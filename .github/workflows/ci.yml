@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --all --check
+
+  check-and-test:
+    name: check-and-test (${{ matrix.os }}, ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        toolchain: [stable, msrv]
+    env:
+      # rust-toolchain.toml pins current stable; the msrv leg overrides it.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && '1.96' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MSRV toolchain
+        if: matrix.toolchain == 'msrv'
+        run: rustup toolchain install 1.96 --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  build-release:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { os: macos-13, target: x86_64-apple-darwin }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release -p patok --target ${{ matrix.target }}
+      - run: target/${{ matrix.target }}/release/patok --version
+      - name: Check static linkage
+        if: contains(matrix.target, 'musl')
+        run: |
+          out=$(ldd target/${{ matrix.target }}/release/patok 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -qE 'not a dynamic executable|statically linked'

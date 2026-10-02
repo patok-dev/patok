@@ -1,0 +1,17 @@
+[package]
+name = "patok"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+patok-core = { path = "../patok-core" }
+patok-engine = { path = "../patok-engine" }
+patok-proto = { path = "../patok-proto" }
+patok-providers = { path = "../patok-providers" }
+patok-tui = { path = "../patok-tui" }
+
+[lints]
+workspace = true
