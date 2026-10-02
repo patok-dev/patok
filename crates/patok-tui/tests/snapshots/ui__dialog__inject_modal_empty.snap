@@ -1,0 +1,28 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: "draw(&app, 80, 24)"
+---
+             ┌ Builder ────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                    │
+    ┌ Inject a task ──────────────────────────────────────────────── [ x ] ┐   │
+[   │Type the task; it lands as an unchecked task line                     │   │
+    │                                                                      │   │
+[   │                                                                      │   │
+    │                                                                      │───┘
+[  R│                                                                      │───┐
+    │                                                                      │   │
+[   │                                                                      │   │
+[ Di│                                                                      │   │
+[ Le│                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
+    │ ↑↓←→ move · Shift-Enter new line ·   [ Enter ] Inject  [ Esc ] Close │   │
+    └──────────────────────────────────────────────────────────────────────┘   │
+             └─────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit

@@ -1,12 +1,18 @@
-//! Placeholder for the `patok-engine` crate (see spec Part X, section 3).
+//! The engine process: owns the task queue, git, history log and provider supervision, and
+//! serves the gRPC protocol to the shell over a Unix socket.
 
-/// Crate name, used to prove the workspace links.
-pub const NAME: &str = "patok-engine";
+mod engine;
+mod git;
+mod plan;
+mod prompt;
+mod review;
+mod schedule;
+mod server;
+mod settings;
+pub mod taskfile;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn name_matches_crate() {
-        assert_eq!(super::NAME, env!("CARGO_PKG_NAME"));
-    }
-}
+pub use engine::{Engine, EngineConfig, QueueCreation};
+pub use server::{prepare_runtime_dir, serve};
+
+/// Name of the task file in the project root.
+pub const TASK_FILE: &str = "TASKS.md";

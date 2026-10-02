@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: "draw(&app, W, H)"
+---
+             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                                        │
+      ↓      │                                                                                     │
+[   Plan    ]│                                                                                     │
+     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+[   B│      discovery provider  ‹ claude ›                                                   ││    │
+     │      discovery model  opus                                                            ││────┘
+[  Re│  ▾ Pipeline                                                                           ││────┐
+     │      run mode  ‹ sprint ›                                                             ││    │
+[   S│      [ ] plan enabled                                                                 ││    │
+[ Dis│      [ ] skip planner for simple                                                      █│    │
+[ Lea│      [ ] skip research for simple                                                     █│    │
+     │      [ ] skip review for simple                                                       █│    │
+     │      review confidence threshold  5                                                   █│    │
+     │      review multipass threshold  8                                                    █│    │
+     │      [ ] batch review                                                                 █│    │
+     │      [ ] planner lookahead                                                            █│    │
+     │      [ ] review in loop                                                               █│    │
+     │      confidence threshold  0.5                                                        █│    │
+     │  ▾ Timeouts and pauses                                                                ││    │
+     │▶     agent timeout  600                                                               ││    │
+     │      pause between tasks  10                                                          ││    │
+     │      pause between agents  3                                                          ││    │
+     │      pause between cycles  30                                                         ││    │
+     │      engine idle timeout  1800                                                        ││    │
+     │┌─────────────────────────────────── agent timeout ────────────────────────────────────┐│    │
+     ││How long one agent invocation may idle, in seconds, before it is stopped; the hard    ││    │
+     ││timeout is four times this. Default 600.                                              ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+     │Editing agent timeout -- Enter confirms, Ctrl+U clears, Esc cancels                     │    │
+     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+     └────────────────────────────────────────────────────────────────────────────────────────┘    │
+             │                                                                                     │
+             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
+             └─────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit

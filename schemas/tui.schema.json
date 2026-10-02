@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TuiSettings",
+  "description": "The merged tui settings.",
+  "type": "object",
+  "properties": {
+    "agent_pane_split": {
+      "description": "The agent pane split, valid range 20-80.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "preview_wrap": {
+      "type": "boolean"
+    },
+    "rail_mode": {
+      "$ref": "#/$defs/RailMode"
+    },
+    "theme": {
+      "$ref": "#/$defs/Theme"
+    },
+    "truecolor": {
+      "description": "`None` means auto-detect; `Some(true)` forces RGB, `Some(false)` forces 256-color.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "update_channel": {
+      "$ref": "#/$defs/UpdateChannel"
+    }
+  },
+  "required": [
+    "theme",
+    "preview_wrap",
+    "agent_pane_split",
+    "update_channel",
+    "rail_mode"
+  ],
+  "$defs": {
+    "RailMode": {
+      "description": "The pipeline rail's visual mode (T57.1): `normal` full-name boxes (the default since T58.1) or `compact` letter tiles, the opt-in.",
+      "type": "string",
+      "enum": [
+        "compact",
+        "normal",
+        "detailed"
+      ]
+    },
+    "Theme": {
+      "description": "The shell theme.",
+      "type": "string",
+      "enum": [
+        "dark",
+        "atom_one_dark",
+        "atom_one_light",
+        "tokyo_night_dark",
+        "tokyo_night_day",
+        "catppuccin_mocha",
+        "catppuccin_latte",
+        "solarized_dark",
+        "solarized_light",
+        "gruvbox_dark",
+        "gruvbox_light"
+      ]
+    },
+    "UpdateChannel": {
+      "description": "Which releases self-update considers.",
+      "type": "string",
+      "enum": [
+        "stable",
+        "dev"
+      ]
+    }
+  }
+}

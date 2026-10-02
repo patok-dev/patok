@@ -1,0 +1,5 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: "styled_footer(&app, app.stop_footer.get())"
+---
+ |DarkGray|- ↑|DarkGray|- ↓|DarkGray|-  |DarkGray|- m|DarkGray|- o|DarkGray|- v|DarkGray|- e|DarkGray|-  |-|-  |-|-  |-|-  |-|-  |-|-  |-|-  |-|-  |-|-  |-|-  |-|-  |Yellow|- [|Yellow|-  |Yellow|- E|Yellow|- n|Yellow|- t|Yellow|- e|Yellow|- r|Yellow|-  |Yellow|- ]|Yellow|-  |Yellow|- C|-|- o|-|- n|-|- f|-|- i|-|- r|-|- m|-|-  |-|-  |Yellow|- [|Yellow|-  |Yellow|- E|Yellow|- s|Yellow|- c|Yellow|-  |Yellow|- ]|Yellow|-  |Yellow|- C|-|- l|-|- o|-|- s|-|- e|-|-  |-|-

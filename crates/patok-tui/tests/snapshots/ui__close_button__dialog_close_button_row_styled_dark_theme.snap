@@ -1,0 +1,5 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: "styled_close_row(&buffer,\nclose_button_rect(dialog_area(Rect::new(0, 0, W, H))))"
+---
+ |Yellow|- [|Yellow|-  |Yellow|- x|Yellow|-  |Yellow|- ]|Yellow|-  |Yellow|-

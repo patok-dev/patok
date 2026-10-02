@@ -1,0 +1,5 @@
+{"id": "u1", "type": "message", "role": "user", "content": [{"type": "text", "text": "Run ls"}], "generationStatus": "completed"}
+{"id": "r1", "type": "reasoning", "text": "I will run ls.", "summary": [], "generationStatus": "completed"}
+{"id": "e1", "type": "effect", "title": "bash", "detail": {"toolName": "bash", "kind": "shell", "input": {"command": "ls /nope"}}, "state": {"status": "failed", "outputText": "ls: cannot access '/nope': No such file or directory"}, "generationStatus": "completed"}
+{"id": "e2", "type": "effect", "title": "grep", "detail": {"toolName": "grep", "input": {"pattern": "fn main"}}, "state": {"status": "completed", "output": {"matches": 1}, "outputText": "src/main.rs:1:fn main() {}"}, "generationStatus": "completed"}
+{"id": "a1", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "The directory does not exist."}], "generationStatus": "completed"}

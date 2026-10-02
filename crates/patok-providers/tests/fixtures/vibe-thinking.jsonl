@@ -1,0 +1,3 @@
+{"id": "d1", "sessionId": "s-vibe-thinking", "turnId": "t1", "type": "message", "role": "user", "content": [{"type": "text", "text": "Fix the task parser"}], "source": "turn_start"}
+{"id": "d2", "sessionId": "s-vibe-thinking", "turnId": "t1", "type": "reasoning", "text": "## Plan\nRead the **task parser**, then:\n- parse the *task lines*\n- fix the `task.rs` fixture\n- run cargo test\nFinally:\n```rust\nlet tasks = parse(&text);\n```\n", "summary": []}
+{"id": "d3", "sessionId": "s-vibe-thinking", "turnId": "t1", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "done"}], "source": null}

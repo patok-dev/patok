@@ -1,0 +1,18 @@
+---
+source: crates/patok-tui/tests/e2e.rs
+expression: screen
+---
+             ┌ Builder | mock ────────────────────────────────────────── 00:00 ┐
+[ Research  ]│Not committed (not a git repository, nothing to commit, or the co│
+      ↓      │mmit failed).                                                    │
+[   Plan    ]│✔ T1.1 done                                                      │
+      ↓      │ v rail view · ↑↓ scroll · PgUp/PgDn page · End follow           │
+[   Build   ]└─────────────────────────────────────────────────────────────────┘
+      ↓      ┌ Tasks | 1/1 - 0 left ───────────────────────────────────────────┐
+[  Review   ]│✔ T1.1  add hello                                                │
+             │                                                                 │
+[   Ship    ]│                                                                 │
+[ Discover  ]│                                                                 │
+[ Learnings ]│                                                                 │
+             └─────────────────────────────────────────────────────────────────┘
+ DISCOVERING  sprint          Esc  stop build  ?  settings  t  theme  d  detach

@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: screen
+---
+             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                                        │
+      ↓      │                                                                                     │
+[   Plan    ]│                                                                                     │
+     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+[   B│  ▾ Provider and model                                                                 █│    │
+     │      engine version: 0.1.0                                                            █│────┘
+[  Re│      shell version: 0.0.0                                                             █│────┐
+     │      provider  ‹ claude ›                                                             █│    │
+[   S│      model  (not set)                                                                 █│    │
+[ Dis│      research provider  ‹ claude ›                                                    █│    │
+[ Lea│      research model  sonnet                                                           █│    │
+     │      planner provider  ‹ claude ›                                                     █│    │
+     │      planner model  opus                                                              █│    │
+     │      builder provider  ‹ claude ›                                                     █│    │
+     │      builder model  opus                                                              █│    │
+     │      reviewer provider  ‹ claude ›                                                    █│    │
+     │      reviewer model  sonnet                                                           ││    │
+     │      discovery provider  ‹ claude ›                                                   ││    │
+     │      discovery model  opus                                                            ││    │
+     │▶ ▸ Pipeline                                                                           ││    │
+     │  ▾ Timeouts and pauses                                                                ││    │
+     │      agent timeout  600                                                               ││    │
+     │      pause between tasks  10                                                          ││    │
+     │      pause between agents  3                                                          ││    │
+     │┌────────────────────────────────────── Pipeline ──────────────────────────────────────┐│    │
+     ││How tasks flow through the pipeline: which stages may be skipped for simple tasks, how││    │
+     ││the reviewer is scheduled, and how its findings are triaged.                          ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+     │                                                                                        │    │
+     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+     └────────────────────────────────────────────────────────────────────────────────────────┘    │
+             │                                                                                     │
+             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
+             └─────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit

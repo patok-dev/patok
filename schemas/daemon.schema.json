@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DaemonSettings",
+  "description": "The merged, normalized daemon settings.\n\nFields beyond `provider`, `model`, `plan_enabled` and the discovery cooldowns are\nparsed, merged and normalized here but not yet consumed by engine behaviour; the\npipeline, routing and learnings tasks pick them up.",
+  "type": "object",
+  "properties": {
+    "adaptive_pauses": {
+      "type": "boolean"
+    },
+    "agent_timeout_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "auto_push_remote": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "batch_review": {
+      "type": "boolean"
+    },
+    "build_command": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "builder_model": {
+      "type": "string"
+    },
+    "builder_provider": {
+      "$ref": "#/$defs/ProviderName"
+    },
+    "catalog_url_overrides": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "confidence_threshold": {
+      "type": "number",
+      "format": "double"
+    },
+    "discovery_cooldown_cap_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "discovery_cooldown_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "discovery_model": {
+      "type": "string"
+    },
+    "discovery_provider": {
+      "$ref": "#/$defs/ProviderName"
+    },
+    "embedding_model": {
+      "type": "string"
+    },
+    "embedding_port": {
+      "type": "integer",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0
+    },
+    "embedding_timeout_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "enforce_phase_rbac": {
+      "type": "boolean"
+    },
+    "engine_idle_timeout_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "history_dir": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "history_retention_tasks": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "history_search_results": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "learning_extraction_model": {
+      "type": "string"
+    },
+    "learning_extraction_provider": {
+      "$ref": "#/$defs/ProviderName"
+    },
+    "local_model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "max_learning_injection": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "min_learning_injection": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "model": {
+      "description": "The single-model override; empty means none (normalization applies it per role).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model_catalog_refresh_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "observatory_retention_days": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "on_task_complete_hook": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pause_between_agents_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "pause_between_cycles_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "pause_between_tasks_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "phase_isolation": {
+      "type": "boolean"
+    },
+    "plan_enabled": {
+      "description": "Whether a plan session runs before each builder session (T10.1).",
+      "type": "boolean"
+    },
+    "plan_revision_accept_policy": {
+      "$ref": "#/$defs/AcceptPolicy"
+    },
+    "plan_revision_cycles": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "planner_lookahead": {
+      "type": "boolean"
+    },
+    "planner_model": {
+      "type": "string"
+    },
+    "planner_provider": {
+      "$ref": "#/$defs/ProviderName"
+    },
+    "planning_iterations": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provider": {
+      "$ref": "#/$defs/ProviderName"
+    },
+    "require_human_approval": {
+      "type": "boolean"
+    },
+    "research_model": {
+      "type": "string"
+    },
+    "research_provider": {
+      "$ref": "#/$defs/ProviderName"
+    },
+    "review_confidence_threshold": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "review_in_loop": {
+      "type": "boolean"
+    },
+    "review_multipass_threshold": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "reviewer_model": {
+      "type": "string"
+    },
+    "reviewer_provider": {
+      "$ref": "#/$defs/ProviderName"
+    },
+    "run_mode": {
+      "$ref": "#/$defs/RunMode"
+    },
+    "semantic_match_enabled": {
+      "type": "boolean"
+    },
+    "semgrep_enabled": {
+      "type": "boolean"
+    },
+    "semgrep_rulesets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "show_retrieval_panel": {
+      "type": "boolean"
+    },
+    "skip_planner_for_simple": {
+      "type": "boolean"
+    },
+    "skip_research_for_simple": {
+      "description": "Whether a Simple-classified task skips the research stage (T68.1).",
+      "type": "boolean"
+    },
+    "skip_review_for_simple": {
+      "type": "boolean"
+    },
+    "stage_overrides": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Stage"
+      }
+    }
+  },
+  "required": [
+    "provider",
+    "research_model",
+    "planner_model",
+    "builder_model",
+    "reviewer_model",
+    "discovery_model",
+    "learning_extraction_model",
+    "research_provider",
+    "planner_provider",
+    "builder_provider",
+    "reviewer_provider",
+    "discovery_provider",
+    "learning_extraction_provider",
+    "model_catalog_refresh_secs",
+    "catalog_url_overrides",
+    "stage_overrides",
+    "run_mode",
+    "stages",
+    "skip_planner_for_simple",
+    "skip_research_for_simple",
+    "skip_review_for_simple",
+    "review_confidence_threshold",
+    "batch_review",
+    "planner_lookahead",
+    "plan_revision_cycles",
+    "plan_revision_accept_policy",
+    "review_in_loop",
+    "review_multipass_threshold",
+    "confidence_threshold",
+    "semgrep_enabled",
+    "semgrep_rulesets",
+    "planning_iterations",
+    "require_human_approval",
+    "discovery_cooldown_secs",
+    "discovery_cooldown_cap_secs",
+    "plan_enabled",
+    "agent_timeout_secs",
+    "pause_between_tasks_secs",
+    "pause_between_agents_secs",
+    "pause_between_cycles_secs",
+    "adaptive_pauses",
+    "engine_idle_timeout_secs",
+    "phase_isolation",
+    "enforce_phase_rbac",
+    "max_learning_injection",
+    "min_learning_injection",
+    "history_search_results",
+    "history_retention_tasks",
+    "observatory_retention_days",
+    "semantic_match_enabled",
+    "embedding_model",
+    "embedding_port",
+    "embedding_timeout_ms",
+    "plugins",
+    "show_retrieval_panel"
+  ],
+  "$defs": {
+    "AcceptPolicy": {
+      "description": "The plan self-review accept policy.",
+      "type": "string",
+      "enum": [
+        "no-high",
+        "no-high-medium",
+        "no-findings"
+      ]
+    },
+    "ProviderName": {
+      "description": "A provider name as written in config files:\ntrimmed, case-insensitive, aliases accepted.",
+      "type": "string",
+      "enum": [
+        "claude",
+        "codex",
+        "opencode",
+        "ghcopilot",
+        "mistral"
+      ]
+    },
+    "RunMode": {
+      "description": "The run mode.",
+      "type": "string",
+      "enum": [
+        "sprint",
+        "continuous"
+      ]
+    },
+    "Stage": {
+      "description": "One pipeline stage: id, label, enabled flag and an optional\nprompt override. A stage absent from the list is treated as disabled by the consumer;\norder is display-only.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "enabled"
+      ]
+    }
+  }
+}
