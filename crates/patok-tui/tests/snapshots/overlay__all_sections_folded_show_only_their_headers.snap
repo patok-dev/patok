@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: screen
+---
+             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                                        │
+      ↓      │                                                                                     │
+[   Plan    ]│                                                                                     │
+     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+[   B│  ▸ Provider and model                                                                  │    │
+     │  ▸ Pipeline                                                                            │────┘
+[  Re│  ▸ Timeouts and pauses                                                                 │────┐
+     │  ▸ Git                                                                                 │    │
+[   S│▶ ▸ Display and theme                                                                   │    │
+[ Dis│                                                                                        │    │
+[ Lea│                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │┌───────────────────────────────── Display and theme ──────────────────────────────────┐│    │
+     ││The shell's own display preferences. The shell applies and persists them itself -- no ││    │
+     ││engine involved -- and each takes effect immediately.                                 ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+     │                                                                                        │    │
+     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+     └────────────────────────────────────────────────────────────────────────────────────────┘    │
+             │                                                                                     │
+             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
+             └─────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit

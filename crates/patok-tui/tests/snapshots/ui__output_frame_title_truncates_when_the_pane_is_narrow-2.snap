@@ -1,0 +1,14 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: "draw(&app, 26, 10)"
+---
+             ┌ Builder ──┐
+[ Research  ]│no output y│
+      ↓      │           │
+[   Plan    ]│           │
+      ↓      │           │
+[   Build   ]│           │
+      ↓      └───────────┘
+[  Review   ]┌ Tasks | 1/┐
+             └───────────┘
+ STOPPED  sprint

@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: screen
+---
+             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                                        │
+      ↓      │                                                                                     │
+[   Plan    ]│                                                                                     │
+     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+[   B│      [ ] planner lookahead                                                            ││    │
+     │      [ ] review in loop                                                               ││────┘
+[  Re│      confidence threshold  0.5                                                        ││────┐
+     │  ▾ Timeouts and pauses                                                                ││    │
+[   S│      agent timeout  600                                                               ││    │
+[ Dis│      pause between tasks  10                                                          ││    │
+[ Lea│      pause between agents  3                                                          ││    │
+     │      pause between cycles  30                                                         ││    │
+     │      engine idle timeout  1800                                                        ││    │
+     │      [x] adaptive pauses                                                              ││    │
+     │      discovery cooldown  300                                                          █│    │
+     │      discovery cooldown cap  1800                                                     █│    │
+     │  ▾ Git                                                                                █│    │
+     │      auto-push remote  (not set)                                                      █│    │
+     │  ▾ Display and theme                                                                  █│    │
+     │      theme  ‹ dark ›                                                                  █│    │
+     │      truecolor  ‹ auto ›                                                              █│    │
+     │      [x] preview wrap                                                                 █│    │
+     │      update channel  ‹ stable ›                                                       █│    │
+     │▶     rail mode  ‹ normal ›                                                            ││    │
+     │┌───────────────────────────────────── rail mode ──────────────────────────────────────┐│    │
+     ││The pipeline rail's density: compact, normal or detailed.                             ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+     │                                                                                        │    │
+     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+     └────────────────────────────────────────────────────────────────────────────────────────┘    │
+             │                                                                                     │
+             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
+             └─────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit

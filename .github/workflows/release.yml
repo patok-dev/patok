@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  classify-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      kind: ${{ steps.classify.outputs.kind }}
+      prerelease: ${{ steps.classify.outputs.prerelease }}
+    steps:
+      - id: classify
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          num='(0|[1-9][0-9]*)'
+          if [[ "$TAG" =~ ^v$num\.$num\.$num$ ]]; then
+            echo "kind=stable" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^v$num\.$num\.$num-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*$ ]]; then
+            echo "kind=dev" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unsupported tag '$TAG': expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-<suffix>"
+            exit 1
+          fi
+
+  check-and-test:
+    needs: classify-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build:
+    needs: [classify-tag, check-and-test]
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set workspace version from tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          sed -i.bak -E "s/^version = \"0\.0\.0\"$/version = \"${version}\"/" Cargo.toml
+          rm Cargo.toml.bak
+          grep -qx "version = \"${version}\"" Cargo.toml
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release -p patok --target ${{ matrix.target }}
+      # Archive naming convention (relied on by the install script and `patok update`):
+      #   patok-<target>.tar.gz, where <target> is the Rust target triple
+      #   (x86_64-unknown-linux-musl, x86_64-apple-darwin, aarch64-apple-darwin).
+      # The archive contains the single `patok` binary at its root.
+      - name: Package archive
+        run: |
+          archive="patok-${{ matrix.target }}.tar.gz"
+          tar -czf "$archive" -C target/${{ matrix.target }}/release patok
+          tar -tzf "$archive" | grep -qx patok
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patok-${{ matrix.target }}
+          path: patok-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [classify-tag, check-and-test, build]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set workspace version from tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          sed -i -E "s/^version = \"0\.0\.0\"$/version = \"${version}\"/" Cargo.toml
+          grep -qx "version = \"${version}\"" Cargo.toml
+          cargo metadata --no-deps --format-version 1 > /dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: patok-*
+          path: dist
+          merge-multiple: true
+      # One `<sha256>  <filename>` line per archive (sha256sum format, bare filenames).
+      - name: Compute checksums
+        working-directory: dist
+        run: |
+          sha256sum patok-*.tar.gz | sort -k2 > checksums
+          test "$(wc -l < checksums)" -eq 3
+          cat checksums
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/checksums
+          if-no-files-found: error
+      # The install script lives at the repo root as `install.sh` and is attached as-is.
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.classify-tag.outputs.prerelease }}
+        run: |
+          test -f install.sh
+          flags=(--verify-tag --generate-notes --title "$TAG")
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG" "${flags[@]}" \
+            dist/patok-*.tar.gz \
+            dist/checksums \
+            install.sh

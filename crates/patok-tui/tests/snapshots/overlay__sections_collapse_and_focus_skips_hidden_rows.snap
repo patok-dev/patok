@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: screen
+---
+             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                                        │
+      ↓      │                                                                                     │
+[   Plan    ]│                                                                                     │
+     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+[   B│      reviewer model  sonnet                                                           ││    │
+     │      discovery provider  ‹ claude ›                                                   ││────┘
+[  Re│      discovery model  opus                                                            ││────┐
+     │  ▾ Pipeline                                                                           ││    │
+[   S│      run mode  ‹ sprint ›                                                             ││    │
+[ Dis│      [ ] plan enabled                                                                 ││    │
+[ Lea│      [ ] skip planner for simple                                                      █│    │
+     │      [ ] skip research for simple                                                     █│    │
+     │      [ ] skip review for simple                                                       █│    │
+     │      review confidence threshold  5                                                   █│    │
+     │      review multipass threshold  8                                                    █│    │
+     │      [ ] batch review                                                                 █│    │
+     │      [ ] planner lookahead                                                            █│    │
+     │      [ ] review in loop                                                               █│    │
+     │      confidence threshold  0.5                                                        █│    │
+     │▶ ▸ Timeouts and pauses                                                                █│    │
+     │  ▾ Git                                                                                █│    │
+     │      auto-push remote  (not set)                                                      ││    │
+     │  ▾ Display and theme                                                                  ││    │
+     │      theme  ‹ dark ›                                                                  ││    │
+     │┌──────────────────────────────── Timeouts and pauses ─────────────────────────────────┐│    │
+     ││Timing: how long an agent may idle, the pauses between tasks, agents and cycles, and  ││    │
+     ││how long an engine with no shell attached waits before shutting down.                 ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+     │                                                                                        │    │
+     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+     └────────────────────────────────────────────────────────────────────────────────────────┘    │
+             │                                                                                     │
+             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
+             └─────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit

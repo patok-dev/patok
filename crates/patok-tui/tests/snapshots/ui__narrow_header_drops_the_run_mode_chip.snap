@@ -1,0 +1,14 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: screen
+---
+             ┌ Bu┐
+[ Research  ]│no │
+      ↓      │   │
+[   Plan    ]│   │
+      ↓      │   │
+[   Build   ]│   │
+      ↓      └───┘
+[  Review   ]┌ Ta┐
+             └───┘
+ STOPPED  sprint

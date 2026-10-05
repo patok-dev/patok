@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: screen
+---
+             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                                        │
+      ↓      │                                                                                     │
+[   Plan    ]│                                                                                     │
+     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+[   B│      shell version: 0.0.0                                                             █│    │
+     │      provider  ‹ claude ›                                                             █│────┘
+[  Re│      model  (not set)                                                                 █│────┐
+     │      research provider  ‹ claude ›                                                    █│    │
+[   S│      research model  sonnet                                                           █│    │
+[ Dis│      planner provider  ‹ claude ›                                                     █│    │
+[ Lea│      planner model  opus                                                              █│    │
+     │      builder provider  ‹ claude ›                                                     █│    │
+     │      builder model  opus                                                              █│    │
+     │      reviewer provider  ‹ claude ›                                                    ││    │
+     │      reviewer model  sonnet                                                           ││    │
+     │      discovery provider  ‹ claude ›                                                   ││    │
+     │      discovery model  opus                                                            ││    │
+     │  ▾ Pipeline                                                                           ││    │
+     │      run mode  ‹ sprint ›                                                             ││    │
+     │▶     [x] plan enabled                                                                 ││    │
+     │      [ ] skip planner for simple                                                      ││    │
+     │      [ ] skip research for simple                                                     ││    │
+     │      [ ] skip review for simple                                                       ││    │
+     │      review confidence threshold  5                                                   ││    │
+     │┌──────────────────────────────────── plan enabled ────────────────────────────────────┐│    │
+     ││Whether a plan session runs before each builder session.                              ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     ││                                                                                      ││    │
+     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+     │                                                                                        │    │
+     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+     └────────────────────────────────────────────────────────────────────────────────────────┘    │
+             │                                                                                     │
+             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
+             └─────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit

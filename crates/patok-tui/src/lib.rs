@@ -1,12 +1,34 @@
-//! Placeholder for the `patok-tui` crate (see spec Part X, section 3).
+//! The shell: ratatui UI and gRPC client. Render-only; it holds no pipeline state
+//!.
 
-/// Crate name, used to prove the workspace links.
-pub const NAME: &str = "patok-tui";
+mod app;
+pub mod client;
+mod markdown;
+mod overlay;
+mod pipeline;
+mod project;
+mod run;
+mod settings;
+mod theme;
+mod ui;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn name_matches_crate() {
-        assert_eq!(super::NAME, env!("CARGO_PKG_NAME"));
-    }
-}
+pub use app::{Action, App, DialogKind, FrameFocus, QueueRun, SOFT_STOP_PENDING, ThemeModal};
+pub use overlay::{
+    Editor, Entry, FieldKind, Number, Row, SCROLL_MARGIN, SETTINGS_CHOICES, Schema, Section,
+    SettingsChoice, SettingsOverlay, StatusLevel, scroll_offset,
+};
+pub use pipeline::{
+    RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width, render_rail,
+    tile_status, tile_style, tile_text,
+};
+pub use run::{Outcome, Spawner, restart, run, save_theme, shutdown_progress};
+pub use settings::{ShellSettings, to_proto};
+pub use theme::Theme;
+pub use ui::{
+    CLOSE_BUTTON_WIDTH, DIALOG_WATERMARK, INJECT_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH,
+    SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH, button_text, close_button_rect,
+    dialog_area, finished_line, fitted_hints, footer_button_rects, format_elapsed, frame_at,
+    frame_constraints, human_duration, output_title, output_title_parts, output_title_spans,
+    render, settings_area, settings_body_areas, settings_confirm_area, started_line, stop_area,
+    theme_area, theme_row_at,
+};

@@ -1,0 +1,467 @@
+syntax = "proto3";
+
+package patok.v1;
+
+// Wire protocol between the Patok shell (terminal UI client) and the Patok
+// engine (build-loop server). This is an internal implementation detail:
+// no external or public API is exposed, no compatibility is promised across
+// versions, and the engine is only reachable over a local, per-user Unix
+// domain socket -- never a network port.
+
+service Engine {
+  // Attach as the single controlling shell for this engine. The server
+  // rejects the call (FAILED_PRECONDITION) if another shell is already
+  // attached. On success,
+  // streams exactly one EngineInfo message first, then a live Event for
+  // every subsequent change, until the shell disconnects or the engine
+  // shuts down (in which case a final ShutdownNotice is sent before the
+  // stream closes).
+  rpc Attach(AttachRequest) returns (stream EngineUpdate);
+
+  // Submit a user-initiated action (start build, start planning, task
+  // injection, Stop-dialog scopes, settings changes, ...). One call per
+  // action; the engine applies its existing business rules
+  // and reports whether the action was accepted.
+  rpc SubmitCommand(CommandRequest) returns (CommandResponse);
+
+  // Request the engine to shut down. Usable whether or not a shell is currently attached.
+  // Streams shutdown progress until the engine process has actually
+  // exited; the final message on the stream is always phase COMPLETE,
+  // immediately followed by the server closing the connection.
+  rpc Shutdown(ShutdownRequest) returns (stream ShutdownUpdate);
+}
+
+message AttachRequest {
+  // The connecting shell's own build version, reported so the engine can
+  // log it; version-mismatch handling itself is a client-side decision
+  //.
+  string shell_version = 1;
+}
+
+message EngineUpdate {
+  oneof payload {
+    EngineInfo info = 1;
+    Event event = 2;
+    ShutdownNotice shutdown_notice = 3;
+    // Sent whenever the engine's run state changes, so an attached shell
+    // knows whether a planner is active.
+    RunStateUpdate run_state = 4;
+  }
+}
+
+// What the engine is doing right now: nothing, a planning run (e.g. the
+// planner appending tasks for an AddTasks request), a discovery round
+// scanning the project for follow-up work, or the build loop.
+enum RunState {
+  RUN_STATE_IDLE = 0;
+  RUN_STATE_PLANNING = 1;
+  RUN_STATE_RUNNING = 2;
+  RUN_STATE_DISCOVERING = 3;
+}
+
+message RunStateUpdate {
+  RunState state = 1;
+}
+
+message EngineInfo {
+  // The engine's own build version; compared client-side against shell_version.
+  string engine_version = 1;
+  Snapshot snapshot = 2;
+}
+
+// Full build-loop state at attach time (phase, task queue view, run mode,
+// gate state, and so on). Left as an opaque, coarse-grained container for
+// now: no field-level schema for that state is defined yet, so this message is
+// intentionally not a stable, fully-typed contract -- it is expected to grow
+// dedicated fields over time.
+message Snapshot {
+  bytes state = 1;
+  // Current run state at attach time; later changes arrive as
+  // EngineUpdate.run_state.
+  RunState run_state = 2;
+  // The pipeline rail at attach time:
+  // the enabled stage tiles in order plus the three standalone tiles. Later
+  // changes arrive as the typed `pipeline_state` event below.
+  PipelineState pipeline = 3;
+}
+
+// One item from the already-specified normalized event vocabulary
+//. `kind` names the event;
+// `payload` carries its fields, encoded the same way as `Snapshot.state`
+// until that vocabulary is given a typed schema here.
+message Event {
+  string kind = 1;
+  bytes payload = 2;
+  // Typed variants; when one is set, `kind` and `payload` are unused.
+  oneof typed {
+    // The task list changed (e.g. tasks were appended).
+    TaskListChanged task_list_changed = 3;
+    // A planning run started by AddTasks has finished.
+    PlanningOutcome planning_outcome = 4;
+    // A daemon-schema field's effective value changed: a settings change the engine persisted, or a
+    // hand-edited config file picked up by its reload. The contract shape of
+    // the config-change broadcast; transport rides the payload path above.
+    ConfigChanged config_changed = 5;
+    // The pipeline rail changed: the
+    // full typed state replaces the previous one.
+    PipelineState pipeline_state = 6;
+  }
+}
+
+// One pipeline stage with a rail tile.
+// The engine runs plan and build today; research and review tiles appear once
+// the stage pipeline of MVP 6 exists.
+enum PipelineStage {
+  PIPELINE_STAGE_RESEARCH = 0;
+  PIPELINE_STAGE_PLAN = 1;
+  PIPELINE_STAGE_BUILD = 2;
+  PIPELINE_STAGE_REVIEW = 3;
+}
+
+// One rail tile's status. The zero value
+// is muted, so an unset field decodes as muted -- the state of every tile on
+// an idle engine.
+enum TileStatus {
+  TILE_STATUS_MUTED = 0;
+  TILE_STATUS_PENDING = 1;
+  TILE_STATUS_ACTIVE = 2;
+  TILE_STATUS_DONE = 3;
+}
+
+// One rail tile: a stage letter with its status.
+message PipelineTile {
+  PipelineStage stage = 1;
+  TileStatus status = 2;
+}
+
+// The pipeline rail: the enabled stage
+// tiles in order, then the three standalone tiles -- ship (SH), discover
+// (DI) and learnings (LN). The engine is the source of truth: the shell only
+// renders this state.
+message PipelineState {
+  // The enabled stages in pipeline order, one tile each with its letter's
+  // status.
+  repeated PipelineTile stages = 1;
+  // SH: active while the engine commits a task.
+  TileStatus ship = 2;
+  // DI: muted in sprint run mode, active while a discovery round runs, done
+  // once a round ran in the session.
+  TileStatus discover = 3;
+  // LN: done once any learning was learned in the session.
+  TileStatus learnings = 4;
+}
+
+message TaskListChanged {}
+
+// The result of a planning run started by AddTasks.
+message PlanningOutcome {
+  oneof result {
+    // Number of tasks appended to the task list.
+    uint32 tasks_added = 1;
+    // Why planning failed; nothing was appended.
+    string error = 2;
+  }
+}
+
+// One daemon-schema field whose effective value changed: the field's on-disk key, its post-merge, post-normalization
+// value, and when the change takes effect.
+message ConfigChanged {
+  string field = 1;
+  oneof value {
+    bool bool_value = 2;
+    uint64 uint_value = 3;
+    double float_value = 4;
+    string string_value = 5;
+  }
+  SettingsChangeResult.ApplyTiming apply_timing = 6;
+}
+
+message ShutdownNotice {
+  // Human-readable reason, e.g. "requested via patok daemon stop" or
+  // "idle timeout".
+  string reason = 1;
+}
+
+// One user-initiated action per call. Settings changes are the
+// first action given a dedicated, typed message below; every other action
+// (StartBuild, StartPlanning, StartDesign, AppendTasks, Stop-dialog
+// scopes) remains opaque until it is formalized in turn.
+message CommandRequest {
+  oneof action {
+    bytes legacy_command = 1;
+    SettingsChange settings_change = 2;
+    // Start the build loop on the first pending task. Rejected when a build is already running.
+    StartBuild start_build = 3;
+    // Run an append-tasks run and append the resulting tasks to the task
+    // list: the planner for a user request, or the research agent for the
+    // queue-creation kinds (T69.1). Rejected when a planning run is already
+    // active. The outcome arrives as an Event with PlanningOutcome.
+    AddTasks add_tasks = 4;
+    // Run one discovery round now: the read-only discovery session that scans
+    // the project for follow-up work and appends D-prefixed tasks to the task
+    // list. Rejected while a build, a planning run or another discovery round
+    // is active. Output, run state and the outcome reach the shell through the
+    // attach stream exactly like an automatic round.
+    RunDiscovery run_discovery = 5;
+    // Cancel a pending soft stop (a SOFT-scope shutdown whose running task has
+    // not finished yet): the build loop continues with the next pending task
+    // once the current task ends, and the engine returns to normal RUNNING
+    // operation. Rejected with a command error when no soft stop is pending.
+    CancelSoftStop cancel_soft_stop = 6;
+    // Inject one task line into TASKS.md verbatim (T76.1's modal, routed
+    // through the engine for T77.1): accepted in every engine state, even
+    // mid-build -- the engine appends under its task-file lock (held only for
+    // short file operations, never across agent sessions) and reconciles the
+    // queue immediately, so the line reaches the attached shell as a
+    // task-list change without waiting for the file poll. The task runs as
+    // the next pending task once the current one finishes; it is never
+    // started mid-session. Rejected only for empty text.
+    InjectTask inject_task = 7;
+  }
+}
+
+message AddTasks {
+  // The user's free-text request describing the work to plan.
+  string request = 1;
+  // Which agent runs the append: the planner expanding the request, or the
+  // research agent creating the initial task queue (T69.1).
+  AddTasksKind kind = 2;
+}
+
+// Which agent an AddTasks command runs. The planner kind (the wire default)
+// expands the request into appended tasks; the two research kinds run the
+// Research agent's queue-creation duty (T69.1): it investigates the project
+// and appends the resulting tasks, reusing the research report window.
+enum AddTasksKind {
+  // The planner expands the user's request into appended T tasks.
+  ADD_TASKS_PLANNER = 0;
+  // The Research agent bootstraps the initial task queue from the spec (the
+  // NeedsQueue scenario's empty submit).
+  ADD_TASKS_BOOTSTRAP = 1;
+  // The Research agent scans for gaps and worthwhile follow-up work (the
+  // QueueComplete scenario's empty submit).
+  ADD_TASKS_SCAN = 2;
+}
+
+message StartBuild {}
+
+message RunDiscovery {}
+
+// Cancels a pending soft stop so the build loop continues with the next
+// pending task once the running task finishes.
+message CancelSoftStop {}
+
+// The inject-task modal's confirm (T76.1, routed through the engine for
+// T77.1): the raw text appended to TASKS.md as the next task line, exactly
+// as typed.
+message InjectTask {
+  string text = 1;
+}
+
+// The pipeline roles and design-command orchestrator seats that carry
+// their own model/provider route. One enum shared by RoleModel and RoleProvider below, rather
+// than a separate message per role, since every role is routed the same
+// two ways.
+enum Role {
+  // Reserved as the unspecified zero value: the role it once carried was
+  // folded into the Research agent (T69.1), so the later role values keep
+  // their numbers.
+  ROLE_UNSPECIFIED = 0;
+  ROLE_RESEARCH = 1;
+  ROLE_PLANNER = 2;
+  ROLE_BUILDER = 3;
+  ROLE_REVIEWER = 4;
+  ROLE_DISCOVERY = 5;
+  ROLE_LEARNING_EXTRACTION = 6;
+  ROLE_ORCHESTRATOR_PROPOSER = 7;
+  ROLE_ORCHESTRATOR_REVIEWER = 8;
+}
+
+// Canonical provider identifiers. The parser-level aliases documented there
+// (gh-copilot/github-copilot/copilot -> PROVIDER_GHCOPILOT, vibe ->
+// PROVIDER_MISTRAL) are a TOML text-parsing concern and are not carried
+// over the wire: the settings overlay always sends one of these five.
+enum Provider {
+  PROVIDER_CLAUDE = 0;
+  PROVIDER_CODEX = 1;
+  PROVIDER_OPENCODE = 2;
+  PROVIDER_GHCOPILOT = 3;
+  PROVIDER_MISTRAL = 4;
+}
+
+enum RunMode {
+  RUN_MODE_SPRINT = 0;
+  RUN_MODE_CONTINUOUS = 1;
+}
+
+// Shared by plan_revision_accept_policy and orchestrator_accept_policy
+//: both rows document the same
+// three alternatives.
+enum AcceptPolicy {
+  ACCEPT_POLICY_NO_HIGH = 0;
+  ACCEPT_POLICY_NO_HIGH_MEDIUM = 1;
+  ACCEPT_POLICY_NO_FINDINGS = 2;
+}
+
+// The model route for one role. Also carries the "learning
+// extraction model" row via ROLE_LEARNING_EXTRACTION.
+message RoleModel {
+  Role role = 1;
+  string model = 2;
+}
+
+// The provider route for one role.
+message RoleProvider {
+  Role role = 1;
+  Provider provider = 2;
+}
+
+// A single daemon-schema settings-overlay change: exactly one field of the `[daemon]` table, precisely typed
+// -- never a generic name/value pair -- so the engine and the shell agree
+// on each field's shape at compile time, not by parsing a string key.
+// tui-schema settings never reach the engine: the shell applies and
+// persists them entirely on its own (Part III, sections 1 and 3), so
+// there is no case for them here.
+//
+// Every case below corresponds to exactly one row of Part III, sections
+// 4-8 (grouped and commented the same way); a case name matches that
+// row's setting name. Rows whose value is a list or map (stages,
+// catalog_url_overrides, stage_overrides, semgrep_rulesets, plugins) have
+// no case: the settings overlay has no list-editing field kind (Part VIII,
+// section 5, "Field kinds") to produce one, so those rows currently have
+// no live single-field edit path at all, on disk or over the wire.
+message SettingsChange {
+  // Field 20 was a removed duplicate of the RoleProvider route (T91.1); the
+  // number stays reserved for wire compatibility.
+  reserved 20;
+  oneof change {
+    // -- Section 3.4, model and provider routing --
+    RoleModel role_model = 1;
+    RoleProvider role_provider = 2;
+    string model_override = 3; // the "model" single-model-override row
+    string local_model = 4;
+    uint32 model_catalog_refresh_secs = 5;
+
+    // -- Section 3.5, run modes and pipeline flow --
+    RunMode run_mode = 6;
+    bool skip_planner_for_simple = 7;
+    bool skip_research_for_simple = 8;
+    bool skip_review_for_simple = 9;
+    uint32 review_confidence_threshold = 10;
+    bool batch_review = 11;
+    bool planner_lookahead = 12;
+    uint32 plan_revision_cycles = 13;
+    AcceptPolicy plan_revision_accept_policy = 14;
+    uint32 orchestrator_max_iterations = 15;
+    AcceptPolicy orchestrator_accept_policy = 16;
+    bool review_in_loop = 17;
+    uint32 review_multipass_threshold = 18;
+    double confidence_threshold = 19; // findings-confidence, range 0.0-1.0
+    bool semgrep_enabled = 21;
+    string build_command = 22;
+    uint32 planning_iterations = 23;
+    bool require_human_approval = 24;
+    string auto_push_remote = 25; // empty clears it (Part III, section 2)
+    string on_task_complete_hook = 26; // empty clears it
+    uint32 discovery_cooldown_secs = 27;
+
+    // -- Section 3.6, timing --
+    uint32 agent_timeout_secs = 28;
+    uint32 pause_between_tasks_secs = 29;
+    uint32 pause_between_agents_secs = 30;
+    uint32 pause_between_cycles_secs = 31;
+    bool adaptive_pauses = 32;
+    uint32 engine_idle_timeout_secs = 33;
+
+    // -- Section 3.7, isolation and security --
+    bool phase_isolation = 34;
+    bool enforce_phase_rbac = 35;
+
+    // -- Section 3.8, learnings, history and embeddings --
+    string history_dir = 36;
+    uint32 max_learning_injection = 37;
+    uint32 min_learning_injection = 38;
+    uint32 history_search_results = 39;
+    uint32 history_retention_tasks = 40;
+    uint32 observatory_retention_days = 41;
+    bool semantic_match_enabled = 42;
+    string embedding_model = 43;
+    // The port of the local embedding server (Part III, section 8's
+    // "embedding model / port / timeout" row, default 11434); validated
+    // as the "port number" type named in section 2's persistence
+    // rules, not a free-form URL.
+    uint32 embedding_port = 44;
+    uint32 embedding_timeout_ms = 45;
+    bool show_retrieval_panel = 46;
+    // The base `provider` key (Part III, section 4's routing table).
+    Provider provider = 47;
+    // Whether a plan session runs before each builder session
+    // (Part III, section 5's `plan_enabled` row).
+    bool plan_enabled = 48;
+    // The cap the discovery cooldown doubles up to (Part III, section 5).
+    uint32 discovery_cooldown_cap_secs = 49;
+  }
+}
+
+message CommandResponse {
+  bool accepted = 1;
+  // Present only when accepted is false.
+  string error = 2;
+  // Present only when the request was a SettingsChange and accepted is
+  // true.
+  SettingsChangeResult settings_change_result = 3;
+}
+
+// Where a settings change was written and when it takes effect, so the
+// shell can reflect both back to the operator without re-deriving them
+//.
+message SettingsChangeResult {
+  enum Layer {
+    LAYER_UNSPECIFIED = 0;
+    USER_GLOBAL = 1;    // config.toml
+    USER_LOCAL = 2;     // config.local.toml
+    // patok.config.toml -- the default target for every daemon-schema
+    // field today (Part III, section 2).
+    PROJECT_LOCAL = 3;
+  }
+  Layer written_layer = 1;
+
+  enum ApplyTiming {
+    APPLY_TIMING_UNSPECIFIED = 0;
+    // Takes effect on the very next read (Part III, section 3, second
+    // apply-timing bullet).
+    IMMEDIATE = 1;
+    // Takes effect at the next build-loop start / task / agent
+    // invocation / pipeline stage, whichever boundary the field is
+    // scoped to; whatever is already running keeps its snapshot (Part
+    // III, section 3, first apply-timing bullet).
+    NEXT_UNIT_OF_WORK = 2;
+  }
+  ApplyTiming apply_timing = 2;
+}
+
+message ShutdownRequest {
+  enum Scope {
+    // Equivalent to the existing "stop after current task" scope
+    //: the stop sentinel is written and the
+    // loop winds down between tasks before the process exits. Default for
+    // every shutdown trigger (Quit, daemon stop, daemon restart, the
+    // version-mismatch restart command) unless NOW is requested explicitly.
+    SOFT = 0;
+    AFTER_CURRENT_AGENT = 1;
+    NOW = 2;
+  }
+  Scope scope = 1;
+}
+
+message ShutdownUpdate {
+  enum Phase {
+    STARTED = 0;
+    IN_PROGRESS = 1;
+    COMPLETE = 2;
+  }
+  Phase phase = 1;
+  // User-facing text, e.g. "Soft stop requested -- finishing the current
+  // task before shutting down.".
+  string message = 2;
+}

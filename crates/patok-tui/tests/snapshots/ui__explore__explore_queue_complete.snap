@@ -1,0 +1,18 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: screen
+---
+             ┌ Builder ────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                    │
+      ↓      │                                                                 │
+[   Plan    ]│                                                                 │
+      ↓      │                                                                 │
+[   Build   ]│                                                                 │
+      ↓      └─────────────────────────────────────────────────────────────────┘
+[  Review   ]┌ Tasks | 2/2 - 0 left ───────────────────────────────────────────┐
+             │✔ T1.2  second done                                              │
+[   Ship    ]│                                                                 │
+[ Discover  ]│                                                                 │
+[ Learnings ]│ a add tasks · i inject task · Enter run discovery · ↑↓ scroll   │
+             └─────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                               transient warning

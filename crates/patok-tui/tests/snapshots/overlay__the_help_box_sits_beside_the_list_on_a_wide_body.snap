@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: screen
+---
+             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+[ Research  ]│no output yet                                                                                                                │
+      ↓      │                                                                                                                             │
+[   Plan    ]│                                                                                                                             │
+      ↓┌──────────────────────────────────────────────────── Settings -- Patok ────────────────────────────────────────────── [ x ] ┐      │
+[   Bui│▶ ▾ Provider and model                                                             █┌───────── Provider and model ─────────┐│      │
+      ↓│      engine version: 0.1.0                                                        █│Which CLI provider and model the agent││──────┘
+[  Revi│      shell version: 0.0.0                                                         █│roles run on. A change applies at the ││──────┐
+       │      provider  ‹ claude ›                                                         █│next task or agent start; whatever is ││      │
+[   Shi│      model  (not set)                                                             █│already running keeps the value it    ││      │
+[ Disco│      research provider  ‹ claude ›                                                █│started with.                         ││      │
+[ Learn│      research model  sonnet                                                       █│                                      ││      │
+       │      planner provider  ‹ claude ›                                                 █│                                      ││      │
+       │      planner model  opus                                                          █│                                      ││      │
+       │      builder provider  ‹ claude ›                                                 █│                                      ││      │
+       │      builder model  opus                                                          █│                                      ││      │
+       │      reviewer provider  ‹ claude ›                                                █│                                      ││      │
+       │      reviewer model  sonnet                                                       █│                                      ││      │
+       │      discovery provider  ‹ claude ›                                               █│                                      ││      │
+       │      discovery model  opus                                                        █│                                      ││      │
+       │  ▾ Pipeline                                                                       █│                                      ││      │
+       │      run mode  ‹ sprint ›                                                         █│                                      ││      │
+       │      [ ] plan enabled                                                             ││                                      ││      │
+       │      [ ] skip planner for simple                                                  ││                                      ││      │
+       │      [ ] skip research for simple                                                 ││                                      ││      │
+       │      [ ] skip review for simple                                                   ││                                      ││      │
+       │      review confidence threshold  5                                               ││                                      ││      │
+       │      review multipass threshold  8                                                ││                                      ││      │
+       │      [ ] batch review                                                             ││                                      ││      │
+       │      [ ] planner lookahead                                                        ││                                      ││      │
+       │      [ ] review in loop                                                           ││                                      ││      │
+       │      confidence threshold  0.5                                                    ││                                      ││      │
+       │  ▾ Timeouts and pauses                                                            │└──────────────────────────────────────┘│      │
+       │                                                                                                                            │      │
+       │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                                                                   [ Esc ] Close │      │
+       └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘      │
+             │                                                                                                                             │
+             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output                                                    │
+             └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                                              Enter  start build  ?  settings  t  theme  d  detach  q  quit

@@ -1,12 +1,11 @@
-//! Placeholder for the `patok-core` crate (see spec Part X, section 3).
+//! Domain types and pure logic shared by the engine and the shell.
 
-/// Crate name, used to prove the workspace links.
-pub const NAME: &str = "patok-core";
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn name_matches_crate() {
-        assert_eq!(super::NAME, env!("CARGO_PKG_NAME"));
-    }
-}
+pub mod complexity;
+pub mod config;
+pub mod event;
+pub mod paths;
+pub mod pipeline;
+pub mod scenario;
+pub mod task;
+pub mod update;
+pub mod version;

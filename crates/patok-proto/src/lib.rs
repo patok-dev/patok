@@ -1,12 +1,5 @@
-//! Placeholder for the `patok-proto` crate (see spec Part X, section 3).
+//! Generated gRPC/protobuf types from `proto/patok/v1/engine.proto`. No logic.
 
-/// Crate name, used to prove the workspace links.
-pub const NAME: &str = "patok-proto";
+#![allow(clippy::all, clippy::pedantic)]
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn name_matches_crate() {
-        assert_eq!(super::NAME, env!("CARGO_PKG_NAME"));
-    }
-}
+tonic::include_proto!("patok.v1");

@@ -3,7 +3,26 @@ name = "patok-tui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish = false
+
+[dependencies]
+anyhow.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+hyper-util.workspace = true
+patok-core.workspace = true
+patok-proto.workspace = true
+ratatui.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tower.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+patok-engine.workspace = true
+patok-providers.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

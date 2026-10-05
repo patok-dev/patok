@@ -1,0 +1,9 @@
+{"type":"system","subtype":"status","status":"requesting","session_id":"acb-thinking","uuid":"u1"}
+{"type":"stream_event","event":{"type":"message_start"},"session_id":"acb-thinking","uuid":"u2","thinking_display":"updates"}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}},"session_id":"acb-thinking","uuid":"u3"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"## Plan\n"}},"session_id":"acb-thinking","uuid":"u4"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Read the **task parser**, then:\n- parse the *task lines*\n- fix the `task.rs` fixture\n- run cargo test\nFinally:\n```rust\nlet tasks = parse(&text);\n```\n"}},"session_id":"acb-thinking","uuid":"u5"}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0},"session_id":"acb-thinking","uuid":"u6"}
+{"type":"assistant","message":{"model":"claude-sonnet-5-5","role":"assistant","content":[{"type":"thinking","thinking":"## Plan\nRead the **task parser**, then:\n- parse the *task lines*\n- fix the `task.rs` fixture\n- run cargo test\nFinally:\n```rust\nlet tasks = parse(&text);\n```\n"},{"type":"text","text":"done"}],"usage":{"input_tokens":4,"cache_creation_input_tokens":20,"cache_read_input_tokens":200}},"session_id":"acb-thinking","uuid":"u7"}
+{"type":"stream_event","event":{"type":"message_delta"},"session_id":"acb-thinking","uuid":"u8"}
+{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"input_tokens":4,"output_tokens":9,"cache_creation_input_tokens":20,"cache_read_input_tokens":200},"modelUsage":{"claude-sonnet-5-5":{"contextWindow":1000}},"session_id":"acb-thinking"}

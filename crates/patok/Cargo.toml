@@ -3,15 +3,25 @@ name = "patok"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish = false
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-patok-core = { path = "../patok-core" }
-patok-engine = { path = "../patok-engine" }
-patok-proto = { path = "../patok-proto" }
-patok-providers = { path = "../patok-providers" }
-patok-tui = { path = "../patok-tui" }
+anyhow.workspace = true
+clap.workspace = true
+patok-core.workspace = true
+patok-engine.workspace = true
+patok-proto.workspace = true
+patok-providers.workspace = true
+patok-tui.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
