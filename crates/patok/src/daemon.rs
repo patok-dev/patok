@@ -11,8 +11,9 @@ use patok_core::paths;
 use patok_engine::{Engine, EngineConfig};
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{ShutdownRequest, shutdown_request};
-use patok_tui::Outcome;
+use patok_tui::{HeadlessOutcome, Outcome};
 use std::os::unix::process::CommandExt;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
 
 const POLL: Duration = Duration::from_millis(50);
@@ -61,53 +62,59 @@ pub async fn run_shell(project: &Path) -> anyhow::Result<()> {
 }
 
 /// `patok --headless`: the engine without the UI. Connects to the engine, spawning it
-/// detached when needed, draws nothing, and stops the engine cleanly on Ctrl-C, SIGTERM,
-/// or the engine's own exit.
+/// detached when needed, forces the build loop into sprint mode, starts the build and
+/// streams the agent output to stdout line by line; exits 0 once every task is done,
+/// 1 when the build fails or an engine error stops it.
 pub async fn run_headless(project: &Path) -> anyhow::Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
     // Installed up front, before the engine work: an interrupt arriving during
     // startup must still stop the session, not kill this process with the engine
     // already detached.
-    let mut interrupt = signal(SignalKind::interrupt()).context("cannot listen for SIGINT")?;
-    let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
-    match try_connect(project).await {
-        Some(_) => println!("Connected to the running engine for {}.", project.display()),
-        None => {
-            spawn_and_connect(project).await?;
-            println!("Started the engine for {}.", project.display());
+    let interrupt = install_signal_watchers().await?;
+    let client = match try_connect(project).await {
+        Some(client) => {
+            println!("Connected to the running engine for {}.", project.display());
+            client
         }
-    }
-    println!("Headless -- press Ctrl-C to stop the engine and exit.");
-    if headless_wait(project, &mut interrupt, &mut terminate).await? {
-        // The same clean quit as `patok daemon stop`: Soft (finish current work),
-        // Now (the true quit once idle), then wait until the socket stops answering.
-        stop(project, false).await
-    } else {
-        println!("The engine stopped; nothing to shut down.");
-        Ok(())
+        None => {
+            let client = spawn_and_connect(project).await?;
+            println!("Started the engine for {}.", project.display());
+            client
+        }
+    };
+    println!("Headless -- starting the build; press Ctrl-C to interrupt.");
+    let mut stdout = std::io::stdout().lock();
+    let outcome = patok_tui::run_until(client, &mut stdout, interrupt).await?;
+    match outcome {
+        HeadlessOutcome::Completed => {
+            println!("All tasks completed.");
+            stop(project, false).await
+        }
+        HeadlessOutcome::Interrupted => {
+            println!("Interrupted -- stopping the engine.");
+            stop(project, false).await
+        }
+        HeadlessOutcome::Failed(error) => {
+            // Best effort: the engine may already be gone. `stop` itself reports that.
+            let _ = stop(project, false).await;
+            bail!("{error}")
+        }
     }
 }
 
-/// Blocks until the headless session should end: the user interrupts (Ctrl-C on a
-/// terminal, SIGTERM from a supervisor) or the engine is no longer reachable. Returns
-/// whether the engine still needs stopping.
-async fn headless_wait(
-    project: &Path,
-    interrupt: &mut tokio::signal::unix::Signal,
-    terminate: &mut tokio::signal::unix::Signal,
-) -> anyhow::Result<bool> {
-    let mut watchdog = tokio::time::interval(Duration::from_secs(1));
-    loop {
+/// Cancels one shared token on SIGINT or SIGTERM, as a supervisor would send.
+async fn install_signal_watchers() -> anyhow::Result<CancellationToken> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let token = CancellationToken::new();
+    let mut interrupt = signal(SignalKind::interrupt()).context("cannot listen for SIGINT")?;
+    let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+    let watcher = token.clone();
+    tokio::spawn(async move {
         tokio::select! {
-            _ = interrupt.recv() => return Ok(true),
-            _ = terminate.recv() => return Ok(true),
-            _ = watchdog.tick() => {
-                if try_connect(project).await.is_none() {
-                    return Ok(false);
-                }
-            }
+            _ = interrupt.recv() => watcher.cancel(),
+            _ = terminate.recv() => watcher.cancel(),
         }
-    }
+    });
+    Ok(token)
 }
 
 /// `patok daemon`: idempotently make sure an engine is running.

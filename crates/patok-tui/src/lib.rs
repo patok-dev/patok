@@ -3,6 +3,7 @@
 
 mod app;
 pub mod client;
+mod headless;
 mod markdown;
 mod overlay;
 mod pipeline;
@@ -13,6 +14,7 @@ mod theme;
 mod ui;
 
 pub use app::{Action, App, DialogKind, FrameFocus, QueueRun, SOFT_STOP_PENDING, ThemeModal};
+pub use headless::{HeadlessOutcome, run_until};
 pub use overlay::{
     Editor, Entry, FieldKind, Number, Row, SCROLL_MARGIN, SETTINGS_CHOICES, Schema, Section,
     SettingsChoice, SettingsOverlay, StatusLevel, scroll_offset,

@@ -19,8 +19,9 @@ struct Cli {
     /// Project directory (default: the current directory).
     #[arg(short = 'd', long = "dir", global = true)]
     dir: Option<PathBuf>,
-    /// Run the engine without the terminal UI: draw nothing, keep the engine
-    /// alive, and stop it when this process exits or is interrupted.
+    /// Run the build without the terminal UI: force the build loop into sprint
+    /// mode, stream the agent output to stdout line by line, exit 0 once every
+    /// task is done, 1 when the build fails.
     #[arg(long)]
     headless: bool,
     #[command(subcommand)]

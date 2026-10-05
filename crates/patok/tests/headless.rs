@@ -1,15 +1,25 @@
-//! The headless mode: engine up, nothing drawn, clean shutdown on interrupt.
+//! The headless mode's process-level contract: build output on stdout, no TUI, exit
+//! 0 once the store is done, 1 when the build cannot run, engine stopped either way.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const READINESS: &str = "Headless -- press Ctrl-C";
-
-fn patok(dir: &Path, args: &[&str]) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_patok"));
-    command.args(["-d", dir.to_str().unwrap()]).args(args);
-    command
+/// Spawns `patok --headless` for `dir` with the XDG directories isolated in `data`
+/// (the engine reads its project-local config from the data dir's projects slot).
+/// Returns the child and the two log paths under `logs`.
+fn spawn_headless(dir: &Path, data: &Path, logs: &Path) -> std::process::Child {
+    let stdout = logs.join("headless.out");
+    let stderr = logs.join("headless.err");
+    Command::new(env!("CARGO_BIN_EXE_patok"))
+        .args(["-d", dir.to_str().unwrap(), "--headless"])
+        .env("XDG_DATA_HOME", data)
+        // No user config layers: the test's project-local config is the only one.
+        .env("XDG_CONFIG_HOME", data.join("config"))
+        .stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(std::fs::File::create(&stderr).unwrap()))
+        .spawn()
+        .unwrap()
 }
 
 /// The engine socket for this project, resolved exactly as the CLI does: the project
@@ -24,82 +34,52 @@ async fn reachable(dir: &Path) -> bool {
     patok_tui::client::connect(&socket(dir)).await.is_ok()
 }
 
-/// Spawns `patok --headless` with stdout and stderr redirected to files (the child
-/// stays alive after the kill checks, so a piped stdout could not be drained). Returns
-/// the child and the two log paths.
-fn spawn_headless(dir: &Path, logs: &Path) -> std::process::Child {
-    let stdout = logs.join("headless.out");
-    let stderr = logs.join("headless.err");
-    patok(dir, &["--headless"])
-        .stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(&stderr).unwrap()))
-        .spawn()
-        .unwrap()
+fn read_log(logs: &Path, name: &str) -> String {
+    std::fs::read_to_string(logs.join(name)).unwrap_or_default()
 }
 
-/// Polls the headless stdout file until it prints its readiness line, proving both
-/// startup lines were flushed and the engine is up.
-async fn wait_until_ready(logs: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(10);
+/// Waits for the child to exit on its own, the way a supervisor would.
+async fn wait_for_exit(child: &mut std::process::Child, logs: &Path) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let stdout = std::fs::read_to_string(logs.join("headless.out")).unwrap_or_default();
-        if stdout.contains(READINESS) {
-            return stdout;
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
         }
         assert!(
             Instant::now() < deadline,
-            "the headless process never announced readiness; stdout: {stdout}"
+            "the headless process did not exit; stdout: {}",
+            read_log(logs, "headless.out")
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
-fn read_log(logs: &Path, name: &str) -> String {
-    std::fs::read_to_string(logs.join(name)).unwrap_or_default()
-}
-
-/// Stops the engine via the CLI and confirms the process is really gone.
-async fn cleanup(dir: &Path) {
-    let out = patok(dir, &["daemon", "stop"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .unwrap();
-    assert!(out.success());
-    assert!(!reachable(dir).await);
+/// The project-local config file, in the project's slot of the isolated data dir.
+fn project_config(data: &Path, dir: &Path, daemon_toml: &str) {
+    let project = dir.canonicalize().unwrap();
+    let config_dir =
+        patok_core::paths::project_data_dir(Some(data.to_str().unwrap()), None, &project).unwrap();
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("patok.config.toml"),
+        format!("[daemon]\n{daemon_toml}"),
+    )
+    .unwrap();
 }
 
 #[tokio::test]
-async fn headless_starts_a_detached_engine_and_draws_nothing() {
+async fn headless_completes_and_stops_the_engine_when_nothing_is_pending() {
     let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
     let logs = tempfile::tempdir().unwrap();
-    let mut child = spawn_headless(dir.path(), logs.path());
+    let mut child = spawn_headless(dir.path(), data.path(), logs.path());
 
-    wait_until_ready(logs.path()).await;
-    assert!(
-        child.try_wait().unwrap().is_none(),
-        "the headless process exited while it should be waiting"
-    );
-    assert!(
-        reachable(dir.path()).await,
-        "the engine is not reachable on the socket"
-    );
-
-    // Abrupt death of the headless process: the engine has its own process group
-    // and must survive it.
-    child.kill().unwrap();
-    let status = child.wait().unwrap();
-    assert!(
-        !status.success(),
-        "a killed child cannot report success: {status}"
-    );
-    assert!(
-        reachable(dir.path()).await,
-        "the engine died with the headless process"
-    );
+    let status = wait_for_exit(&mut child, logs.path()).await;
+    assert_eq!(status.code(), Some(0), "headless exit status: {status}");
 
     let stdout = read_log(logs.path(), "headless.out");
     assert!(stdout.contains("Started the engine"), "stdout: {stdout}");
+    assert!(stdout.contains("All tasks completed."), "stdout: {stdout}");
     assert!(
         !stdout.contains('\x1b'),
         "escape sequences were drawn on stdout: {stdout:?}"
@@ -107,57 +87,52 @@ async fn headless_starts_a_detached_engine_and_draws_nothing() {
     let stderr = read_log(logs.path(), "headless.err");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 
-    cleanup(dir.path()).await;
+    // The headless exit stopped the engine it started.
+    assert!(
+        !reachable(dir.path()).await,
+        "the engine is still running after the headless exit"
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_patok"))
+        .args(["-d", dir.path().to_str().unwrap(), "daemon", "stop"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("No engine is running for"),
+        "stdout: {stdout}"
+    );
 }
 
 #[tokio::test]
-async fn headless_stops_the_engine_when_interrupted() {
+async fn headless_exits_1_when_the_build_cannot_start() {
     let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
     let logs = tempfile::tempdir().unwrap();
-    let mut child = spawn_headless(dir.path(), logs.path());
+    std::fs::write(dir.path().join("TASKS.md"), "- [ ] T1.1: add hello\n").unwrap();
+    // A provider spelling this build does not ship: every build command is refused
+    // with a deterministic error, so no provider CLI on PATH is needed.
+    project_config(data.path(), dir.path(), "provider = \"opencode\"\n");
+    let mut child = spawn_headless(dir.path(), data.path(), logs.path());
 
-    wait_until_ready(logs.path()).await;
-
-    // SIGTERM, as a supervisor would send.
-    let signal = Command::new("kill")
-        .arg(child.id().to_string())
-        .status()
-        .unwrap();
-    assert!(signal.success());
-
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the headless process did not exit; stdout: {}",
-            read_log(logs.path(), "headless.out")
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    assert_eq!(status.code(), Some(0), "headless exit status: {status}");
+    let status = wait_for_exit(&mut child, logs.path()).await;
+    assert_eq!(status.code(), Some(1), "headless exit status: {status}");
 
     let stdout = read_log(logs.path(), "headless.out");
     assert!(
         !stdout.contains('\x1b'),
         "escape sequences were drawn on stdout: {stdout:?}"
     );
+    let stderr = read_log(logs.path(), "headless.err");
+    assert!(stderr.contains("patok:"), "stderr: {stderr}");
     assert!(
-        stdout.contains("Soft stop requested"),
-        "the clean-stop messages are missing: {stdout}"
+        stderr.contains("not available in this build"),
+        "the provider error reaches the operator: {stderr}"
     );
 
+    // The failure path stops the engine too.
     assert!(
         !reachable(dir.path()).await,
-        "the engine is still running after the headless exit"
-    );
-    let out = patok(dir.path(), &["daemon", "stop"]).output().unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("No engine is running for"),
-        "stdout: {stdout}"
+        "the engine is still running after the failed headless run"
     );
 }
