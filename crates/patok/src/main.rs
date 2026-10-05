@@ -60,6 +60,8 @@ enum TasksAction {
         /// The id of the task to remove, e.g. T3.1.
         id: String,
     },
+    /// List every task in the shared task store, one per line, id first.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -112,6 +114,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Tasks { action } => match action {
             TasksAction::Add { text } => tasks::add(&project, &text),
             TasksAction::Remove { id } => tasks::remove(&project, &id).await,
+            TasksAction::List => tasks::list(&project),
         },
     }
 }

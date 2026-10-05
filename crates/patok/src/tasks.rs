@@ -13,7 +13,12 @@
 //! truth. Known races, deliberately left alone: with no cross-process lock,
 //! an add concurrent with a TUI inject through a running engine can pick the
 //! same number; and an engine can start between the failed connect and the
-//! fallback write, whose mtime poll then reconciles the already-removed line.
+//! fallback write, whose mtime poll then reconciles the already-removed
+//! line. The list reads the file directly too, so it works while an
+//! engine runs: the file is the complete record -- pending, in-progress
+//! and completed tasks all have a line -- and the engine's rewrites are
+//! atomic, so a read concurrent with a rewrite sees either the old or
+//! the new content, never a torn one.
 
 use std::path::Path;
 
@@ -94,6 +99,24 @@ pub async fn remove(project: &Path, id: &str) -> anyhow::Result<()> {
         patok_engine::taskfile::RemoveOutcome::NotFound => {
             bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
         }
+    }
+    Ok(())
+}
+
+/// Lists every task in the project's task file, one per line with the id
+/// first, reading the file directly instead of contacting the engine: the
+/// file is the complete record -- pending, in-progress, and completed tasks
+/// all have a line -- and the engine's rewrites are atomic, so a read while
+/// an engine runs sees either the old or the new content. A missing file
+/// reads as empty and lists nothing, exactly like `add` reads it.
+pub fn list(project: &Path) -> anyhow::Result<()> {
+    let path = project.join(patok_engine::TASK_FILE);
+    let file = match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        other => other.with_context(|| format!("cannot read {}", path.display()))?,
+    };
+    for task in patok_core::task::parse(&file) {
+        println!("{} {}", task.id, task.description);
     }
     Ok(())
 }
@@ -200,5 +223,20 @@ mod tests {
         let error = remove(dir.path(), "T1.1").await.unwrap_err();
         assert!(error.to_string().contains("no task with id"), "{error:#}");
         assert!(!dir.path().join("TASKS.md").exists());
+    }
+
+    #[test]
+    fn list_succeeds_on_a_missing_store() {
+        let dir = tempfile::tempdir().unwrap();
+        list(dir.path()).unwrap();
+        assert!(!dir.path().join("TASKS.md").exists());
+    }
+
+    #[test]
+    fn list_fails_when_the_store_cannot_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("TASKS.md")).unwrap();
+        let error = list(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("cannot read"), "{error:#}");
     }
 }
