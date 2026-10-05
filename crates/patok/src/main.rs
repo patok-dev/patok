@@ -4,6 +4,7 @@
 //! per-project engine or spawns it (`patok daemon`), then runs the shell.
 
 mod daemon;
+mod tasks;
 mod update;
 
 use std::path::PathBuf;
@@ -39,6 +40,20 @@ enum Command {
         foreground: bool,
         #[command(subcommand)]
         action: Option<DaemonAction>,
+    },
+    /// Manage tasks in the shared task store.
+    Tasks {
+        #[command(subcommand)]
+        action: TasksAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TasksAction {
+    /// Append a task with a patok-generated id to the shared task store.
+    Add {
+        /// The task text. One line; no id needed.
+        text: String,
     },
 }
 
@@ -89,6 +104,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             daemon::stop(&project, false).await?;
             daemon::start(&project).await
         }
+        Command::Tasks { action } => match action {
+            TasksAction::Add { text } => tasks::add(&project, &text),
+        },
     }
 }
 
