@@ -1400,6 +1400,55 @@ impl Engine {
         Ok(())
     }
 
+    /// Removes the task line with the given id from the task file (T98.1).
+    /// The engine is the only place where "in progress" exists -- it lives in
+    /// `current_task`, not in the file -- so the CLI routes removal through
+    /// this method while an engine runs: the current (in-progress) task and
+    /// completed tasks are refused, and the removal itself runs under the
+    /// task-file lock, the same lock the engine's own rewrites take, followed
+    /// by an immediate reconcile, so the line leaves the in-memory queue and
+    /// reaches the attached shells right away. Accepted in every engine
+    /// state: removing a *pending* task while a build runs is required
+    /// behavior, and the running and completed tasks are protected anyway.
+    /// Known race, same class as the add/inject race: `begin_next_task`
+    /// loads the file without this lock, so a start concurrent with a
+    /// removal can still pick the removed task; the consequence is the
+    /// session's finalize `write_progress` reporting a missing line, a
+    /// documented no-op warning. Errors are user-facing rejection reasons.
+    pub async fn remove_task(&self, id: &str) -> Result<(), String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("the task id is empty".into());
+        }
+        let path = self.inner.config.task_file();
+        let guard = self.inner.task_file_lock.clone().lock_owned().await;
+        // Reading `current_task` under the file lock shrinks the race
+        // window against `begin_next_task` (see the doc comment above).
+        {
+            let state = self.state();
+            if state.current_task.as_deref() == Some(id) {
+                return Err(format!(
+                    "task {id} is in progress; wait for it to finish before removing it"
+                ));
+            }
+        }
+        match taskfile::remove_task(&path, id) {
+            Ok(taskfile::RemoveOutcome::Removed) => {}
+            Ok(taskfile::RemoveOutcome::Completed) => {
+                return Err(format!("task {id} is completed and cannot be removed"));
+            }
+            Ok(taskfile::RemoveOutcome::NotFound) => {
+                return Err(format!("no task with id {id} in {TASK_FILE}"));
+            }
+            Err(e) => {
+                return Err(format!("cannot update {}: {e}", path.display()));
+            }
+        }
+        drop(guard);
+        self.reconcile();
+        Ok(())
+    }
+
     /// Requests a stop: no new unit of work starts. A running task finishes first
     /// unless `now`, which kills the agent. Neither scope quits the process: a
     /// soft stop (`now` false) and a NOW stop on a busy engine are both

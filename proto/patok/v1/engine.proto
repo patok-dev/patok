@@ -217,6 +217,12 @@ message CommandRequest {
     // the next pending task once the current one finishes; it is never
     // started mid-session. Rejected only for empty text.
     InjectTask inject_task = 7;
+    // The tasks-remove CLI action (T98.1): remove one pending task line from
+    // TASKS.md by its ID. Rejected when the task is the engine's current
+    // (in-progress) task or already completed, or when no task with the ID
+    // exists. Accepted in every engine state; the removal runs under the
+    // engine's task-file lock and the queue reconciles immediately.
+    RemoveTask remove_task = 8;
   }
 }
 
@@ -256,6 +262,12 @@ message CancelSoftStop {}
 // as typed.
 message InjectTask {
   string text = 1;
+}
+
+// The tasks-remove CLI action's payload (T98.1): the id of the task line
+// to remove from TASKS.md, e.g. "T3.1".
+message RemoveTask {
+  string id = 1;
 }
 
 // The pipeline roles and design-command orchestrator seats that carry

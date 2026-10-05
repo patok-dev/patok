@@ -1257,6 +1257,60 @@ async fn start_build_is_rejected_when_busy_or_nothing_is_pending() {
     );
 }
 
+/// T98.1: while a build runs, removing the current (in-progress) task is
+/// refused with a reason and the line stays, while a pending task is
+/// removed from the file and the queue reconciles immediately.
+#[tokio::test]
+async fn remove_task_refuses_the_running_task_and_removes_a_pending_one_mid_build() {
+    let fixture = Fixture::new(TASKS);
+    let provider = MockProvider::new(vec![Step::Sleep(Duration::from_secs(60))]);
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TaskStarted { .. })
+    })
+    .await;
+
+    // The running (in-progress) task is refused with a reason; its line
+    // stays in the file whatever shape the session has given it so far.
+    assert_eq!(
+        engine.remove_task("T1.1").await.unwrap_err(),
+        "task T1.1 is in progress; wait for it to finish before removing it"
+    );
+    let tasks = fixture.tasks_file();
+    assert!(tasks.contains("T1.1"));
+    assert!(tasks.contains("add the greeting file"));
+
+    // A pending task is removed even mid-build, and the queue reconciles
+    // right away: the TasksChanged broadcast no longer carries T1.2.
+    engine.remove_task("T1.2").await.unwrap();
+    assert!(!fixture.tasks_file().contains("T1.2"));
+    let is_tasks_changed = |e: &EngineEvent| matches!(e, EngineEvent::TasksChanged { .. });
+    let events = collect_until(&mut attachment.events, is_tasks_changed).await;
+    let changed = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::TasksChanged { tasks } => Some(tasks),
+            _ => None,
+        })
+        .next_back()
+        .unwrap();
+    assert!(!changed.iter().any(|t| t.id == "T1.2"));
+    assert!(changed.iter().any(|t| t.id == "T1.1"));
+
+    // Tearing down: the interrupted build ends cancelled and the file keeps
+    // the refused task unchecked.
+    engine.request_stop(true);
+    collect_until(&mut attachment.events, is_phase_startup).await;
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [ ] T1.1: add the greeting file")
+    );
+}
+
 #[tokio::test]
 async fn stop_now_cancels_the_agent_without_committing() {
     let fixture = Fixture::new(TASKS);

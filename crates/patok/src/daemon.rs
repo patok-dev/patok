@@ -26,7 +26,7 @@ fn socket(project: &Path) -> PathBuf {
 }
 
 /// Connects to the running engine, if any.
-async fn try_connect(project: &Path) -> Option<Client> {
+pub(crate) async fn try_connect(project: &Path) -> Option<Client> {
     patok_tui::client::connect(&socket(project)).await.ok()
 }
 
