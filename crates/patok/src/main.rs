@@ -10,7 +10,7 @@ mod update;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -19,6 +19,10 @@ struct Cli {
     /// Project directory (default: the current directory).
     #[arg(short = 'd', long = "dir", global = true)]
     dir: Option<PathBuf>,
+    /// Run the engine without the terminal UI: draw nothing, keep the engine
+    /// alive, and stop it when this process exits or is interrupted.
+    #[arg(long)]
+    headless: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -89,6 +93,12 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let project = project_dir(cli.dir)?;
+    if cli.headless {
+        match &cli.command {
+            None | Some(Command::Run) => return daemon::run_headless(&project).await,
+            Some(_) => bail!("--headless only applies to the default run mode"),
+        }
+    }
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => daemon::run_shell(&project).await,
         Command::Update { channel } => update::run(channel.into()),

@@ -60,6 +60,56 @@ pub async fn run_shell(project: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `patok --headless`: the engine without the UI. Connects to the engine, spawning it
+/// detached when needed, draws nothing, and stops the engine cleanly on Ctrl-C, SIGTERM,
+/// or the engine's own exit.
+pub async fn run_headless(project: &Path) -> anyhow::Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+    // Installed up front, before the engine work: an interrupt arriving during
+    // startup must still stop the session, not kill this process with the engine
+    // already detached.
+    let mut interrupt = signal(SignalKind::interrupt()).context("cannot listen for SIGINT")?;
+    let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+    match try_connect(project).await {
+        Some(_) => println!("Connected to the running engine for {}.", project.display()),
+        None => {
+            spawn_and_connect(project).await?;
+            println!("Started the engine for {}.", project.display());
+        }
+    }
+    println!("Headless -- press Ctrl-C to stop the engine and exit.");
+    if headless_wait(project, &mut interrupt, &mut terminate).await? {
+        // The same clean quit as `patok daemon stop`: Soft (finish current work),
+        // Now (the true quit once idle), then wait until the socket stops answering.
+        stop(project, false).await
+    } else {
+        println!("The engine stopped; nothing to shut down.");
+        Ok(())
+    }
+}
+
+/// Blocks until the headless session should end: the user interrupts (Ctrl-C on a
+/// terminal, SIGTERM from a supervisor) or the engine is no longer reachable. Returns
+/// whether the engine still needs stopping.
+async fn headless_wait(
+    project: &Path,
+    interrupt: &mut tokio::signal::unix::Signal,
+    terminate: &mut tokio::signal::unix::Signal,
+) -> anyhow::Result<bool> {
+    let mut watchdog = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            _ = interrupt.recv() => return Ok(true),
+            _ = terminate.recv() => return Ok(true),
+            _ = watchdog.tick() => {
+                if try_connect(project).await.is_none() {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+}
+
 /// `patok daemon`: idempotently make sure an engine is running.
 pub async fn start(project: &Path) -> anyhow::Result<()> {
     if try_connect(project).await.is_some() {
