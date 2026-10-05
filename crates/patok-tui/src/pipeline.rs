@@ -248,24 +248,20 @@ pub fn render_rail(frame: &mut Frame, app: &App, area: Rect) {
             Paragraph::new(Span::styled(tile_text(id, mode), style)),
             rect,
         );
-        if mode == RailMode::Detailed {
-            if let Some((provider, model)) = agent_details(app, id) {
-                let x = area.x + 1;
-                let width = area.width.saturating_sub(2);
-                for (offset, label) in [format!("{provider}"), format!("{model}")]
-                    .into_iter()
-                    .enumerate()
-                {
-                    let detail_rect =
-                        Rect::new(x, rect.y.saturating_add(1 + offset as u16), width, 1);
-                    if detail_rect.y < area.y.saturating_add(area.height) {
-                        frame.render_widget(
-                            Paragraph::new(label)
-                                .style(Style::new().fg(theme.rail_muted))
-                                .wrap(ratatui::widgets::Wrap { trim: true }),
-                            detail_rect,
-                        );
-                    }
+        if mode == RailMode::Detailed
+            && let Some((provider, model)) = agent_details(app, id)
+        {
+            let x = area.x + 1;
+            let width = area.width.saturating_sub(2);
+            for (offset, label) in [provider, model].into_iter().enumerate() {
+                let detail_rect = Rect::new(x, rect.y.saturating_add(1 + offset as u16), width, 1);
+                if detail_rect.y < area.y.saturating_add(area.height) {
+                    frame.render_widget(
+                        Paragraph::new(label)
+                            .style(Style::new().fg(theme.rail_muted))
+                            .wrap(ratatui::widgets::Wrap { trim: true }),
+                        detail_rect,
+                    );
                 }
             }
         }
