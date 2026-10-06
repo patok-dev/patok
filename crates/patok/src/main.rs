@@ -10,7 +10,7 @@ mod update;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -19,11 +19,6 @@ struct Cli {
     /// Project directory (default: the current directory).
     #[arg(short = 'd', long = "dir", global = true)]
     dir: Option<PathBuf>,
-    /// Run the build without the terminal UI: force the build loop into sprint
-    /// mode, stream the agent output to stdout line by line, exit 0 once every
-    /// task is done, 1 when the build fails.
-    #[arg(long)]
-    headless: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -32,6 +27,10 @@ struct Cli {
 enum Command {
     /// Attach to (or start) the engine and open the terminal UI. The default.
     Run,
+    /// Run the build without the terminal UI: force the build loop into sprint
+    /// mode, stream the agent output to stdout line by line, exit 0 once every
+    /// task is done, 1 when the build fails
+    Headless,
     /// Check for a newer release and report how to update.
     Update {
         /// Release channel to check.
@@ -94,14 +93,9 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let project = project_dir(cli.dir)?;
-    if cli.headless {
-        match &cli.command {
-            None | Some(Command::Run) => return daemon::run_headless(&project).await,
-            Some(_) => bail!("--headless only applies to the default run mode"),
-        }
-    }
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => daemon::run_shell(&project).await,
+        Command::Headless => daemon::run_headless(&project).await,
         Command::Update { channel } => update::run(channel.into()),
         Command::Daemon {
             foreground: true,

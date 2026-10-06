@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// Spawns `patok --headless` for `dir` with the XDG directories isolated in `data`
+/// Spawns `patok headless` for `dir` with the XDG directories isolated in `data`
 /// (the engine reads its project-local config from the data dir's projects slot).
 /// Returns the child and the two log paths under `logs`.
 fn spawn_headless(dir: &Path, data: &Path, logs: &Path) -> std::process::Child {
     let stdout = logs.join("headless.out");
     let stderr = logs.join("headless.err");
     Command::new(env!("CARGO_BIN_EXE_patok"))
-        .args(["-d", dir.to_str().unwrap(), "--headless"])
+        .args(["-d", dir.to_str().unwrap(), "headless"])
         .env("XDG_DATA_HOME", data)
         // No user config layers: the test's project-local config is the only one.
         .env("XDG_CONFIG_HOME", data.join("config"))

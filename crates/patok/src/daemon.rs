@@ -61,7 +61,7 @@ pub async fn run_shell(project: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `patok --headless`: the engine without the UI. Connects to the engine, spawning it
+/// `patok headless`: the engine without the UI. Connects to the engine, spawning it
 /// detached when needed, forces the build loop into sprint mode, starts the build and
 /// streams the agent output to stdout line by line; exits 0 once every task is done,
 /// 1 when the build fails or an engine error stops it.
