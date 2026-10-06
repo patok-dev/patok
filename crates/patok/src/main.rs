@@ -30,7 +30,12 @@ enum Command {
     /// Run the build without the terminal UI: force the build loop into sprint
     /// mode, stream the agent output to stdout line by line, exit 0 once every
     /// task is done, 1 when the build fails
-    Headless,
+    Headless {
+        /// Color the streamed output with the shell's theme colors. Off by
+        /// default: the headless output stays plain without the flag.
+        #[arg(long)]
+        color: bool,
+    },
     /// Check for a newer release and report how to update.
     Update {
         /// Release channel to check.
@@ -95,7 +100,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let project = project_dir(cli.dir)?;
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => daemon::run_shell(&project).await,
-        Command::Headless => daemon::run_headless(&project).await,
+        Command::Headless { color } => daemon::run_headless(&project, color).await,
         Command::Update { channel } => update::run(channel.into()),
         Command::Daemon {
             foreground: true,

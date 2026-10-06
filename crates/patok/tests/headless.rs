@@ -6,13 +6,15 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Spawns `patok headless` for `dir` with the XDG directories isolated in `data`
-/// (the engine reads its project-local config from the data dir's projects slot).
-/// Returns the child and the two log paths under `logs`.
-fn spawn_headless(dir: &Path, data: &Path, logs: &Path) -> std::process::Child {
+/// (the engine reads its project-local config from the data dir's projects slot),
+/// with the extra `args` appended after the subcommand. Returns the child and the
+/// two log paths under `logs`.
+fn spawn_headless(dir: &Path, data: &Path, logs: &Path, args: &[&str]) -> std::process::Child {
     let stdout = logs.join("headless.out");
     let stderr = logs.join("headless.err");
     Command::new(env!("CARGO_BIN_EXE_patok"))
         .args(["-d", dir.to_str().unwrap(), "headless"])
+        .args(args)
         .env("XDG_DATA_HOME", data)
         // No user config layers: the test's project-local config is the only one.
         .env("XDG_CONFIG_HOME", data.join("config"))
@@ -72,7 +74,7 @@ async fn headless_completes_and_stops_the_engine_when_nothing_is_pending() {
     let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let logs = tempfile::tempdir().unwrap();
-    let mut child = spawn_headless(dir.path(), data.path(), logs.path());
+    let mut child = spawn_headless(dir.path(), data.path(), logs.path(), &[]);
 
     let status = wait_for_exit(&mut child, logs.path()).await;
     assert_eq!(status.code(), Some(0), "headless exit status: {status}");
@@ -113,7 +115,7 @@ async fn headless_exits_1_when_the_build_cannot_start() {
     // A provider spelling this build does not ship: every build command is refused
     // with a deterministic error, so no provider CLI on PATH is needed.
     project_config(data.path(), dir.path(), "provider = \"opencode\"\n");
-    let mut child = spawn_headless(dir.path(), data.path(), logs.path());
+    let mut child = spawn_headless(dir.path(), data.path(), logs.path(), &[]);
 
     let status = wait_for_exit(&mut child, logs.path()).await;
     assert_eq!(status.code(), Some(1), "headless exit status: {status}");
@@ -135,4 +137,23 @@ async fn headless_exits_1_when_the_build_cannot_start() {
         !reachable(dir.path()).await,
         "the engine is still running after the failed headless run"
     );
+}
+
+#[tokio::test]
+async fn headless_color_flag_parses_and_completes() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let logs = tempfile::tempdir().unwrap();
+    let mut child = spawn_headless(dir.path(), data.path(), logs.path(), &["--color"]);
+
+    let status = wait_for_exit(&mut child, logs.path()).await;
+    assert_eq!(status.code(), Some(0), "headless exit status: {status}");
+
+    // An empty store streams nothing, so the flag's own effect (colored lines)
+    // is covered at the protocol level; here it must at least parse and leave
+    // the no-output path unchanged.
+    let stdout = read_log(logs.path(), "headless.out");
+    assert!(stdout.contains("All tasks completed."), "stdout: {stdout}");
+    let stderr = read_log(logs.path(), "headless.err");
+    assert!(stderr.is_empty(), "stderr: {stderr}");
 }

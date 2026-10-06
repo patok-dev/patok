@@ -64,8 +64,9 @@ pub async fn run_shell(project: &Path) -> anyhow::Result<()> {
 /// `patok headless`: the engine without the UI. Connects to the engine, spawning it
 /// detached when needed, forces the build loop into sprint mode, starts the build and
 /// streams the agent output to stdout line by line; exits 0 once every task is done,
-/// 1 when the build fails or an engine error stops it.
-pub async fn run_headless(project: &Path) -> anyhow::Result<()> {
+/// 1 when the build fails or an engine error stops it. `color` turns the streamed
+/// lines' theme colors on; without it the output stays plain.
+pub async fn run_headless(project: &Path, color: bool) -> anyhow::Result<()> {
     // Installed up front, before the engine work: an interrupt arriving during
     // startup must still stop the session, not kill this process with the engine
     // already detached.
@@ -83,7 +84,7 @@ pub async fn run_headless(project: &Path) -> anyhow::Result<()> {
     };
     println!("Headless -- starting the build; press Ctrl-C to interrupt.");
     let mut stdout = std::io::stdout().lock();
-    let outcome = patok_tui::run_until(client, &mut stdout, interrupt).await?;
+    let outcome = patok_tui::run_until(client, &mut stdout, interrupt, color).await?;
     match outcome {
         HeadlessOutcome::Completed => {
             println!("All tasks completed.");

@@ -65,11 +65,12 @@ async fn connect_retrying(
 /// Runs `run_until` with a fresh token, capturing the streamed output.
 async fn run_headless(
     client: patok_proto::engine_client::EngineClient<tonic::transport::Channel>,
+    color: bool,
 ) -> (patok_tui::HeadlessOutcome, String) {
     let mut buffer = Vec::new();
     let outcome = tokio::time::timeout(
         Duration::from_secs(20),
-        patok_tui::run_until(client, &mut buffer, CancellationToken::new()),
+        patok_tui::run_until(client, &mut buffer, CancellationToken::new(), color),
     )
     .await
     .expect("the headless run finishes")
@@ -108,7 +109,7 @@ async fn runs_to_completion_and_streams_the_frame_content() {
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
 
     let client = connect_retrying(&socket).await;
-    let (outcome, buffer) = run_headless(client).await;
+    let (outcome, buffer) = run_headless(client, false).await;
 
     assert_eq!(outcome, patok_tui::HeadlessOutcome::Completed);
     // The frame's exact lines, in order: the task heading, the lifecycle status
@@ -134,6 +135,50 @@ async fn runs_to_completion_and_streams_the_frame_content() {
 }
 
 #[tokio::test]
+async fn colored_output_uses_escapes_and_keeps_the_lines() {
+    let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
+    let socket = setup.config.socket_path();
+    let provider = MockProvider::new(vec![
+        Step::Event(AgentEvent::Text {
+            text: "hello from the agent".into(),
+        }),
+        Step::Event(AgentEvent::Result { text: "ok".into() }),
+    ]);
+    let engine = Engine::new(setup.config.clone(), Arc::new(provider));
+    let server = tokio::spawn(patok_engine::serve(engine.clone()));
+
+    let client = connect_retrying(&socket).await;
+    let (outcome, buffer) = run_headless(client, true).await;
+
+    assert_eq!(outcome, patok_tui::HeadlessOutcome::Completed);
+    assert!(
+        buffer.contains("\x1b["),
+        "the colored run must emit escape sequences: {buffer:?}"
+    );
+    // The escape sequences wrap whole lines, so every frame line survives
+    // verbatim and in the frame's order.
+    let heading = buffer.find("── T1.1: add hello").expect(&buffer);
+    let started = buffer.find("Builder started (mock)").expect(&buffer);
+    let text = buffer.find("hello from the agent").expect(&buffer);
+    let result = buffer.find("result: ok").expect(&buffer);
+    let finished = buffer.find("Builder finished in").expect(&buffer);
+    let done = buffer.find("✔ T1.1 done").expect(&buffer);
+    assert!(
+        heading < started && started < text && text < result && result < finished,
+        "buffer: {buffer}"
+    );
+    assert!(finished < done, "buffer: {buffer}");
+    assert!(buffer.ends_with('\n'), "buffer: {buffer:?}");
+
+    finish(server, &engine).await;
+}
+
+#[tokio::test]
 async fn failed_task_exits_failed() {
     let setup = setup();
     std::fs::write(
@@ -148,7 +193,7 @@ async fn failed_task_exits_failed() {
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
 
     let client = connect_retrying(&socket).await;
-    let (outcome, buffer) = run_headless(client).await;
+    let (outcome, buffer) = run_headless(client, false).await;
 
     let patok_tui::HeadlessOutcome::Failed(error) = outcome else {
         panic!("a failed task must end the run as Failed")
@@ -184,7 +229,7 @@ async fn forces_sprint_and_restores_the_previous_mode() {
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
 
     let client = connect_retrying(&socket).await;
-    let (outcome, buffer) = run_headless(client).await;
+    let (outcome, buffer) = run_headless(client, false).await;
 
     assert_eq!(outcome, patok_tui::HeadlessOutcome::Completed);
     // The forced sprint mode skips the scheduled discovery round the continuous
@@ -226,7 +271,7 @@ async fn nothing_pending_completes_without_a_build() {
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
 
     let client = connect_retrying(&socket).await;
-    let (outcome, _buffer) = run_headless(client).await;
+    let (outcome, _buffer) = run_headless(client, false).await;
 
     assert_eq!(outcome, patok_tui::HeadlessOutcome::Completed);
     assert!(
@@ -261,7 +306,7 @@ async fn interrupt_cancels_to_interrupted() {
     let mut buffer = Vec::new();
     let outcome = tokio::time::timeout(
         Duration::from_secs(10),
-        patok_tui::run_until(client, &mut buffer, token),
+        patok_tui::run_until(client, &mut buffer, token, false),
     )
     .await
     .expect("the interrupted run returns promptly")
@@ -296,7 +341,7 @@ async fn unavailable_provider_is_an_engine_error() {
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
 
     let client = connect_retrying(&socket).await;
-    let (outcome, _buffer) = run_headless(client).await;
+    let (outcome, _buffer) = run_headless(client, false).await;
 
     let patok_tui::HeadlessOutcome::Failed(error) = outcome else {
         panic!("a refused build must end the run as Failed")

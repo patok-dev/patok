@@ -65,6 +65,7 @@
 //! | `rail_muted` | `pipeline::tile_style` | muted and pending rail tiles |
 //! | `rail_connector` | `pipeline::render_rail` | the rail's down-arrow connectors |
 
+use crate::app::LineKind;
 use patok_core::config::Theme as ThemeKey;
 use ratatui::style::Color;
 
@@ -234,6 +235,23 @@ impl Theme {
         match theme {
             ThemeKey::Dark => Theme::DARK,
             other => palette_of(other).theme(truecolor.unwrap_or_else(truecolor_detected)),
+        }
+    }
+
+    /// The foreground colour of one output line kind: the single kind-to-colour
+    /// mapping, shared by the frame's `style_of` and the headless mode's
+    /// `--color` output so the two cannot drift. `Text` lines render unstyled
+    /// (the caller decides what that means), so it maps to `Color::Reset`.
+    pub fn line_color(theme: Theme, kind: LineKind) -> Color {
+        match kind {
+            LineKind::Text => Color::Reset,
+            LineKind::Thinking => theme.thinking,
+            LineKind::Tool => theme.tool,
+            LineKind::Result => theme.result,
+            LineKind::Error => theme.error,
+            LineKind::Notice => theme.notice,
+            LineKind::Status => theme.pane_status,
+            LineKind::Heading => theme.heading,
         }
     }
 }

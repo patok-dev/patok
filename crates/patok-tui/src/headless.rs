@@ -5,6 +5,7 @@
 use std::io::Write;
 use std::time::Duration;
 
+use crossterm::style::Stylize;
 use patok_core::config::SettingValue;
 use patok_core::event::{EngineEvent, Phase, TaskOutcome};
 use patok_proto::engine_client::EngineClient;
@@ -13,8 +14,9 @@ use tokio_util::sync::CancellationToken;
 use tonic::Streaming;
 use tonic::transport::Channel;
 
-use crate::app::App;
+use crate::app::{App, LineKind, OutLine};
 use crate::settings::to_proto;
+use crate::theme::Theme;
 
 /// How long the run-mode restore waits for the engine's confirmation event.
 const RESTORE_CONFIRM: Duration = Duration::from_secs(5);
@@ -34,17 +36,23 @@ pub enum HeadlessOutcome {
 /// agent output frame's content -- agent messages, task lines and agent lifecycle
 /// status lines -- to `out` line by line as it arrives. Ends once every task in the
 /// store is done, the build fails, an engine error stops it, or `interrupt` is
-/// cancelled. The previous run mode is restored on every exit path.
+/// cancelled. The previous run mode is restored on every exit path. With `color`,
+/// the streamed lines wear the user's theme colours (the same kind-to-colour
+/// mapping the frame renders with); without it the output stays plain.
 pub async fn run_until<W: Write>(
     mut client: EngineClient<Channel>,
     out: &mut W,
     interrupt: CancellationToken,
+    color: bool,
 ) -> anyhow::Result<HeadlessOutcome> {
     // The same attach path the shell takes, so the snapshot decode and the recent-event
     // replay are identical: a headless run attaching mid-build shows the prior output
     // first, like the frame does.
     let (mut app, mut updates) = crate::run::attach(&mut client).await?;
-    let mut printer = Printer::default();
+    let mut printer = Printer {
+        theme: color.then(|| app.theme()),
+        ..Printer::default()
+    };
     printer.drain(out, &app)?;
 
     // Sprint while headless is active: the build loop must run the whole store down
@@ -339,11 +347,17 @@ async fn restore_mode<W: Write>(
 /// Streams the output frame's lines to a writer as they are built: completed lines
 /// are written whole, the still-streaming last line is written in tail deltas, so
 /// what arrives on the writer matches what the frame displays at every moment.
+/// With a theme, every written piece is wrapped in the line kind's theme colour;
+/// without one the bytes are the plain text.
 #[derive(Default)]
 struct Printer {
+    /// The theme whose colours wrap the output, or `None` for plain output.
+    theme: Option<Theme>,
     /// Lines already written whole, with their newline.
     printed: usize,
     /// What has already been written of the current (last) line, without a newline.
+    /// Always the plain text: the colour escapes reach the writer but never this
+    /// buffer, so the delta logic keeps comparing plain text against plain text.
     partial: String,
 }
 
@@ -360,27 +374,30 @@ impl Printer {
             self.partial.clear();
         }
         while self.printed + 1 < lines.len() {
-            self.complete(out, &lines[self.printed].text)?;
+            self.complete(out, &lines[self.printed])?;
             self.printed += 1;
         }
         if let Some(last) = lines.back() {
             let text = &last.text;
+            let kind = last.kind;
             if self.partial.is_empty() {
                 if !text.is_empty() {
-                    out.write_all(text.as_bytes())?;
+                    out.write_all(self.wrap(text, kind).as_bytes())?;
                     out.flush()?;
                     self.partial = text.clone();
                 }
             } else if let Some(tail) = text.strip_prefix(self.partial.as_str()) {
                 if !tail.is_empty() {
-                    out.write_all(tail.as_bytes())?;
+                    out.write_all(self.wrap(tail, kind).as_bytes())?;
                     out.flush()?;
                 }
                 self.partial = text.clone();
             } else {
                 // Not a prefix anymore (defensive): the line is rewritten whole.
-                out.write_all(text.as_bytes())?;
-                out.flush()?;
+                if !text.is_empty() {
+                    out.write_all(self.wrap(text, kind).as_bytes())?;
+                    out.flush()?;
+                }
                 self.partial = text.clone();
             }
         }
@@ -388,10 +405,13 @@ impl Printer {
     }
 
     /// Writes one completed line: the part of it not written yet, then the newline.
-    fn complete<W: Write>(&mut self, out: &mut W, text: &str) -> std::io::Result<()> {
-        match text.strip_prefix(self.partial.as_str()) {
-            Some(tail) => out.write_all(tail.as_bytes())?,
-            None => out.write_all(text.as_bytes())?,
+    fn complete<W: Write>(&mut self, out: &mut W, line: &OutLine) -> std::io::Result<()> {
+        match line.text.strip_prefix(self.partial.as_str()) {
+            Some(tail) if !tail.is_empty() => {
+                out.write_all(self.wrap(tail, line.kind).as_bytes())?
+            }
+            Some(_) => {}
+            None => out.write_all(self.wrap(&line.text, line.kind).as_bytes())?,
         }
         out.write_all(b"\n")?;
         self.partial.clear();
@@ -415,9 +435,59 @@ impl Printer {
     /// streaming line is terminated first so the note stands on its own.
     fn note<W: Write>(&mut self, out: &mut W, text: String) -> std::io::Result<()> {
         self.finish(out)?;
-        out.write_all(text.as_bytes())?;
+        out.write_all(self.wrap(&text, LineKind::Notice).as_bytes())?;
         out.write_all(b"\n")?;
         out.flush()
+    }
+
+    /// Wraps one written piece in the line kind's theme colour: the colour prefix,
+    /// the plain text, a trailing reset. `Text` lines and a colourless printer
+    /// return the text unchanged. Every wrapped piece ends with a reset, so a
+    /// flush mid-line never leaves the terminal's colour state dangling.
+    fn wrap<'a>(&self, text: &'a str, kind: LineKind) -> std::borrow::Cow<'a, str> {
+        let Some(theme) = self.theme else {
+            return std::borrow::Cow::Borrowed(text);
+        };
+        if kind == LineKind::Text {
+            return std::borrow::Cow::Borrowed(text);
+        }
+        let styled = crossterm::style::style(text).with(term_color(Theme::line_color(theme, kind)));
+        let styled = if kind == LineKind::Heading {
+            styled.attribute(crossterm::style::Attribute::Bold)
+        } else {
+            styled
+        };
+        std::borrow::Cow::Owned(styled.to_string())
+    }
+}
+
+/// Converts a render colour to the terminal colour: the two crates disagree on
+/// naming -- ratatui's plain names are the standard 0-7 colours while crossterm's
+/// are the bright 8-15 variants -- so the mapping is spelled out to keep the
+/// streamed colours identical to the frame's.
+fn term_color(color: ratatui::style::Color) -> crossterm::style::Color {
+    use crossterm::style::Color as T;
+    use ratatui::style::Color as R;
+    match color {
+        R::Reset => T::Reset,
+        R::Black => T::Black,
+        R::Red => T::DarkRed,
+        R::Green => T::DarkGreen,
+        R::Yellow => T::DarkYellow,
+        R::Blue => T::DarkBlue,
+        R::Magenta => T::DarkMagenta,
+        R::Cyan => T::DarkCyan,
+        R::Gray => T::Grey,
+        R::DarkGray => T::DarkGrey,
+        R::LightRed => T::Red,
+        R::LightGreen => T::Green,
+        R::LightYellow => T::Yellow,
+        R::LightBlue => T::Blue,
+        R::LightMagenta => T::Magenta,
+        R::LightCyan => T::Cyan,
+        R::White => T::White,
+        R::Rgb(r, g, b) => T::Rgb { r, g, b },
+        R::Indexed(i) => T::AnsiValue(i),
     }
 }
 
@@ -476,5 +546,60 @@ mod tests {
             String::from_utf8(out).unwrap(),
             "hello world!\n✔ T1.1 done\n"
         );
+    }
+
+    /// With a theme, the deltas are wrapped in the line kinds' colours without
+    /// being duplicated: the `Text` deltas stay escape-free, the completed status
+    /// line carries its colour prefix and trailing reset, and no text is written
+    /// twice.
+    #[test]
+    fn colored_lines_are_wrapped_and_deltas_are_not_duplicated() {
+        let mut app = app_with_one_task();
+        let mut out = Vec::new();
+        let mut printer = Printer {
+            theme: Some(Theme::DARK),
+            ..Printer::default()
+        };
+        for chunk in ["hello", " world", "!"] {
+            app.apply(EngineEvent::Agent {
+                event: AgentEvent::TextDelta { text: chunk.into() },
+            });
+            printer.drain(&mut out, &app).unwrap();
+        }
+        app.apply(EngineEvent::TaskFinished {
+            id: "T1.1".into(),
+            outcome: TaskOutcome::Done,
+            commit: None,
+        });
+        printer.drain(&mut out, &app).unwrap();
+        printer.finish(&mut out).unwrap();
+        let buffer = String::from_utf8(out).unwrap();
+        // The text line is a `Text` line: exactly the plain deltas, no escapes.
+        let (text, status) = buffer
+            .split_once('\n')
+            .expect("the streamed line precedes the status line");
+        assert_eq!(text, "hello world!", "buffer: {buffer:?}");
+        assert!(
+            !text.contains('\x1b'),
+            "the Text line must stay plain: {text:?}"
+        );
+        // The status line is wrapped in its kind's theme colour and ends with
+        // the colour reset before the newline. (The done line's kind resolves
+        // to the dark theme's yellow in this snapshot: SGR 38;5;3.)
+        assert!(
+            status.starts_with("\x1b[38;5;3m"),
+            "the status line carries its theme colour: {status:?}"
+        );
+        assert!(
+            status.contains("✔ T1.1 done"),
+            "the plain text survives the wrapping: {status:?}"
+        );
+        assert!(
+            status.ends_with("\x1b[39m\n") || status.ends_with("\x1b[0m\n"),
+            "the status line ends with a colour reset: {status:?}"
+        );
+        // The deltas were never written twice.
+        assert_eq!(buffer.matches("hello").count(), 1, "buffer: {buffer:?}");
+        assert_eq!(buffer.matches("T1.1 done").count(), 1, "buffer: {buffer:?}");
     }
 }
