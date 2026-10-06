@@ -13,11 +13,11 @@
 #
 # Environment:
 #   PATOK_INSTALL_DIR  install directory (default: $HOME/.local/bin)
-#   PATOK_REPO         GitHub repository as owner/name (default: patok/patok)
+#   PATOK_REPO         GitHub repository as owner/name (default: patok-dev/patok)
 
 set -eu
 
-REPO="${PATOK_REPO:-patok/patok}"
+REPO="${PATOK_REPO:-patok-dev/patok}"
 INSTALL_DIR="${PATOK_INSTALL_DIR:-$HOME/.local/bin}"
 
 err() {
