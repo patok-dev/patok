@@ -1,6 +1,6 @@
 //! Rendering. Reads the [`App`], draws a frame, never blocks on I/O.
 
-use patok_core::config::{SettingValue, Theme as ThemeKey};
+use patok_core::config::SettingValue;
 use patok_core::event::{Phase, SessionOutcome};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -858,9 +858,9 @@ pub fn theme_row_at(position: Position, body: Rect) -> Option<usize> {
 }
 
 /// The theme picker (the `t` key, T43.1): a centered " Theme " modal listing
-/// the built-in themes, each row rendered in its own theme's colours with a
-/// selection marker and a two-zone bottom line
-/// of hints left, buttons right (T59.1).
+/// the built-in themes as a normal list, every row rendered in the currently
+/// active theme's classes (T115.1), with a selection marker and a two-zone
+/// bottom line of hints left, buttons right (T59.1).
 /// Rendered on top of everything else; the shell underneath is already
 /// recoloured by the live preview, since `App::theme` resolves it.
 fn render_theme_modal(frame: &mut Frame, app: &App) {
@@ -896,12 +896,12 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
     );
 }
 
-/// One theme entry of the picker (T43.1): the name padded to the list's longest
-/// name, on the entry theme's own background and foreground, so the row
-/// previews the theme itself. The selected row carries the marker and renders
-/// bold.
+/// One theme entry of the picker (T43.1, T115.1): the name padded to the list's
+/// longest name, rendered as a normal list row in the currently active theme's
+/// classes instead of previewing the entry's own palette. The selected row
+/// carries the marker and renders its name in `highlighted_text`, bold.
 fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
-    let entry = Theme::resolve(ThemeKey::parse(name).unwrap_or_default(), app.tui.truecolor);
+    let theme = app.theme();
     let selected = index == app.theme_modal.selected;
     let marker = if selected { "▶ " } else { "  " };
     let width = theme_modal_keys()
@@ -909,13 +909,18 @@ fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
         .map(|name| name.len())
         .max()
         .unwrap_or(0);
+    let fg = if selected {
+        theme.highlighted_text
+    } else {
+        theme.normal_text
+    };
     let spans = vec![
-        Span::raw(marker),
-        Span::styled(format!("{name:<width$}"), Style::new().fg(entry.foreground)),
+        Span::styled(marker, Style::new().fg(fg)),
+        Span::styled(format!("{name:<width$}"), Style::new().fg(fg)),
     ];
-    let mut line = Line::from(spans).style(base_style(entry));
+    let mut line = Line::from(spans).style(base_style(theme));
     if selected {
-        line = line.style(base_style(entry).add_modifier(Modifier::BOLD));
+        line = line.style(base_style(theme).add_modifier(Modifier::BOLD));
     }
     line
 }

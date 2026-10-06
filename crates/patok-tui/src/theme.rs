@@ -51,9 +51,9 @@
 //! |---|---|---|
 //! | `background` | `render` | the frame's base background, painted first |
 //! | `foreground` | `render` | the frame's base foreground, inherited by unstyled text |
-//! | `normal_text` | `button_line` | the modal buttons' labels (T64.1) |
+//! | `normal_text` | `button_line`, `theme_row_line` | the modal buttons' labels (T64.1), the theme picker's unselected entry names (T115.1) |
 //! | `muted_text` | `render_modal_footer`, `render_hints_strip`, `status_widget`, `render_output`, `render_pane`, `render_tasks`, `render_dialog`, `render_stop_dialog`, `render_settings_confirm`, `render_settings_overlay`, `settings_row_line`, `render_settings_help`, `pipeline::tile_style`, `pipeline::render_rail` | every low-emphasis text: modal footers and the focused frame's hints strip (T59.1, T71.1), the status bar's key-chip labels, the output frame title's separator, provider, model and timer and everything after the word `Tasks` in the tasks frame title (T37.1, T67.1), the "no output yet" and "no tasks in TASKS.md" placeholders, done task rows, the empty-input watermark (T41.1), "-- detail" choice text, the settings overlay's info, read-only and help text (T85.1), the rail's muted and pending tiles, the provider/model detail and the down-arrow connectors |
-//! | `highlighted_text` | `status_widget`, `render_tasks`, `render_dialog`, `button_line`, `render_settings_overlay` | the status bar's message, the STOPPING chip, new tasks, the add-task dialog's status line, every modal's " [ Key ] " markers and the settings overlay's error line |
+//! | `highlighted_text` | `status_widget`, `render_tasks`, `render_dialog`, `button_line`, `render_settings_overlay`, `theme_row_line` | the status bar's message, the STOPPING chip, new tasks, the add-task dialog's status line, every modal's " [ Key ] " markers, the settings overlay's error line and the theme picker's selected entry (T115.1) |
 //! | `chip_neutral` | `status_widget` | STOPPED, run-mode and key-chip backgrounds |
 //! | `contrast_text` | `status_widget`, `render_dialog` | foreground on every status chip and the dialog input's block cursor |
 //! | `success` | `status_widget`, `render_tasks`, `pipeline::tile_style` | the RUNNING chip, running task rows, done rail tiles (T50.1) and SHIP while shipping |

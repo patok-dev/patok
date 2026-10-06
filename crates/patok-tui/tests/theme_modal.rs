@@ -547,6 +547,80 @@ fn the_picker_with_the_selection_on_a_light_theme() {
     insta::assert_snapshot!(draw(&app, 80, 24));
 }
 
+/// The picker's rows render as a normal list (T115.1): every row wears the
+/// active theme's classes -- the active `background`, the names in
+/// `normal_text`, the selected row's name in `highlighted_text` -- never the
+/// entry's own palette.
+#[test]
+fn the_picker_rows_wear_the_active_theme_not_their_own() {
+    let app = open();
+    let buffer = draw_buffer(&app);
+    let body = app.theme_modal.area.get();
+    let dark = theme_of(ThemeKey::Dark);
+    let selected = row_of("dark");
+    for (i, _name) in theme_modal_keys().iter().enumerate() {
+        let row = i as u16;
+        assert_eq!(
+            buffer[(body.x, body.y + row)].bg,
+            dark.background,
+            "row {i} sits on the active background"
+        );
+        let expected = if i == selected {
+            dark.highlighted_text
+        } else {
+            dark.normal_text
+        };
+        assert_eq!(
+            buffer[(body.x + 2, body.y + row)].style().fg,
+            Some(expected),
+            "row {i}'s name wears the active theme's class"
+        );
+    }
+    // Not vacuously: a row whose own palette differs from the active theme's
+    // still wears the active theme, not its own background or text colour.
+    let latte = row_of("catppuccin_latte") as u16;
+    let latte_theme = theme_of(ThemeKey::CatppuccinLatte);
+    assert_ne!(latte_theme.background, dark.background);
+    assert_ne!(latte_theme.normal_text, dark.normal_text);
+    assert_eq!(buffer[(body.x, body.y + latte)].bg, dark.background);
+    assert_eq!(
+        buffer[(body.x + 2, body.y + latte)].style().fg,
+        Some(dark.normal_text)
+    );
+}
+
+/// Browsing recolours the rows too (T115.1): with a theme previewed, the
+/// rows wear the preview's classes -- the active theme is the previewed one
+/// while the picker is open, so the list restyles live under navigation.
+#[test]
+fn previewing_recolours_the_rows_too() {
+    let mut app = open();
+    for _ in 0..row_of("tokyo_night_dark") {
+        press(&mut app, KeyCode::Down);
+    }
+    let tokyo = theme_of(ThemeKey::TokyoNightDark);
+    assert_eq!(app.theme(), tokyo);
+    assert_eq!(app.tui.theme, ThemeKey::Dark, "nothing is committed");
+    let buffer = draw_buffer(&app);
+    let body = app.theme_modal.area.get();
+    // An unselected row wears the preview, not its own palette.
+    let latte = row_of("catppuccin_latte") as u16;
+    let latte_theme = theme_of(ThemeKey::CatppuccinLatte);
+    assert_ne!(latte_theme.background, tokyo.background);
+    assert_ne!(latte_theme.normal_text, tokyo.normal_text);
+    assert_eq!(buffer[(body.x, body.y + latte)].bg, tokyo.background);
+    assert_eq!(
+        buffer[(body.x + 2, body.y + latte)].style().fg,
+        Some(tokyo.normal_text)
+    );
+    // The selected row's name wears the preview's highlight.
+    let selected = row_of("tokyo_night_dark") as u16;
+    assert_eq!(
+        buffer[(body.x + 2, body.y + selected)].style().fg,
+        Some(tokyo.highlighted_text)
+    );
+}
+
 /// The style dump of a rendered row: every cell as `symbol|fg|bg`, so a
 /// snapshot captures the colours, not just the layout.
 fn styled_rows(buffer: &ratatui::buffer::Buffer, rows: &[u16]) -> String {
