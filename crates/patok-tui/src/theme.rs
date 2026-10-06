@@ -10,10 +10,12 @@
 //! Eleven built-in variants: the default `dark` plus ten published palettes
 //! (Atom One, Tokyo Night, Catppuccin, Solarized and Gruvbox, each in a dark and
 //! a light variant). Every non-default variant is defined once as a
-//! [`Palette`] of signature roles and mapped onto the same semantic fields by
-//! the same rules, so every renderer works unchanged with any variant. RGB
-//! colours emit as `Color::Rgb` while the truecolor setting is on and as the
-//! nearest xterm-256 indexed colour while it is off.
+//! [`Palette`] of signature roles and carries its own [`Chrome`] table that
+//! maps those roles onto the semantic fields (T109.1), so each theme tunes its
+//! chrome — chips, cursor, muted text — without touching the others, and every
+//! renderer works unchanged with any variant. RGB colours emit as `Color::Rgb`
+//! while the truecolor setting is on and as the nearest xterm-256 indexed
+//! colour while it is off.
 //!
 //! The agent output line colours live in their own [`AgentText`] subclass
 //! (T108.1), structurally separate from the chrome fields so the output
@@ -416,7 +418,10 @@ impl Theme {
     pub fn resolve(theme: ThemeKey, truecolor: Option<bool>) -> Theme {
         match theme {
             ThemeKey::Dark => Theme::DARK,
-            other => palette_of(other).theme(truecolor.unwrap_or_else(truecolor_detected)),
+            other => palette_of(other).theme(
+                chrome_of(other),
+                truecolor.unwrap_or_else(truecolor_detected),
+            ),
         }
     }
 
@@ -439,9 +444,9 @@ impl Theme {
     }
 }
 
-/// One published palette's signature roles, as raw RGB triples. The roles map
-/// onto the semantic fields by one shared rule ([`Palette::theme`]), which is
-/// what keeps every renderer variant-agnostic.
+/// One published palette's signature roles, as raw RGB triples. Each palette
+/// has its own [`Chrome`] table ([`Palette::theme`]) that maps the roles onto
+/// the semantic fields, which is what keeps every renderer variant-agnostic.
 struct Palette {
     /// The theme's base background.
     background: (u8, u8, u8),
@@ -459,6 +464,96 @@ struct Palette {
     magenta: (u8, u8, u8),
 }
 
+/// One theme's chrome mapping (T109.1): the raw RGB triple every
+/// non-agent-text semantic field of [`Theme`] resolves to, in the same order
+/// as the `Theme` fields minus `agent_text`. Each built-in palette owns one
+/// table — there is no shared mapping rule — so a theme can tune any chrome
+/// use (chip backgrounds, cursor, muted text) without touching the others.
+/// The agent line colours are fixated separately by [`AgentText`] (T108.1)
+/// and never come from here.
+struct Chrome {
+    /// The shell's base background, painted over the whole frame first.
+    background: (u8, u8, u8),
+    /// The shell's base foreground, inherited by every unstyled text cell.
+    foreground: (u8, u8, u8),
+    /// Status-line STOPPED status chip background.
+    chip_stopped: (u8, u8, u8),
+    /// Status-line RUNNING status chip background.
+    chip_running: (u8, u8, u8),
+    /// Status-line PLANNING status chip background.
+    chip_planning: (u8, u8, u8),
+    /// Status-line DISCOVERING status chip background.
+    chip_discovering: (u8, u8, u8),
+    /// Status-line STOPPING status chip background.
+    chip_stopping: (u8, u8, u8),
+    /// Foreground on every status-line status chip.
+    chip_text: (u8, u8, u8),
+    /// Run-mode chip background (foreground `chip_text`).
+    run_mode_chip: (u8, u8, u8),
+    /// The status bar's one-line message.
+    status_message: (u8, u8, u8),
+    /// Status-bar key-chip background (foreground `chip_text`).
+    status_key: (u8, u8, u8),
+    /// Status-bar key-chip labels.
+    status_label: (u8, u8, u8),
+    /// The agent type name in the output frame title while the builder runs.
+    frame_title_builder: (u8, u8, u8),
+    /// The agent type name in the output frame title while the planner runs.
+    frame_title_planner: (u8, u8, u8),
+    /// The agent type name in the output frame title while the research agent
+    /// runs (T68.1).
+    frame_title_research: (u8, u8, u8),
+    /// The output frame title's detail text (T37.1) and everything after the
+    /// word `Tasks` in the tasks frame title (T67.1).
+    frame_title_detail: (u8, u8, u8),
+    /// "no output yet" placeholder in the output pane.
+    pane_empty: (u8, u8, u8),
+    /// Done task rows.
+    task_done: (u8, u8, u8),
+    /// Running task rows (the renderer adds bold).
+    task_running: (u8, u8, u8),
+    /// New-task highlight (the renderer adds bold + reversed).
+    task_new: (u8, u8, u8),
+    /// "no tasks in TASKS.md" placeholder.
+    tasks_empty: (u8, u8, u8),
+    /// The add-task dialog's status line.
+    dialog_status: (u8, u8, u8),
+    /// The dialog input's block cursor foreground.
+    cursor_foreground: (u8, u8, u8),
+    /// The dialog input's block cursor background.
+    cursor_background: (u8, u8, u8),
+    /// The empty-input watermark (T41.1).
+    dialog_hint: (u8, u8, u8),
+    /// "-- detail" text in the stop and unsaved-changes dialogs.
+    choice_detail: (u8, u8, u8),
+    /// Every modal bottom line's key-hint zone (T59.1).
+    modal_footer: (u8, u8, u8),
+    /// Every modal bottom line's " [ Key ] Label " buttons and the settings
+    /// overlay's " [ X ] " close marker (T44.1, T59.1).
+    button_accent: (u8, u8, u8),
+    /// The settings overlay's error status line.
+    settings_error: (u8, u8, u8),
+    /// The settings overlay's info status line.
+    settings_info: (u8, u8, u8),
+    /// Read-only settings overlay rows.
+    settings_readonly: (u8, u8, u8),
+    /// The settings overlay's help box text (T85.1).
+    settings_help: (u8, u8, u8),
+    /// The settings overlay's scrollbar thumb.
+    scrollbar_thumb: (u8, u8, u8),
+    /// The settings overlay's scrollbar rail.
+    scrollbar_rail: (u8, u8, u8),
+    /// Done rail tiles (T50.1): the stages before the active one,
+    /// SHIP while shipping, DISCOVER after a round ran, LEARNINGS once learned.
+    rail_done: (u8, u8, u8),
+    /// The active stage tile and DISCOVER while a round runs (bold added).
+    rail_active: (u8, u8, u8),
+    /// Muted and pending rail tiles.
+    rail_muted: (u8, u8, u8),
+    /// The rail's down-arrow connectors between consecutive stage tiles.
+    rail_connector: (u8, u8, u8),
+}
+
 const ATOM_ONE_DARK: Palette = Palette {
     background: (0x28, 0x2C, 0x34),
     foreground: (0xAB, 0xB2, 0xBF),
@@ -468,6 +563,54 @@ const ATOM_ONE_DARK: Palette = Palette {
     yellow: (0xE5, 0xC0, 0x7B),
     blue: (0x61, 0xAF, 0xEF),
     magenta: (0xC6, 0x78, 0xDD),
+};
+
+/// The neutral chips (stopped, run-mode, key) take the foreground role: the
+/// background-role chip text only reads on chip backgrounds at least as
+/// bright as the accents, and the surface role is not. The palette's muted
+/// (2.3:1 on the background) is dimmer than the benchmark theme's, so every
+/// text-bearing muted use takes a lightened muted literal that clears
+/// [`READABLE_CONTRAST`]; the decorative scrollbar rail keeps the palette
+/// value.
+const ATOM_ONE_DARK_CHROME: Chrome = Chrome {
+    background: ATOM_ONE_DARK.background,
+    foreground: ATOM_ONE_DARK.foreground,
+    chip_stopped: ATOM_ONE_DARK.foreground,
+    chip_running: ATOM_ONE_DARK.green,
+    chip_planning: ATOM_ONE_DARK.magenta,
+    chip_discovering: ATOM_ONE_DARK.blue,
+    chip_stopping: ATOM_ONE_DARK.yellow,
+    chip_text: ATOM_ONE_DARK.background,
+    run_mode_chip: ATOM_ONE_DARK.foreground,
+    status_message: ATOM_ONE_DARK.yellow,
+    status_key: ATOM_ONE_DARK.foreground,
+    status_label: (0x6E, 0x77, 0x86),
+    frame_title_builder: ATOM_ONE_DARK.green,
+    frame_title_planner: ATOM_ONE_DARK.magenta,
+    frame_title_research: ATOM_ONE_DARK.blue,
+    frame_title_detail: (0x6E, 0x77, 0x86),
+    pane_empty: (0x6E, 0x77, 0x86),
+    task_done: (0x6E, 0x77, 0x86),
+    task_running: ATOM_ONE_DARK.green,
+    task_new: ATOM_ONE_DARK.yellow,
+    tasks_empty: (0x6E, 0x77, 0x86),
+    dialog_status: ATOM_ONE_DARK.yellow,
+    cursor_foreground: ATOM_ONE_DARK.background,
+    cursor_background: ATOM_ONE_DARK.blue,
+    dialog_hint: (0x6E, 0x77, 0x86),
+    choice_detail: (0x6E, 0x77, 0x86),
+    modal_footer: (0x6E, 0x77, 0x86),
+    button_accent: ATOM_ONE_DARK.yellow,
+    settings_error: ATOM_ONE_DARK.yellow,
+    settings_info: (0x6E, 0x77, 0x86),
+    settings_readonly: (0x6E, 0x77, 0x86),
+    settings_help: (0x6E, 0x77, 0x86),
+    scrollbar_thumb: ATOM_ONE_DARK.blue,
+    scrollbar_rail: ATOM_ONE_DARK.muted,
+    rail_done: ATOM_ONE_DARK.green,
+    rail_active: ATOM_ONE_DARK.blue,
+    rail_muted: (0x6E, 0x77, 0x86),
+    rail_connector: (0x6E, 0x77, 0x86),
 };
 
 const ATOM_ONE_LIGHT: Palette = Palette {
@@ -481,6 +624,51 @@ const ATOM_ONE_LIGHT: Palette = Palette {
     magenta: (0xA6, 0x26, 0xA4),
 };
 
+/// Light theme: the neutral chips take the foreground role so the
+/// background-role chip text (near-white) reads on them, and every
+/// text-bearing muted use takes a darkened muted literal that clears
+/// [`READABLE_CONTRAST`] on the near-white background.
+const ATOM_ONE_LIGHT_CHROME: Chrome = Chrome {
+    background: ATOM_ONE_LIGHT.background,
+    foreground: ATOM_ONE_LIGHT.foreground,
+    chip_stopped: ATOM_ONE_LIGHT.foreground,
+    chip_running: ATOM_ONE_LIGHT.green,
+    chip_planning: ATOM_ONE_LIGHT.magenta,
+    chip_discovering: ATOM_ONE_LIGHT.blue,
+    chip_stopping: ATOM_ONE_LIGHT.yellow,
+    chip_text: ATOM_ONE_LIGHT.background,
+    run_mode_chip: ATOM_ONE_LIGHT.foreground,
+    status_message: ATOM_ONE_LIGHT.yellow,
+    status_key: ATOM_ONE_LIGHT.foreground,
+    status_label: (0x86, 0x87, 0x8E),
+    frame_title_builder: ATOM_ONE_LIGHT.green,
+    frame_title_planner: ATOM_ONE_LIGHT.magenta,
+    frame_title_research: ATOM_ONE_LIGHT.blue,
+    frame_title_detail: (0x86, 0x87, 0x8E),
+    pane_empty: (0x86, 0x87, 0x8E),
+    task_done: (0x86, 0x87, 0x8E),
+    task_running: ATOM_ONE_LIGHT.green,
+    task_new: ATOM_ONE_LIGHT.yellow,
+    tasks_empty: (0x86, 0x87, 0x8E),
+    dialog_status: ATOM_ONE_LIGHT.yellow,
+    cursor_foreground: ATOM_ONE_LIGHT.background,
+    cursor_background: ATOM_ONE_LIGHT.blue,
+    dialog_hint: (0x86, 0x87, 0x8E),
+    choice_detail: (0x86, 0x87, 0x8E),
+    modal_footer: (0x86, 0x87, 0x8E),
+    button_accent: ATOM_ONE_LIGHT.yellow,
+    settings_error: ATOM_ONE_LIGHT.yellow,
+    settings_info: (0x86, 0x87, 0x8E),
+    settings_readonly: (0x86, 0x87, 0x8E),
+    settings_help: (0x86, 0x87, 0x8E),
+    scrollbar_thumb: ATOM_ONE_LIGHT.blue,
+    scrollbar_rail: ATOM_ONE_LIGHT.muted,
+    rail_done: ATOM_ONE_LIGHT.green,
+    rail_active: ATOM_ONE_LIGHT.blue,
+    rail_muted: (0x86, 0x87, 0x8E),
+    rail_connector: (0x86, 0x87, 0x8E),
+};
+
 const TOKYO_NIGHT_DARK: Palette = Palette {
     background: (0x1A, 0x1B, 0x26),
     foreground: (0xC0, 0xCA, 0xF5),
@@ -490,6 +678,49 @@ const TOKYO_NIGHT_DARK: Palette = Palette {
     yellow: (0xE0, 0xAF, 0x68),
     blue: (0x7A, 0xA2, 0xF7),
     magenta: (0xBB, 0x9A, 0xF7),
+};
+
+/// The benchmark theme (T109.1): its look is snapshot-locked and byte-identical
+/// to the output of the single shared rule this table replaced.
+const TOKYO_NIGHT_DARK_CHROME: Chrome = Chrome {
+    background: TOKYO_NIGHT_DARK.background,
+    foreground: TOKYO_NIGHT_DARK.foreground,
+    chip_stopped: TOKYO_NIGHT_DARK.surface,
+    chip_running: TOKYO_NIGHT_DARK.green,
+    chip_planning: TOKYO_NIGHT_DARK.magenta,
+    chip_discovering: TOKYO_NIGHT_DARK.blue,
+    chip_stopping: TOKYO_NIGHT_DARK.yellow,
+    chip_text: TOKYO_NIGHT_DARK.background,
+    run_mode_chip: TOKYO_NIGHT_DARK.surface,
+    status_message: TOKYO_NIGHT_DARK.yellow,
+    status_key: TOKYO_NIGHT_DARK.surface,
+    status_label: TOKYO_NIGHT_DARK.muted,
+    frame_title_builder: TOKYO_NIGHT_DARK.green,
+    frame_title_planner: TOKYO_NIGHT_DARK.magenta,
+    frame_title_research: TOKYO_NIGHT_DARK.blue,
+    frame_title_detail: TOKYO_NIGHT_DARK.muted,
+    pane_empty: TOKYO_NIGHT_DARK.muted,
+    task_done: TOKYO_NIGHT_DARK.muted,
+    task_running: TOKYO_NIGHT_DARK.green,
+    task_new: TOKYO_NIGHT_DARK.yellow,
+    tasks_empty: TOKYO_NIGHT_DARK.muted,
+    dialog_status: TOKYO_NIGHT_DARK.yellow,
+    cursor_foreground: TOKYO_NIGHT_DARK.background,
+    cursor_background: TOKYO_NIGHT_DARK.blue,
+    dialog_hint: TOKYO_NIGHT_DARK.muted,
+    choice_detail: TOKYO_NIGHT_DARK.muted,
+    modal_footer: TOKYO_NIGHT_DARK.muted,
+    button_accent: TOKYO_NIGHT_DARK.yellow,
+    settings_error: TOKYO_NIGHT_DARK.yellow,
+    settings_info: TOKYO_NIGHT_DARK.muted,
+    settings_readonly: TOKYO_NIGHT_DARK.muted,
+    settings_help: TOKYO_NIGHT_DARK.muted,
+    scrollbar_thumb: TOKYO_NIGHT_DARK.blue,
+    scrollbar_rail: TOKYO_NIGHT_DARK.muted,
+    rail_done: TOKYO_NIGHT_DARK.green,
+    rail_active: TOKYO_NIGHT_DARK.blue,
+    rail_muted: TOKYO_NIGHT_DARK.muted,
+    rail_connector: TOKYO_NIGHT_DARK.muted,
 };
 
 const TOKYO_NIGHT_DAY: Palette = Palette {
@@ -503,6 +734,50 @@ const TOKYO_NIGHT_DAY: Palette = Palette {
     magenta: (0x98, 0x54, 0xF1),
 };
 
+/// Light theme: the neutral chips take the foreground role so the
+/// background-role chip text reads on them, and every text-bearing muted use
+/// takes a darkened muted literal that clears [`READABLE_CONTRAST`].
+const TOKYO_NIGHT_DAY_CHROME: Chrome = Chrome {
+    background: TOKYO_NIGHT_DAY.background,
+    foreground: TOKYO_NIGHT_DAY.foreground,
+    chip_stopped: TOKYO_NIGHT_DAY.foreground,
+    chip_running: TOKYO_NIGHT_DAY.green,
+    chip_planning: TOKYO_NIGHT_DAY.magenta,
+    chip_discovering: TOKYO_NIGHT_DAY.blue,
+    chip_stopping: TOKYO_NIGHT_DAY.yellow,
+    chip_text: TOKYO_NIGHT_DAY.background,
+    run_mode_chip: TOKYO_NIGHT_DAY.foreground,
+    status_message: TOKYO_NIGHT_DAY.yellow,
+    status_key: TOKYO_NIGHT_DAY.foreground,
+    status_label: (0x71, 0x7A, 0xAA),
+    frame_title_builder: TOKYO_NIGHT_DAY.green,
+    frame_title_planner: TOKYO_NIGHT_DAY.magenta,
+    frame_title_research: TOKYO_NIGHT_DAY.blue,
+    frame_title_detail: (0x71, 0x7A, 0xAA),
+    pane_empty: (0x71, 0x7A, 0xAA),
+    task_done: (0x71, 0x7A, 0xAA),
+    task_running: TOKYO_NIGHT_DAY.green,
+    task_new: TOKYO_NIGHT_DAY.yellow,
+    tasks_empty: (0x71, 0x7A, 0xAA),
+    dialog_status: TOKYO_NIGHT_DAY.yellow,
+    cursor_foreground: TOKYO_NIGHT_DAY.background,
+    cursor_background: TOKYO_NIGHT_DAY.blue,
+    dialog_hint: (0x71, 0x7A, 0xAA),
+    choice_detail: (0x71, 0x7A, 0xAA),
+    modal_footer: (0x71, 0x7A, 0xAA),
+    button_accent: TOKYO_NIGHT_DAY.yellow,
+    settings_error: TOKYO_NIGHT_DAY.yellow,
+    settings_info: (0x71, 0x7A, 0xAA),
+    settings_readonly: (0x71, 0x7A, 0xAA),
+    settings_help: (0x71, 0x7A, 0xAA),
+    scrollbar_thumb: TOKYO_NIGHT_DAY.blue,
+    scrollbar_rail: TOKYO_NIGHT_DAY.muted,
+    rail_done: TOKYO_NIGHT_DAY.green,
+    rail_active: TOKYO_NIGHT_DAY.blue,
+    rail_muted: (0x71, 0x7A, 0xAA),
+    rail_connector: (0x71, 0x7A, 0xAA),
+};
+
 const CATPPUCCIN_MOCHA: Palette = Palette {
     background: (0x1E, 0x1E, 0x2E),
     foreground: (0xCD, 0xD6, 0xF4),
@@ -512,6 +787,49 @@ const CATPPUCCIN_MOCHA: Palette = Palette {
     yellow: (0xF9, 0xE2, 0xAF),
     blue: (0x89, 0xB4, 0xFA),
     magenta: (0xCB, 0xA6, 0xF7),
+};
+
+/// Only the neutral chips move to the foreground role; Mocha's own muted and
+/// accents already clear [`READABLE_CONTRAST`] on its background.
+const CATPPUCCIN_MOCHA_CHROME: Chrome = Chrome {
+    background: CATPPUCCIN_MOCHA.background,
+    foreground: CATPPUCCIN_MOCHA.foreground,
+    chip_stopped: CATPPUCCIN_MOCHA.foreground,
+    chip_running: CATPPUCCIN_MOCHA.green,
+    chip_planning: CATPPUCCIN_MOCHA.magenta,
+    chip_discovering: CATPPUCCIN_MOCHA.blue,
+    chip_stopping: CATPPUCCIN_MOCHA.yellow,
+    chip_text: CATPPUCCIN_MOCHA.background,
+    run_mode_chip: CATPPUCCIN_MOCHA.foreground,
+    status_message: CATPPUCCIN_MOCHA.yellow,
+    status_key: CATPPUCCIN_MOCHA.foreground,
+    status_label: CATPPUCCIN_MOCHA.muted,
+    frame_title_builder: CATPPUCCIN_MOCHA.green,
+    frame_title_planner: CATPPUCCIN_MOCHA.magenta,
+    frame_title_research: CATPPUCCIN_MOCHA.blue,
+    frame_title_detail: CATPPUCCIN_MOCHA.muted,
+    pane_empty: CATPPUCCIN_MOCHA.muted,
+    task_done: CATPPUCCIN_MOCHA.muted,
+    task_running: CATPPUCCIN_MOCHA.green,
+    task_new: CATPPUCCIN_MOCHA.yellow,
+    tasks_empty: CATPPUCCIN_MOCHA.muted,
+    dialog_status: CATPPUCCIN_MOCHA.yellow,
+    cursor_foreground: CATPPUCCIN_MOCHA.background,
+    cursor_background: CATPPUCCIN_MOCHA.blue,
+    dialog_hint: CATPPUCCIN_MOCHA.muted,
+    choice_detail: CATPPUCCIN_MOCHA.muted,
+    modal_footer: CATPPUCCIN_MOCHA.muted,
+    button_accent: CATPPUCCIN_MOCHA.yellow,
+    settings_error: CATPPUCCIN_MOCHA.yellow,
+    settings_info: CATPPUCCIN_MOCHA.muted,
+    settings_readonly: CATPPUCCIN_MOCHA.muted,
+    settings_help: CATPPUCCIN_MOCHA.muted,
+    scrollbar_thumb: CATPPUCCIN_MOCHA.blue,
+    scrollbar_rail: CATPPUCCIN_MOCHA.muted,
+    rail_done: CATPPUCCIN_MOCHA.green,
+    rail_active: CATPPUCCIN_MOCHA.blue,
+    rail_muted: CATPPUCCIN_MOCHA.muted,
+    rail_connector: CATPPUCCIN_MOCHA.muted,
 };
 
 const CATPPUCCIN_LATTE: Palette = Palette {
@@ -525,6 +843,52 @@ const CATPPUCCIN_LATTE: Palette = Palette {
     magenta: (0x88, 0x39, 0xEF),
 };
 
+/// Light theme: the neutral chips take the foreground role so the
+/// background-role chip text reads on them. Latte's muted already clears
+/// [`READABLE_CONTRAST`], but its green and yellow fall short both as chip
+/// backgrounds under the chip text and as text on the background, so every
+/// green and yellow use takes a darkened literal of the role's hue.
+const CATPPUCCIN_LATTE_CHROME: Chrome = Chrome {
+    background: CATPPUCCIN_LATTE.background,
+    foreground: CATPPUCCIN_LATTE.foreground,
+    chip_stopped: CATPPUCCIN_LATTE.foreground,
+    chip_running: (0x3D, 0x98, 0x29),
+    chip_planning: CATPPUCCIN_LATTE.magenta,
+    chip_discovering: CATPPUCCIN_LATTE.blue,
+    chip_stopping: (0xBB, 0x77, 0x18),
+    chip_text: CATPPUCCIN_LATTE.background,
+    run_mode_chip: CATPPUCCIN_LATTE.foreground,
+    status_message: (0xBB, 0x77, 0x18),
+    status_key: CATPPUCCIN_LATTE.foreground,
+    status_label: CATPPUCCIN_LATTE.muted,
+    frame_title_builder: (0x3D, 0x98, 0x29),
+    frame_title_planner: CATPPUCCIN_LATTE.magenta,
+    frame_title_research: CATPPUCCIN_LATTE.blue,
+    frame_title_detail: CATPPUCCIN_LATTE.muted,
+    pane_empty: CATPPUCCIN_LATTE.muted,
+    task_done: CATPPUCCIN_LATTE.muted,
+    task_running: (0x3D, 0x98, 0x29),
+    task_new: (0xBB, 0x77, 0x18),
+    tasks_empty: CATPPUCCIN_LATTE.muted,
+    dialog_status: (0xBB, 0x77, 0x18),
+    cursor_foreground: CATPPUCCIN_LATTE.background,
+    cursor_background: CATPPUCCIN_LATTE.blue,
+    dialog_hint: CATPPUCCIN_LATTE.muted,
+    choice_detail: CATPPUCCIN_LATTE.muted,
+    modal_footer: CATPPUCCIN_LATTE.muted,
+    button_accent: (0xBB, 0x77, 0x18),
+    settings_error: (0xBB, 0x77, 0x18),
+    settings_info: CATPPUCCIN_LATTE.muted,
+    settings_readonly: CATPPUCCIN_LATTE.muted,
+    settings_help: CATPPUCCIN_LATTE.muted,
+    scrollbar_thumb: CATPPUCCIN_LATTE.blue,
+    scrollbar_rail: CATPPUCCIN_LATTE.muted,
+    rail_done: (0x3D, 0x98, 0x29),
+    rail_active: CATPPUCCIN_LATTE.blue,
+    rail_muted: CATPPUCCIN_LATTE.muted,
+    rail_connector: CATPPUCCIN_LATTE.muted,
+};
+
 const SOLARIZED_DARK: Palette = Palette {
     background: (0x00, 0x2B, 0x36),
     foreground: (0x83, 0x94, 0x96),
@@ -534,6 +898,50 @@ const SOLARIZED_DARK: Palette = Palette {
     yellow: (0xB5, 0x89, 0x00),
     blue: (0x26, 0x8B, 0xD2),
     magenta: (0xD3, 0x36, 0x82),
+};
+
+/// Only the neutral chips move to the foreground role; Solarized Dark's muted
+/// sits at the benchmark theme's dimness and its accents already clear
+/// [`READABLE_CONTRAST`].
+const SOLARIZED_DARK_CHROME: Chrome = Chrome {
+    background: SOLARIZED_DARK.background,
+    foreground: SOLARIZED_DARK.foreground,
+    chip_stopped: SOLARIZED_DARK.foreground,
+    chip_running: SOLARIZED_DARK.green,
+    chip_planning: SOLARIZED_DARK.magenta,
+    chip_discovering: SOLARIZED_DARK.blue,
+    chip_stopping: SOLARIZED_DARK.yellow,
+    chip_text: SOLARIZED_DARK.background,
+    run_mode_chip: SOLARIZED_DARK.foreground,
+    status_message: SOLARIZED_DARK.yellow,
+    status_key: SOLARIZED_DARK.foreground,
+    status_label: SOLARIZED_DARK.muted,
+    frame_title_builder: SOLARIZED_DARK.green,
+    frame_title_planner: SOLARIZED_DARK.magenta,
+    frame_title_research: SOLARIZED_DARK.blue,
+    frame_title_detail: SOLARIZED_DARK.muted,
+    pane_empty: SOLARIZED_DARK.muted,
+    task_done: SOLARIZED_DARK.muted,
+    task_running: SOLARIZED_DARK.green,
+    task_new: SOLARIZED_DARK.yellow,
+    tasks_empty: SOLARIZED_DARK.muted,
+    dialog_status: SOLARIZED_DARK.yellow,
+    cursor_foreground: SOLARIZED_DARK.background,
+    cursor_background: SOLARIZED_DARK.blue,
+    dialog_hint: SOLARIZED_DARK.muted,
+    choice_detail: SOLARIZED_DARK.muted,
+    modal_footer: SOLARIZED_DARK.muted,
+    button_accent: SOLARIZED_DARK.yellow,
+    settings_error: SOLARIZED_DARK.yellow,
+    settings_info: SOLARIZED_DARK.muted,
+    settings_readonly: SOLARIZED_DARK.muted,
+    settings_help: SOLARIZED_DARK.muted,
+    scrollbar_thumb: SOLARIZED_DARK.blue,
+    scrollbar_rail: SOLARIZED_DARK.muted,
+    rail_done: SOLARIZED_DARK.green,
+    rail_active: SOLARIZED_DARK.blue,
+    rail_muted: SOLARIZED_DARK.muted,
+    rail_connector: SOLARIZED_DARK.muted,
 };
 
 const SOLARIZED_LIGHT: Palette = Palette {
@@ -547,6 +955,52 @@ const SOLARIZED_LIGHT: Palette = Palette {
     magenta: (0xD3, 0x36, 0x82),
 };
 
+/// Light theme: the neutral chips take the foreground role so the
+/// background-role chip text reads on them, every text-bearing muted use
+/// takes a darkened muted literal, and the green and yellow — short both as
+/// chip backgrounds under the chip text and as text on the background — take
+/// darkened literals of their hues.
+const SOLARIZED_LIGHT_CHROME: Chrome = Chrome {
+    background: SOLARIZED_LIGHT.background,
+    foreground: SOLARIZED_LIGHT.foreground,
+    chip_stopped: SOLARIZED_LIGHT.foreground,
+    chip_running: (0x7C, 0x8F, 0x00),
+    chip_planning: SOLARIZED_LIGHT.magenta,
+    chip_discovering: SOLARIZED_LIGHT.blue,
+    chip_stopping: (0xAB, 0x81, 0x00),
+    chip_text: SOLARIZED_LIGHT.background,
+    run_mode_chip: SOLARIZED_LIGHT.foreground,
+    status_message: (0xAB, 0x81, 0x00),
+    status_key: SOLARIZED_LIGHT.foreground,
+    status_label: (0x76, 0x87, 0x87),
+    frame_title_builder: (0x7C, 0x8F, 0x00),
+    frame_title_planner: SOLARIZED_LIGHT.magenta,
+    frame_title_research: SOLARIZED_LIGHT.blue,
+    frame_title_detail: (0x76, 0x87, 0x87),
+    pane_empty: (0x76, 0x87, 0x87),
+    task_done: (0x76, 0x87, 0x87),
+    task_running: (0x7C, 0x8F, 0x00),
+    task_new: (0xAB, 0x81, 0x00),
+    tasks_empty: (0x76, 0x87, 0x87),
+    dialog_status: (0xAB, 0x81, 0x00),
+    cursor_foreground: SOLARIZED_LIGHT.background,
+    cursor_background: SOLARIZED_LIGHT.blue,
+    dialog_hint: (0x76, 0x87, 0x87),
+    choice_detail: (0x76, 0x87, 0x87),
+    modal_footer: (0x76, 0x87, 0x87),
+    button_accent: (0xAB, 0x81, 0x00),
+    settings_error: (0xAB, 0x81, 0x00),
+    settings_info: (0x76, 0x87, 0x87),
+    settings_readonly: (0x76, 0x87, 0x87),
+    settings_help: (0x76, 0x87, 0x87),
+    scrollbar_thumb: SOLARIZED_LIGHT.blue,
+    scrollbar_rail: SOLARIZED_LIGHT.muted,
+    rail_done: (0x7C, 0x8F, 0x00),
+    rail_active: SOLARIZED_LIGHT.blue,
+    rail_muted: (0x76, 0x87, 0x87),
+    rail_connector: (0x76, 0x87, 0x87),
+};
+
 const GRUVBOX_DARK: Palette = Palette {
     background: (0x28, 0x28, 0x28),
     foreground: (0xEB, 0xDB, 0xB2),
@@ -558,6 +1012,49 @@ const GRUVBOX_DARK: Palette = Palette {
     magenta: (0xD3, 0x86, 0x9B),
 };
 
+/// Only the neutral chips move to the foreground role; Gruvbox Dark's own
+/// muted and accents already clear [`READABLE_CONTRAST`] on its background.
+const GRUVBOX_DARK_CHROME: Chrome = Chrome {
+    background: GRUVBOX_DARK.background,
+    foreground: GRUVBOX_DARK.foreground,
+    chip_stopped: GRUVBOX_DARK.foreground,
+    chip_running: GRUVBOX_DARK.green,
+    chip_planning: GRUVBOX_DARK.magenta,
+    chip_discovering: GRUVBOX_DARK.blue,
+    chip_stopping: GRUVBOX_DARK.yellow,
+    chip_text: GRUVBOX_DARK.background,
+    run_mode_chip: GRUVBOX_DARK.foreground,
+    status_message: GRUVBOX_DARK.yellow,
+    status_key: GRUVBOX_DARK.foreground,
+    status_label: GRUVBOX_DARK.muted,
+    frame_title_builder: GRUVBOX_DARK.green,
+    frame_title_planner: GRUVBOX_DARK.magenta,
+    frame_title_research: GRUVBOX_DARK.blue,
+    frame_title_detail: GRUVBOX_DARK.muted,
+    pane_empty: GRUVBOX_DARK.muted,
+    task_done: GRUVBOX_DARK.muted,
+    task_running: GRUVBOX_DARK.green,
+    task_new: GRUVBOX_DARK.yellow,
+    tasks_empty: GRUVBOX_DARK.muted,
+    dialog_status: GRUVBOX_DARK.yellow,
+    cursor_foreground: GRUVBOX_DARK.background,
+    cursor_background: GRUVBOX_DARK.blue,
+    dialog_hint: GRUVBOX_DARK.muted,
+    choice_detail: GRUVBOX_DARK.muted,
+    modal_footer: GRUVBOX_DARK.muted,
+    button_accent: GRUVBOX_DARK.yellow,
+    settings_error: GRUVBOX_DARK.yellow,
+    settings_info: GRUVBOX_DARK.muted,
+    settings_readonly: GRUVBOX_DARK.muted,
+    settings_help: GRUVBOX_DARK.muted,
+    scrollbar_thumb: GRUVBOX_DARK.blue,
+    scrollbar_rail: GRUVBOX_DARK.muted,
+    rail_done: GRUVBOX_DARK.green,
+    rail_active: GRUVBOX_DARK.blue,
+    rail_muted: GRUVBOX_DARK.muted,
+    rail_connector: GRUVBOX_DARK.muted,
+};
+
 const GRUVBOX_LIGHT: Palette = Palette {
     background: (0xFB, 0xF1, 0xC7),
     foreground: (0x3C, 0x38, 0x36),
@@ -567,6 +1064,49 @@ const GRUVBOX_LIGHT: Palette = Palette {
     yellow: (0xB5, 0x76, 0x14),
     blue: (0x07, 0x66, 0x78),
     magenta: (0x8F, 0x3F, 0x71),
+};
+
+/// Only the neutral chips move to the foreground role; Gruvbox Light's own
+/// muted and accents already clear [`READABLE_CONTRAST`] on its background.
+const GRUVBOX_LIGHT_CHROME: Chrome = Chrome {
+    background: GRUVBOX_LIGHT.background,
+    foreground: GRUVBOX_LIGHT.foreground,
+    chip_stopped: GRUVBOX_LIGHT.foreground,
+    chip_running: GRUVBOX_LIGHT.green,
+    chip_planning: GRUVBOX_LIGHT.magenta,
+    chip_discovering: GRUVBOX_LIGHT.blue,
+    chip_stopping: GRUVBOX_LIGHT.yellow,
+    chip_text: GRUVBOX_LIGHT.background,
+    run_mode_chip: GRUVBOX_LIGHT.foreground,
+    status_message: GRUVBOX_LIGHT.yellow,
+    status_key: GRUVBOX_LIGHT.foreground,
+    status_label: GRUVBOX_LIGHT.muted,
+    frame_title_builder: GRUVBOX_LIGHT.green,
+    frame_title_planner: GRUVBOX_LIGHT.magenta,
+    frame_title_research: GRUVBOX_LIGHT.blue,
+    frame_title_detail: GRUVBOX_LIGHT.muted,
+    pane_empty: GRUVBOX_LIGHT.muted,
+    task_done: GRUVBOX_LIGHT.muted,
+    task_running: GRUVBOX_LIGHT.green,
+    task_new: GRUVBOX_LIGHT.yellow,
+    tasks_empty: GRUVBOX_LIGHT.muted,
+    dialog_status: GRUVBOX_LIGHT.yellow,
+    cursor_foreground: GRUVBOX_LIGHT.background,
+    cursor_background: GRUVBOX_LIGHT.blue,
+    dialog_hint: GRUVBOX_LIGHT.muted,
+    choice_detail: GRUVBOX_LIGHT.muted,
+    modal_footer: GRUVBOX_LIGHT.muted,
+    button_accent: GRUVBOX_LIGHT.yellow,
+    settings_error: GRUVBOX_LIGHT.yellow,
+    settings_info: GRUVBOX_LIGHT.muted,
+    settings_readonly: GRUVBOX_LIGHT.muted,
+    settings_help: GRUVBOX_LIGHT.muted,
+    scrollbar_thumb: GRUVBOX_LIGHT.blue,
+    scrollbar_rail: GRUVBOX_LIGHT.muted,
+    rail_done: GRUVBOX_LIGHT.green,
+    rail_active: GRUVBOX_LIGHT.blue,
+    rail_muted: GRUVBOX_LIGHT.muted,
+    rail_connector: GRUVBOX_LIGHT.muted,
 };
 
 /// The palette of a non-default theme key.
@@ -586,12 +1126,29 @@ fn palette_of(theme: ThemeKey) -> &'static Palette {
     }
 }
 
+/// The chrome table of a non-default theme key (T109.1).
+fn chrome_of(theme: ThemeKey) -> &'static Chrome {
+    match theme {
+        ThemeKey::AtomOneDark => &ATOM_ONE_DARK_CHROME,
+        ThemeKey::AtomOneLight => &ATOM_ONE_LIGHT_CHROME,
+        ThemeKey::TokyoNightDark => &TOKYO_NIGHT_DARK_CHROME,
+        ThemeKey::TokyoNightDay => &TOKYO_NIGHT_DAY_CHROME,
+        ThemeKey::CatppuccinMocha => &CATPPUCCIN_MOCHA_CHROME,
+        ThemeKey::CatppuccinLatte => &CATPPUCCIN_LATTE_CHROME,
+        ThemeKey::SolarizedDark => &SOLARIZED_DARK_CHROME,
+        ThemeKey::SolarizedLight => &SOLARIZED_LIGHT_CHROME,
+        ThemeKey::GruvboxDark => &GRUVBOX_DARK_CHROME,
+        ThemeKey::GruvboxLight => &GRUVBOX_LIGHT_CHROME,
+        ThemeKey::Dark => unreachable!("the default theme is Theme::DARK, not a palette"),
+    }
+}
+
 impl Palette {
-    /// Maps the palette's roles onto every semantic field of the model. The
-    /// same rule serves dark and light variants, so the renderers stay
-    /// variant-agnostic. Text on coloured chips, the cursor and buttons takes
-    /// the background colour for contrast in both directions.
-    fn theme(&self, truecolor: bool) -> Theme {
+    /// Emits the theme: the palette's own [`Chrome`] table (T109.1) supplies
+    /// every non-agent-text semantic field, and the palette's background fixes
+    /// the agent line colours (T108.1). The truecolor setting picks the
+    /// emission, exactly like the agent text roles.
+    fn theme(&self, chrome: &Chrome, truecolor: bool) -> Theme {
         let colour = |role: (u8, u8, u8)| {
             if truecolor {
                 Color::Rgb(role.0, role.1, role.2)
@@ -599,53 +1156,46 @@ impl Palette {
                 Color::Indexed(rgb_to_indexed(role))
             }
         };
-        let background = colour(self.background);
-        let muted = colour(self.muted);
-        let surface = colour(self.surface);
-        let green = colour(self.green);
-        let yellow = colour(self.yellow);
-        let blue = colour(self.blue);
-        let magenta = colour(self.magenta);
         Theme {
-            background,
-            foreground: colour(self.foreground),
-            chip_stopped: surface,
-            chip_running: green,
-            chip_planning: magenta,
-            chip_discovering: blue,
-            chip_stopping: yellow,
-            chip_text: background,
-            run_mode_chip: surface,
-            status_message: yellow,
-            status_key: surface,
-            status_label: muted,
+            background: colour(chrome.background),
+            foreground: colour(chrome.foreground),
+            chip_stopped: colour(chrome.chip_stopped),
+            chip_running: colour(chrome.chip_running),
+            chip_planning: colour(chrome.chip_planning),
+            chip_discovering: colour(chrome.chip_discovering),
+            chip_stopping: colour(chrome.chip_stopping),
+            chip_text: colour(chrome.chip_text),
+            run_mode_chip: colour(chrome.run_mode_chip),
+            status_message: colour(chrome.status_message),
+            status_key: colour(chrome.status_key),
+            status_label: colour(chrome.status_label),
             agent_text: AgentText::resolve(self.background, truecolor),
-            frame_title_builder: green,
-            frame_title_planner: magenta,
-            frame_title_research: blue,
-            frame_title_detail: muted,
-            pane_empty: muted,
-            task_done: muted,
-            task_running: green,
-            task_new: yellow,
-            tasks_empty: muted,
-            dialog_status: yellow,
-            cursor_foreground: background,
-            cursor_background: blue,
-            dialog_hint: muted,
-            choice_detail: muted,
-            modal_footer: muted,
-            button_accent: yellow,
-            settings_error: yellow,
-            settings_info: muted,
-            settings_readonly: muted,
-            settings_help: muted,
-            scrollbar_thumb: blue,
-            scrollbar_rail: muted,
-            rail_done: green,
-            rail_active: blue,
-            rail_muted: muted,
-            rail_connector: muted,
+            frame_title_builder: colour(chrome.frame_title_builder),
+            frame_title_planner: colour(chrome.frame_title_planner),
+            frame_title_research: colour(chrome.frame_title_research),
+            frame_title_detail: colour(chrome.frame_title_detail),
+            pane_empty: colour(chrome.pane_empty),
+            task_done: colour(chrome.task_done),
+            task_running: colour(chrome.task_running),
+            task_new: colour(chrome.task_new),
+            tasks_empty: colour(chrome.tasks_empty),
+            dialog_status: colour(chrome.dialog_status),
+            cursor_foreground: colour(chrome.cursor_foreground),
+            cursor_background: colour(chrome.cursor_background),
+            dialog_hint: colour(chrome.dialog_hint),
+            choice_detail: colour(chrome.choice_detail),
+            modal_footer: colour(chrome.modal_footer),
+            button_accent: colour(chrome.button_accent),
+            settings_error: colour(chrome.settings_error),
+            settings_info: colour(chrome.settings_info),
+            settings_readonly: colour(chrome.settings_readonly),
+            settings_help: colour(chrome.settings_help),
+            scrollbar_thumb: colour(chrome.scrollbar_thumb),
+            scrollbar_rail: colour(chrome.scrollbar_rail),
+            rail_done: colour(chrome.rail_done),
+            rail_active: colour(chrome.rail_active),
+            rail_muted: colour(chrome.rail_muted),
+            rail_connector: colour(chrome.rail_connector),
         }
     }
 }
@@ -974,6 +1524,214 @@ mod tests {
                     "{key:?} {kind:?} reaches only {ratio} against the background"
                 );
             }
+        }
+    }
+
+    /// Every chrome semantic field of a theme, in a fixed order matching the
+    /// [`Chrome`] struct, for the per-theme table checks.
+    fn every_chrome_field(theme: &Theme) -> Vec<Color> {
+        vec![
+            theme.background,
+            theme.foreground,
+            theme.chip_stopped,
+            theme.chip_running,
+            theme.chip_planning,
+            theme.chip_discovering,
+            theme.chip_stopping,
+            theme.chip_text,
+            theme.run_mode_chip,
+            theme.status_message,
+            theme.status_key,
+            theme.status_label,
+            theme.frame_title_builder,
+            theme.frame_title_planner,
+            theme.frame_title_research,
+            theme.frame_title_detail,
+            theme.pane_empty,
+            theme.task_done,
+            theme.task_running,
+            theme.task_new,
+            theme.tasks_empty,
+            theme.dialog_status,
+            theme.cursor_foreground,
+            theme.cursor_background,
+            theme.dialog_hint,
+            theme.choice_detail,
+            theme.modal_footer,
+            theme.button_accent,
+            theme.settings_error,
+            theme.settings_info,
+            theme.settings_readonly,
+            theme.settings_help,
+            theme.scrollbar_thumb,
+            theme.scrollbar_rail,
+            theme.rail_done,
+            theme.rail_active,
+            theme.rail_muted,
+            theme.rail_connector,
+        ]
+    }
+
+    /// Every non-agent-text semantic field resolves from the theme's own
+    /// [`Chrome`] table (T109.1): a theme that silently fell back to a shared
+    /// mapping rule would fail this. A field added to `Theme` without a
+    /// `Chrome` counterpart fails to compile. The agent text fields are
+    /// asserted separately above (T108.1). Checked in truecolor mode; the
+    /// 256-colour mode derives from the same triples.
+    #[test]
+    fn chrome_mapping_is_per_theme() {
+        for key in every_key().into_iter().filter(|key| *key != ThemeKey::Dark) {
+            let theme = Theme::resolve(key, Some(true));
+            let chrome = chrome_of(key);
+            let expected = [
+                chrome.background,
+                chrome.foreground,
+                chrome.chip_stopped,
+                chrome.chip_running,
+                chrome.chip_planning,
+                chrome.chip_discovering,
+                chrome.chip_stopping,
+                chrome.chip_text,
+                chrome.run_mode_chip,
+                chrome.status_message,
+                chrome.status_key,
+                chrome.status_label,
+                chrome.frame_title_builder,
+                chrome.frame_title_planner,
+                chrome.frame_title_research,
+                chrome.frame_title_detail,
+                chrome.pane_empty,
+                chrome.task_done,
+                chrome.task_running,
+                chrome.task_new,
+                chrome.tasks_empty,
+                chrome.dialog_status,
+                chrome.cursor_foreground,
+                chrome.cursor_background,
+                chrome.dialog_hint,
+                chrome.choice_detail,
+                chrome.modal_footer,
+                chrome.button_accent,
+                chrome.settings_error,
+                chrome.settings_info,
+                chrome.settings_readonly,
+                chrome.settings_help,
+                chrome.scrollbar_thumb,
+                chrome.scrollbar_rail,
+                chrome.rail_done,
+                chrome.rail_active,
+                chrome.rail_muted,
+                chrome.rail_connector,
+            ];
+            for (got, want) in every_chrome_field(&theme).into_iter().zip(expected) {
+                assert_eq!(
+                    got,
+                    Color::Rgb(want.0, want.1, want.2),
+                    "{key:?} chrome field must resolve from its per-theme table"
+                );
+            }
+        }
+    }
+
+    /// The one chip text reads on every chip background of every theme except
+    /// the benchmark: after the per-theme retune (T109.1) each of the seven
+    /// chip backgrounds reaches [`READABLE_CONTRAST`] under the shared
+    /// `chip_text`. Tokyo Night Dark is exempt because its look is the
+    /// snapshot-locked benchmark the other themes are tuned to reach.
+    #[test]
+    fn chip_text_reads_on_every_chip_background() {
+        for key in every_key()
+            .into_iter()
+            .filter(|key| !matches!(key, ThemeKey::Dark | ThemeKey::TokyoNightDark))
+        {
+            let chrome = chrome_of(key);
+            for chip in [
+                chrome.chip_stopped,
+                chrome.chip_running,
+                chrome.chip_planning,
+                chrome.chip_discovering,
+                chrome.chip_stopping,
+                chrome.run_mode_chip,
+                chrome.status_key,
+            ] {
+                let ratio = contrast_ratio(chrome.chip_text, chip);
+                assert!(
+                    ratio >= READABLE_CONTRAST,
+                    "{key:?} chip text reaches only {ratio} on a chip background"
+                );
+            }
+        }
+    }
+
+    /// The block cursor's foreground reads on its background in every theme
+    /// except the benchmark (the same snapshot-locked exemption as the chip
+    /// test above).
+    #[test]
+    fn cursor_foreground_reads_on_cursor_background() {
+        for key in every_key()
+            .into_iter()
+            .filter(|key| !matches!(key, ThemeKey::Dark | ThemeKey::TokyoNightDark))
+        {
+            let chrome = chrome_of(key);
+            let ratio = contrast_ratio(chrome.cursor_foreground, chrome.cursor_background);
+            assert!(
+                ratio >= READABLE_CONTRAST,
+                "{key:?} cursor foreground reaches only {ratio} on the cursor background"
+            );
+        }
+    }
+
+    /// Every light theme's chrome text reads on its background (T109.1): all
+    /// text-bearing fields reach [`READABLE_CONTRAST`] and the decorative
+    /// scrollbar fields merely differ from it. Scoped to the light variants
+    /// deliberately: dim muted text is an accepted aesthetic on the dark
+    /// themes, where the benchmark theme itself sits near the threshold.
+    #[test]
+    fn light_theme_chrome_text_is_readable() {
+        for key in [
+            ThemeKey::AtomOneLight,
+            ThemeKey::TokyoNightDay,
+            ThemeKey::CatppuccinLatte,
+            ThemeKey::SolarizedLight,
+            ThemeKey::GruvboxLight,
+        ] {
+            let chrome = chrome_of(key);
+            let text_fields = [
+                ("foreground", chrome.foreground),
+                ("status_label", chrome.status_label),
+                ("status_message", chrome.status_message),
+                ("frame_title_builder", chrome.frame_title_builder),
+                ("frame_title_planner", chrome.frame_title_planner),
+                ("frame_title_research", chrome.frame_title_research),
+                ("frame_title_detail", chrome.frame_title_detail),
+                ("pane_empty", chrome.pane_empty),
+                ("task_done", chrome.task_done),
+                ("task_running", chrome.task_running),
+                ("task_new", chrome.task_new),
+                ("tasks_empty", chrome.tasks_empty),
+                ("dialog_status", chrome.dialog_status),
+                ("dialog_hint", chrome.dialog_hint),
+                ("choice_detail", chrome.choice_detail),
+                ("modal_footer", chrome.modal_footer),
+                ("button_accent", chrome.button_accent),
+                ("settings_error", chrome.settings_error),
+                ("settings_info", chrome.settings_info),
+                ("settings_readonly", chrome.settings_readonly),
+                ("settings_help", chrome.settings_help),
+                ("rail_done", chrome.rail_done),
+                ("rail_active", chrome.rail_active),
+                ("rail_muted", chrome.rail_muted),
+                ("rail_connector", chrome.rail_connector),
+            ];
+            for (field, text) in text_fields {
+                let ratio = contrast_ratio(text, chrome.background);
+                assert!(
+                    ratio >= READABLE_CONTRAST,
+                    "{key:?} {field} reaches only {ratio} on the background"
+                );
+            }
+            assert_ne!(chrome.scrollbar_thumb, chrome.background);
+            assert_ne!(chrome.scrollbar_rail, chrome.background);
         }
     }
 
