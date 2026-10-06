@@ -521,8 +521,8 @@ fn the_save_path_persists_the_theme_a_fresh_load_resolves() {
     assert_eq!(shell.settings().theme, ThemeKey::CatppuccinLatte);
 }
 
-/// The picker's screen: the eleven built-ins, the selection marker, the swatch
-/// strips and the footer hints.
+/// The picker's screen: the eleven built-ins, the selection marker and the
+/// footer hints.
 #[test]
 fn the_picker_with_the_selection_on_a_dark_theme() {
     let mut app = open();

@@ -859,7 +859,7 @@ pub fn theme_row_at(position: Position, body: Rect) -> Option<usize> {
 
 /// The theme picker (the `t` key, T43.1): a centered " Theme " modal listing
 /// the built-in themes, each row rendered in its own theme's colours with a
-/// short colour-swatch strip, a selection marker and a two-zone bottom line
+/// selection marker and a two-zone bottom line
 /// of hints left, buttons right (T59.1).
 /// Rendered on top of everything else; the shell underneath is already
 /// recoloured by the live preview, since `App::theme` resolves it.
@@ -897,8 +897,7 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
 }
 
 /// One theme entry of the picker (T43.1): the name padded to the list's longest
-/// name and a swatch strip of three cells in each of the theme's signature
-/// colours, all on the entry theme's own background and foreground, so the row
+/// name, on the entry theme's own background and foreground, so the row
 /// previews the theme itself. The selected row carries the marker and renders
 /// bold.
 fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
@@ -906,23 +905,10 @@ fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
     let selected = index == app.theme_modal.selected;
     let marker = if selected { "▶ " } else { "  " };
     let width = THEME_KEYS.iter().map(|name| name.len()).max().unwrap_or(0);
-    let mut spans = vec![
+    let spans = vec![
         Span::raw(marker),
         Span::styled(format!("{name:<width$}"), Style::new().fg(entry.foreground)),
-        Span::raw("  "),
     ];
-    for colour in [
-        entry.agent_text.thinking,
-        entry.success,
-        entry.agent_text.notice,
-        entry.agent_text.error,
-        entry.agent_text.heading,
-    ] {
-        spans.push(Span::styled(
-            "███",
-            Style::new().fg(colour).bg(entry.background),
-        ));
-    }
     let mut line = Line::from(spans).style(base_style(entry));
     if selected {
         line = line.style(base_style(entry).add_modifier(Modifier::BOLD));

@@ -8,17 +8,17 @@ expression: "draw(&app, 80, 24)"
 [   Plan    ]│                                                                 │
       ↓      │                                                                 │
 [   Build   ]┌────────────────────── Theme ──────────────── [ x ] ┐            │
-      ↓      │  dark              ███████████████                 │────────────┘
-[  Review   ]│▶ atom_one_dark     ███████████████                 │────────────┐
-             │  atom_one_light    ███████████████                 │            │
-[   Ship    ]│  tokyo_night_dark  ███████████████                 │            │
-[ Discover  ]│  tokyo_night_day   ███████████████                 │            │
-[ Learnings ]│  catppuccin_mocha  ███████████████                 │            │
-             │  catppuccin_latte  ███████████████                 │            │
-             │  solarized_dark    ███████████████                 │            │
-             │  solarized_light   ███████████████                 │            │
-             │  gruvbox_dark      ███████████████                 │            │
-             │  gruvbox_light     ███████████████                 │            │
+      ↓      │  dark                                              │────────────┘
+[  Review   ]│▶ atom_one_dark                                     │────────────┐
+             │  atom_one_light                                    │            │
+[   Ship    ]│  tokyo_night_dark                                  │            │
+[ Discover  ]│  tokyo_night_day                                   │            │
+[ Learnings ]│  catppuccin_mocha                                  │            │
+             │  catppuccin_latte                                  │            │
+             │  solarized_dark                                    │            │
+             │  solarized_light                                   │            │
+             │  gruvbox_dark                                      │            │
+             │  gruvbox_light                                     │            │
              │ ↑↓/jk previews      [ Enter ] Save  [ Esc ] Cancel │            │
              └────────────────────────────────────────────────────┘            │
              │                                                                 │
