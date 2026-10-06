@@ -11,9 +11,11 @@ use std::time::Duration;
 
 use crate::app::{App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOICES};
 use crate::markdown::markdown_lines;
-use crate::overlay::{Entry, FieldKind, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset};
+use crate::overlay::{
+    Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset,
+};
 use crate::pipeline::{rail_width, render_rail};
-use crate::theme::{Theme, theme_modal_keys};
+use crate::theme::{Theme, theme_modal_groups};
 
 /// Entry rows indent this many spaces past the focus marker, nesting them under
 /// their section header; headers keep the bare marker margin.
@@ -522,13 +524,29 @@ fn render_settings_confirm(frame: &mut Frame, app: &App) {
     );
 }
 
+/// One group header line: the focus marker, the fold glyph (▾ expanded, ▸
+/// folded) and the title, bold -- shared by the settings overlay's sections
+/// and the theme picker's Dark/Light groups (T116.1), so the fold glyph
+/// logic exists in one place.
+fn group_header_line(marker: &str, expanded: bool, title: &str) -> Line<'static> {
+    Line::styled(
+        format!("{marker}{} {title}", if expanded { '▾' } else { '▸' }),
+        Style::new().add_modifier(Modifier::BOLD),
+    )
+}
+
 /// One overlay row as a rendered line: section headers carry the collapse marker,
 /// booleans a checkbox, enums their current choice in cycle markers, numbers and text
 /// their value (or the live editor buffer while it is open), read-only rows a muted
 /// report. Entry rows render indented past the focus marker so they nest under their
 /// section header; headers keep the bare marker margin. The
 /// focused row carries a cursor marker and renders bold.
-fn settings_row_line(app: &App, index: usize, entry: &Entry, width: usize) -> Line<'static> {
+fn settings_row_line(
+    app: &App,
+    index: usize,
+    entry: &Entry<&'static Row>,
+    width: usize,
+) -> Line<'static> {
     let theme = app.theme();
     let focused = index == app.overlay.focus;
     let marker = if focused { "▶ " } else { "  " };
@@ -540,10 +558,7 @@ fn settings_row_line(app: &App, index: usize, entry: &Entry, width: usize) -> Li
                 .get(*section)
                 .map(|section| section.title)
                 .unwrap_or_default();
-            Line::styled(
-                format!("{marker}{} {title}", if expanded { '▾' } else { '▸' }),
-                Style::new().add_modifier(Modifier::BOLD),
-            )
+            group_header_line(marker, expanded, title)
         }
         Entry::Row(row) => {
             let editor = app
@@ -832,12 +847,13 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
     );
 }
 
-/// The theme picker's rect (T43.1): a centered modal, at least 54 columns wide
-/// and 14 rows tall -- the border, the eleven one-line entries and the footer
-/// -- clamped to the screen.
+/// The theme picker's rect (T43.1, T116.1): a centered modal, at least 54
+/// columns wide and tall enough for its full grouped list -- the border (2),
+/// the two group headers, the eleven one-line entries (13 body rows) and the
+/// footer (1), so 16 -- clamped to the screen.
 pub fn theme_area(screen: Rect) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
-    let height = 14.min(screen.height);
+    let height = 16.min(screen.height);
     Rect::new(
         screen.x + (screen.width - width) / 2,
         screen.y + (screen.height - height) / 2,
@@ -846,23 +862,27 @@ pub fn theme_area(screen: Rect) -> Rect {
     )
 }
 
-/// The theme picker's row the pointer sits on (T43.1): the row index when the
-/// position is on one of the body's entry rows, `None` on the border, the
-/// footer or the shell behind the modal. A pure hit-test like `frame_at`.
-pub fn theme_row_at(position: Position, body: Rect) -> Option<usize> {
+/// The theme picker's entry the pointer sits on (T43.1, T116.1): the visible
+/// entry index when the position is on one of the body's visible entry rows,
+/// `None` on the border, the footer, the shell behind the modal or a body row
+/// past the last visible entry (a folded group's hidden area). A pure
+/// hit-test like `frame_at`.
+pub fn theme_row_at(position: Position, body: Rect, visible_len: usize) -> Option<usize> {
     if !body.contains(position) {
         return None;
     }
     let row = usize::from(position.y - body.y);
-    (row < theme_modal_keys().len()).then_some(row)
+    (row < visible_len).then_some(row)
 }
 
-/// The theme picker (the `t` key, T43.1): a centered " Theme " modal listing
-/// the built-in themes as a normal list, every row rendered in the currently
-/// active theme's classes (T115.1), with a selection marker and a two-zone
-/// bottom line of hints left, buttons right (T59.1).
-/// Rendered on top of everything else; the shell underneath is already
-/// recoloured by the live preview, since `App::theme` resolves it.
+/// The theme picker (the `t` key, T43.1, T116.1): a centered " Theme " modal
+/// listing the built-in themes in two collapsible groups, Dark then Light,
+/// mirroring the settings overlay's grouped list -- each header carries the
+/// fold glyph and toggles its group, the entries nest indented under it.
+/// Every row renders in the currently active theme's classes (T115.1), with
+/// a selection marker and a two-zone bottom line of hints left, buttons
+/// right (T59.1). Rendered on top of everything else; the shell underneath
+/// is already recoloured by the live preview, since `App::theme` resolves it.
 fn render_theme_modal(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = theme_area(frame.area());
@@ -877,10 +897,18 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     app.theme_modal.area.set(body);
-    let lines: Vec<Line> = theme_modal_keys()
+    let groups = theme_modal_groups();
+    let entries = app.theme_modal.entries();
+    let width = groups
+        .iter()
+        .flat_map(|(_, names)| names.iter())
+        .map(|name| name.len())
+        .max()
+        .unwrap_or(0);
+    let lines: Vec<Line> = entries
         .iter()
         .enumerate()
-        .map(|(index, name)| theme_row_line(app, index, name))
+        .map(|(index, entry)| theme_row_line(app, index, *entry, &groups, width))
         .collect();
     frame.render_widget(Paragraph::new(lines), body);
     // The bottom line's two zones (T59.1): the preview hints on the left, the
@@ -896,33 +924,64 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
     );
 }
 
-/// One theme entry of the picker (T43.1, T115.1): the name padded to the list's
-/// longest name, rendered as a normal list row in the currently active theme's
-/// classes instead of previewing the entry's own palette. The selected row
-/// carries the marker and renders its name in `highlighted_text`, bold.
-fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
+/// One visible entry of the picker (T43.1, T115.1, T116.1): a group header
+/// line -- the marker, the fold glyph and the title, bold -- or a theme
+/// entry, the name indented under its header and padded to the list's
+/// longest name, rendered as a normal list row in the currently active
+/// theme's classes instead of previewing the entry's own palette. The
+/// selected entry carries the marker and renders in `highlighted_text`,
+/// bold.
+fn theme_row_line(
+    app: &App,
+    index: usize,
+    entry: Entry<&'static str>,
+    groups: &[(&'static str, Vec<&'static str>)],
+    width: usize,
+) -> Line<'static> {
     let theme = app.theme();
     let selected = index == app.theme_modal.selected;
     let marker = if selected { "▶ " } else { "  " };
-    let width = theme_modal_keys()
-        .iter()
-        .map(|name| name.len())
-        .max()
-        .unwrap_or(0);
-    let fg = if selected {
-        theme.highlighted_text
-    } else {
-        theme.normal_text
-    };
-    let spans = vec![
-        Span::styled(marker, Style::new().fg(fg)),
-        Span::styled(format!("{name:<width$}"), Style::new().fg(fg)),
-    ];
-    let mut line = Line::from(spans).style(base_style(theme));
-    if selected {
-        line = line.style(base_style(theme).add_modifier(Modifier::BOLD));
+    match entry {
+        Entry::Header(group) => {
+            let (title, expanded) = groups
+                .get(group)
+                .map(|(title, _)| {
+                    (
+                        *title,
+                        app.theme_modal
+                            .expanded
+                            .get(group)
+                            .copied()
+                            .unwrap_or(false),
+                    )
+                })
+                .unwrap_or(("", false));
+            let fg = if selected {
+                theme.highlighted_text
+            } else {
+                theme.foreground
+            };
+            group_header_line(marker, expanded, title)
+                .style(base_style(theme).fg(fg).add_modifier(Modifier::BOLD))
+        }
+        Entry::Row(name) => {
+            let fg = if selected {
+                theme.highlighted_text
+            } else {
+                theme.normal_text
+            };
+            let row_marker = format!("{marker}{}", " ".repeat(ENTRY_INDENT));
+            let spans = vec![
+                Span::styled(row_marker, Style::new().fg(fg)),
+                Span::styled(format!("{name:<width$}"), Style::new().fg(fg)),
+            ];
+            let mut line = Line::from(spans).style(base_style(theme));
+            if selected {
+                line = line.style(base_style(theme).add_modifier(Modifier::BOLD));
+            }
+            line
+        }
     }
-    line
 }
 
 /// The provider's display name for the output frame title ("claude" -> "Claude").

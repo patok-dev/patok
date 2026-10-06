@@ -981,20 +981,18 @@ fn truecolor_detected() -> bool {
         .unwrap_or(false)
 }
 
-/// The theme picker modal's row order (T114.1): [`THEME_KEYS`] grouped by
-/// [`ThemeKey::is_dark`] into one contiguous dark block followed by one
-/// contiguous light block, so the picker reads dark-then-light instead of
-/// alternating. Derived from the classification, never from hardcoded indexes;
-/// the stable partition keeps each block's `THEME_KEYS` relative order.
-/// `THEME_KEYS` itself stays the settings overlay's cycle order.
-pub fn theme_modal_keys() -> Vec<&'static str> {
+/// The theme picker modal's two groups (T114.1, T116.1): [`THEME_KEYS`]
+/// classified by [`ThemeKey::is_dark`] into a "Dark" group followed by a
+/// "Light" group, each a collapsible section of the picker. Derived from the
+/// classification, never from hardcoded indexes; the stable partition keeps
+/// each group's `THEME_KEYS` relative order. `THEME_KEYS` itself stays the
+/// settings overlay's cycle order.
+pub fn theme_modal_groups() -> [(&'static str, Vec<&'static str>); 2] {
     let (dark, light): (Vec<_>, Vec<_>) = patok_core::config::THEME_KEYS
         .iter()
         .copied()
         .partition(|name| ThemeKey::parse(name).is_some_and(ThemeKey::is_dark));
-    let mut keys = dark;
-    keys.extend(light);
-    keys
+    [("Dark", dark), ("Light", light)]
 }
 
 #[cfg(test)]
@@ -1534,33 +1532,37 @@ mod tests {
         assert_eq!(ThemeKey::parse("solarized"), None);
     }
 
-    /// The picker's list (T114.1) covers every built-in exactly once and puts
-    /// every dark theme before every light theme: one contiguous dark block,
-    /// then one contiguous light block.
+    /// The picker's groups (T114.1, T116.1) cover every built-in exactly once:
+    /// the first group is titled Dark and holds every dark theme, the second
+    /// is titled Light and holds every light theme.
     #[test]
-    fn the_modal_list_groups_dark_before_light() {
-        let keys = theme_modal_keys();
-        assert_eq!(keys.len(), THEME_KEYS.len());
-        // The same multiset: every built-in appears exactly once.
-        let mut sorted = keys.clone();
-        sorted.sort_unstable();
+    fn the_modal_groups_cover_every_theme_exactly_once() {
+        let groups = theme_modal_groups();
+        assert_eq!(groups[0].0, "Dark");
+        assert_eq!(groups[1].0, "Light");
+        assert!(!groups[0].1.is_empty());
+        assert!(!groups[1].1.is_empty());
+        // The same multiset across both groups: every built-in appears exactly once.
+        let mut all: Vec<&str> = groups[0]
+            .1
+            .iter()
+            .chain(groups[1].1.iter())
+            .copied()
+            .collect();
+        assert_eq!(all.len(), THEME_KEYS.len());
+        all.sort_unstable();
         let mut expected = THEME_KEYS.to_vec();
         expected.sort_unstable();
-        assert_eq!(sorted, expected);
-        // A single dark-to-light boundary: everything before the first light
-        // entry is dark, everything from it on is light.
+        assert_eq!(all, expected);
+        // The classification lands every entry in the group it belongs to.
         let is_dark = |name: &str| ThemeKey::parse(name).is_some_and(ThemeKey::is_dark);
-        let light_start = keys
-            .iter()
-            .position(|name| !is_dark(name))
-            .expect("a light theme exists");
         assert!(
-            keys[..light_start].iter().all(|name| is_dark(name)),
-            "every entry before the first light theme is dark"
+            groups[0].1.iter().all(|name| is_dark(name)),
+            "every entry under Dark is dark"
         );
         assert!(
-            keys[light_start..].iter().all(|name| !is_dark(name)),
-            "every entry from the first light theme on is light"
+            groups[1].1.iter().all(|name| !is_dark(name)),
+            "every entry under Light is light"
         );
     }
 

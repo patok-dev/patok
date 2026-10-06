@@ -6,22 +6,22 @@ expression: "draw(&app, 80, 24)"
 [ Research  ]│no output yet                                                    │
       ↓      │                                                                 │
 [   Plan    ]│                                                                 │
-      ↓      │                                                                 │
-[   Build   ]┌────────────────────── Theme ──────────────── [ x ] ┐            │
-      ↓      │  dark                                              │────────────┘
-[  Review   ]│▶ atom_one_dark                                     │────────────┐
-             │  tokyo_night_dark                                  │            │
-[   Ship    ]│  catppuccin_mocha                                  │            │
-[ Discover  ]│  solarized_dark                                    │            │
-[ Learnings ]│  gruvbox_dark                                      │            │
-             │  atom_one_light                                    │            │
-             │  tokyo_night_day                                   │            │
-             │  catppuccin_latte                                  │            │
-             │  solarized_light                                   │            │
-             │  gruvbox_light                                     │            │
+      ↓      ┌────────────────────── Theme ──────────────── [ x ] ┐            │
+[   Build   ]│  ▾ Dark                                            │            │
+      ↓      │      dark                                          │────────────┘
+[  Review   ]│▶     atom_one_dark                                 │────────────┐
+             │      tokyo_night_dark                              │            │
+[   Ship    ]│      catppuccin_mocha                              │            │
+[ Discover  ]│      solarized_dark                                │            │
+[ Learnings ]│      gruvbox_dark                                  │            │
+             │  ▾ Light                                           │            │
+             │      atom_one_light                                │            │
+             │      tokyo_night_day                               │            │
+             │      catppuccin_latte                              │            │
+             │      solarized_light                               │            │
+             │      gruvbox_light                                 │            │
              │ ↑↓/jk previews      [ Enter ] Save  [ Esc ] Cancel │            │
              └────────────────────────────────────────────────────┘            │
-             │                                                                 │
              │                                                                 │
              │ a add tasks · i inject task · Enter start build · ↑↓ scroll     │
              └─────────────────────────────────────────────────────────────────┘

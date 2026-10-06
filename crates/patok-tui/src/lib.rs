@@ -17,7 +17,8 @@ pub use app::{Action, App, DialogKind, FrameFocus, QueueRun, SOFT_STOP_PENDING, 
 pub use headless::{HeadlessOutcome, run_until};
 pub use overlay::{
     Editor, Entry, FieldKind, Number, Row, SCROLL_MARGIN, SETTINGS_CHOICES, Schema, Section,
-    SettingsChoice, SettingsOverlay, StatusLevel, scroll_offset,
+    SettingsChoice, SettingsOverlay, StatusLevel, clamp_focus, group_entries, header_fold,
+    scroll_offset,
 };
 pub use pipeline::{
     RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width, render_rail,
@@ -25,7 +26,7 @@ pub use pipeline::{
 };
 pub use run::{Outcome, Spawner, restart, run, save_theme, shutdown_progress};
 pub use settings::{ShellSettings, to_proto};
-pub use theme::{AgentText, Theme, theme_modal_keys};
+pub use theme::{AgentText, Theme, theme_modal_groups};
 pub use ui::{
     CLOSE_BUTTON_WIDTH, DIALOG_WATERMARK, INJECT_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH,
     SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH, button_text, close_button_rect,
