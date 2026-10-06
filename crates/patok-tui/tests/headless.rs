@@ -28,6 +28,7 @@ fn setup() -> Setup {
         discovery_cooldown: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN,
         discovery_cooldown_cap: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN_CAP,
         plan_enabled: false,
+        run_mode: patok_core::config::RunMode::Sprint,
         skip_research_for_simple: true,
         review_in_loop: false,
         review_history: data.path().join("review-history.json"),
@@ -174,6 +175,7 @@ async fn forces_sprint_and_restores_the_previous_mode() {
     );
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![Step::Event(AgentEvent::Result { text: "ok".into() })]);
+    let recorded = provider.clone();
     let engine = Engine::configured_with_env(
         setup.config.clone(),
         &patok_core::config::DaemonEnv::default(),
@@ -185,6 +187,16 @@ async fn forces_sprint_and_restores_the_previous_mode() {
     let (outcome, buffer) = run_headless(client).await;
 
     assert_eq!(outcome, patok_tui::HeadlessOutcome::Completed);
+    // The forced sprint mode skips the scheduled discovery round the continuous
+    // mode would run on the emptied queue (T103.1): exactly the task's own
+    // builder session ran, and no discovery line reached the output.
+    let recorded_sessions = recorded.sessions();
+    let labels: Vec<_> = recorded_sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1"], "no discovery session may run: {labels:?}");
+    assert!(
+        !buffer.contains("Discovery started"),
+        "no discovery lifecycle line: {buffer}"
+    );
     let forced = buffer
         .find("Setting `run_mode` changed to `sprint`")
         .expect(&buffer);

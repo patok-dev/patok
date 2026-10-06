@@ -37,6 +37,9 @@ fn defaults_config(fixture: &Fixture) -> EngineConfig {
     let mut config = fixture.config_for(true);
     config.agent_timeout = EngineConfig::DEFAULT_AGENT_TIMEOUT;
     config.idle_shutdown = EngineConfig::DEFAULT_IDLE_SHUTDOWN;
+    // The file default for the run mode is sprint (the fixture's continuous
+    // default is for the scheduled-round tests, T103.1).
+    config.run_mode = RunMode::Sprint;
     config
 }
 
@@ -213,8 +216,14 @@ async fn a_hand_edited_config_file_is_picked_up_by_the_reload() {
 #[tokio::test]
 async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     let fixture = Fixture::new("- [ ] T1.1: fix the first\n");
-    // The plan stage off, so the build sessions stay plain builder sessions.
-    std::fs::write(fixture.project_config(), "[daemon]\nplan_enabled = false\n").unwrap();
+    // The plan stage off, so the build sessions stay plain builder sessions;
+    // continuous mode so the session's empty end still runs the scheduled
+    // discovery round on the old unit (T103.1).
+    std::fs::write(
+        fixture.project_config(),
+        "[daemon]\nplan_enabled = false\nrun_mode = \"continuous\"\n",
+    )
+    .unwrap();
     let claude = MockProvider::per_session(vec![
         // The first builder session is still running when the settings change lands.
         vec![
@@ -326,12 +335,13 @@ async fn attach_reports_the_daemon_settings_readout() {
     let attachment = engine.attach().unwrap();
 
     // Every registry field is reported with its effective value, not the file defaults:
-    // the engine was seeded from its config here.
+    // the engine was seeded from its config here -- the fixture seeds continuous
+    // (T103.1), while the file default is sprint.
     let readout = &attachment.snapshot.settings;
     assert!(!readout.is_empty());
     assert_eq!(
         readout.get("run_mode"),
-        Some(&SettingValue::Str("sprint".into()))
+        Some(&SettingValue::Str("continuous".into()))
     );
     assert_eq!(
         readout.get("agent_timeout_secs"),

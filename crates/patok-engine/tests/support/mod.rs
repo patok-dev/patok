@@ -5,6 +5,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+use patok_core::config::RunMode;
 use patok_core::event::EngineEvent;
 use patok_engine::{Engine, EngineConfig};
 use patok_providers::Provider;
@@ -68,6 +69,8 @@ impl Fixture {
     /// The config with the plan stage and the research-skip key set (T68.1).
     /// The review stage is off, so the existing tests keep their exact session
     /// counts and task lines; the review tests turn it on (T70.1).
+    /// The run mode is continuous, the mode the scheduled discovery round
+    /// belongs to (T103.1); the sprint tests opt out via [`Fixture::config_sprint`].
     pub fn config_full(&self, plan_enabled: bool, skip_research_for_simple: bool) -> EngineConfig {
         EngineConfig {
             project_dir: self.path().to_path_buf(),
@@ -78,11 +81,25 @@ impl Fixture {
             discovery_cooldown: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN,
             discovery_cooldown_cap: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN_CAP,
             plan_enabled,
+            run_mode: RunMode::Continuous,
             skip_research_for_simple,
             review_in_loop: false,
             review_history: self.data.path().join("review-history.json"),
             config_files: patok_core::config::ConfigFiles::default(),
         }
+    }
+
+    /// The config with sprint as the run mode (T103.1): no scheduled discovery
+    /// round on the emptied queue.
+    pub fn config_sprint(&self) -> EngineConfig {
+        let mut config = self.config_full(false, true);
+        config.run_mode = RunMode::Sprint;
+        config
+    }
+
+    /// An engine in sprint mode (T103.1).
+    pub fn engine_sprint(&self, provider: impl Provider + 'static) -> Engine {
+        Engine::new(self.config_sprint(), Arc::new(provider))
     }
 
     /// The config with the review stage on (T70.1): the plan stage off
