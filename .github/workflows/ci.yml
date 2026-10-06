@@ -36,6 +36,16 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  install-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: sh -n install.sh
+      - run: shellcheck install.sh scripts/test-install.sh
+      - run: scripts/test-install.sh
+
   build-release:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
