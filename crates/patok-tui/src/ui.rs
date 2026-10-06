@@ -183,12 +183,12 @@ pub fn close_button_rect(area: Rect) -> Rect {
 fn button_line(key: &str, label: &str, theme: Theme) -> Line<'static> {
     let mut spans = vec![Span::styled(
         format!(" [ {key} ] "),
-        Style::new().fg(theme.button_accent),
+        Style::new().fg(theme.highlighted_text),
     )];
     if !label.is_empty() {
         spans.push(Span::styled(
             format!("{label} "),
-            Style::new().fg(theme.foreground),
+            Style::new().fg(theme.normal_text),
         ));
     }
     Line::from(spans)
@@ -283,7 +283,7 @@ fn render_hints_strip(frame: &mut Frame, hints_row: Option<Rect>, hints: &[&str]
     if fitted.is_empty() {
         return;
     }
-    frame.render_widget(Paragraph::new(hint_line(&fitted, theme.modal_footer)), row);
+    frame.render_widget(Paragraph::new(hint_line(&fitted, theme.muted_text)), row);
 }
 
 /// Every button's rectangle on a modal's bottom line (T59.1): the buttons
@@ -327,7 +327,7 @@ fn render_modal_footer(
     // the button zone, so the two kinds stay visually distinguishable.
     let hint_zone = Rect::new(footer.x, footer.y, footer.width.saturating_sub(used + 2), 1);
     frame.render_widget(
-        Paragraph::new(hint_line(hints, theme.modal_footer)),
+        Paragraph::new(hint_line(hints, theme.muted_text)),
         hint_zone,
     );
     for ((key, label), rect) in buttons.iter().zip(&rects) {
@@ -414,14 +414,14 @@ fn render_settings_overlay(frame: &mut Frame, app: &App) {
         Some((text, StatusLevel::Error)) => frame.render_widget(
             Paragraph::new(Line::styled(
                 text.clone(),
-                Style::new().fg(theme.settings_error),
+                Style::new().fg(theme.highlighted_text),
             )),
             status_line,
         ),
         Some((text, StatusLevel::Info)) => frame.render_widget(
             Paragraph::new(Line::styled(
                 text.clone(),
-                Style::new().fg(theme.settings_info),
+                Style::new().fg(theme.muted_text),
             )),
             status_line,
         ),
@@ -452,7 +452,7 @@ fn render_settings_help(frame: &mut Frame, help: Rect, app: &App, theme: Theme) 
         .style(base_style(theme))
         .title_top(Line::from(format!(" {label} ")).centered());
     frame.render_widget(
-        Paragraph::new(Line::styled(text, Style::new().fg(theme.settings_help)))
+        Paragraph::new(Line::styled(text, Style::new().fg(theme.muted_text)))
             .wrap(Wrap { trim: true }),
         block.inner(help),
     );
@@ -500,7 +500,7 @@ fn render_settings_confirm(frame: &mut Frame, app: &App) {
                 Span::raw(choice.label()),
                 Span::styled(
                     format!(" -- {}", choice.detail()),
-                    Style::new().fg(theme.choice_detail),
+                    Style::new().fg(theme.muted_text),
                 ),
             ]);
             if focused {
@@ -560,7 +560,7 @@ fn settings_row_line(app: &App, index: usize, entry: &Entry, width: usize) -> Li
                     };
                     Line::styled(
                         format!("{row_marker}{}: {value}", row.label),
-                        Style::new().fg(theme.settings_readonly),
+                        Style::new().fg(theme.muted_text),
                     )
                 }
                 FieldKind::Bool => {
@@ -653,7 +653,7 @@ fn render_scrollbar(frame: &mut Frame, theme: Theme, body: Rect, start: usize, t
         if let Some(cell) = frame.buffer_mut().cell_mut((col, body.y + i as u16)) {
             cell.set_symbol(if in_thumb { "█" } else { "│" });
             cell.set_style(if in_thumb {
-                Style::new().fg(theme.scrollbar_thumb)
+                Style::new().fg(theme.accent)
             } else {
                 Style::new().fg(theme.scrollbar_rail)
             });
@@ -705,7 +705,7 @@ fn render_dialog(frame: &mut Frame, app: &App) {
         frame.render_widget(
             Paragraph::new(Line::styled(
                 message.clone(),
-                Style::new().fg(theme.dialog_status),
+                Style::new().fg(theme.highlighted_text),
             )),
             dialog_status,
         );
@@ -721,14 +721,12 @@ fn render_dialog(frame: &mut Frame, app: &App) {
     // on the cursor style, or a styled space at the end of a logical line or
     // on an empty one. No cell is added, so the letters around the cursor
     // stay in place while it moves.
-    let cursor_style = Style::new()
-        .fg(theme.cursor_foreground)
-        .bg(theme.cursor_background);
+    let cursor_style = Style::new().fg(theme.contrast_text).bg(theme.accent);
     let mut lines: Vec<Line> = if app.dialog_text.is_empty() {
         // The empty-input watermark (T41.1): a dim hint followed by the block
         // cursor, which keeps the focus indicator visible.
         vec![Line::from(vec![
-            Span::styled(watermark, Style::new().fg(theme.dialog_hint)),
+            Span::styled(watermark, Style::new().fg(theme.muted_text)),
             Span::styled(" ", cursor_style),
         ])]
     } else {
@@ -812,7 +810,7 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
                 Span::raw(choice.label()),
                 Span::styled(
                     format!(" -- {}", choice.detail()),
-                    Style::new().fg(theme.choice_detail),
+                    Style::new().fg(theme.muted_text),
                 ),
             ]);
             if focused {
@@ -915,7 +913,7 @@ fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
     ];
     for colour in [
         entry.agent_text.thinking,
-        entry.task_running,
+        entry.success,
         entry.agent_text.notice,
         entry.agent_text.error,
         entry.agent_text.heading,
@@ -1152,7 +1150,7 @@ fn render_output(frame: &mut Frame, app: &App, area: Rect) {
         timer.as_deref(),
         usize::from(area.width.saturating_sub(2)),
         title_colour,
-        theme.frame_title_detail,
+        theme.muted_text,
     );
     let mut block = Block::default()
         .borders(Borders::ALL)
@@ -1191,7 +1189,7 @@ fn render_pane(
         frame.render_widget(
             Paragraph::new(Line::styled(
                 empty.to_string(),
-                Style::new().fg(theme.pane_empty),
+                Style::new().fg(theme.muted_text),
             )),
             inner,
         );
@@ -1298,7 +1296,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 /// `left` -- wears the theme's low-emphasis detail colour (T67.1).
 fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
-    let detail = Style::new().fg(theme.frame_title_detail);
+    let detail = Style::new().fg(theme.muted_text);
     let done = app.tasks.iter().filter(|t| t.done).count();
     let total = app.tasks.len();
     let left = app.tasks.iter().filter(|t| !t.done).count();
@@ -1336,13 +1334,13 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
         .map(|task| {
             let running = app.current_task.as_deref() == Some(task.id.as_str());
             let (mark, style) = match (task.done, running) {
-                (true, _) => ("✔", Style::new().fg(theme.task_done)),
-                (false, true) => ("▶", Style::new().fg(theme.task_running).bold()),
+                (true, _) => ("✔", Style::new().fg(theme.muted_text)),
+                (false, true) => ("▶", Style::new().fg(theme.success).bold()),
                 (false, false) => ("○", Style::new()),
             };
             let style = if app.is_new_task(&task.id) {
                 Style::new()
-                    .fg(theme.task_new)
+                    .fg(theme.highlighted_text)
                     .bold()
                     .add_modifier(Modifier::REVERSED)
             } else {
@@ -1359,7 +1357,7 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::styled(
                 "no tasks in TASKS.md",
-                Style::new().fg(theme.tasks_empty),
+                Style::new().fg(theme.muted_text),
             )),
             content,
         );
@@ -1380,11 +1378,11 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     // A discovery round runs either on an idle engine or inside a session's empty-queue gap
     // (the phase stays Running for the whole session), so it wins over the phase chips.
     let (label, color) = match (app.stopping, app.phase) {
-        (true, _) => ("STOPPING", theme.chip_stopping),
+        (true, _) => ("STOPPING", theme.highlighted_text),
         (false, _) if app.planning => ("PLANNING", theme.chip_planning),
         (false, _) if app.discovering => ("DISCOVERING", theme.chip_discovering),
-        (false, Phase::Running) => ("RUNNING", theme.chip_running),
-        (false, Phase::Startup) => ("STOPPED", theme.chip_stopped),
+        (false, Phase::Running) => ("RUNNING", theme.success),
+        (false, Phase::Startup) => ("STOPPED", theme.chip_neutral),
     };
     let chip = format!(" {label} ");
     // The run-mode chip: a quieter second chip mirroring the engine-reported readout,
@@ -1395,12 +1393,12 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     let fits_mode = chip.chars().count() + mode.chars().count() <= width;
     let mut spans = vec![Span::styled(
         chip,
-        Style::new().fg(theme.chip_text).bg(color).bold(),
+        Style::new().fg(theme.contrast_text).bg(color).bold(),
     )];
     if fits_mode {
         spans.push(Span::styled(
             mode,
-            Style::new().fg(theme.chip_text).bg(theme.run_mode_chip),
+            Style::new().fg(theme.contrast_text).bg(theme.chip_neutral),
         ));
     }
     let left_width: usize = spans.iter().map(|span| span.content.chars().count()).sum();
@@ -1427,12 +1425,12 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
                 ));
                 spans.push(Span::styled(
                     rest.to_string(),
-                    Style::new().fg(theme.status_message),
+                    Style::new().fg(theme.highlighted_text),
                 ));
             } else {
                 spans.push(Span::styled(
                     message.clone(),
-                    Style::new().fg(theme.status_message),
+                    Style::new().fg(theme.highlighted_text),
                 ));
             }
             spans
@@ -1484,11 +1482,14 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
             for (key, label) in kept {
                 right.push(Span::styled(
                     format!(" {key} "),
-                    Style::new().bold().fg(theme.chip_text).bg(theme.status_key),
+                    Style::new()
+                        .bold()
+                        .fg(theme.contrast_text)
+                        .bg(theme.chip_neutral),
                 ));
                 right.push(Span::styled(
                     format!(" {label} "),
-                    Style::new().fg(theme.status_label),
+                    Style::new().fg(theme.muted_text),
                 ));
             }
             right

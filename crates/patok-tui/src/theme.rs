@@ -1,8 +1,12 @@
-//! The colour theme (T34.1): the single source of every colour the shell renders.
-//!
-//! Every semantic colour the renderers use lives here as a named field; no code
-//! outside this module constructs a `ratatui::style::Color` literal. Renderers
-//! reach the theme through [`crate::app::App::theme`], which resolves it from the
+//! The colour theme (T34.1, T111.1): the single source of every colour the
+//! shell renders, as a class-based system. The renderers use the five basic
+//! classes `background`, `foreground`, `normal-text`, `muted-text` and
+//! `highlighted-text`, plus only the special classes the basics cannot
+//! express. No code outside this module constructs a `ratatui::style::Color`
+//! literal. Classes are shared: every use of one kind of text sits on the
+//! same field, so two uses are not independently restyleable — the deliberate
+//! reversal of the pre-T111.1 one-field-per-use design. Renderers reach the
+//! theme through [`crate::app::App::theme`], which resolves it from the
 //! shell's tui settings, so a config reload picks up changes without extra
 //! plumbing. Markdown rendering takes its colours from the base style
 //! (`thinking`), so it needs no fields of its own.
@@ -10,16 +14,16 @@
 //! Eleven built-in variants: the default `dark` plus ten published palettes
 //! (Atom One, Tokyo Night, Catppuccin, Solarized and Gruvbox, each in a dark and
 //! a light variant). Every non-default variant is defined once as a
-//! [`Palette`] of signature roles and carries its own [`Chrome`] table that
-//! maps those roles onto the semantic fields (T109.1), so each theme tunes its
-//! chrome — chips, cursor, muted text — without touching the others, and every
+//! [`Palette`] of signature roles and carries its own [`Classes`] table that
+//! maps those roles onto the classes (T111.1), so each theme tunes its
+//! classes — chips, cursor, muted text — without touching the others, and every
 //! renderer works unchanged with any variant. RGB colours emit as `Color::Rgb`
 //! while the truecolor setting is on and as the nearest xterm-256 indexed
 //! colour while it is off.
 //!
 //! The agent output line colours live in their own [`AgentText`] subclass
-//! (T108.1), structurally separate from the chrome fields so the output
-//! identity stays stable across theme refactoring. Each line kind's colour
+//! (T108.1), structurally separate from the classes so the output identity
+//! stays stable across theme refactoring. Each line kind's colour
 //! identity is fixed for every built-in theme — error red, notice yellow, tool
 //! cyan, thinking blue, heading and pane status magenta, result a muted gray —
 //! and a palette only adjusts an anchor's lightness so the fixed identity
@@ -38,22 +42,22 @@
 //! heading, the status bar's run message and the headless `--color` output --
 //! routes through the same mapping.
 //!
-//! Field-to-use map (all sites are in `ui.rs` unless noted):
+//! Class-to-use map (all sites are in `ui.rs` unless noted):
 //!
-//! | Field | Renderer | Use |
+//! | Class | Renderer | Use |
 //! |---|---|---|
 //! | `background` | `render` | the frame's base background, painted first |
-//! | `foreground` | `render` | the frame's base foreground, inherited by unstyled text; the modal buttons' labels (T64.1) |
-//! | `chip_stopped` | `status_widget` | STOPPED status chip background |
-//! | `chip_running` | `status_widget` | RUNNING status chip background |
+//! | `foreground` | `render` | the frame's base foreground, inherited by unstyled text |
+//! | `normal_text` | `button_line` | the modal buttons' labels (T64.1) |
+//! | `muted_text` | `render_modal_footer`, `render_hints_strip`, `status_widget`, `render_output`, `render_pane`, `render_tasks`, `render_dialog`, `render_stop_dialog`, `render_settings_confirm`, `render_settings_overlay`, `settings_row_line`, `render_settings_help`, `pipeline::tile_style`, `pipeline::render_rail` | every low-emphasis text: modal footers and the focused frame's hints strip (T59.1, T71.1), the status bar's key-chip labels, the output frame title's separator, provider, model and timer and everything after the word `Tasks` in the tasks frame title (T37.1, T67.1), the "no output yet" and "no tasks in TASKS.md" placeholders, done task rows, the empty-input watermark (T41.1), "-- detail" choice text, the settings overlay's info, read-only and help text (T85.1), the rail's muted and pending tiles, the provider/model detail and the down-arrow connectors |
+//! | `highlighted_text` | `status_widget`, `render_tasks`, `render_dialog`, `button_line`, `render_settings_overlay` | the status bar's message, the STOPPING chip, new tasks, the add-task dialog's status line, every modal's " [ Key ] " markers and the settings overlay's error line |
+//! | `chip_neutral` | `status_widget` | STOPPED, run-mode and key-chip backgrounds |
+//! | `contrast_text` | `status_widget`, `render_dialog` | foreground on every status chip and the dialog input's block cursor |
+//! | `success` | `status_widget`, `render_tasks`, `pipeline::tile_style` | the RUNNING chip, running task rows, done rail tiles (T50.1) and SHIP while shipping |
 //! | `chip_planning` | `status_widget` | PLANNING status chip background |
 //! | `chip_discovering` | `status_widget` | DISCOVERING status chip background |
-//! | `chip_stopping` | `status_widget` | STOPPING status chip background |
-//! | `chip_text` | `status_widget` | foreground on every status chip |
-//! | `run_mode_chip` | `status_widget` | run-mode chip background |
-//! | `status_message` | `status_widget` | the status bar's one-line message |
-//! | `status_key` | `status_widget` | key-chip background (e.g. " Enter ") |
-//! | `status_label` | `status_widget` | key-chip labels (e.g. "run discovery") |
+//! | `accent` | `render_dialog`, `render_scrollbar`, `pipeline::tile_style` | the dialog input's block cursor background, the overlay scrollbar thumb, the active rail tile and DISCOVER while a round runs |
+//! | `scrollbar_rail` | `render_scrollbar` | the overlay scrollbar's rail |
 //! | `agent_text.thinking` | `style_of`, headless `--color` | agent thinking; also the markdown base style |
 //! | `agent_text.tool` | `style_of`, headless `--color` | tool-call lines |
 //! | `agent_text.result` | `style_of`, headless `--color` | result lines |
@@ -61,38 +65,14 @@
 //! | `agent_text.notice` | `style_of`, headless `--color` | notice lines |
 //! | `agent_text.heading` | `style_of`, headless `--color` | markdown headings (bold added by the renderer) |
 //! | `agent_names.*` | `render_output`, `visual_lines`, `status_widget`, headless `--color` | every agent name rendered by identity (T110.1): the output frame title's agent type name, the agent name inside the lifecycle started/finished lines, the planning heading's name and the status bar's "{Agent} running..." message |
-//! | `frame_title_detail` | `render_output`, `render_tasks` | output frame title's separator, provider, model and timer; everything after the word `Tasks` in the tasks frame title (T67.1): the pipe separator, the completed, total and left counts, the slash, the dash and the word `left` |
 //! | `agent_text.pane_status` | `style_of`, headless `--color` | the agent lifecycle status lines in the output pane (T78.1, T42.1) outside the agent name itself, which wears its own fixed colour (T110.1) |
-//! | `pane_empty` | `render_pane` | "no output yet" placeholder |
-//! | `task_done` | `render_tasks` | done task rows |
-//! | `task_running` | `render_tasks` | running task rows (bold added by the renderer) |
-//! | `task_new` | `render_tasks` | new-task highlight (bold + reversed added by the renderer) |
-//! | `tasks_empty` | `render_tasks` | "no tasks in TASKS.md" placeholder |
-//! | `dialog_status` | `render_dialog` | the add-task dialog's status line |
-//! | `cursor_foreground` | `render_dialog` | the dialog input's block cursor foreground |
-//! | `cursor_background` | `render_dialog` | the dialog input's block cursor background |
-//! | `dialog_hint` | `render_dialog` | the empty-input watermark (T41.1) |
-//! | `choice_detail` | `render_stop_dialog`, `render_settings_confirm` | "-- detail" choice text |
-//! | `modal_footer` | `render_modal_footer`, `render_hints_strip` | every modal bottom line's key-hint zone (T59.1) and the focused dashboard frame's hints strip along its bottom edge (T71.1) |
-//! | `button_accent` | `render_modal_footer`, `close_button_line` | every modal's bracketed " [ Key ] " key markers and the " [ x ] " close button of every modal's title row (T44.1, T59.1, T66.1); the labels after them wear `foreground` (T64.1) |
-//! | `settings_error` | `render_settings_overlay` | overlay error status line |
-//! | `settings_info` | `render_settings_overlay` | overlay info status line |
-//! | `settings_readonly` | `settings_row_line` | read-only overlay rows |
-//! | `settings_help` | `render_settings_overlay` | the settings help box text (T85.1) |
-//! | `scrollbar_thumb` | `render_scrollbar` | overlay scrollbar thumb |
-//! | `scrollbar_rail` | `render_scrollbar` | overlay scrollbar rail |
-//! | `rail_done` | `pipeline::tile_style` | done rail tiles (T50.1): stages before the active one, SHIP while shipping, DISCOVER after a round ran, LEARNINGS once learned |
-//! | `rail_active` | `pipeline::tile_style` | the active stage tile and DISCOVER while a round runs (bold added by the renderer) |
-//! | `rail_muted` | `pipeline::tile_style` | muted and pending rail tiles |
-//! | `rail_connector` | `pipeline::render_rail` | the rail's down-arrow connectors |
 
 use crate::app::LineKind;
 use patok_core::config::Theme as ThemeKey;
 use ratatui::style::Color;
 
 /// The agent output line colours (T108.1): structurally separate from the
-/// chrome fields so the output identity stays stable across theme
-/// refactoring. Each kind's hue is fixed for every built-in theme; a palette
+/// classes so the output identity stays stable across theme refactoring. Each kind's hue is fixed for every built-in theme; a palette
 /// only adjusts lightness so the fixed hue stays readable on its background.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AgentText {
@@ -100,7 +80,7 @@ pub struct AgentText {
     pub thinking: Color,
     /// Tool-call lines.
     pub tool: Color,
-    /// Result lines: a muted gray, independent of the chrome `muted` role.
+    /// Result lines: a muted gray, independent of the `muted_text` class.
     pub result: Color,
     /// Error lines.
     pub error: Color,
@@ -211,7 +191,7 @@ impl AgentText {
     /// Resolves the agent line colours for a palette theme (T108.1): every
     /// kind keeps its canonical anchor; the theme's background only adjusts
     /// each anchor's lightness until the pair reads. The truecolor setting
-    /// picks the emission, exactly like the chrome roles.
+    /// picks the emission, exactly like the classes.
     fn resolve(background: (u8, u8, u8), truecolor: bool) -> AgentText {
         let colour = |rgb: (u8, u8, u8)| {
             if truecolor {
@@ -341,110 +321,71 @@ fn adjust_lightness(rgb: (u8, u8, u8), background: (u8, u8, u8)) -> (u8, u8, u8)
     best
 }
 
-/// The shell's colour theme: one named semantic field per colour use, so a future
-/// variant can restyle any use independently. `Copy`, so renderers pass it around
-/// freely.
+/// The shell's colour theme (T111.1): a class-based system. The five basic
+/// classes cover every text and surface use; the special classes exist only
+/// for colours the basics cannot express. Unlike the pre-T111.1 design of one
+/// named semantic field per colour use, classes are shared: every use of one
+/// kind of text sits on the same field, so two uses are not independently
+/// restyleable. The agent output line colours (T108.1) and agent name colours
+/// (T110.1) stay fixated in their own subclasses, outside the class system.
+/// `Copy`, so renderers pass it around freely.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Theme {
-    /// The shell's base background, painted over the whole frame first.
+    /// The `background` basic class: the shell's base background, painted
+    /// over the whole frame first.
     pub background: Color,
-    /// The shell's base foreground, inherited by every unstyled text cell.
+    /// The `foreground` basic class: the shell's base foreground, inherited by
+    /// every unstyled text cell.
     pub foreground: Color,
-    /// Status-line STOPPED status chip background.
-    pub chip_stopped: Color,
-    /// Status-line RUNNING status chip background.
-    pub chip_running: Color,
-    /// Status-line PLANNING status chip background.
-    pub chip_planning: Color,
-    /// Status-line DISCOVERING status chip background.
-    pub chip_discovering: Color,
-    /// Status-line STOPPING status chip background.
-    pub chip_stopping: Color,
-    /// Foreground on every status-line status chip.
-    pub chip_text: Color,
-    /// Run-mode chip background (foreground `chip_text`).
-    pub run_mode_chip: Color,
-    /// The status bar's one-line message.
-    pub status_message: Color,
-    /// Status-bar key-chip background (foreground `chip_text`).
-    pub status_key: Color,
-    /// Status-bar key-chip labels.
-    pub status_label: Color,
-    /// The agent output line colours (T108.1), held apart from the chrome
-    /// fields so the output identity stays stable across theme refactoring.
+    /// The `normal-text` basic class: explicitly styled plain text, such as
+    /// the modal buttons' labels (T64.1).
+    pub normal_text: Color,
+    /// The `muted-text` basic class: every low-emphasis text and connector.
+    pub muted_text: Color,
+    /// The `highlighted-text` basic class: every emphasized text, and the
+    /// STOPPING chip background.
+    pub highlighted_text: Color,
+    /// The agent output line colours (T108.1), held apart from the classes so
+    /// the output identity stays stable across theme refactoring.
     pub agent_text: AgentText,
     /// The agent name colours (T110.1): one fixed identity per agent, the
     /// same hue family in every built-in theme.
     pub agent_names: AgentNames,
-    /// The output frame title's separator, provider, model and timer text (T37.1),
-    /// and everything after the word `Tasks` in the tasks frame title (T67.1):
-    /// the pipe separator, the completed, total and left counts, the slash, the
-    /// dash and the word `left`.
-    pub frame_title_detail: Color,
-    /// "no output yet" placeholder in the output pane.
-    pub pane_empty: Color,
-    /// Done task rows.
-    pub task_done: Color,
-    /// Running task rows (the renderer adds bold).
-    pub task_running: Color,
-    /// New-task highlight (the renderer adds bold + reversed).
-    pub task_new: Color,
-    /// "no tasks in TASKS.md" placeholder.
-    pub tasks_empty: Color,
-    /// The add-task dialog's status line.
-    pub dialog_status: Color,
-    /// The dialog input's block cursor foreground.
-    pub cursor_foreground: Color,
-    /// The dialog input's block cursor background.
-    pub cursor_background: Color,
-    /// The empty-input watermark (T41.1).
-    pub dialog_hint: Color,
-    /// "-- detail" text in the stop and unsaved-changes dialogs.
-    pub choice_detail: Color,
-    /// Every modal bottom line's key-hint zone (T59.1).
-    pub modal_footer: Color,
-    /// Every modal bottom line's " [ Key ] Label " buttons and the settings
-    /// overlay's " [ X ] " close marker (T44.1, T59.1).
-    pub button_accent: Color,
-    /// The settings overlay's error status line.
-    pub settings_error: Color,
-    /// The settings overlay's info status line.
-    pub settings_info: Color,
-    /// Read-only settings overlay rows.
-    pub settings_readonly: Color,
-    /// The settings overlay's help box text (T85.1).
-    pub settings_help: Color,
-    /// The settings overlay's scrollbar thumb.
-    pub scrollbar_thumb: Color,
-    /// The settings overlay's scrollbar rail.
+    /// The neutral-chip special class: STOPPED, run-mode and key-chip
+    /// backgrounds. Special because the benchmark theme (Tokyo Night Dark)
+    /// sits it on the palette's `surface` role, not `foreground`.
+    pub chip_neutral: Color,
+    /// The contrast-text special class: the foreground on the saturated chip
+    /// and cursor backgrounds. Special because the default theme's value is
+    /// `Black` while its background is `Reset`.
+    pub contrast_text: Color,
+    /// The success special class: the RUNNING chip, running task rows and
+    /// done rail tiles. A saturated green no basic class expresses.
+    pub success: Color,
+    /// The PLANNING status chip background: a saturated magenta no basic class
+    /// expresses.
+    pub chip_planning: Color,
+    /// The DISCOVERING status chip background: a saturated blue no basic class
+    /// expresses (and distinct from `accent` in the default theme).
+    pub chip_discovering: Color,
+    /// The accent special class: the active rail tile, the dialog cursor
+    /// background and the scrollbar thumb. A saturated cyan/blue no basic
+    /// class expresses.
+    pub accent: Color,
+    /// The scrollbar-rail special class: the overlay scrollbar's rail,
+    /// deliberately dimmer than `muted_text` on some themes.
     pub scrollbar_rail: Color,
-    /// Done rail tiles (T50.1): the stages before the active one,
-    /// SHIP while shipping, DISCOVER after a round ran, LEARNINGS once learned.
-    pub rail_done: Color,
-    /// The active stage tile and DISCOVER while a round runs (bold added).
-    pub rail_active: Color,
-    /// Muted and pending rail tiles.
-    pub rail_muted: Color,
-    /// The rail's down-arrow connectors between consecutive stage tiles.
-    pub rail_connector: Color,
 }
 
 impl Theme {
-    /// The default dark theme: exactly the look the shell had before themes
-    /// existed, value-locked by the unit tests below.
+    /// The default dark theme: exactly the look the shell had before the class
+    /// system existed, value-locked by the unit tests below.
     pub const DARK: Theme = Theme {
         background: Color::Reset,
         foreground: Color::Reset,
-        chip_stopped: Color::DarkGray,
-        chip_running: Color::Green,
-        chip_planning: Color::Magenta,
-        chip_discovering: Color::Blue,
-        chip_stopping: Color::Yellow,
-        chip_text: Color::Black,
-        run_mode_chip: Color::DarkGray,
-        status_message: Color::Yellow,
-        status_key: Color::DarkGray,
-        status_label: Color::DarkGray,
+        normal_text: Color::Reset,
+        muted_text: Color::DarkGray,
+        highlighted_text: Color::Yellow,
         agent_text: AgentText {
             thinking: Color::Blue,
             tool: Color::Cyan,
@@ -463,29 +404,13 @@ impl Theme {
             orchestrator: Color::LightMagenta,
             other: Color::DarkGray,
         },
-        frame_title_detail: Color::DarkGray,
-        pane_empty: Color::DarkGray,
-        task_done: Color::DarkGray,
-        task_running: Color::Green,
-        task_new: Color::Yellow,
-        tasks_empty: Color::DarkGray,
-        dialog_status: Color::Yellow,
-        cursor_foreground: Color::Black,
-        cursor_background: Color::Cyan,
-        dialog_hint: Color::DarkGray,
-        choice_detail: Color::DarkGray,
-        modal_footer: Color::DarkGray,
-        button_accent: Color::Yellow,
-        settings_error: Color::Yellow,
-        settings_info: Color::DarkGray,
-        settings_readonly: Color::DarkGray,
-        settings_help: Color::DarkGray,
-        scrollbar_thumb: Color::Cyan,
+        chip_neutral: Color::DarkGray,
+        contrast_text: Color::Black,
+        success: Color::Green,
+        chip_planning: Color::Magenta,
+        chip_discovering: Color::Blue,
+        accent: Color::Cyan,
         scrollbar_rail: Color::DarkGray,
-        rail_done: Color::Green,
-        rail_active: Color::Cyan,
-        rail_muted: Color::DarkGray,
-        rail_connector: Color::DarkGray,
     };
 
     /// Resolves the theme from the shell's tui settings. `dark` is the
@@ -498,7 +423,7 @@ impl Theme {
         match theme {
             ThemeKey::Dark => Theme::DARK,
             other => palette_of(other).theme(
-                chrome_of(other),
+                classes_of(other),
                 truecolor.unwrap_or_else(truecolor_detected),
             ),
         }
@@ -541,8 +466,8 @@ impl Theme {
 }
 
 /// One published palette's signature roles, as raw RGB triples. Each palette
-/// has its own [`Chrome`] table ([`Palette::theme`]) that maps the roles onto
-/// the semantic fields, which is what keeps every renderer variant-agnostic.
+/// has its own [`Classes`] table ([`Palette::theme`]) that maps the roles onto
+/// the colour classes, which is what keeps every renderer variant-agnostic.
 struct Palette {
     /// The theme's base background.
     background: (u8, u8, u8),
@@ -560,88 +485,43 @@ struct Palette {
     magenta: (u8, u8, u8),
 }
 
-/// One theme's chrome mapping (T109.1): the raw RGB triple every
-/// non-fixated semantic field of [`Theme`] resolves to, in the same order
-/// as the `Theme` fields minus the fixated subclasses. Each built-in palette owns one
-/// table — there is no shared mapping rule — so a theme can tune any chrome
-/// use (chip backgrounds, cursor, muted text) without touching the others.
-/// The agent line colours and agent name colours are fixated separately by
-/// [`AgentText`] (T108.1) and [`AgentNames`] (T110.1) and never come from
-/// here.
-struct Chrome {
-    /// The shell's base background, painted over the whole frame first.
+/// One theme's class table (T111.1): the raw RGB triple every class of
+/// [`Theme`] resolves to, in the same order as the `Theme` fields minus the
+/// fixated subclasses. Each built-in palette owns one table — there is no
+/// shared mapping rule — so a theme can tune any class without touching the
+/// others. The agent line colours and agent name colours are fixated
+/// separately by [`AgentText`] (T108.1) and [`AgentNames`] (T110.1) and never
+/// come from here.
+struct Classes {
+    /// The `background` basic class: the theme's base background.
     background: (u8, u8, u8),
-    /// The shell's base foreground, inherited by every unstyled text cell.
+    /// The `foreground` basic class: the theme's base foreground.
     foreground: (u8, u8, u8),
-    /// Status-line STOPPED status chip background.
-    chip_stopped: (u8, u8, u8),
-    /// Status-line RUNNING status chip background.
-    chip_running: (u8, u8, u8),
-    /// Status-line PLANNING status chip background.
+    /// The `normal-text` basic class: explicitly styled plain text.
+    normal_text: (u8, u8, u8),
+    /// The `muted-text` basic class: every low-emphasis text and connector.
+    muted_text: (u8, u8, u8),
+    /// The `highlighted-text` basic class: every emphasized text, and the
+    /// STOPPING chip background.
+    highlighted_text: (u8, u8, u8),
+    /// The neutral-chip special class: STOPPED, run-mode and key-chip
+    /// backgrounds.
+    chip_neutral: (u8, u8, u8),
+    /// The contrast-text special class: the foreground on the saturated chip
+    /// and cursor backgrounds.
+    contrast_text: (u8, u8, u8),
+    /// The success special class: RUNNING chip, running tasks, done rail
+    /// tiles.
+    success: (u8, u8, u8),
+    /// The PLANNING status chip background.
     chip_planning: (u8, u8, u8),
-    /// Status-line DISCOVERING status chip background.
+    /// The DISCOVERING status chip background.
     chip_discovering: (u8, u8, u8),
-    /// Status-line STOPPING status chip background.
-    chip_stopping: (u8, u8, u8),
-    /// Foreground on every status-line status chip.
-    chip_text: (u8, u8, u8),
-    /// Run-mode chip background (foreground `chip_text`).
-    run_mode_chip: (u8, u8, u8),
-    /// The status bar's one-line message.
-    status_message: (u8, u8, u8),
-    /// Status-bar key-chip background (foreground `chip_text`).
-    status_key: (u8, u8, u8),
-    /// Status-bar key-chip labels.
-    status_label: (u8, u8, u8),
-    /// The output frame title's detail text (T37.1) and everything after the
-    /// word `Tasks` in the tasks frame title (T67.1).
-    frame_title_detail: (u8, u8, u8),
-    /// "no output yet" placeholder in the output pane.
-    pane_empty: (u8, u8, u8),
-    /// Done task rows.
-    task_done: (u8, u8, u8),
-    /// Running task rows (the renderer adds bold).
-    task_running: (u8, u8, u8),
-    /// New-task highlight (the renderer adds bold + reversed).
-    task_new: (u8, u8, u8),
-    /// "no tasks in TASKS.md" placeholder.
-    tasks_empty: (u8, u8, u8),
-    /// The add-task dialog's status line.
-    dialog_status: (u8, u8, u8),
-    /// The dialog input's block cursor foreground.
-    cursor_foreground: (u8, u8, u8),
-    /// The dialog input's block cursor background.
-    cursor_background: (u8, u8, u8),
-    /// The empty-input watermark (T41.1).
-    dialog_hint: (u8, u8, u8),
-    /// "-- detail" text in the stop and unsaved-changes dialogs.
-    choice_detail: (u8, u8, u8),
-    /// Every modal bottom line's key-hint zone (T59.1).
-    modal_footer: (u8, u8, u8),
-    /// Every modal bottom line's " [ Key ] Label " buttons and the settings
-    /// overlay's " [ X ] " close marker (T44.1, T59.1).
-    button_accent: (u8, u8, u8),
-    /// The settings overlay's error status line.
-    settings_error: (u8, u8, u8),
-    /// The settings overlay's info status line.
-    settings_info: (u8, u8, u8),
-    /// Read-only settings overlay rows.
-    settings_readonly: (u8, u8, u8),
-    /// The settings overlay's help box text (T85.1).
-    settings_help: (u8, u8, u8),
-    /// The settings overlay's scrollbar thumb.
-    scrollbar_thumb: (u8, u8, u8),
-    /// The settings overlay's scrollbar rail.
+    /// The accent special class: active rail tile, cursor background,
+    /// scrollbar thumb.
+    accent: (u8, u8, u8),
+    /// The scrollbar-rail special class: the overlay scrollbar's rail.
     scrollbar_rail: (u8, u8, u8),
-    /// Done rail tiles (T50.1): the stages before the active one,
-    /// SHIP while shipping, DISCOVER after a round ran, LEARNINGS once learned.
-    rail_done: (u8, u8, u8),
-    /// The active stage tile and DISCOVER while a round runs (bold added).
-    rail_active: (u8, u8, u8),
-    /// Muted and pending rail tiles.
-    rail_muted: (u8, u8, u8),
-    /// The rail's down-arrow connectors between consecutive stage tiles.
-    rail_connector: (u8, u8, u8),
 }
 
 const ATOM_ONE_DARK: Palette = Palette {
@@ -655,49 +535,26 @@ const ATOM_ONE_DARK: Palette = Palette {
     magenta: (0xC6, 0x78, 0xDD),
 };
 
-/// The neutral chips (stopped, run-mode, key) take the foreground role: the
-/// background-role chip text only reads on chip backgrounds at least as
-/// bright as the accents, and the surface role is not. The palette's muted
-/// (2.3:1 on the background) is dimmer than the benchmark theme's, so every
-/// text-bearing muted use takes a lightened muted literal that clears
-/// [`READABLE_CONTRAST`]; the decorative scrollbar rail keeps the palette
-/// value.
-const ATOM_ONE_DARK_CHROME: Chrome = Chrome {
+/// The neutral chips (stopped, run-mode, key) sit `chip_neutral` on the
+/// foreground role: the background-role contrast text only reads on chip
+/// backgrounds at least as bright as the accents, and the surface role is
+/// not. The palette's muted (2.3:1 on the background) is dimmer than the
+/// benchmark theme's, so `muted_text` takes a lightened muted literal that
+/// clears [`READABLE_CONTRAST`]; the decorative scrollbar rail keeps the
+/// palette value.
+const ATOM_ONE_DARK_CLASSES: Classes = Classes {
     background: ATOM_ONE_DARK.background,
     foreground: ATOM_ONE_DARK.foreground,
-    chip_stopped: ATOM_ONE_DARK.foreground,
-    chip_running: ATOM_ONE_DARK.green,
+    normal_text: ATOM_ONE_DARK.foreground,
+    muted_text: (0x6E, 0x77, 0x86),
+    highlighted_text: ATOM_ONE_DARK.yellow,
+    chip_neutral: ATOM_ONE_DARK.foreground,
+    contrast_text: ATOM_ONE_DARK.background,
+    success: ATOM_ONE_DARK.green,
     chip_planning: ATOM_ONE_DARK.magenta,
     chip_discovering: ATOM_ONE_DARK.blue,
-    chip_stopping: ATOM_ONE_DARK.yellow,
-    chip_text: ATOM_ONE_DARK.background,
-    run_mode_chip: ATOM_ONE_DARK.foreground,
-    status_message: ATOM_ONE_DARK.yellow,
-    status_key: ATOM_ONE_DARK.foreground,
-    status_label: (0x6E, 0x77, 0x86),
-    frame_title_detail: (0x6E, 0x77, 0x86),
-    pane_empty: (0x6E, 0x77, 0x86),
-    task_done: (0x6E, 0x77, 0x86),
-    task_running: ATOM_ONE_DARK.green,
-    task_new: ATOM_ONE_DARK.yellow,
-    tasks_empty: (0x6E, 0x77, 0x86),
-    dialog_status: ATOM_ONE_DARK.yellow,
-    cursor_foreground: ATOM_ONE_DARK.background,
-    cursor_background: ATOM_ONE_DARK.blue,
-    dialog_hint: (0x6E, 0x77, 0x86),
-    choice_detail: (0x6E, 0x77, 0x86),
-    modal_footer: (0x6E, 0x77, 0x86),
-    button_accent: ATOM_ONE_DARK.yellow,
-    settings_error: ATOM_ONE_DARK.yellow,
-    settings_info: (0x6E, 0x77, 0x86),
-    settings_readonly: (0x6E, 0x77, 0x86),
-    settings_help: (0x6E, 0x77, 0x86),
-    scrollbar_thumb: ATOM_ONE_DARK.blue,
+    accent: ATOM_ONE_DARK.blue,
     scrollbar_rail: ATOM_ONE_DARK.muted,
-    rail_done: ATOM_ONE_DARK.green,
-    rail_active: ATOM_ONE_DARK.blue,
-    rail_muted: (0x6E, 0x77, 0x86),
-    rail_connector: (0x6E, 0x77, 0x86),
 };
 
 const ATOM_ONE_LIGHT: Palette = Palette {
@@ -711,46 +568,23 @@ const ATOM_ONE_LIGHT: Palette = Palette {
     magenta: (0xA6, 0x26, 0xA4),
 };
 
-/// Light theme: the neutral chips take the foreground role so the
-/// background-role chip text (near-white) reads on them, and every
-/// text-bearing muted use takes a darkened muted literal that clears
-/// [`READABLE_CONTRAST`] on the near-white background.
-const ATOM_ONE_LIGHT_CHROME: Chrome = Chrome {
+/// Light theme: `chip_neutral` takes the foreground role so the
+/// background-role contrast text reads on it, and `muted_text` takes a
+/// darkened muted literal that clears [`READABLE_CONTRAST`] on the
+/// near-white background.
+const ATOM_ONE_LIGHT_CLASSES: Classes = Classes {
     background: ATOM_ONE_LIGHT.background,
     foreground: ATOM_ONE_LIGHT.foreground,
-    chip_stopped: ATOM_ONE_LIGHT.foreground,
-    chip_running: ATOM_ONE_LIGHT.green,
+    normal_text: ATOM_ONE_LIGHT.foreground,
+    muted_text: (0x86, 0x87, 0x8E),
+    highlighted_text: ATOM_ONE_LIGHT.yellow,
+    chip_neutral: ATOM_ONE_LIGHT.foreground,
+    contrast_text: ATOM_ONE_LIGHT.background,
+    success: ATOM_ONE_LIGHT.green,
     chip_planning: ATOM_ONE_LIGHT.magenta,
     chip_discovering: ATOM_ONE_LIGHT.blue,
-    chip_stopping: ATOM_ONE_LIGHT.yellow,
-    chip_text: ATOM_ONE_LIGHT.background,
-    run_mode_chip: ATOM_ONE_LIGHT.foreground,
-    status_message: ATOM_ONE_LIGHT.yellow,
-    status_key: ATOM_ONE_LIGHT.foreground,
-    status_label: (0x86, 0x87, 0x8E),
-    frame_title_detail: (0x86, 0x87, 0x8E),
-    pane_empty: (0x86, 0x87, 0x8E),
-    task_done: (0x86, 0x87, 0x8E),
-    task_running: ATOM_ONE_LIGHT.green,
-    task_new: ATOM_ONE_LIGHT.yellow,
-    tasks_empty: (0x86, 0x87, 0x8E),
-    dialog_status: ATOM_ONE_LIGHT.yellow,
-    cursor_foreground: ATOM_ONE_LIGHT.background,
-    cursor_background: ATOM_ONE_LIGHT.blue,
-    dialog_hint: (0x86, 0x87, 0x8E),
-    choice_detail: (0x86, 0x87, 0x8E),
-    modal_footer: (0x86, 0x87, 0x8E),
-    button_accent: ATOM_ONE_LIGHT.yellow,
-    settings_error: ATOM_ONE_LIGHT.yellow,
-    settings_info: (0x86, 0x87, 0x8E),
-    settings_readonly: (0x86, 0x87, 0x8E),
-    settings_help: (0x86, 0x87, 0x8E),
-    scrollbar_thumb: ATOM_ONE_LIGHT.blue,
+    accent: ATOM_ONE_LIGHT.blue,
     scrollbar_rail: ATOM_ONE_LIGHT.muted,
-    rail_done: ATOM_ONE_LIGHT.green,
-    rail_active: ATOM_ONE_LIGHT.blue,
-    rail_muted: (0x86, 0x87, 0x8E),
-    rail_connector: (0x86, 0x87, 0x8E),
 };
 
 const TOKYO_NIGHT_DARK: Palette = Palette {
@@ -765,43 +599,21 @@ const TOKYO_NIGHT_DARK: Palette = Palette {
 };
 
 /// The benchmark theme (T109.1): its look is snapshot-locked and byte-identical
-/// to the output of the single shared rule this table replaced.
-const TOKYO_NIGHT_DARK_CHROME: Chrome = Chrome {
+/// to the output of the single shared rule this table replaced, so
+/// `chip_neutral` keeps the palette's `surface` role instead of `foreground`.
+const TOKYO_NIGHT_DARK_CLASSES: Classes = Classes {
     background: TOKYO_NIGHT_DARK.background,
     foreground: TOKYO_NIGHT_DARK.foreground,
-    chip_stopped: TOKYO_NIGHT_DARK.surface,
-    chip_running: TOKYO_NIGHT_DARK.green,
+    normal_text: TOKYO_NIGHT_DARK.foreground,
+    muted_text: TOKYO_NIGHT_DARK.muted,
+    highlighted_text: TOKYO_NIGHT_DARK.yellow,
+    chip_neutral: TOKYO_NIGHT_DARK.surface,
+    contrast_text: TOKYO_NIGHT_DARK.background,
+    success: TOKYO_NIGHT_DARK.green,
     chip_planning: TOKYO_NIGHT_DARK.magenta,
     chip_discovering: TOKYO_NIGHT_DARK.blue,
-    chip_stopping: TOKYO_NIGHT_DARK.yellow,
-    chip_text: TOKYO_NIGHT_DARK.background,
-    run_mode_chip: TOKYO_NIGHT_DARK.surface,
-    status_message: TOKYO_NIGHT_DARK.yellow,
-    status_key: TOKYO_NIGHT_DARK.surface,
-    status_label: TOKYO_NIGHT_DARK.muted,
-    frame_title_detail: TOKYO_NIGHT_DARK.muted,
-    pane_empty: TOKYO_NIGHT_DARK.muted,
-    task_done: TOKYO_NIGHT_DARK.muted,
-    task_running: TOKYO_NIGHT_DARK.green,
-    task_new: TOKYO_NIGHT_DARK.yellow,
-    tasks_empty: TOKYO_NIGHT_DARK.muted,
-    dialog_status: TOKYO_NIGHT_DARK.yellow,
-    cursor_foreground: TOKYO_NIGHT_DARK.background,
-    cursor_background: TOKYO_NIGHT_DARK.blue,
-    dialog_hint: TOKYO_NIGHT_DARK.muted,
-    choice_detail: TOKYO_NIGHT_DARK.muted,
-    modal_footer: TOKYO_NIGHT_DARK.muted,
-    button_accent: TOKYO_NIGHT_DARK.yellow,
-    settings_error: TOKYO_NIGHT_DARK.yellow,
-    settings_info: TOKYO_NIGHT_DARK.muted,
-    settings_readonly: TOKYO_NIGHT_DARK.muted,
-    settings_help: TOKYO_NIGHT_DARK.muted,
-    scrollbar_thumb: TOKYO_NIGHT_DARK.blue,
+    accent: TOKYO_NIGHT_DARK.blue,
     scrollbar_rail: TOKYO_NIGHT_DARK.muted,
-    rail_done: TOKYO_NIGHT_DARK.green,
-    rail_active: TOKYO_NIGHT_DARK.blue,
-    rail_muted: TOKYO_NIGHT_DARK.muted,
-    rail_connector: TOKYO_NIGHT_DARK.muted,
 };
 
 const TOKYO_NIGHT_DAY: Palette = Palette {
@@ -815,45 +627,22 @@ const TOKYO_NIGHT_DAY: Palette = Palette {
     magenta: (0x98, 0x54, 0xF1),
 };
 
-/// Light theme: the neutral chips take the foreground role so the
-/// background-role chip text reads on them, and every text-bearing muted use
-/// takes a darkened muted literal that clears [`READABLE_CONTRAST`].
-const TOKYO_NIGHT_DAY_CHROME: Chrome = Chrome {
+/// Light theme: `chip_neutral` takes the foreground role so the
+/// background-role contrast text reads on it, and `muted_text` takes a
+/// darkened muted literal that clears [`READABLE_CONTRAST`].
+const TOKYO_NIGHT_DAY_CLASSES: Classes = Classes {
     background: TOKYO_NIGHT_DAY.background,
     foreground: TOKYO_NIGHT_DAY.foreground,
-    chip_stopped: TOKYO_NIGHT_DAY.foreground,
-    chip_running: TOKYO_NIGHT_DAY.green,
+    normal_text: TOKYO_NIGHT_DAY.foreground,
+    muted_text: (0x71, 0x7A, 0xAA),
+    highlighted_text: TOKYO_NIGHT_DAY.yellow,
+    chip_neutral: TOKYO_NIGHT_DAY.foreground,
+    contrast_text: TOKYO_NIGHT_DAY.background,
+    success: TOKYO_NIGHT_DAY.green,
     chip_planning: TOKYO_NIGHT_DAY.magenta,
     chip_discovering: TOKYO_NIGHT_DAY.blue,
-    chip_stopping: TOKYO_NIGHT_DAY.yellow,
-    chip_text: TOKYO_NIGHT_DAY.background,
-    run_mode_chip: TOKYO_NIGHT_DAY.foreground,
-    status_message: TOKYO_NIGHT_DAY.yellow,
-    status_key: TOKYO_NIGHT_DAY.foreground,
-    status_label: (0x71, 0x7A, 0xAA),
-    frame_title_detail: (0x71, 0x7A, 0xAA),
-    pane_empty: (0x71, 0x7A, 0xAA),
-    task_done: (0x71, 0x7A, 0xAA),
-    task_running: TOKYO_NIGHT_DAY.green,
-    task_new: TOKYO_NIGHT_DAY.yellow,
-    tasks_empty: (0x71, 0x7A, 0xAA),
-    dialog_status: TOKYO_NIGHT_DAY.yellow,
-    cursor_foreground: TOKYO_NIGHT_DAY.background,
-    cursor_background: TOKYO_NIGHT_DAY.blue,
-    dialog_hint: (0x71, 0x7A, 0xAA),
-    choice_detail: (0x71, 0x7A, 0xAA),
-    modal_footer: (0x71, 0x7A, 0xAA),
-    button_accent: TOKYO_NIGHT_DAY.yellow,
-    settings_error: TOKYO_NIGHT_DAY.yellow,
-    settings_info: (0x71, 0x7A, 0xAA),
-    settings_readonly: (0x71, 0x7A, 0xAA),
-    settings_help: (0x71, 0x7A, 0xAA),
-    scrollbar_thumb: TOKYO_NIGHT_DAY.blue,
+    accent: TOKYO_NIGHT_DAY.blue,
     scrollbar_rail: TOKYO_NIGHT_DAY.muted,
-    rail_done: TOKYO_NIGHT_DAY.green,
-    rail_active: TOKYO_NIGHT_DAY.blue,
-    rail_muted: (0x71, 0x7A, 0xAA),
-    rail_connector: (0x71, 0x7A, 0xAA),
 };
 
 const CATPPUCCIN_MOCHA: Palette = Palette {
@@ -867,44 +656,21 @@ const CATPPUCCIN_MOCHA: Palette = Palette {
     magenta: (0xCB, 0xA6, 0xF7),
 };
 
-/// Only the neutral chips move to the foreground role; Mocha's own muted and
+/// Only `chip_neutral` moves to the foreground role; Mocha's own muted and
 /// accents already clear [`READABLE_CONTRAST`] on its background.
-const CATPPUCCIN_MOCHA_CHROME: Chrome = Chrome {
+const CATPPUCCIN_MOCHA_CLASSES: Classes = Classes {
     background: CATPPUCCIN_MOCHA.background,
     foreground: CATPPUCCIN_MOCHA.foreground,
-    chip_stopped: CATPPUCCIN_MOCHA.foreground,
-    chip_running: CATPPUCCIN_MOCHA.green,
+    normal_text: CATPPUCCIN_MOCHA.foreground,
+    muted_text: CATPPUCCIN_MOCHA.muted,
+    highlighted_text: CATPPUCCIN_MOCHA.yellow,
+    chip_neutral: CATPPUCCIN_MOCHA.foreground,
+    contrast_text: CATPPUCCIN_MOCHA.background,
+    success: CATPPUCCIN_MOCHA.green,
     chip_planning: CATPPUCCIN_MOCHA.magenta,
     chip_discovering: CATPPUCCIN_MOCHA.blue,
-    chip_stopping: CATPPUCCIN_MOCHA.yellow,
-    chip_text: CATPPUCCIN_MOCHA.background,
-    run_mode_chip: CATPPUCCIN_MOCHA.foreground,
-    status_message: CATPPUCCIN_MOCHA.yellow,
-    status_key: CATPPUCCIN_MOCHA.foreground,
-    status_label: CATPPUCCIN_MOCHA.muted,
-    frame_title_detail: CATPPUCCIN_MOCHA.muted,
-    pane_empty: CATPPUCCIN_MOCHA.muted,
-    task_done: CATPPUCCIN_MOCHA.muted,
-    task_running: CATPPUCCIN_MOCHA.green,
-    task_new: CATPPUCCIN_MOCHA.yellow,
-    tasks_empty: CATPPUCCIN_MOCHA.muted,
-    dialog_status: CATPPUCCIN_MOCHA.yellow,
-    cursor_foreground: CATPPUCCIN_MOCHA.background,
-    cursor_background: CATPPUCCIN_MOCHA.blue,
-    dialog_hint: CATPPUCCIN_MOCHA.muted,
-    choice_detail: CATPPUCCIN_MOCHA.muted,
-    modal_footer: CATPPUCCIN_MOCHA.muted,
-    button_accent: CATPPUCCIN_MOCHA.yellow,
-    settings_error: CATPPUCCIN_MOCHA.yellow,
-    settings_info: CATPPUCCIN_MOCHA.muted,
-    settings_readonly: CATPPUCCIN_MOCHA.muted,
-    settings_help: CATPPUCCIN_MOCHA.muted,
-    scrollbar_thumb: CATPPUCCIN_MOCHA.blue,
+    accent: CATPPUCCIN_MOCHA.blue,
     scrollbar_rail: CATPPUCCIN_MOCHA.muted,
-    rail_done: CATPPUCCIN_MOCHA.green,
-    rail_active: CATPPUCCIN_MOCHA.blue,
-    rail_muted: CATPPUCCIN_MOCHA.muted,
-    rail_connector: CATPPUCCIN_MOCHA.muted,
 };
 
 const CATPPUCCIN_LATTE: Palette = Palette {
@@ -918,47 +684,25 @@ const CATPPUCCIN_LATTE: Palette = Palette {
     magenta: (0x88, 0x39, 0xEF),
 };
 
-/// Light theme: the neutral chips take the foreground role so the
-/// background-role chip text reads on them. Latte's muted already clears
+/// Light theme: `chip_neutral` takes the foreground role so the
+/// background-role contrast text reads on it. Latte's muted already clears
 /// [`READABLE_CONTRAST`], but its green and yellow fall short both as chip
-/// backgrounds under the chip text and as text on the background, so every
-/// green and yellow use takes a darkened literal of the role's hue.
-const CATPPUCCIN_LATTE_CHROME: Chrome = Chrome {
+/// backgrounds under the contrast text and as text on the background, so
+/// `success` and `highlighted_text` take darkened literals of the roles'
+/// hues.
+const CATPPUCCIN_LATTE_CLASSES: Classes = Classes {
     background: CATPPUCCIN_LATTE.background,
     foreground: CATPPUCCIN_LATTE.foreground,
-    chip_stopped: CATPPUCCIN_LATTE.foreground,
-    chip_running: (0x3D, 0x98, 0x29),
+    normal_text: CATPPUCCIN_LATTE.foreground,
+    muted_text: CATPPUCCIN_LATTE.muted,
+    highlighted_text: (0xBB, 0x77, 0x18),
+    chip_neutral: CATPPUCCIN_LATTE.foreground,
+    contrast_text: CATPPUCCIN_LATTE.background,
+    success: (0x3D, 0x98, 0x29),
     chip_planning: CATPPUCCIN_LATTE.magenta,
     chip_discovering: CATPPUCCIN_LATTE.blue,
-    chip_stopping: (0xBB, 0x77, 0x18),
-    chip_text: CATPPUCCIN_LATTE.background,
-    run_mode_chip: CATPPUCCIN_LATTE.foreground,
-    status_message: (0xBB, 0x77, 0x18),
-    status_key: CATPPUCCIN_LATTE.foreground,
-    status_label: CATPPUCCIN_LATTE.muted,
-    frame_title_detail: CATPPUCCIN_LATTE.muted,
-    pane_empty: CATPPUCCIN_LATTE.muted,
-    task_done: CATPPUCCIN_LATTE.muted,
-    task_running: (0x3D, 0x98, 0x29),
-    task_new: (0xBB, 0x77, 0x18),
-    tasks_empty: CATPPUCCIN_LATTE.muted,
-    dialog_status: (0xBB, 0x77, 0x18),
-    cursor_foreground: CATPPUCCIN_LATTE.background,
-    cursor_background: CATPPUCCIN_LATTE.blue,
-    dialog_hint: CATPPUCCIN_LATTE.muted,
-    choice_detail: CATPPUCCIN_LATTE.muted,
-    modal_footer: CATPPUCCIN_LATTE.muted,
-    button_accent: (0xBB, 0x77, 0x18),
-    settings_error: (0xBB, 0x77, 0x18),
-    settings_info: CATPPUCCIN_LATTE.muted,
-    settings_readonly: CATPPUCCIN_LATTE.muted,
-    settings_help: CATPPUCCIN_LATTE.muted,
-    scrollbar_thumb: CATPPUCCIN_LATTE.blue,
+    accent: CATPPUCCIN_LATTE.blue,
     scrollbar_rail: CATPPUCCIN_LATTE.muted,
-    rail_done: (0x3D, 0x98, 0x29),
-    rail_active: CATPPUCCIN_LATTE.blue,
-    rail_muted: CATPPUCCIN_LATTE.muted,
-    rail_connector: CATPPUCCIN_LATTE.muted,
 };
 
 const SOLARIZED_DARK: Palette = Palette {
@@ -972,45 +716,22 @@ const SOLARIZED_DARK: Palette = Palette {
     magenta: (0xD3, 0x36, 0x82),
 };
 
-/// Only the neutral chips move to the foreground role; Solarized Dark's muted
+/// Only `chip_neutral` moves to the foreground role; Solarized Dark's muted
 /// sits at the benchmark theme's dimness and its accents already clear
 /// [`READABLE_CONTRAST`].
-const SOLARIZED_DARK_CHROME: Chrome = Chrome {
+const SOLARIZED_DARK_CLASSES: Classes = Classes {
     background: SOLARIZED_DARK.background,
     foreground: SOLARIZED_DARK.foreground,
-    chip_stopped: SOLARIZED_DARK.foreground,
-    chip_running: SOLARIZED_DARK.green,
+    normal_text: SOLARIZED_DARK.foreground,
+    muted_text: SOLARIZED_DARK.muted,
+    highlighted_text: SOLARIZED_DARK.yellow,
+    chip_neutral: SOLARIZED_DARK.foreground,
+    contrast_text: SOLARIZED_DARK.background,
+    success: SOLARIZED_DARK.green,
     chip_planning: SOLARIZED_DARK.magenta,
     chip_discovering: SOLARIZED_DARK.blue,
-    chip_stopping: SOLARIZED_DARK.yellow,
-    chip_text: SOLARIZED_DARK.background,
-    run_mode_chip: SOLARIZED_DARK.foreground,
-    status_message: SOLARIZED_DARK.yellow,
-    status_key: SOLARIZED_DARK.foreground,
-    status_label: SOLARIZED_DARK.muted,
-    frame_title_detail: SOLARIZED_DARK.muted,
-    pane_empty: SOLARIZED_DARK.muted,
-    task_done: SOLARIZED_DARK.muted,
-    task_running: SOLARIZED_DARK.green,
-    task_new: SOLARIZED_DARK.yellow,
-    tasks_empty: SOLARIZED_DARK.muted,
-    dialog_status: SOLARIZED_DARK.yellow,
-    cursor_foreground: SOLARIZED_DARK.background,
-    cursor_background: SOLARIZED_DARK.blue,
-    dialog_hint: SOLARIZED_DARK.muted,
-    choice_detail: SOLARIZED_DARK.muted,
-    modal_footer: SOLARIZED_DARK.muted,
-    button_accent: SOLARIZED_DARK.yellow,
-    settings_error: SOLARIZED_DARK.yellow,
-    settings_info: SOLARIZED_DARK.muted,
-    settings_readonly: SOLARIZED_DARK.muted,
-    settings_help: SOLARIZED_DARK.muted,
-    scrollbar_thumb: SOLARIZED_DARK.blue,
+    accent: SOLARIZED_DARK.blue,
     scrollbar_rail: SOLARIZED_DARK.muted,
-    rail_done: SOLARIZED_DARK.green,
-    rail_active: SOLARIZED_DARK.blue,
-    rail_muted: SOLARIZED_DARK.muted,
-    rail_connector: SOLARIZED_DARK.muted,
 };
 
 const SOLARIZED_LIGHT: Palette = Palette {
@@ -1024,47 +745,24 @@ const SOLARIZED_LIGHT: Palette = Palette {
     magenta: (0xD3, 0x36, 0x82),
 };
 
-/// Light theme: the neutral chips take the foreground role so the
-/// background-role chip text reads on them, every text-bearing muted use
-/// takes a darkened muted literal, and the green and yellow — short both as
-/// chip backgrounds under the chip text and as text on the background — take
-/// darkened literals of their hues.
-const SOLARIZED_LIGHT_CHROME: Chrome = Chrome {
+/// Light theme: `chip_neutral` takes the foreground role so the
+/// background-role contrast text reads on it, `muted_text` takes a darkened
+/// muted literal, and the green and yellow — short both as chip backgrounds
+/// under the contrast text and as text on the background — take darkened
+/// literals of their hues as `success` and `highlighted_text`.
+const SOLARIZED_LIGHT_CLASSES: Classes = Classes {
     background: SOLARIZED_LIGHT.background,
     foreground: SOLARIZED_LIGHT.foreground,
-    chip_stopped: SOLARIZED_LIGHT.foreground,
-    chip_running: (0x7C, 0x8F, 0x00),
+    normal_text: SOLARIZED_LIGHT.foreground,
+    muted_text: (0x76, 0x87, 0x87),
+    highlighted_text: (0xAB, 0x81, 0x00),
+    chip_neutral: SOLARIZED_LIGHT.foreground,
+    contrast_text: SOLARIZED_LIGHT.background,
+    success: (0x7C, 0x8F, 0x00),
     chip_planning: SOLARIZED_LIGHT.magenta,
     chip_discovering: SOLARIZED_LIGHT.blue,
-    chip_stopping: (0xAB, 0x81, 0x00),
-    chip_text: SOLARIZED_LIGHT.background,
-    run_mode_chip: SOLARIZED_LIGHT.foreground,
-    status_message: (0xAB, 0x81, 0x00),
-    status_key: SOLARIZED_LIGHT.foreground,
-    status_label: (0x76, 0x87, 0x87),
-    frame_title_detail: (0x76, 0x87, 0x87),
-    pane_empty: (0x76, 0x87, 0x87),
-    task_done: (0x76, 0x87, 0x87),
-    task_running: (0x7C, 0x8F, 0x00),
-    task_new: (0xAB, 0x81, 0x00),
-    tasks_empty: (0x76, 0x87, 0x87),
-    dialog_status: (0xAB, 0x81, 0x00),
-    cursor_foreground: SOLARIZED_LIGHT.background,
-    cursor_background: SOLARIZED_LIGHT.blue,
-    dialog_hint: (0x76, 0x87, 0x87),
-    choice_detail: (0x76, 0x87, 0x87),
-    modal_footer: (0x76, 0x87, 0x87),
-    button_accent: (0xAB, 0x81, 0x00),
-    settings_error: (0xAB, 0x81, 0x00),
-    settings_info: (0x76, 0x87, 0x87),
-    settings_readonly: (0x76, 0x87, 0x87),
-    settings_help: (0x76, 0x87, 0x87),
-    scrollbar_thumb: SOLARIZED_LIGHT.blue,
+    accent: SOLARIZED_LIGHT.blue,
     scrollbar_rail: SOLARIZED_LIGHT.muted,
-    rail_done: (0x7C, 0x8F, 0x00),
-    rail_active: SOLARIZED_LIGHT.blue,
-    rail_muted: (0x76, 0x87, 0x87),
-    rail_connector: (0x76, 0x87, 0x87),
 };
 
 const GRUVBOX_DARK: Palette = Palette {
@@ -1078,44 +776,21 @@ const GRUVBOX_DARK: Palette = Palette {
     magenta: (0xD3, 0x86, 0x9B),
 };
 
-/// Only the neutral chips move to the foreground role; Gruvbox Dark's own
+/// Only `chip_neutral` moves to the foreground role; Gruvbox Dark's own
 /// muted and accents already clear [`READABLE_CONTRAST`] on its background.
-const GRUVBOX_DARK_CHROME: Chrome = Chrome {
+const GRUVBOX_DARK_CLASSES: Classes = Classes {
     background: GRUVBOX_DARK.background,
     foreground: GRUVBOX_DARK.foreground,
-    chip_stopped: GRUVBOX_DARK.foreground,
-    chip_running: GRUVBOX_DARK.green,
+    normal_text: GRUVBOX_DARK.foreground,
+    muted_text: GRUVBOX_DARK.muted,
+    highlighted_text: GRUVBOX_DARK.yellow,
+    chip_neutral: GRUVBOX_DARK.foreground,
+    contrast_text: GRUVBOX_DARK.background,
+    success: GRUVBOX_DARK.green,
     chip_planning: GRUVBOX_DARK.magenta,
     chip_discovering: GRUVBOX_DARK.blue,
-    chip_stopping: GRUVBOX_DARK.yellow,
-    chip_text: GRUVBOX_DARK.background,
-    run_mode_chip: GRUVBOX_DARK.foreground,
-    status_message: GRUVBOX_DARK.yellow,
-    status_key: GRUVBOX_DARK.foreground,
-    status_label: GRUVBOX_DARK.muted,
-    frame_title_detail: GRUVBOX_DARK.muted,
-    pane_empty: GRUVBOX_DARK.muted,
-    task_done: GRUVBOX_DARK.muted,
-    task_running: GRUVBOX_DARK.green,
-    task_new: GRUVBOX_DARK.yellow,
-    tasks_empty: GRUVBOX_DARK.muted,
-    dialog_status: GRUVBOX_DARK.yellow,
-    cursor_foreground: GRUVBOX_DARK.background,
-    cursor_background: GRUVBOX_DARK.blue,
-    dialog_hint: GRUVBOX_DARK.muted,
-    choice_detail: GRUVBOX_DARK.muted,
-    modal_footer: GRUVBOX_DARK.muted,
-    button_accent: GRUVBOX_DARK.yellow,
-    settings_error: GRUVBOX_DARK.yellow,
-    settings_info: GRUVBOX_DARK.muted,
-    settings_readonly: GRUVBOX_DARK.muted,
-    settings_help: GRUVBOX_DARK.muted,
-    scrollbar_thumb: GRUVBOX_DARK.blue,
+    accent: GRUVBOX_DARK.blue,
     scrollbar_rail: GRUVBOX_DARK.muted,
-    rail_done: GRUVBOX_DARK.green,
-    rail_active: GRUVBOX_DARK.blue,
-    rail_muted: GRUVBOX_DARK.muted,
-    rail_connector: GRUVBOX_DARK.muted,
 };
 
 const GRUVBOX_LIGHT: Palette = Palette {
@@ -1129,44 +804,21 @@ const GRUVBOX_LIGHT: Palette = Palette {
     magenta: (0x8F, 0x3F, 0x71),
 };
 
-/// Only the neutral chips move to the foreground role; Gruvbox Light's own
+/// Only `chip_neutral` moves to the foreground role; Gruvbox Light's own
 /// muted and accents already clear [`READABLE_CONTRAST`] on its background.
-const GRUVBOX_LIGHT_CHROME: Chrome = Chrome {
+const GRUVBOX_LIGHT_CLASSES: Classes = Classes {
     background: GRUVBOX_LIGHT.background,
     foreground: GRUVBOX_LIGHT.foreground,
-    chip_stopped: GRUVBOX_LIGHT.foreground,
-    chip_running: GRUVBOX_LIGHT.green,
+    normal_text: GRUVBOX_LIGHT.foreground,
+    muted_text: GRUVBOX_LIGHT.muted,
+    highlighted_text: GRUVBOX_LIGHT.yellow,
+    chip_neutral: GRUVBOX_LIGHT.foreground,
+    contrast_text: GRUVBOX_LIGHT.background,
+    success: GRUVBOX_LIGHT.green,
     chip_planning: GRUVBOX_LIGHT.magenta,
     chip_discovering: GRUVBOX_LIGHT.blue,
-    chip_stopping: GRUVBOX_LIGHT.yellow,
-    chip_text: GRUVBOX_LIGHT.background,
-    run_mode_chip: GRUVBOX_LIGHT.foreground,
-    status_message: GRUVBOX_LIGHT.yellow,
-    status_key: GRUVBOX_LIGHT.foreground,
-    status_label: GRUVBOX_LIGHT.muted,
-    frame_title_detail: GRUVBOX_LIGHT.muted,
-    pane_empty: GRUVBOX_LIGHT.muted,
-    task_done: GRUVBOX_LIGHT.muted,
-    task_running: GRUVBOX_LIGHT.green,
-    task_new: GRUVBOX_LIGHT.yellow,
-    tasks_empty: GRUVBOX_LIGHT.muted,
-    dialog_status: GRUVBOX_LIGHT.yellow,
-    cursor_foreground: GRUVBOX_LIGHT.background,
-    cursor_background: GRUVBOX_LIGHT.blue,
-    dialog_hint: GRUVBOX_LIGHT.muted,
-    choice_detail: GRUVBOX_LIGHT.muted,
-    modal_footer: GRUVBOX_LIGHT.muted,
-    button_accent: GRUVBOX_LIGHT.yellow,
-    settings_error: GRUVBOX_LIGHT.yellow,
-    settings_info: GRUVBOX_LIGHT.muted,
-    settings_readonly: GRUVBOX_LIGHT.muted,
-    settings_help: GRUVBOX_LIGHT.muted,
-    scrollbar_thumb: GRUVBOX_LIGHT.blue,
+    accent: GRUVBOX_LIGHT.blue,
     scrollbar_rail: GRUVBOX_LIGHT.muted,
-    rail_done: GRUVBOX_LIGHT.green,
-    rail_active: GRUVBOX_LIGHT.blue,
-    rail_muted: GRUVBOX_LIGHT.muted,
-    rail_connector: GRUVBOX_LIGHT.muted,
 };
 
 /// The palette of a non-default theme key.
@@ -1186,29 +838,29 @@ fn palette_of(theme: ThemeKey) -> &'static Palette {
     }
 }
 
-/// The chrome table of a non-default theme key (T109.1).
-fn chrome_of(theme: ThemeKey) -> &'static Chrome {
+/// The class table of a non-default theme key (T111.1).
+fn classes_of(theme: ThemeKey) -> &'static Classes {
     match theme {
-        ThemeKey::AtomOneDark => &ATOM_ONE_DARK_CHROME,
-        ThemeKey::AtomOneLight => &ATOM_ONE_LIGHT_CHROME,
-        ThemeKey::TokyoNightDark => &TOKYO_NIGHT_DARK_CHROME,
-        ThemeKey::TokyoNightDay => &TOKYO_NIGHT_DAY_CHROME,
-        ThemeKey::CatppuccinMocha => &CATPPUCCIN_MOCHA_CHROME,
-        ThemeKey::CatppuccinLatte => &CATPPUCCIN_LATTE_CHROME,
-        ThemeKey::SolarizedDark => &SOLARIZED_DARK_CHROME,
-        ThemeKey::SolarizedLight => &SOLARIZED_LIGHT_CHROME,
-        ThemeKey::GruvboxDark => &GRUVBOX_DARK_CHROME,
-        ThemeKey::GruvboxLight => &GRUVBOX_LIGHT_CHROME,
+        ThemeKey::AtomOneDark => &ATOM_ONE_DARK_CLASSES,
+        ThemeKey::AtomOneLight => &ATOM_ONE_LIGHT_CLASSES,
+        ThemeKey::TokyoNightDark => &TOKYO_NIGHT_DARK_CLASSES,
+        ThemeKey::TokyoNightDay => &TOKYO_NIGHT_DAY_CLASSES,
+        ThemeKey::CatppuccinMocha => &CATPPUCCIN_MOCHA_CLASSES,
+        ThemeKey::CatppuccinLatte => &CATPPUCCIN_LATTE_CLASSES,
+        ThemeKey::SolarizedDark => &SOLARIZED_DARK_CLASSES,
+        ThemeKey::SolarizedLight => &SOLARIZED_LIGHT_CLASSES,
+        ThemeKey::GruvboxDark => &GRUVBOX_DARK_CLASSES,
+        ThemeKey::GruvboxLight => &GRUVBOX_LIGHT_CLASSES,
         ThemeKey::Dark => unreachable!("the default theme is Theme::DARK, not a palette"),
     }
 }
 
 impl Palette {
-    /// Emits the theme: the palette's own [`Chrome`] table (T109.1) supplies
-    /// every non-agent-text semantic field, and the palette's background fixes
-    /// the agent line colours (T108.1). The truecolor setting picks the
-    /// emission, exactly like the agent text roles.
-    fn theme(&self, chrome: &Chrome, truecolor: bool) -> Theme {
+    /// Emits the theme: the palette's own [`Classes`] table (T111.1) supplies
+    /// every class, and the palette's background fixes the agent line colours
+    /// (T108.1). The truecolor setting picks the emission, exactly like the
+    /// agent text roles.
+    fn theme(&self, classes: &Classes, truecolor: bool) -> Theme {
         let colour = |role: (u8, u8, u8)| {
             if truecolor {
                 Color::Rgb(role.0, role.1, role.2)
@@ -1217,43 +869,20 @@ impl Palette {
             }
         };
         Theme {
-            background: colour(chrome.background),
-            foreground: colour(chrome.foreground),
-            chip_stopped: colour(chrome.chip_stopped),
-            chip_running: colour(chrome.chip_running),
-            chip_planning: colour(chrome.chip_planning),
-            chip_discovering: colour(chrome.chip_discovering),
-            chip_stopping: colour(chrome.chip_stopping),
-            chip_text: colour(chrome.chip_text),
-            run_mode_chip: colour(chrome.run_mode_chip),
-            status_message: colour(chrome.status_message),
-            status_key: colour(chrome.status_key),
-            status_label: colour(chrome.status_label),
+            background: colour(classes.background),
+            foreground: colour(classes.foreground),
+            normal_text: colour(classes.normal_text),
+            muted_text: colour(classes.muted_text),
+            highlighted_text: colour(classes.highlighted_text),
             agent_text: AgentText::resolve(self.background, truecolor),
             agent_names: AgentNames::resolve(self.background, truecolor),
-            frame_title_detail: colour(chrome.frame_title_detail),
-            pane_empty: colour(chrome.pane_empty),
-            task_done: colour(chrome.task_done),
-            task_running: colour(chrome.task_running),
-            task_new: colour(chrome.task_new),
-            tasks_empty: colour(chrome.tasks_empty),
-            dialog_status: colour(chrome.dialog_status),
-            cursor_foreground: colour(chrome.cursor_foreground),
-            cursor_background: colour(chrome.cursor_background),
-            dialog_hint: colour(chrome.dialog_hint),
-            choice_detail: colour(chrome.choice_detail),
-            modal_footer: colour(chrome.modal_footer),
-            button_accent: colour(chrome.button_accent),
-            settings_error: colour(chrome.settings_error),
-            settings_info: colour(chrome.settings_info),
-            settings_readonly: colour(chrome.settings_readonly),
-            settings_help: colour(chrome.settings_help),
-            scrollbar_thumb: colour(chrome.scrollbar_thumb),
-            scrollbar_rail: colour(chrome.scrollbar_rail),
-            rail_done: colour(chrome.rail_done),
-            rail_active: colour(chrome.rail_active),
-            rail_muted: colour(chrome.rail_muted),
-            rail_connector: colour(chrome.rail_connector),
+            chip_neutral: colour(classes.chip_neutral),
+            contrast_text: colour(classes.contrast_text),
+            success: colour(classes.success),
+            chip_planning: colour(classes.chip_planning),
+            chip_discovering: colour(classes.chip_discovering),
+            accent: colour(classes.accent),
+            scrollbar_rail: colour(classes.scrollbar_rail),
         }
     }
 }
@@ -1324,24 +953,18 @@ mod tests {
     use super::*;
     use patok_core::config::THEME_KEYS;
 
-    /// DARK is value-locked to the pre-theme look: every semantic field keeps
-    /// the colour the renderers hardcoded before T34.1, and the base style is
-    /// the terminal default (Reset/Reset), so painting it is a no-op.
+    /// DARK is value-locked to the pre-class-system look (T111.1): every
+    /// class keeps the colour the collapsed fields held before the refactor,
+    /// and the base style is the terminal default (Reset/Reset), so painting
+    /// it is a no-op.
     #[test]
     fn dark_theme_is_the_current_look() {
         let dark = Theme::DARK;
         assert_eq!(dark.background, Color::Reset);
         assert_eq!(dark.foreground, Color::Reset);
-        assert_eq!(dark.chip_stopped, Color::DarkGray);
-        assert_eq!(dark.chip_running, Color::Green);
-        assert_eq!(dark.chip_planning, Color::Magenta);
-        assert_eq!(dark.chip_discovering, Color::Blue);
-        assert_eq!(dark.chip_stopping, Color::Yellow);
-        assert_eq!(dark.chip_text, Color::Black);
-        assert_eq!(dark.run_mode_chip, Color::DarkGray);
-        assert_eq!(dark.status_message, Color::Yellow);
-        assert_eq!(dark.status_key, Color::DarkGray);
-        assert_eq!(dark.status_label, Color::DarkGray);
+        assert_eq!(dark.normal_text, Color::Reset);
+        assert_eq!(dark.muted_text, Color::DarkGray);
+        assert_eq!(dark.highlighted_text, Color::Yellow);
         assert_eq!(dark.agent_text.thinking, Color::Blue);
         assert_eq!(dark.agent_text.tool, Color::Cyan);
         assert_eq!(dark.agent_text.result, Color::DarkGray);
@@ -1356,47 +979,19 @@ mod tests {
         assert_eq!(dark.agent_names.discovery, Color::Cyan);
         assert_eq!(dark.agent_names.orchestrator, Color::LightMagenta);
         assert_eq!(dark.agent_names.other, Color::DarkGray);
-        assert_eq!(dark.frame_title_detail, Color::DarkGray);
-        assert_eq!(dark.pane_empty, Color::DarkGray);
-        assert_eq!(dark.task_done, Color::DarkGray);
-        assert_eq!(dark.task_running, Color::Green);
-        assert_eq!(dark.task_new, Color::Yellow);
-        assert_eq!(dark.tasks_empty, Color::DarkGray);
-        assert_eq!(dark.dialog_status, Color::Yellow);
-        assert_eq!(dark.cursor_foreground, Color::Black);
-        assert_eq!(dark.cursor_background, Color::Cyan);
-        assert_eq!(dark.dialog_hint, Color::DarkGray);
-        assert_eq!(dark.choice_detail, Color::DarkGray);
-        assert_eq!(dark.modal_footer, Color::DarkGray);
-        assert_eq!(dark.button_accent, Color::Yellow);
-        assert_eq!(dark.settings_error, Color::Yellow);
-        assert_eq!(dark.settings_info, Color::DarkGray);
-        assert_eq!(dark.settings_readonly, Color::DarkGray);
-        assert_eq!(dark.settings_help, Color::DarkGray);
-        assert_eq!(dark.scrollbar_thumb, Color::Cyan);
+        assert_eq!(dark.chip_neutral, Color::DarkGray);
+        assert_eq!(dark.contrast_text, Color::Black);
+        assert_eq!(dark.success, Color::Green);
+        assert_eq!(dark.chip_planning, Color::Magenta);
+        assert_eq!(dark.chip_discovering, Color::Blue);
+        assert_eq!(dark.accent, Color::Cyan);
         assert_eq!(dark.scrollbar_rail, Color::DarkGray);
-        assert_eq!(dark.rail_done, Color::Green);
-        assert_eq!(dark.rail_active, Color::Cyan);
-        assert_eq!(dark.rail_muted, Color::DarkGray);
-        assert_eq!(dark.rail_connector, Color::DarkGray);
     }
 
-    /// Every semantic field of a theme, in a fixed order, for completeness
-    /// checks.
+    /// Every field of a theme, in a fixed order, for completeness checks.
     fn every_field(theme: &Theme) -> Vec<Color> {
-        vec![
-            theme.background,
-            theme.foreground,
-            theme.chip_stopped,
-            theme.chip_running,
-            theme.chip_planning,
-            theme.chip_discovering,
-            theme.chip_stopping,
-            theme.chip_text,
-            theme.run_mode_chip,
-            theme.status_message,
-            theme.status_key,
-            theme.status_label,
+        let mut fields = every_class_field(theme);
+        fields.extend([
             theme.agent_text.thinking,
             theme.agent_text.tool,
             theme.agent_text.result,
@@ -1411,29 +1006,27 @@ mod tests {
             theme.agent_names.discovery,
             theme.agent_names.orchestrator,
             theme.agent_names.other,
-            theme.frame_title_detail,
-            theme.pane_empty,
-            theme.task_done,
-            theme.task_running,
-            theme.task_new,
-            theme.tasks_empty,
-            theme.dialog_status,
-            theme.cursor_foreground,
-            theme.cursor_background,
-            theme.dialog_hint,
-            theme.choice_detail,
-            theme.modal_footer,
-            theme.button_accent,
-            theme.settings_error,
-            theme.settings_info,
-            theme.settings_readonly,
-            theme.settings_help,
-            theme.scrollbar_thumb,
+        ]);
+        fields
+    }
+
+    /// Every class of a theme, in a fixed order matching the [`Classes`]
+    /// struct, for the per-theme table checks. The agent subclasses are
+    /// asserted separately (T108.1, T110.1).
+    fn every_class_field(theme: &Theme) -> Vec<Color> {
+        vec![
+            theme.background,
+            theme.foreground,
+            theme.normal_text,
+            theme.muted_text,
+            theme.highlighted_text,
+            theme.chip_neutral,
+            theme.contrast_text,
+            theme.success,
+            theme.chip_planning,
+            theme.chip_discovering,
+            theme.accent,
             theme.scrollbar_rail,
-            theme.rail_done,
-            theme.rail_active,
-            theme.rail_muted,
-            theme.rail_connector,
         ]
     }
 
@@ -1728,157 +1321,75 @@ mod tests {
         }
     }
 
-    /// Every chrome semantic field of a theme, in a fixed order matching the
-    /// [`Chrome`] struct, for the per-theme table checks.
-    fn every_chrome_field(theme: &Theme) -> Vec<Color> {
-        vec![
-            theme.background,
-            theme.foreground,
-            theme.chip_stopped,
-            theme.chip_running,
-            theme.chip_planning,
-            theme.chip_discovering,
-            theme.chip_stopping,
-            theme.chip_text,
-            theme.run_mode_chip,
-            theme.status_message,
-            theme.status_key,
-            theme.status_label,
-            theme.frame_title_detail,
-            theme.pane_empty,
-            theme.task_done,
-            theme.task_running,
-            theme.task_new,
-            theme.tasks_empty,
-            theme.dialog_status,
-            theme.cursor_foreground,
-            theme.cursor_background,
-            theme.dialog_hint,
-            theme.choice_detail,
-            theme.modal_footer,
-            theme.button_accent,
-            theme.settings_error,
-            theme.settings_info,
-            theme.settings_readonly,
-            theme.settings_help,
-            theme.scrollbar_thumb,
-            theme.scrollbar_rail,
-            theme.rail_done,
-            theme.rail_active,
-            theme.rail_muted,
-            theme.rail_connector,
-        ]
-    }
-
-    /// Every non-fixated semantic field resolves from the theme's own
-    /// [`Chrome`] table (T109.1): a theme that silently fell back to a shared
-    /// mapping rule would fail this. A field added to `Theme` without a
-    /// `Chrome` counterpart fails to compile. The agent text and agent name
-    /// fields are asserted separately above (T108.1, T110.1). Checked in
-    /// truecolor mode; the 256-colour mode derives from the same triples.
+    /// Every class resolves from the theme's own [`Classes`] table (T111.1):
+    /// a theme that silently fell back to a shared mapping rule would fail
+    /// this. A class added to `Theme` without a `Classes` counterpart fails
+    /// to compile. The agent text and agent name fields are asserted
+    /// separately above (T108.1, T110.1). Checked in truecolor mode; the
+    /// 256-colour mode derives from the same triples.
     #[test]
-    fn chrome_mapping_is_per_theme() {
+    fn class_mapping_is_per_theme() {
         for key in every_key().into_iter().filter(|key| *key != ThemeKey::Dark) {
             let theme = Theme::resolve(key, Some(true));
-            let chrome = chrome_of(key);
+            let classes = classes_of(key);
             let expected = [
-                chrome.background,
-                chrome.foreground,
-                chrome.chip_stopped,
-                chrome.chip_running,
-                chrome.chip_planning,
-                chrome.chip_discovering,
-                chrome.chip_stopping,
-                chrome.chip_text,
-                chrome.run_mode_chip,
-                chrome.status_message,
-                chrome.status_key,
-                chrome.status_label,
-                chrome.frame_title_detail,
-                chrome.pane_empty,
-                chrome.task_done,
-                chrome.task_running,
-                chrome.task_new,
-                chrome.tasks_empty,
-                chrome.dialog_status,
-                chrome.cursor_foreground,
-                chrome.cursor_background,
-                chrome.dialog_hint,
-                chrome.choice_detail,
-                chrome.modal_footer,
-                chrome.button_accent,
-                chrome.settings_error,
-                chrome.settings_info,
-                chrome.settings_readonly,
-                chrome.settings_help,
-                chrome.scrollbar_thumb,
-                chrome.scrollbar_rail,
-                chrome.rail_done,
-                chrome.rail_active,
-                chrome.rail_muted,
-                chrome.rail_connector,
+                classes.background,
+                classes.foreground,
+                classes.normal_text,
+                classes.muted_text,
+                classes.highlighted_text,
+                classes.chip_neutral,
+                classes.contrast_text,
+                classes.success,
+                classes.chip_planning,
+                classes.chip_discovering,
+                classes.accent,
+                classes.scrollbar_rail,
             ];
-            for (got, want) in every_chrome_field(&theme).into_iter().zip(expected) {
+            for (got, want) in every_class_field(&theme).into_iter().zip(expected) {
                 assert_eq!(
                     got,
                     Color::Rgb(want.0, want.1, want.2),
-                    "{key:?} chrome field must resolve from its per-theme table"
+                    "{key:?} class must resolve from its per-theme table"
                 );
             }
         }
     }
 
-    /// The one chip text reads on every chip background of every theme except
-    /// the benchmark: after the per-theme retune (T109.1) each of the seven
-    /// chip backgrounds reaches [`READABLE_CONTRAST`] under the shared
-    /// `chip_text`. Tokyo Night Dark is exempt because its look is the
+    /// The shared contrast text reads on every coloured background of every
+    /// theme except the two benchmarks: after the class collapse (T111.1)
+    /// each chip and cursor background reaches [`READABLE_CONTRAST`] under
+    /// `contrast_text`. The default theme is excluded because its background
+    /// is the terminal default (`Color::Reset`), whose colour the theme
+    /// cannot know. Tokyo Night Dark is exempt because its look is the
     /// snapshot-locked benchmark the other themes are tuned to reach.
     #[test]
-    fn chip_text_reads_on_every_chip_background() {
+    fn contrast_text_reads_on_every_colored_background() {
         for key in every_key()
             .into_iter()
             .filter(|key| !matches!(key, ThemeKey::Dark | ThemeKey::TokyoNightDark))
         {
-            let chrome = chrome_of(key);
-            for chip in [
-                chrome.chip_stopped,
-                chrome.chip_running,
-                chrome.chip_planning,
-                chrome.chip_discovering,
-                chrome.chip_stopping,
-                chrome.run_mode_chip,
-                chrome.status_key,
+            let classes = classes_of(key);
+            for background in [
+                classes.chip_neutral,
+                classes.success,
+                classes.chip_planning,
+                classes.chip_discovering,
+                classes.highlighted_text,
+                classes.accent,
             ] {
-                let ratio = contrast_ratio(chrome.chip_text, chip);
+                let ratio = contrast_ratio(classes.contrast_text, background);
                 assert!(
                     ratio >= READABLE_CONTRAST,
-                    "{key:?} chip text reaches only {ratio} on a chip background"
+                    "{key:?} contrast text reaches only {ratio} on a coloured background"
                 );
             }
         }
     }
 
-    /// The block cursor's foreground reads on its background in every theme
-    /// except the benchmark (the same snapshot-locked exemption as the chip
-    /// test above).
-    #[test]
-    fn cursor_foreground_reads_on_cursor_background() {
-        for key in every_key()
-            .into_iter()
-            .filter(|key| !matches!(key, ThemeKey::Dark | ThemeKey::TokyoNightDark))
-        {
-            let chrome = chrome_of(key);
-            let ratio = contrast_ratio(chrome.cursor_foreground, chrome.cursor_background);
-            assert!(
-                ratio >= READABLE_CONTRAST,
-                "{key:?} cursor foreground reaches only {ratio} on the cursor background"
-            );
-        }
-    }
-
-    /// Every light theme's chrome text reads on its background (T109.1): all
-    /// text-bearing fields reach [`READABLE_CONTRAST`] and the decorative
-    /// scrollbar fields merely differ from it. Scoped to the light variants
+    /// Every light theme's class text reads on its background (T111.1): all
+    /// text-bearing classes reach [`READABLE_CONTRAST`] and the decorative
+    /// scrollbar rail merely differs from it. Scoped to the light variants
     /// deliberately: dim muted text is an accepted aesthetic on the dark
     /// themes, where the benchmark theme itself sits near the threshold.
     #[test]
@@ -1890,40 +1401,24 @@ mod tests {
             ThemeKey::SolarizedLight,
             ThemeKey::GruvboxLight,
         ] {
-            let chrome = chrome_of(key);
-            let text_fields = [
-                ("foreground", chrome.foreground),
-                ("status_label", chrome.status_label),
-                ("status_message", chrome.status_message),
-                ("frame_title_detail", chrome.frame_title_detail),
-                ("pane_empty", chrome.pane_empty),
-                ("task_done", chrome.task_done),
-                ("task_running", chrome.task_running),
-                ("task_new", chrome.task_new),
-                ("tasks_empty", chrome.tasks_empty),
-                ("dialog_status", chrome.dialog_status),
-                ("dialog_hint", chrome.dialog_hint),
-                ("choice_detail", chrome.choice_detail),
-                ("modal_footer", chrome.modal_footer),
-                ("button_accent", chrome.button_accent),
-                ("settings_error", chrome.settings_error),
-                ("settings_info", chrome.settings_info),
-                ("settings_readonly", chrome.settings_readonly),
-                ("settings_help", chrome.settings_help),
-                ("rail_done", chrome.rail_done),
-                ("rail_active", chrome.rail_active),
-                ("rail_muted", chrome.rail_muted),
-                ("rail_connector", chrome.rail_connector),
+            let classes = classes_of(key);
+            let text_classes = [
+                ("foreground", classes.foreground),
+                ("normal_text", classes.normal_text),
+                ("muted_text", classes.muted_text),
+                ("highlighted_text", classes.highlighted_text),
+                ("success", classes.success),
+                ("accent", classes.accent),
             ];
-            for (field, text) in text_fields {
-                let ratio = contrast_ratio(text, chrome.background);
+            for (class, text) in text_classes {
+                let ratio = contrast_ratio(text, classes.background);
                 assert!(
                     ratio >= READABLE_CONTRAST,
-                    "{key:?} {field} reaches only {ratio} on the background"
+                    "{key:?} {class} reaches only {ratio} on the background"
                 );
             }
-            assert_ne!(chrome.scrollbar_thumb, chrome.background);
-            assert_ne!(chrome.scrollbar_rail, chrome.background);
+            assert_ne!(classes.chip_neutral, classes.background);
+            assert_ne!(classes.scrollbar_rail, classes.background);
         }
     }
 

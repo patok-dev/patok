@@ -123,7 +123,7 @@ fn tasks_frame_title_counts_and_colours() {
         let buffer = draw_buffer(app);
         let tasks = app.tasks_area.get();
         let (x, y) = (tasks.x + 1, tasks.y);
-        let (title, detail) = (theme.foreground, theme.frame_title_detail);
+        let (title, detail) = (theme.foreground, theme.muted_text);
         assert_segment(&buffer, x, y, " Tasks", title);
         let mut x = x + " Tasks".len() as u16;
         assert_segment(&buffer, x, y, " | ", detail);
@@ -174,7 +174,7 @@ fn tasks_frame_title_counts_and_colours() {
     themed.tui.theme = ThemeKey::TokyoNightDark;
     themed.tui.truecolor = Some(true);
     let palette = Theme::resolve(ThemeKey::TokyoNightDark, Some(true));
-    assert_ne!(palette.frame_title_detail, Theme::DARK.frame_title_detail);
+    assert_ne!(palette.muted_text, Theme::DARK.muted_text);
     assert_ne!(palette.foreground, Theme::DARK.foreground);
     assert_title(&themed, 1, 3, 2, palette);
 
@@ -182,7 +182,7 @@ fn tasks_frame_title_counts_and_colours() {
     light.tui.theme = ThemeKey::CatppuccinLatte;
     light.tui.truecolor = Some(true);
     let resolved = Theme::resolve(ThemeKey::CatppuccinLatte, Some(true));
-    assert_ne!(resolved.frame_title_detail, palette.frame_title_detail);
+    assert_ne!(resolved.muted_text, palette.muted_text);
     assert_ne!(resolved.foreground, palette.foreground);
     assert_title(&light, 1, 3, 2, resolved);
 }
@@ -708,7 +708,7 @@ fn output_frame_title_colours_only_the_agent_type() {
     // A frozen clock advanced by hand makes the timer deterministic.
     app.now.set(t0 + Duration::from_secs(65));
 
-    let detail = Theme::DARK.frame_title_detail;
+    let detail = Theme::DARK.muted_text;
     // Builder: the name carries the builder colour and bold; the separator,
     // provider, model and the right-aligned timer are all gray. The run-active
     // rail (T50.1) shifts the frame right, so the title's columns derive from
@@ -1686,8 +1686,8 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
         );
     }
     let chip = buffer[(theme_key as u16, row)].style();
-    assert_eq!(chip.fg, Some(theme.chip_text));
-    assert_eq!(chip.bg, Some(theme.status_key));
+    assert_eq!(chip.fg, Some(theme.contrast_text));
+    assert_eq!(chip.bg, Some(theme.chip_neutral));
     assert!(chip.add_modifier.contains(Modifier::BOLD));
     for offset in 0..7u16 {
         assert_eq!(
@@ -1698,7 +1698,7 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
     }
     assert_eq!(
         buffer[(theme_key as u16 + 3, row)].style().fg,
-        Some(theme.status_label)
+        Some(theme.muted_text)
     );
     // The theme label ends right where the detach chip begins.
     assert_eq!(symbols[theme_key + 3..detach].concat(), " theme ");
@@ -1731,13 +1731,13 @@ fn the_status_bar_hints_never_wear_the_button_accent() {
         let settings = column(&[" ", "?", " "]);
         for offset in 0..3u16 {
             let style = buffer[(settings as u16 + offset, row)].style();
-            assert_eq!(style.fg, Some(theme.chip_text), "the chip text colour");
-            assert_eq!(style.bg, Some(theme.status_key), "the chip background");
+            assert_eq!(style.fg, Some(theme.contrast_text), "the chip text colour");
+            assert_eq!(style.bg, Some(theme.chip_neutral), "the chip background");
         }
         for offset in 0..10u16 {
             assert_eq!(
                 buffer[(settings as u16 + 3 + offset, row)].style().fg,
-                Some(theme.status_label),
+                Some(theme.muted_text),
                 "the label colour"
             );
         }
@@ -1745,7 +1745,7 @@ fn the_status_bar_hints_never_wear_the_button_accent() {
         for x in 0..130u16 {
             assert_ne!(
                 buffer[(x, row)].style().fg,
-                Some(theme.button_accent),
+                Some(theme.highlighted_text),
                 "no status-bar cell wears the button accent at x={x}"
             );
         }
@@ -2841,8 +2841,8 @@ mod dialog {
         // reset the Paragraph renderer adds). The colours come from the theme, so
         // this test follows any future cursor restyling.
         let is_block = |cell: &ratatui::buffer::Cell| {
-            cell.style().fg == Some(Theme::DARK.cursor_foreground)
-                && cell.style().bg == Some(Theme::DARK.cursor_background)
+            cell.style().fg == Some(Theme::DARK.contrast_text)
+                && cell.style().bg == Some(Theme::DARK.accent)
         };
         let is_plain = |cell: &ratatui::buffer::Cell| {
             matches!(cell.style().fg, None | Some(Color::Reset))
@@ -2884,7 +2884,7 @@ mod dialog {
             assert_eq!(cell.symbol(), ch.to_string());
             assert_eq!(
                 cell.style().fg,
-                Some(Theme::DARK.dialog_hint),
+                Some(Theme::DARK.muted_text),
                 "the watermark is dim, not typed content: {:?}",
                 cell.style()
             );
@@ -3105,7 +3105,7 @@ mod dialog {
         let close = styles(&draw_buffer(&overlay), "[ x ]");
         assert!(
             close.iter().all(|style| {
-                style.fg == Some(Theme::DARK.button_accent)
+                style.fg == Some(Theme::DARK.highlighted_text)
                     && matches!(style.bg, None | Some(Color::Reset))
                     && !style.add_modifier.contains(Modifier::BOLD)
             }),
@@ -3152,12 +3152,12 @@ mod dialog {
             let style = buffer[(i, y)].style();
             assert_eq!(
                 style.fg,
-                Some(Theme::DARK.modal_footer),
+                Some(Theme::DARK.muted_text),
                 "the hint wears the low-emphasis footer colour"
             );
             assert_ne!(
                 style.fg,
-                Some(Theme::DARK.button_accent),
+                Some(Theme::DARK.highlighted_text),
                 "the hint never wears the button accent"
             );
         }
@@ -4127,7 +4127,7 @@ mod hints {
             &buffer,
             bottom_row(app.tasks_area.get()),
             TASKS_STRIP,
-            theme.modal_footer,
+            theme.muted_text,
         );
         // The idle task list strip no longer advertises the quit key (T75.1)
         // -- pressing `q` still quits, the hint line just does not say so.
@@ -4172,7 +4172,7 @@ mod hints {
             &buffer,
             bottom_row(app.output_area.get()),
             OUTPUT_STRIP,
-            theme.modal_footer,
+            theme.muted_text,
         );
         // The unfocused task list frame has no strip.
         let tasks_row = bottom_row(app.tasks_area.get());
@@ -4188,11 +4188,11 @@ mod hints {
             &buffer,
             bottom_row(app.tasks_area.get()),
             TASKS_STRIP,
-            theme.modal_footer,
+            theme.muted_text,
         );
         // The palette theme's footer colour differs from the default one, so
         // the strip really follows the theme and no literal is baked in.
-        assert_ne!(theme.modal_footer, Theme::DARK.modal_footer);
+        assert_ne!(theme.muted_text, Theme::DARK.muted_text);
     }
 
     #[test]
@@ -4220,7 +4220,7 @@ mod hints {
             &drawn,
             bottom_row(app.output_area.get()),
             OUTPUT_STRIP,
-            Theme::DARK.modal_footer,
+            Theme::DARK.muted_text,
         );
         // The strip left the task list the moment the focus did.
         let tasks_row = bottom_row(app.tasks_area.get());
@@ -4234,7 +4234,7 @@ mod hints {
             &drawn,
             bottom_row(app.tasks_area.get()),
             TASKS_STRIP,
-            Theme::DARK.modal_footer,
+            Theme::DARK.muted_text,
         );
         let output_row = bottom_row(app.output_area.get());
         assert!(row_text(&drawn, output_row).trim().is_empty());
@@ -4689,7 +4689,7 @@ mod modal_footer {
         for i in 0..hint_width {
             assert_eq!(
                 buffer[(footer.x + i, row)].style().fg,
-                Some(theme.modal_footer),
+                Some(theme.muted_text),
                 "hint cell {i} wears the footer colour"
             );
         }
@@ -4710,14 +4710,14 @@ mod modal_footer {
                 u16::try_from(format!(" [ {key} ] ").chars().count()).unwrap_or(rect.width);
             if !label.is_empty() {
                 assert_ne!(
-                    theme.foreground, theme.button_accent,
+                    theme.foreground, theme.highlighted_text,
                     "the label colour differs from the accent"
                 );
             }
             for i in 0..rect.width {
                 let cell = &buffer[(rect.x + i, row)];
                 let expected = if i < accent_width {
-                    theme.button_accent
+                    theme.highlighted_text
                 } else {
                     theme.foreground
                 };
@@ -4740,7 +4740,7 @@ mod modal_footer {
             let cell = &buffer[(x, row)];
             assert_ne!(
                 cell.style().fg,
-                Some(theme.button_accent),
+                Some(theme.highlighted_text),
                 "no hint cell wears the accent at x={x}"
             );
             assert!(
@@ -4800,8 +4800,8 @@ mod modal_footer {
             &[("Enter", app.primary_label()), ("Esc", "Close")],
             &theme,
         );
-        assert_ne!(theme.button_accent, Theme::DARK.button_accent);
-        assert_ne!(theme.modal_footer, Theme::DARK.modal_footer);
+        assert_ne!(theme.highlighted_text, Theme::DARK.highlighted_text);
+        assert_ne!(theme.muted_text, Theme::DARK.muted_text);
     }
 
     #[test]
@@ -5115,7 +5115,7 @@ mod close_button {
         for i in 0..close.width {
             assert_eq!(
                 buffer[(close.x + i, close.y)].style().fg,
-                Some(theme.button_accent),
+                Some(theme.highlighted_text),
                 "button cell {i} wears the accent"
             );
         }
@@ -5189,7 +5189,7 @@ mod close_button {
         let modal = dialog_area(Rect::new(0, 0, W, H));
         let theme = Theme::resolve(ThemeKey::TokyoNightDark, Some(true));
         assert_close_button(&buffer, modal, "What do you want to do?", &theme);
-        assert_ne!(theme.button_accent, Theme::DARK.button_accent);
+        assert_ne!(theme.highlighted_text, Theme::DARK.highlighted_text);
     }
 
     #[test]
@@ -5465,11 +5465,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Research)),
-            ("[ R ]".to_string(), Some(theme.rail_active), true)
+            ("[ R ]".to_string(), Some(theme.accent), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.rail_muted), false)
+            ("[ P ]".to_string(), Some(theme.muted_text), false)
         );
 
         app.apply(EngineEvent::PipelineChanged {
@@ -5483,11 +5483,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Research)),
-            ("[ R ]".to_string(), Some(theme.rail_done), false)
+            ("[ R ]".to_string(), Some(theme.success), false)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.rail_active), true)
+            ("[ P ]".to_string(), Some(theme.accent), true)
         );
     }
 
@@ -5590,11 +5590,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.rail_active), true)
+            ("[ P ]".to_string(), Some(theme.accent), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ B ]".to_string(), Some(theme.rail_muted), false)
+            ("[ B ]".to_string(), Some(theme.muted_text), false)
         );
 
         // The build stage runs: Plan went green, Build is accent and bold.
@@ -5604,11 +5604,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.rail_done), false)
+            ("[ P ]".to_string(), Some(theme.success), false)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ B ]".to_string(), Some(theme.rail_active), true)
+            ("[ B ]".to_string(), Some(theme.accent), true)
         );
 
         // Shipping: SH is green while shipping and bold; both stages stay green.
@@ -5621,11 +5621,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Ship)),
-            ("[ SH ]".to_string(), Some(theme.rail_done), true)
+            ("[ SH ]".to_string(), Some(theme.success), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ B ]".to_string(), Some(theme.rail_done), false)
+            ("[ B ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -5651,7 +5651,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ RV ]".to_string(), Some(theme.rail_muted), false)
+            ("[ RV ]".to_string(), Some(theme.muted_text), false)
         );
 
         // The reviewer runs: the review tile is accent and bold.
@@ -5666,7 +5666,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ RV ]".to_string(), Some(theme.rail_active), true)
+            ("[ RV ]".to_string(), Some(theme.accent), true)
         );
 
         // The review is done: green, like a skipped review's tile.
@@ -5681,7 +5681,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ RV ]".to_string(), Some(theme.rail_done), false)
+            ("[ RV ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -5699,11 +5699,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ DI ]".to_string(), Some(theme.rail_muted), false)
+            ("[ DI ]".to_string(), Some(theme.muted_text), false)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Learnings)),
-            ("[ LN ]".to_string(), Some(theme.rail_muted), false)
+            ("[ LN ]".to_string(), Some(theme.muted_text), false)
         );
 
         // A discovery round runs: DI is accent and bold in the rail.
@@ -5717,7 +5717,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ DI ]".to_string(), Some(theme.rail_active), true)
+            ("[ DI ]".to_string(), Some(theme.accent), true)
         );
 
         // The round ran in this session: DI and LN turn green (LN once any
@@ -5733,11 +5733,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ DI ]".to_string(), Some(theme.rail_done), false)
+            ("[ DI ]".to_string(), Some(theme.success), false)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Learnings)),
-            ("[ LN ]".to_string(), Some(theme.rail_done), false)
+            ("[ LN ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -5851,11 +5851,11 @@ mod pipeline {
         // The letters, colours and boldness the state implies, shared by
         // every shell: Plan done, Build active, SHIP muted, DI and LN done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
-            ("[ P ]".to_string(), Some(theme.rail_done), false),
-            ("[ B ]".to_string(), Some(theme.rail_active), true),
-            ("[ SH ]".to_string(), Some(theme.rail_muted), false),
-            ("[ DI ]".to_string(), Some(theme.rail_done), false),
-            ("[ LN ]".to_string(), Some(theme.rail_done), false),
+            ("[ P ]".to_string(), Some(theme.success), false),
+            ("[ B ]".to_string(), Some(theme.accent), true),
+            ("[ SH ]".to_string(), Some(theme.muted_text), false),
+            ("[ DI ]".to_string(), Some(theme.success), false),
+            ("[ LN ]".to_string(), Some(theme.success), false),
         ];
 
         // The whole rail area's drawn cells, as the equality reference:
@@ -5958,18 +5958,18 @@ mod pipeline {
             // both modes: Plan done, Build active, SHIP muted, DI and LN done.
             let expected: Vec<(String, Option<Color>, bool)> = match mode {
                 RailMode::Compact => vec![
-                    ("[ P ]".to_string(), Some(theme.rail_done), false),
-                    ("[ B ]".to_string(), Some(theme.rail_active), true),
-                    ("[ SH ]".to_string(), Some(theme.rail_muted), false),
-                    ("[ DI ]".to_string(), Some(theme.rail_done), false),
-                    ("[ LN ]".to_string(), Some(theme.rail_done), false),
+                    ("[ P ]".to_string(), Some(theme.success), false),
+                    ("[ B ]".to_string(), Some(theme.accent), true),
+                    ("[ SH ]".to_string(), Some(theme.muted_text), false),
+                    ("[ DI ]".to_string(), Some(theme.success), false),
+                    ("[ LN ]".to_string(), Some(theme.success), false),
                 ],
                 RailMode::Normal | RailMode::Detailed => vec![
-                    ("[   Plan    ]".to_string(), Some(theme.rail_done), false),
-                    ("[   Build   ]".to_string(), Some(theme.rail_active), true),
-                    ("[   Ship    ]".to_string(), Some(theme.rail_muted), false),
-                    ("[ Discover  ]".to_string(), Some(theme.rail_done), false),
-                    ("[ Learnings ]".to_string(), Some(theme.rail_done), false),
+                    ("[   Plan    ]".to_string(), Some(theme.success), false),
+                    ("[   Build   ]".to_string(), Some(theme.accent), true),
+                    ("[   Ship    ]".to_string(), Some(theme.muted_text), false),
+                    ("[ Discover  ]".to_string(), Some(theme.success), false),
+                    ("[ Learnings ]".to_string(), Some(theme.success), false),
                 ],
             };
 
@@ -6136,11 +6136,11 @@ mod pipeline {
         // The full names, colours and boldness the state implies, shared by
         // every shell: Plan done, Build active, SHIP muted, DI and LN done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
-            ("[   Plan    ]".to_string(), Some(theme.rail_done), false),
-            ("[   Build   ]".to_string(), Some(theme.rail_active), true),
-            ("[   Ship    ]".to_string(), Some(theme.rail_muted), false),
-            ("[ Discover  ]".to_string(), Some(theme.rail_done), false),
-            ("[ Learnings ]".to_string(), Some(theme.rail_done), false),
+            ("[   Plan    ]".to_string(), Some(theme.success), false),
+            ("[   Build   ]".to_string(), Some(theme.accent), true),
+            ("[   Ship    ]".to_string(), Some(theme.muted_text), false),
+            ("[ Discover  ]".to_string(), Some(theme.success), false),
+            ("[ Learnings ]".to_string(), Some(theme.success), false),
         ];
         let width = rail_width(RailMode::Normal);
         assert_eq!(width, 13, "the longest name (Learnings) plus its padding");
@@ -6204,7 +6204,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(Theme::DARK.rail_active), true)
+            ("[ P ]".to_string(), Some(Theme::DARK.accent), true)
         );
         assert_eq!(app.pipeline_area.get().width, RAIL_WIDTH);
         assert_eq!(app.tasks_area.get().x, RAIL_WIDTH);
@@ -6215,11 +6215,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            (
-                "[   Plan    ]".to_string(),
-                Some(Theme::DARK.rail_active),
-                true
-            )
+            ("[   Plan    ]".to_string(), Some(Theme::DARK.accent), true)
         );
         let width = rail_width(RailMode::Normal);
         assert_eq!(app.pipeline_area.get().width, width);
@@ -6315,7 +6311,7 @@ mod pipeline {
         assert_eq!(shell.tasks_area.get().x, RAIL_WIDTH);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&shell, TileId::Plan)),
-            ("[ P ]".to_string(), Some(Theme::DARK.rail_muted), false)
+            ("[ P ]".to_string(), Some(Theme::DARK.muted_text), false)
         );
         assert!(draw(&shell, 80, 24).contains("[ P ]"));
     }

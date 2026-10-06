@@ -374,7 +374,7 @@ fn the_picker_shows_a_close_button_top_right() {
     for i in 0..close.width {
         assert_eq!(
             buffer[(close.x + i, close.y)].style().fg,
-            Some(theme_of(ThemeKey::Dark).button_accent),
+            Some(theme_of(ThemeKey::Dark).highlighted_text),
             "button cell {i} wears the accent"
         );
     }
@@ -389,13 +389,13 @@ fn the_picker_shows_a_close_button_top_right() {
     for i in 0..close.width {
         assert_eq!(
             buffer[(close.x + i, close.y)].style().fg,
-            Some(theme_of(ThemeKey::TokyoNightDark).button_accent),
+            Some(theme_of(ThemeKey::TokyoNightDark).highlighted_text),
             "button cell {i} wears the previewed theme's accent"
         );
     }
     assert_ne!(
-        theme_of(ThemeKey::Dark).button_accent,
-        theme_of(ThemeKey::TokyoNightDark).button_accent
+        theme_of(ThemeKey::Dark).highlighted_text,
+        theme_of(ThemeKey::TokyoNightDark).highlighted_text
     );
 }
 
@@ -578,7 +578,7 @@ fn a_preview_recolours_the_whole_shell() {
     assert_eq!(app.tui.theme, ThemeKey::Dark);
     let buffer = draw_buffer(&app);
     // The status line's chip (row 23, T86.1) and a base row under the modal.
-    assert_eq!(buffer[(0, 23)].bg, preview.chip_stopped);
+    assert_eq!(buffer[(0, 23)].bg, preview.chip_neutral);
     assert_eq!(buffer[(40, 21)].bg, preview.background);
     insta::assert_snapshot!(styled_rows(&buffer, &[23, 21]));
 }
@@ -620,7 +620,7 @@ mod modal_footer {
         for i in 0..hint_width {
             assert_eq!(
                 buffer[(footer.x + i, row)].style().fg,
-                Some(theme.modal_footer),
+                Some(theme.muted_text),
                 "hint cell {i} wears the footer colour"
             );
         }
@@ -641,14 +641,14 @@ mod modal_footer {
                 u16::try_from(format!(" [ {key} ] ").chars().count()).unwrap_or(rect.width);
             if !label.is_empty() {
                 assert_ne!(
-                    theme.foreground, theme.button_accent,
+                    theme.foreground, theme.highlighted_text,
                     "the label colour differs from the accent"
                 );
             }
             for i in 0..rect.width {
                 let cell = &buffer[(rect.x + i, row)];
                 let expected = if i < accent_width {
-                    theme.button_accent
+                    theme.highlighted_text
                 } else {
                     theme.foreground
                 };
@@ -669,7 +669,7 @@ mod modal_footer {
             let cell = &buffer[(x, row)];
             assert_ne!(
                 cell.style().fg,
-                Some(theme.button_accent),
+                Some(theme.highlighted_text),
                 "no hint cell wears the accent at x={x}"
             );
             assert!(

@@ -1540,7 +1540,7 @@ mod modal_footer {
         for i in 0..hint_width {
             assert_eq!(
                 buffer[(footer.x + i, row)].style().fg,
-                Some(theme.modal_footer),
+                Some(theme.muted_text),
                 "hint cell {i} wears the footer colour"
             );
         }
@@ -1558,14 +1558,14 @@ mod modal_footer {
                 u16::try_from(format!(" [ {key} ] ").chars().count()).unwrap_or(rect.width);
             if !label.is_empty() {
                 assert_ne!(
-                    theme.foreground, theme.button_accent,
+                    theme.foreground, theme.highlighted_text,
                     "the label colour differs from the accent"
                 );
             }
             for i in 0..rect.width {
                 let cell = &buffer[(rect.x + i, row)];
                 let expected = if i < accent_width {
-                    theme.button_accent
+                    theme.highlighted_text
                 } else {
                     theme.foreground
                 };
@@ -1586,7 +1586,7 @@ mod modal_footer {
             let cell = &buffer[(x, row)];
             assert_ne!(
                 cell.style().fg,
-                Some(theme.button_accent),
+                Some(theme.highlighted_text),
                 "no hint cell wears the accent at x={x}"
             );
             assert!(
@@ -1824,7 +1824,7 @@ mod close_button {
         for i in 0..CLOSE_BUTTON_WIDTH {
             assert_eq!(
                 buffer[(close.x + i, close.y)].style().fg,
-                Some(theme.button_accent),
+                Some(theme.highlighted_text),
                 "button cell {i} wears the accent"
             );
         }
