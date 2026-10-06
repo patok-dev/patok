@@ -5,11 +5,13 @@
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use patok_core::config::{ConfigFiles, THEME_KEYS, Theme as ThemeKey};
+use patok_core::config::{ConfigFiles, Theme as ThemeKey};
 use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
-use patok_tui::{Action, App, FrameFocus, ShellSettings, Theme, render, theme_row_at};
+use patok_tui::{
+    Action, App, FrameFocus, ShellSettings, Theme, render, theme_modal_keys, theme_row_at,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -85,9 +87,13 @@ fn theme_of(key: ThemeKey) -> Theme {
     Theme::resolve(key, Some(true))
 }
 
-/// The index of a theme name in the picker's list.
+/// The index of a theme name in the picker's list: the grouped dark-then-light
+/// order (T114.1), not the settings overlay's cycle order.
 fn row_of(name: &str) -> usize {
-    THEME_KEYS.iter().position(|key| *key == name).unwrap()
+    theme_modal_keys()
+        .iter()
+        .position(|key| *key == name)
+        .unwrap()
 }
 
 #[test]
@@ -177,9 +183,9 @@ fn moving_the_selection_previews_without_persisting() {
     assert_eq!(press(&mut app, KeyCode::Down), Action::None);
     assert_eq!(app.theme_modal.selected, 1);
     assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneDark));
-    // j moves the same way Down does.
+    // j moves the same way Down does: within the dark block.
     assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
-    assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneLight));
+    assert_eq!(app.theme(), theme_of(ThemeKey::TokyoNightDark));
     // k and Up move back up.
     press(&mut app, KeyCode::Char('k'));
     assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneDark));
@@ -203,7 +209,7 @@ fn hovering_a_row_previews_it_and_hovering_outside_changes_nothing() {
         Action::None
     );
     assert_eq!(app.theme_modal.selected, 6);
-    assert_eq!(app.theme(), theme_of(ThemeKey::CatppuccinLatte));
+    assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneLight));
     // On the footer -- outside the rows -- nothing changes.
     assert_eq!(
         app.on_mouse(mouse(
@@ -329,12 +335,12 @@ fn clicking_a_row_previews_then_saves_like_enter() {
             body.x + 4,
             body.y + 3
         )),
-        Action::SaveTheme(ThemeKey::TokyoNightDark)
+        Action::SaveTheme(ThemeKey::CatppuccinMocha)
     );
     assert!(!app.theme_modal.open);
     assert_eq!(app.theme_modal.selected, 3);
-    assert_eq!(app.tui.theme, ThemeKey::TokyoNightDark);
-    assert_eq!(app.theme(), theme_of(ThemeKey::TokyoNightDark));
+    assert_eq!(app.tui.theme, ThemeKey::CatppuccinMocha);
+    assert_eq!(app.theme(), theme_of(ThemeKey::CatppuccinMocha));
 
     // A click outside the rows changes nothing.
     let mut app = open();

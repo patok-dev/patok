@@ -25,7 +25,7 @@ pub use pipeline::{
 };
 pub use run::{Outcome, Spawner, restart, run, save_theme, shutdown_progress};
 pub use settings::{ShellSettings, to_proto};
-pub use theme::{AgentText, Theme};
+pub use theme::{AgentText, Theme, theme_modal_keys};
 pub use ui::{
     CLOSE_BUTTON_WIDTH, DIALOG_WATERMARK, INJECT_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH,
     SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH, button_text, close_button_rect,

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use patok_core::config::{ApplyTiming, SettingValue, THEME_KEYS, Theme as ThemeKey, TuiSettings};
+use patok_core::config::{ApplyTiming, SettingValue, Theme as ThemeKey, TuiSettings};
 use patok_core::event::{
     AgentEvent, EngineEvent, NoticeLevel, Phase, Snapshot, TaskOutcome, Usage,
 };
@@ -17,7 +17,7 @@ use patok_core::task::Task;
 use ratatui::layout::Rect;
 
 use crate::overlay::{Entry, Schema, SettingsOverlay, StatusLevel};
-use crate::theme::Theme;
+use crate::theme::{Theme, theme_modal_keys};
 use crate::ui::{
     agent_display, finished_line, footer_button_rects, frame_at, started_line, theme_row_at,
 };
@@ -1023,7 +1023,7 @@ impl App {
     fn open_theme(&mut self) {
         self.theme_modal.open = true;
         self.theme_modal.original = self.tui.theme;
-        self.theme_modal.selected = THEME_KEYS
+        self.theme_modal.selected = theme_modal_keys()
             .iter()
             .position(|name| *name == self.tui.theme.as_str())
             .unwrap_or(0);
@@ -1044,7 +1044,9 @@ impl App {
                 self.preview_theme(self.theme_modal.selected.saturating_sub(1));
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.preview_theme((self.theme_modal.selected + 1).min(THEME_KEYS.len() - 1));
+                self.preview_theme(
+                    (self.theme_modal.selected + 1).min(theme_modal_keys().len() - 1),
+                );
             }
             KeyCode::Enter if !ctrl => return self.commit_theme(),
             _ => {}
@@ -1055,7 +1057,7 @@ impl App {
     /// The theme of the selected row: a built-in name, always parseable; the
     /// remembered original is a fallback a corrupt list could never hit.
     fn selected_theme(&self) -> ThemeKey {
-        THEME_KEYS
+        theme_modal_keys()
             .get(self.theme_modal.selected)
             .and_then(|name| ThemeKey::parse(name))
             .unwrap_or(self.theme_modal.original)

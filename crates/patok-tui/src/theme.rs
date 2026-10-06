@@ -981,6 +981,22 @@ fn truecolor_detected() -> bool {
         .unwrap_or(false)
 }
 
+/// The theme picker modal's row order (T114.1): [`THEME_KEYS`] grouped by
+/// [`ThemeKey::is_dark`] into one contiguous dark block followed by one
+/// contiguous light block, so the picker reads dark-then-light instead of
+/// alternating. Derived from the classification, never from hardcoded indexes;
+/// the stable partition keeps each block's `THEME_KEYS` relative order.
+/// `THEME_KEYS` itself stays the settings overlay's cycle order.
+pub fn theme_modal_keys() -> Vec<&'static str> {
+    let (dark, light): (Vec<_>, Vec<_>) = patok_core::config::THEME_KEYS
+        .iter()
+        .copied()
+        .partition(|name| ThemeKey::parse(name).is_some_and(ThemeKey::is_dark));
+    let mut keys = dark;
+    keys.extend(light);
+    keys
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1516,6 +1532,36 @@ mod tests {
         // The pre-T36.1 placeholder names are no longer valid.
         assert_eq!(ThemeKey::parse("catppuccin"), None);
         assert_eq!(ThemeKey::parse("solarized"), None);
+    }
+
+    /// The picker's list (T114.1) covers every built-in exactly once and puts
+    /// every dark theme before every light theme: one contiguous dark block,
+    /// then one contiguous light block.
+    #[test]
+    fn the_modal_list_groups_dark_before_light() {
+        let keys = theme_modal_keys();
+        assert_eq!(keys.len(), THEME_KEYS.len());
+        // The same multiset: every built-in appears exactly once.
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        let mut expected = THEME_KEYS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(sorted, expected);
+        // A single dark-to-light boundary: everything before the first light
+        // entry is dark, everything from it on is light.
+        let is_dark = |name: &str| ThemeKey::parse(name).is_some_and(ThemeKey::is_dark);
+        let light_start = keys
+            .iter()
+            .position(|name| !is_dark(name))
+            .expect("a light theme exists");
+        assert!(
+            keys[..light_start].iter().all(|name| is_dark(name)),
+            "every entry before the first light theme is dark"
+        );
+        assert!(
+            keys[light_start..].iter().all(|name| !is_dark(name)),
+            "every entry from the first light theme on is light"
+        );
     }
 
     /// The nearest-index mapping hits exact members of the xterm-256 table and

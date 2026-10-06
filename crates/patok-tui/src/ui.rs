@@ -1,6 +1,6 @@
 //! Rendering. Reads the [`App`], draws a frame, never blocks on I/O.
 
-use patok_core::config::{SettingValue, THEME_KEYS, Theme as ThemeKey};
+use patok_core::config::{SettingValue, Theme as ThemeKey};
 use patok_core::event::{Phase, SessionOutcome};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -13,7 +13,7 @@ use crate::app::{App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOI
 use crate::markdown::markdown_lines;
 use crate::overlay::{Entry, FieldKind, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset};
 use crate::pipeline::{rail_width, render_rail};
-use crate::theme::Theme;
+use crate::theme::{Theme, theme_modal_keys};
 
 /// Entry rows indent this many spaces past the focus marker, nesting them under
 /// their section header; headers keep the bare marker margin.
@@ -854,7 +854,7 @@ pub fn theme_row_at(position: Position, body: Rect) -> Option<usize> {
         return None;
     }
     let row = usize::from(position.y - body.y);
-    (row < THEME_KEYS.len()).then_some(row)
+    (row < theme_modal_keys().len()).then_some(row)
 }
 
 /// The theme picker (the `t` key, T43.1): a centered " Theme " modal listing
@@ -877,7 +877,7 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     app.theme_modal.area.set(body);
-    let lines: Vec<Line> = THEME_KEYS
+    let lines: Vec<Line> = theme_modal_keys()
         .iter()
         .enumerate()
         .map(|(index, name)| theme_row_line(app, index, name))
@@ -904,7 +904,11 @@ fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
     let entry = Theme::resolve(ThemeKey::parse(name).unwrap_or_default(), app.tui.truecolor);
     let selected = index == app.theme_modal.selected;
     let marker = if selected { "▶ " } else { "  " };
-    let width = THEME_KEYS.iter().map(|name| name.len()).max().unwrap_or(0);
+    let width = theme_modal_keys()
+        .iter()
+        .map(|name| name.len())
+        .max()
+        .unwrap_or(0);
     let spans = vec![
         Span::raw(marker),
         Span::styled(format!("{name:<width$}"), Style::new().fg(entry.foreground)),
