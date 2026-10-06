@@ -4,6 +4,7 @@
 //! per-project engine or spawns it (`patok daemon`), then runs the shell.
 
 mod daemon;
+mod tasks;
 mod update;
 
 use std::path::PathBuf;
@@ -26,6 +27,15 @@ struct Cli {
 enum Command {
     /// Attach to (or start) the engine and open the terminal UI. The default.
     Run,
+    /// Run the build without the terminal UI: force the build loop into sprint
+    /// mode, stream the agent output to stdout line by line, exit 0 once every
+    /// task is done, 1 when the build fails
+    Headless {
+        /// Color the streamed output with the shell's theme colors. Off by
+        /// default: the headless output stays plain without the flag.
+        #[arg(long)]
+        color: bool,
+    },
     /// Check for a newer release and report how to update.
     Update {
         /// Release channel to check.
@@ -40,6 +50,27 @@ enum Command {
         #[command(subcommand)]
         action: Option<DaemonAction>,
     },
+    /// Manage tasks in the shared task store.
+    Tasks {
+        #[command(subcommand)]
+        action: TasksAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TasksAction {
+    /// Append a task with a patok-generated id to the shared task store.
+    Add {
+        /// The task text. One line; no id needed.
+        text: String,
+    },
+    /// Remove a pending task from the shared task store by its id.
+    Remove {
+        /// The id of the task to remove, e.g. T3.1.
+        id: String,
+    },
+    /// List every task in the shared task store, one per line, id first.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -69,6 +100,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let project = project_dir(cli.dir)?;
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => daemon::run_shell(&project).await,
+        Command::Headless { color } => daemon::run_headless(&project, color).await,
         Command::Update { channel } => update::run(channel.into()),
         Command::Daemon {
             foreground: true,
@@ -89,6 +121,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             daemon::stop(&project, false).await?;
             daemon::start(&project).await
         }
+        Command::Tasks { action } => match action {
+            TasksAction::Add { text } => tasks::add(&project, &text),
+            TasksAction::Remove { id } => tasks::remove(&project, &id).await,
+            TasksAction::List => tasks::list(&project),
+        },
     }
 }
 

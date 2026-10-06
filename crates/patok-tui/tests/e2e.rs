@@ -31,6 +31,7 @@ fn setup() -> Setup {
         discovery_cooldown: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN,
         discovery_cooldown_cap: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN_CAP,
         plan_enabled: false,
+        run_mode: patok_core::config::RunMode::Sprint,
         skip_research_for_simple: true,
         review_in_loop: false,
         review_history: data.path().join("review-history.json"),
@@ -1252,6 +1253,10 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
 
     let setup = setup();
     let socket = setup.config.socket_path();
+    // The scheduled discovery round is continuous-mode behaviour (T103.1), so
+    // this test's engine runs continuous.
+    let mut config = setup.config.clone();
+    config.run_mode = patok_core::config::RunMode::Continuous;
     // The completed task's line carries the five-position progress indicator
     // the engine writes at finalization (T70.1).
     let built = "- [x] T1.1: [--.B-] add hello\n";
@@ -1277,7 +1282,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
             contents: "polished\n".into(),
         }],
     ]);
-    let engine = Engine::new(setup.config.clone(), Arc::new(provider));
+    let engine = Engine::new(config, Arc::new(provider));
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
 
     let mut client = connect_retrying(&socket).await;

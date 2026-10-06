@@ -41,7 +41,7 @@
 //! | `frame_title_planner` | `render_output` | the agent type name in the output frame title while the planner runs |
 //! | `frame_title_research` | `render_output` | the agent type name in the output frame title while the research agent runs (T68.1) |
 //! | `frame_title_detail` | `render_output`, `render_tasks` | output frame title's separator, provider, model and timer; everything after the word `Tasks` in the tasks frame title (T67.1): the pipe separator, the completed, total and left counts, the slash, the dash and the word `left` |
-//! | `pane_status` | `style_of` | the finished-agent status line in the output pane (T42.1) |
+//! | `pane_status` | `style_of` | the agent lifecycle status lines in the output pane: the started line (T78.1) and the finished line (T42.1), in the same colour as the heading/task lines (T96.1) |
 //! | `pane_empty` | `render_pane` | "no output yet" placeholder |
 //! | `task_done` | `render_tasks` | done task rows |
 //! | `task_running` | `render_tasks` | running task rows (bold added by the renderer) |
@@ -65,6 +65,7 @@
 //! | `rail_muted` | `pipeline::tile_style` | muted and pending rail tiles |
 //! | `rail_connector` | `pipeline::render_rail` | the rail's down-arrow connectors |
 
+use crate::app::LineKind;
 use patok_core::config::Theme as ThemeKey;
 use ratatui::style::Color;
 
@@ -121,7 +122,9 @@ pub struct Theme {
     /// the pipe separator, the completed, total and left counts, the slash, the
     /// dash and the word `left`.
     pub frame_title_detail: Color,
-    /// The finished-agent status line in the output pane (T42.1).
+    /// The agent lifecycle status lines in the output pane: the started line
+    /// (T78.1) and the finished line (T42.1), in the same colour as the
+    /// heading/task lines (T96.1).
     pub pane_status: Color,
     /// "no output yet" placeholder in the output pane.
     pub pane_empty: Color,
@@ -197,7 +200,7 @@ impl Theme {
         frame_title_planner: Color::Magenta,
         frame_title_research: Color::LightBlue,
         frame_title_detail: Color::DarkGray,
-        pane_status: Color::DarkGray,
+        pane_status: Color::Magenta,
         pane_empty: Color::DarkGray,
         task_done: Color::DarkGray,
         task_running: Color::Green,
@@ -232,6 +235,23 @@ impl Theme {
         match theme {
             ThemeKey::Dark => Theme::DARK,
             other => palette_of(other).theme(truecolor.unwrap_or_else(truecolor_detected)),
+        }
+    }
+
+    /// The foreground colour of one output line kind: the single kind-to-colour
+    /// mapping, shared by the frame's `style_of` and the headless mode's
+    /// `--color` output so the two cannot drift. `Text` lines render unstyled
+    /// (the caller decides what that means), so it maps to `Color::Reset`.
+    pub fn line_color(theme: Theme, kind: LineKind) -> Color {
+        match kind {
+            LineKind::Text => Color::Reset,
+            LineKind::Thinking => theme.thinking,
+            LineKind::Tool => theme.tool,
+            LineKind::Result => theme.result,
+            LineKind::Error => theme.error,
+            LineKind::Notice => theme.notice,
+            LineKind::Status => theme.pane_status,
+            LineKind::Heading => theme.heading,
         }
     }
 }
@@ -450,7 +470,7 @@ impl Palette {
             frame_title_planner: magenta,
             frame_title_research: blue,
             frame_title_detail: muted,
-            pane_status: muted,
+            pane_status: magenta,
             pane_empty: muted,
             task_done: muted,
             task_running: green,
@@ -571,7 +591,7 @@ mod tests {
         assert_eq!(dark.frame_title_planner, Color::Magenta);
         assert_eq!(dark.frame_title_research, Color::LightBlue);
         assert_eq!(dark.frame_title_detail, Color::DarkGray);
-        assert_eq!(dark.pane_status, Color::DarkGray);
+        assert_eq!(dark.pane_status, Color::Magenta);
         assert_eq!(dark.pane_empty, Color::DarkGray);
         assert_eq!(dark.task_done, Color::DarkGray);
         assert_eq!(dark.task_running, Color::Green);

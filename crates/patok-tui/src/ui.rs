@@ -1261,15 +1261,16 @@ fn wrap_line(line: &Line<'_>, width: usize) -> Vec<Line<'static>> {
 }
 
 fn style_of(theme: Theme, kind: LineKind) -> Style {
-    match kind {
-        LineKind::Text => Style::new(),
-        LineKind::Thinking => Style::new().fg(theme.thinking),
-        LineKind::Tool => Style::new().fg(theme.tool),
-        LineKind::Result => Style::new().fg(theme.result),
-        LineKind::Error => Style::new().fg(theme.error),
-        LineKind::Notice => Style::new().fg(theme.notice),
-        LineKind::Status => Style::new().fg(theme.pane_status),
-        LineKind::Heading => Style::new().fg(theme.heading).add_modifier(Modifier::BOLD),
+    // `Text` renders unstyled: no fg at all, so the line inherits the base
+    // style's foreground instead of resetting it.
+    if kind == LineKind::Text {
+        return Style::new();
+    }
+    let style = Style::new().fg(Theme::line_color(theme, kind));
+    if kind == LineKind::Heading {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
     }
 }
 

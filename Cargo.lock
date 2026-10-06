@@ -1263,6 +1263,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tonic",
  "tracing",
  "tracing-subscriber",
@@ -1343,6 +1344,7 @@ dependencies = [
  "ratatui",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tonic",
  "tower",
 ]

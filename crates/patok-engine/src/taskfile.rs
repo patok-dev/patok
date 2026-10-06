@@ -541,6 +541,70 @@ pub fn cleanup_completed(path: &Path) -> io::Result<bool> {
     }
 }
 
+/// The result of [`remove_task`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoveOutcome {
+    /// No well-formed task line carries the id; nothing was written.
+    NotFound,
+    /// A matching line is checked: the removal is refused, nothing was written.
+    Completed,
+    /// The matching unchecked line(s) were removed and the file rewritten.
+    Removed,
+}
+
+/// Removes every unchecked task line whose well-formed ID equals `id`
+/// (T98.1), atomically rewriting the file. A matching checked line refuses
+/// the removal ([`RemoveOutcome::Completed`]); no matching line at all is
+/// [`RemoveOutcome::NotFound`] -- both without writing anything, and a
+/// missing file reads as `NotFound` and is not created. Malformed lines
+/// (no well-formed ID) never match, and every other line survives
+/// byte-identical, CRLF and unterminated last lines included, the same
+/// convention as `write_progress`; headings and blank lines are left alone
+/// (dangling-heading cleanup belongs to the startup cleanup).
+pub fn remove_task(path: &Path, id: &str) -> io::Result<RemoveOutcome> {
+    let text = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(RemoveOutcome::NotFound),
+        other => other?,
+    };
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    // Per-line deletion mask. A line matches when, after leading whitespace
+    // and the checkbox, its ID is well-formed and equals `id`; a checked
+    // match refuses the whole removal.
+    let mut matched = vec![false; lines.len()];
+    let mut completed = false;
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let (checked, rest) = if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
+            (false, rest)
+        } else if let Some(rest) = trimmed.strip_prefix("- [x] ") {
+            (true, rest)
+        } else {
+            continue;
+        };
+        if split_id(rest).is_some_and(|(found, _, _)| found == id) {
+            if checked {
+                completed = true;
+            } else {
+                matched[i] = true;
+            }
+        }
+    }
+    if completed {
+        return Ok(RemoveOutcome::Completed);
+    }
+    if !matched.iter().any(|&m| m) {
+        return Ok(RemoveOutcome::NotFound);
+    }
+    let mut updated = String::with_capacity(text.len());
+    for (i, line) in lines.iter().enumerate() {
+        if !matched[i] {
+            updated.push_str(line);
+        }
+    }
+    write_atomic(path, &updated)?;
+    Ok(RemoveOutcome::Removed)
+}
+
 /// Writes through a temporary file in the same directory, then renames over the target.
 fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
@@ -1208,5 +1272,94 @@ mod tests {
         std::fs::write(&path, format!("{before}garbage")).unwrap();
         restore_keeping(&path, before, &[]).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn remove_task_removes_a_pending_line_and_keeps_every_other_byte() {
+        // Mixed CRLF and LF, trailing spaces, an indented H line, a heading
+        // and no trailing newline on the final line.
+        let text = "# T\r\n- [ ] T1.1: gone\n  - [ ] H1.2: stays\nprose  \r\n\
+                    - [ ] T1.3: [--.B-] last";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(remove_task(&path, "T1.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# T\r\n  - [ ] H1.2: stays\nprose  \r\n- [ ] T1.3: [--.B-] last"
+        );
+        // No temporary file is left behind.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn remove_task_refuses_a_completed_line_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        let text = "# T\n- [x] T1.1: done\n- [ ] T1.2: b\n";
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(
+            remove_task(&path, "T1.1").unwrap(),
+            RemoveOutcome::Completed
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        // A checked duplicate refuses the removal even alongside an
+        // unchecked line with the same id.
+        let dup = "# T\n- [ ] T1.1: pending\n- [x] T1.1: done\n";
+        std::fs::write(&path, dup).unwrap();
+        assert_eq!(
+            remove_task(&path, "T1.1").unwrap(),
+            RemoveOutcome::Completed
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), dup);
+    }
+
+    #[test]
+    fn remove_task_reports_unknown_ids_and_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        let text = "# T\n- [ ] T1.1: a\n";
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(remove_task(&path, "T9.9").unwrap(), RemoveOutcome::NotFound);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        // A missing file reads as NotFound and is not created.
+        let missing = dir.path().join("none.md");
+        assert_eq!(
+            remove_task(&missing, "T1.1").unwrap(),
+            RemoveOutcome::NotFound
+        );
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn remove_task_removes_duplicate_unchecked_lines_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        let text = "# T\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.1: dup\n";
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(remove_task(&path, "T1.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# T\n- [ ] T1.2: b\n"
+        );
+    }
+
+    #[test]
+    fn remove_task_matches_by_well_formed_id_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        // An unchecked H line is removable by its id; a malformed line
+        // (`- [ ] no id`) is never touched.
+        let text = "# T\n  - [ ] H2.1: human\n- [ ] no id\n- [ ] T2.1: t\n";
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(remove_task(&path, "H2.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# T\n- [ ] no id\n- [ ] T2.1: t\n"
+        );
+        // A progress token in the line does not block the id match.
+        std::fs::write(&path, "- [ ] T3.1: [RP.BA] mid\n").unwrap();
+        assert_eq!(remove_task(&path, "T3.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
     }
 }

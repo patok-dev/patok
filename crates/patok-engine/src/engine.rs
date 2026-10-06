@@ -61,6 +61,10 @@ pub struct EngineConfig {
     pub discovery_cooldown_cap: Duration,
     /// Whether a plan session runs before each builder session (`plan_enabled`, T10.1).
     pub plan_enabled: bool,
+    /// Seeds the central settings on `Engine::new` exactly like `plan_enabled`;
+    /// a configured engine reads the mode from the config files instead.
+    /// The scheduled discovery round runs only in continuous mode (T103.1).
+    pub run_mode: patok_core::config::RunMode,
     /// Whether a task the complexity classifier marks Simple skips the research
     /// stage (`skip_research_for_simple`, T68.1; default on).
     pub skip_research_for_simple: bool,
@@ -99,6 +103,7 @@ impl EngineConfig {
             discovery_cooldown: Self::DEFAULT_DISCOVERY_COOLDOWN,
             discovery_cooldown_cap: Self::DEFAULT_DISCOVERY_COOLDOWN_CAP,
             plan_enabled: true,
+            run_mode: RunMode::Sprint,
             skip_research_for_simple: true,
             review_in_loop: true,
             review_history,
@@ -330,6 +335,10 @@ struct Unit {
     model: Option<String>,
     agent_timeout: Duration,
     plan_enabled: bool,
+    /// The run mode (`run_mode`), snapshotted at the unit's start exactly like
+    /// the other fields: the scheduled discovery round runs only when it says
+    /// continuous (T103.1), and a mode change takes effect at the next unit.
+    run_mode: RunMode,
     skip_research_for_simple: bool,
     /// The review stage's knobs, snapshot at the
     /// unit's start exactly like the other fields.
@@ -416,6 +425,7 @@ impl Engine {
             discovery_cooldown_secs: config.discovery_cooldown.as_secs(),
             discovery_cooldown_cap_secs: config.discovery_cooldown_cap.as_secs(),
             plan_enabled: config.plan_enabled,
+            run_mode: config.run_mode,
             skip_research_for_simple: config.skip_research_for_simple,
             review_in_loop: config.review_in_loop,
             ..DaemonSettings::default()
@@ -851,6 +861,7 @@ impl Engine {
             model: central.model.clone(),
             agent_timeout: Duration::from_secs(central.settings.agent_timeout_secs),
             plan_enabled: central.settings.plan_enabled,
+            run_mode: central.settings.run_mode,
             skip_research_for_simple: central.settings.skip_research_for_simple,
             review_in_loop: central.settings.review_in_loop,
             skip_review_for_simple: central.settings.skip_review_for_simple,
@@ -928,8 +939,9 @@ impl Engine {
             Duration::from_secs(new.discovery_cooldown_cap_secs),
         );
         // A sprint <-> continuous change re-mutes or unmutes the DISCOVER tile
-        // live, so the rail follows the run mode
-        // the same way the schedule does.
+        // live, so the rail follows the central mode; the running loop still
+        // honors the mode from its session snapshot and picks the change up at
+        // the next build-loop start.
         let run_mode_changed = changed.iter().any(|field| field == "run_mode");
         for field in changed {
             let Some(value) = daemon_field_value(&new, &field) else {
@@ -1033,7 +1045,8 @@ impl Engine {
     }
 
     /// Starts the build on the first pending task. The session-level loop then continues with the next pending task after each finish until
-    /// none remain, and runs one discovery round if the cooldown has elapsed. The central
+    /// none remain, and in continuous mode runs one discovery round if the cooldown has
+    /// elapsed. The central
     /// settings are snapshotted here and the whole session runs on that unit. Errors are user-facing rejection reasons.
     pub fn start_build(&self) -> Result<(), String> {
         let unit = self.unit()?;
@@ -1080,8 +1093,10 @@ impl Engine {
     }
 
     /// The session-level build loop: pending tasks are
-    /// built one after another until none remain, then one discovery round runs if the
-    /// cooldown has elapsed; a round that appends tasks continues the session with them.
+    /// built one after another until none remain, then in continuous mode one discovery
+    /// round runs if the cooldown has elapsed; a round that appends tasks continues the
+    /// session with them. In sprint mode the empty queue ends the session (the mode comes
+    /// from the session's snapshot, so a change takes effect at the next start).
     /// A task that does not complete ends the session (it stays pending, so re-picking it
     /// immediately would loop), as does a stop request. `first` is the task `start_build`
     /// already announced: it runs even when a stop request arrives before the loop does,
@@ -1102,8 +1117,12 @@ impl Engine {
                     return;
                 }
             }
-            // The queue is empty: one discovery round, but only past the cooldown.
-            if self.state().stopping || !self.discovery_due() {
+            // The queue is empty: sprint mode stops here; in continuous mode one
+            // discovery round runs, but only past the cooldown.
+            if self.state().stopping
+                || unit.run_mode != RunMode::Continuous
+                || !self.discovery_due()
+            {
                 break;
             }
             match self.run_scheduled_discovery(cancel.clone(), &unit).await {
@@ -1396,6 +1415,55 @@ impl Engine {
             state.injected.push(chunk);
         }
         drop(_guard);
+        self.reconcile();
+        Ok(())
+    }
+
+    /// Removes the task line with the given id from the task file (T98.1).
+    /// The engine is the only place where "in progress" exists -- it lives in
+    /// `current_task`, not in the file -- so the CLI routes removal through
+    /// this method while an engine runs: the current (in-progress) task and
+    /// completed tasks are refused, and the removal itself runs under the
+    /// task-file lock, the same lock the engine's own rewrites take, followed
+    /// by an immediate reconcile, so the line leaves the in-memory queue and
+    /// reaches the attached shells right away. Accepted in every engine
+    /// state: removing a *pending* task while a build runs is required
+    /// behavior, and the running and completed tasks are protected anyway.
+    /// Known race, same class as the add/inject race: `begin_next_task`
+    /// loads the file without this lock, so a start concurrent with a
+    /// removal can still pick the removed task; the consequence is the
+    /// session's finalize `write_progress` reporting a missing line, a
+    /// documented no-op warning. Errors are user-facing rejection reasons.
+    pub async fn remove_task(&self, id: &str) -> Result<(), String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("the task id is empty".into());
+        }
+        let path = self.inner.config.task_file();
+        let guard = self.inner.task_file_lock.clone().lock_owned().await;
+        // Reading `current_task` under the file lock shrinks the race
+        // window against `begin_next_task` (see the doc comment above).
+        {
+            let state = self.state();
+            if state.current_task.as_deref() == Some(id) {
+                return Err(format!(
+                    "task {id} is in progress; wait for it to finish before removing it"
+                ));
+            }
+        }
+        match taskfile::remove_task(&path, id) {
+            Ok(taskfile::RemoveOutcome::Removed) => {}
+            Ok(taskfile::RemoveOutcome::Completed) => {
+                return Err(format!("task {id} is completed and cannot be removed"));
+            }
+            Ok(taskfile::RemoveOutcome::NotFound) => {
+                return Err(format!("no task with id {id} in {TASK_FILE}"));
+            }
+            Err(e) => {
+                return Err(format!("cannot update {}: {e}", path.display()));
+            }
+        }
+        drop(guard);
         self.reconcile();
         Ok(())
     }

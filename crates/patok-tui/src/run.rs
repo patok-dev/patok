@@ -119,8 +119,9 @@ pub async fn run(
     result
 }
 
-/// Attaches and builds the shell state from the engine's first (info) message.
-async fn attach(
+/// Attaches and builds the shell state from the engine's first (info) message. Shared
+/// with the headless driver, so both attach through the identical snapshot decode.
+pub(crate) async fn attach(
     client: &mut EngineClient<Channel>,
 ) -> anyhow::Result<(App, Streaming<patok_proto::EngineUpdate>)> {
     let mut updates = client

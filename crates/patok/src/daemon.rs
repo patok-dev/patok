@@ -11,8 +11,9 @@ use patok_core::paths;
 use patok_engine::{Engine, EngineConfig};
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{ShutdownRequest, shutdown_request};
-use patok_tui::Outcome;
+use patok_tui::{HeadlessOutcome, Outcome};
 use std::os::unix::process::CommandExt;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
 
 const POLL: Duration = Duration::from_millis(50);
@@ -26,7 +27,7 @@ fn socket(project: &Path) -> PathBuf {
 }
 
 /// Connects to the running engine, if any.
-async fn try_connect(project: &Path) -> Option<Client> {
+pub(crate) async fn try_connect(project: &Path) -> Option<Client> {
     patok_tui::client::connect(&socket(project)).await.ok()
 }
 
@@ -58,6 +59,63 @@ pub async fn run_shell(project: &Path) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `patok headless`: the engine without the UI. Connects to the engine, spawning it
+/// detached when needed, forces the build loop into sprint mode, starts the build and
+/// streams the agent output to stdout line by line; exits 0 once every task is done,
+/// 1 when the build fails or an engine error stops it. `color` turns the streamed
+/// lines' theme colors on; without it the output stays plain.
+pub async fn run_headless(project: &Path, color: bool) -> anyhow::Result<()> {
+    // Installed up front, before the engine work: an interrupt arriving during
+    // startup must still stop the session, not kill this process with the engine
+    // already detached.
+    let interrupt = install_signal_watchers().await?;
+    let client = match try_connect(project).await {
+        Some(client) => {
+            println!("Connected to the running engine for {}.", project.display());
+            client
+        }
+        None => {
+            let client = spawn_and_connect(project).await?;
+            println!("Started the engine for {}.", project.display());
+            client
+        }
+    };
+    println!("Headless -- starting the build; press Ctrl-C to interrupt.");
+    let mut stdout = std::io::stdout().lock();
+    let outcome = patok_tui::run_until(client, &mut stdout, interrupt, color).await?;
+    match outcome {
+        HeadlessOutcome::Completed => {
+            println!("All tasks completed.");
+            stop(project, false).await
+        }
+        HeadlessOutcome::Interrupted => {
+            println!("Interrupted -- stopping the engine.");
+            stop(project, false).await
+        }
+        HeadlessOutcome::Failed(error) => {
+            // Best effort: the engine may already be gone. `stop` itself reports that.
+            let _ = stop(project, false).await;
+            bail!("{error}")
+        }
+    }
+}
+
+/// Cancels one shared token on SIGINT or SIGTERM, as a supervisor would send.
+async fn install_signal_watchers() -> anyhow::Result<CancellationToken> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let token = CancellationToken::new();
+    let mut interrupt = signal(SignalKind::interrupt()).context("cannot listen for SIGINT")?;
+    let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+    let watcher = token.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = interrupt.recv() => watcher.cancel(),
+            _ = terminate.recv() => watcher.cancel(),
+        }
+    });
+    Ok(token)
 }
 
 /// `patok daemon`: idempotently make sure an engine is running.

@@ -1217,22 +1217,47 @@ fn a_discovery_run_leaves_its_own_finished_line() {
 }
 
 #[test]
-fn the_finished_line_carries_the_low_emphasis_status_colour() {
+fn the_lifecycle_status_lines_carry_the_task_heading_colour() {
     use ratatui::style::Color;
-    let app = finished_run("builder", SessionOutcome::Finished, 125_000);
-    let status = patok_tui::Theme::DARK.pane_status;
-    // A dim status colour, distinct from every content kind.
+    let theme = patok_tui::Theme::DARK;
+    let status = theme.pane_status;
+    // The lifecycle status colour matches the task/heading colour (T96.1).
     assert_ne!(status, Color::Reset);
-    assert_ne!(status, patok_tui::Theme::DARK.notice);
-    assert_ne!(status, patok_tui::Theme::DARK.heading);
+    assert_eq!(status, theme.heading);
+
+    fn cell_of(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
+        (0..24)
+            .find_map(|y| {
+                let row: String = (0..80).map(|x| buffer[(x, y)].symbol()).collect();
+                row.find(text).map(|x| (y, x as u16))
+            })
+            .unwrap_or_else(|| panic!("the line {text:?} is on screen"))
+    }
+
+    let finished_app = finished_run("builder", SessionOutcome::Finished, 125_000);
+    let buffer = draw_buffer(&finished_app);
+    let (row, x) = cell_of(&buffer, "Builder finished in 2 min 05 sec");
+    assert_eq!(buffer[(x, row)].style().fg, Some(status));
+
+    let mut app = app();
+    app.apply(EngineEvent::PhaseChanged {
+        phase: Phase::Running,
+    });
+    app.apply(EngineEvent::TaskStarted {
+        id: "T1.2".into(),
+        description: "add the parser for task files".into(),
+    });
+    app.apply(EngineEvent::AgentStarted {
+        agent: "builder".into(),
+        provider: "mock".into(),
+        model: Some("m-brand".into()),
+    });
+    app.apply(EngineEvent::AgentChanged {
+        agent: "builder".into(),
+        started_ms: 0,
+    });
     let buffer = draw_buffer(&app);
-    let text = "Builder finished in 2 min 05 sec";
-    let (row, x) = (0..24)
-        .find_map(|y| {
-            let row: String = (0..80).map(|x| buffer[(x, y)].symbol()).collect();
-            row.find(text).map(|x| (y, x as u16))
-        })
-        .expect("the finished line is on screen");
+    let (row, x) = cell_of(&buffer, "Builder started (mock, m-brand)");
     assert_eq!(buffer[(x, row)].style().fg, Some(status));
 }
 

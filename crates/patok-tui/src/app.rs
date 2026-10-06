@@ -34,8 +34,9 @@ pub enum LineKind {
     Result,
     Error,
     Notice,
-    /// A low-emphasis status line, not agent content: the finished-agent line
-    /// naming the agent type and the session's duration (T42.1).
+    /// A status line, not agent content: the agent-started line (T78.1) and
+    /// the finished-agent line naming the agent type and the session's
+    /// duration (T42.1), in the heading colour (T96.1).
     Status,
     Heading,
 }
@@ -495,7 +496,7 @@ impl App {
                     self.session_start = Some(self.anchored(started_ms));
                 }
             }
-            // One agent session began: one dim line naming the agent type, the
+            // One agent session began: one line naming the agent type, the
             // provider it runs on and the configured model when one exists,
             // pairing with the finished line at the session's end (T78.1). The
             // active agent and the timer stay owned by the adjacent
@@ -513,7 +514,7 @@ impl App {
                 self.provider = provider;
                 self.model = model.unwrap_or_default();
             }
-            // One agent session ended: one dim line naming the agent type and the
+            // One agent session ended: one line naming the agent type and the
             // session's total duration lands at the end of the pane (T42.1). The
             // timer hides with the idle transition that follows, and the frame
             // title returns to the configured provider and model (T81.1).

@@ -121,6 +121,45 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
     );
 }
 
+/// T103.1: sprint mode ends the session on the emptied queue -- no scheduled
+/// discovery round starts, unlike the continuous mode above.
+#[tokio::test]
+async fn sprint_mode_skips_the_scheduled_discovery_round() {
+    let fixture = Fixture::new(TASKS);
+    let provider = scripted();
+    let engine = fixture.engine_sprint(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // Both tasks ran; no round was announced.
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2"]);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, EngineEvent::DiscoveryChanged { discovering: true }))
+    );
+    assert!(
+        !notices(&events)
+            .iter()
+            .any(|(_, text)| text == "No tasks added.")
+    );
+    // Two builder sessions in the history log, no third one.
+    assert!(
+        fixture
+            .data
+            .path()
+            .join("history")
+            .read_dir()
+            .unwrap()
+            .count()
+            == 2
+    );
+}
+
 #[tokio::test]
 async fn a_failed_agent_commits_wip_and_leaves_the_task_pending() {
     let fixture = Fixture::new(TASKS);
@@ -1254,6 +1293,60 @@ async fn start_build_is_rejected_when_busy_or_nothing_is_pending() {
     assert_eq!(
         engine.start_build().unwrap_err(),
         "no pending tasks in TASKS.md"
+    );
+}
+
+/// T98.1: while a build runs, removing the current (in-progress) task is
+/// refused with a reason and the line stays, while a pending task is
+/// removed from the file and the queue reconciles immediately.
+#[tokio::test]
+async fn remove_task_refuses_the_running_task_and_removes_a_pending_one_mid_build() {
+    let fixture = Fixture::new(TASKS);
+    let provider = MockProvider::new(vec![Step::Sleep(Duration::from_secs(60))]);
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TaskStarted { .. })
+    })
+    .await;
+
+    // The running (in-progress) task is refused with a reason; its line
+    // stays in the file whatever shape the session has given it so far.
+    assert_eq!(
+        engine.remove_task("T1.1").await.unwrap_err(),
+        "task T1.1 is in progress; wait for it to finish before removing it"
+    );
+    let tasks = fixture.tasks_file();
+    assert!(tasks.contains("T1.1"));
+    assert!(tasks.contains("add the greeting file"));
+
+    // A pending task is removed even mid-build, and the queue reconciles
+    // right away: the TasksChanged broadcast no longer carries T1.2.
+    engine.remove_task("T1.2").await.unwrap();
+    assert!(!fixture.tasks_file().contains("T1.2"));
+    let is_tasks_changed = |e: &EngineEvent| matches!(e, EngineEvent::TasksChanged { .. });
+    let events = collect_until(&mut attachment.events, is_tasks_changed).await;
+    let changed = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::TasksChanged { tasks } => Some(tasks),
+            _ => None,
+        })
+        .next_back()
+        .unwrap();
+    assert!(!changed.iter().any(|t| t.id == "T1.2"));
+    assert!(changed.iter().any(|t| t.id == "T1.1"));
+
+    // Tearing down: the interrupted build ends cancelled and the file keeps
+    // the refused task unchecked.
+    engine.request_stop(true);
+    collect_until(&mut attachment.events, is_phase_startup).await;
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [ ] T1.1: add the greeting file")
     );
 }
 
@@ -2539,7 +2632,11 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
         })],
         builder_steps(),
     ]);
-    let engine = fixture.engine_with_plan(provider);
+    // Sprint mode (T103.1), so the walk ends at the emptied queue without the
+    // DISCOVER flips a scheduled round would add; the plan stage stays on.
+    let mut config = fixture.config_sprint();
+    config.plan_enabled = true;
+    let engine = patok_engine::Engine::new(config, std::sync::Arc::new(provider));
     let mut attachment = engine.attach().unwrap();
 
     engine.start_build().unwrap();
@@ -2614,7 +2711,9 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
 #[tokio::test]
 async fn a_build_without_the_plan_stage_walks_build_directly() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
-    let engine = fixture.engine(scripted());
+    // Sprint mode (T103.1), so the walk ends at the emptied queue without the
+    // DISCOVER flips a scheduled round would add.
+    let engine = fixture.engine_sprint(scripted());
     let mut attachment = engine.attach().unwrap();
 
     engine.start_build().unwrap();
@@ -2749,7 +2848,9 @@ async fn a_discovery_round_flips_discover_from_active_to_done() {
 #[tokio::test]
 async fn sprint_run_mode_keeps_discover_muted() {
     let fixture = Fixture::new(TASKS);
-    let engine = fixture.engine(MockProvider::new(vec![]));
+    // The sprint engine (T103.1): the manual round stays available, but the
+    // DISCOVER tile never unmutes.
+    let engine = fixture.engine_sprint(MockProvider::new(vec![]));
     let mut attachment = engine.attach().unwrap();
 
     engine.start_discovery().unwrap();
@@ -3036,7 +3137,9 @@ mod provider_config {
             .iter()
             .map(|s| s.label.clone())
             .collect();
-        assert_eq!(labels, ["plan", "T1.1", "discovery"]);
+        // No trailing discovery round: the config files default to sprint
+        // mode (T103.1), which ends the session on the emptied queue.
+        assert_eq!(labels, ["plan", "T1.1"]);
     }
 
     #[tokio::test]
@@ -3061,7 +3164,9 @@ mod provider_config {
             .iter()
             .map(|s| s.label.clone())
             .collect();
-        assert_eq!(labels, ["T1.1", "discovery"]);
+        // No trailing discovery round: the config files default to sprint
+        // mode (T103.1), which ends the session on the emptied queue.
+        assert_eq!(labels, ["T1.1"]);
     }
 
     #[tokio::test]
@@ -3069,10 +3174,11 @@ mod provider_config {
         let tasks = "# Tasks\n- [x] T1.1: already done\n";
         let fixture = Fixture::new(tasks);
         // A 1-second cooldown, so the test can wait it out; the plan stage is off so the
-        // build sessions stay plain builder sessions.
+        // build sessions stay plain builder sessions, and the run mode is continuous so
+        // the scheduled round runs at all (T103.1).
         write(
             &fixture.project_config(),
-            "[daemon]\ndiscovery_cooldown_secs = 1\nplan_enabled = false\n",
+            "[daemon]\ndiscovery_cooldown_secs = 1\nplan_enabled = false\nrun_mode = \"continuous\"\n",
         );
         let appended = format!("{tasks}- [ ] T2.1: set from the ui\n");
         let provider = MockProvider::per_session(vec![
@@ -3214,9 +3320,9 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
     // allowlist; the reviewer's raw stream lands in the history log.
     let sessions = provider.sessions();
     let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
-    // The sprint's discovery round on the emptied queue replays the last
-    // script and adds nothing.
-    assert_eq!(labels, ["T1.1", "review", "discovery"]);
+    // The sprint config ends the session on the emptied queue (T103.1), so no
+    // discovery round follows the reviewer.
+    assert_eq!(labels, ["T1.1", "review"]);
     assert_eq!(
         sessions[1].allowed_tools,
         ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
@@ -3248,9 +3354,8 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
     );
     let log = fixture.git(&["log", "--format=%s"]);
     assert!(log.contains("feat(T1.1): add the greeting file"), "{log}");
-    // The builder, reviewer and discovery raw streams are all in the
-    // history log.
-    assert_eq!(fixture.data_path("history").read_dir().unwrap().count(), 3);
+    // The builder and reviewer raw streams are in the history log.
+    assert_eq!(fixture.data_path("history").read_dir().unwrap().count(), 2);
 }
 
 #[tokio::test]
@@ -3645,7 +3750,9 @@ async fn a_simple_task_with_a_passing_build_skips_the_review() {
             ..
         }
     )));
-    assert_eq!(provider.sessions().len(), 3);
+    // Builder and reviewer sessions; the sprint config ends the session on the
+    // emptied queue (T103.1).
+    assert_eq!(provider.sessions().len(), 2);
 }
 
 #[tokio::test]
@@ -3669,8 +3776,9 @@ async fn learned_confidence_skips_the_review_after_the_threshold() {
         *level == NoticeLevel::Info
             && text == "Review skipped for T1.1: learned confidence: similar tasks passed review repeatedly."
     }));
-    // The builder session plus the discovery round on the emptied queue.
-    assert_eq!(provider.sessions().len(), 2);
+    // Only the builder session: the sprint config ends the session on the
+    // emptied queue (T103.1).
+    assert_eq!(provider.sessions().len(), 1);
     // A threshold of 0 disables the feature: the review runs.
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     std::fs::write(fixture.data_path("review-history.json"), primed_history).unwrap();
@@ -3689,8 +3797,9 @@ async fn learned_confidence_skips_the_review_after_the_threshold() {
             ..
         }
     )));
-    // Builder, reviewer, then the discovery round on the emptied queue.
-    assert_eq!(provider.sessions().len(), 3);
+    // Builder, reviewer; the sprint config ends the session on the emptied
+    // queue (T103.1).
+    assert_eq!(provider.sessions().len(), 2);
 }
 
 #[tokio::test]
@@ -3715,8 +3824,9 @@ async fn a_disabled_review_stage_skips_the_review() {
             .tasks_file()
             .contains("- [x] T1.1: [--.B-] add the greeting file")
     );
-    // The builder session plus the discovery round on the emptied queue.
-    assert_eq!(provider.sessions().len(), 2);
+    // Only the builder session: the sprint config ends the session on the
+    // emptied queue (T103.1).
+    assert_eq!(provider.sessions().len(), 1);
 }
 
 #[tokio::test]
@@ -3775,8 +3885,9 @@ async fn batch_review_defers_every_task_but_the_last_and_the_last_diff_spans_the
     // task, whose diff spans every commit of the group.
     let sessions = provider.sessions();
     let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
-    // The three builders, the group's reviewer, then the discovery round.
-    assert_eq!(labels, ["T1.1", "T1.2", "T1.3", "review", "discovery"]);
+    // The three builders and the group's reviewer; the sprint config ends the
+    // session on the emptied queue (T103.1).
+    assert_eq!(labels, ["T1.1", "T1.2", "T1.3", "review"]);
     let reviewer_prompt = &sessions[3].prompt;
     assert!(
         reviewer_prompt.contains("first.txt"),
@@ -3825,10 +3936,7 @@ async fn a_multipass_review_reviews_each_file_then_integrates() {
     // and produced the final report.
     let sessions = provider.sessions();
     let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
-    assert_eq!(
-        labels,
-        ["T1.1", "review", "review", "review", "review", "discovery"]
-    );
+    assert_eq!(labels, ["T1.1", "review", "review", "review", "review"]);
     for (session, file) in sessions[1..4].iter().zip(["a.txt", "b.txt", "c.txt"]) {
         assert!(
             session

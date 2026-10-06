@@ -141,6 +141,16 @@ impl EngineApi for Service {
                     Err(error) => rejected(error),
                 }
             }
+            // Removes one pending task from TASKS.md under the engine's
+            // task-file lock (T98.1), refusing the engine's current
+            // (in-progress) task and completed tasks; the queue reconciles
+            // immediately.
+            Some(command_request::Action::RemoveTask(remove)) => {
+                match self.engine.remove_task(&remove.id).await {
+                    Ok(()) => accepted(),
+                    Err(error) => rejected(error),
+                }
+            }
             // One daemon-schema field change: validated,
             // persisted to the resolved layer and merged into the engine's central
             // config; the new value reaches the shell as a ConfigChanged event.
