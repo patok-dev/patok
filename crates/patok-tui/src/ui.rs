@@ -914,11 +914,11 @@ fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
         Span::raw("  "),
     ];
     for colour in [
-        entry.thinking,
+        entry.agent_text.thinking,
         entry.task_running,
-        entry.notice,
-        entry.error,
-        entry.heading,
+        entry.agent_text.notice,
+        entry.agent_text.error,
+        entry.agent_text.heading,
     ] {
         spans.push(Span::styled(
             "███",

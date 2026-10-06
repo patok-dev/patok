@@ -1220,10 +1220,10 @@ fn a_discovery_run_leaves_its_own_finished_line() {
 fn the_lifecycle_status_lines_carry_the_task_heading_colour() {
     use ratatui::style::Color;
     let theme = patok_tui::Theme::DARK;
-    let status = theme.pane_status;
+    let status = theme.agent_text.pane_status;
     // The lifecycle status colour matches the task/heading colour (T96.1).
     assert_ne!(status, Color::Reset);
-    assert_eq!(status, theme.heading);
+    assert_eq!(status, theme.agent_text.heading);
 
     fn cell_of(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
         (0..24)
