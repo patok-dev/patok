@@ -56,14 +56,21 @@ impl Pane {
 
     fn push(&mut self, kind: LineKind, text: String) {
         self.open = false;
-        self.add(kind, text);
+        self.add(kind, text, None);
     }
 
-    fn add(&mut self, kind: LineKind, text: String) {
+    /// Pushes one complete line that names an agent (T110.1): the name keeps
+    /// its fixed colour identity wherever the line renders.
+    fn push_agent(&mut self, kind: LineKind, text: String, agent: &str) {
+        self.open = false;
+        self.add(kind, text, Some(agent.to_string()));
+    }
+
+    fn add(&mut self, kind: LineKind, text: String, agent: Option<String>) {
         if self.lines.len() == OUTPUT_LIMIT {
             self.lines.pop_front();
         }
-        self.lines.push_back(OutLine { kind, text });
+        self.lines.push_back(OutLine { kind, text, agent });
     }
 
     /// Appends a streamed chunk to the current line, starting new lines at newlines.
@@ -77,7 +84,7 @@ impl Pane {
             }
             match self.lines.back_mut() {
                 Some(line) if self.open => line.text.push_str(piece),
-                _ => self.add(LineKind::Text, piece.to_string()),
+                _ => self.add(LineKind::Text, piece.to_string(), None),
             }
             self.open = true;
         }
@@ -88,6 +95,37 @@ impl Pane {
 pub struct OutLine {
     pub kind: LineKind,
     pub text: String,
+    /// The agent whose name this line carries (T110.1): the lifecycle status
+    /// lines and the planning heading; `None` on every other line.
+    pub agent: Option<String>,
+}
+
+impl OutLine {
+    /// Splits this line's text around the agent name it carries (T110.1):
+    /// `(before, name, after)` as slices of `text`, or `None` on a line that
+    /// carries no name. The lifecycle status lines lead with the display-cased
+    /// name; the planning heading carries the raw name after the marker. Both
+    /// producers build the text here, so the layouts are known — a mismatch
+    /// falls back to `None` and the line renders like any other of its kind.
+    pub fn name_pieces(&self) -> Option<(&str, &str, &str)> {
+        let agent = self.agent.as_deref()?;
+        match self.kind {
+            LineKind::Status => {
+                let name = agent_display(agent);
+                let after = self.text.strip_prefix(name.as_str())?;
+                let end = self.text.len() - after.len();
+                Some(("", &self.text[..end], after))
+            }
+            LineKind::Heading => {
+                let name = self.text.strip_prefix("── ")?;
+                if name != agent {
+                    return None;
+                }
+                Some(("── ", name, ""))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// The two research queue-creation runs (T69.1): the Research agent's second
@@ -510,7 +548,7 @@ impl App {
                 model,
             } => {
                 let text = started_line(&agent, &provider, model.as_deref());
-                self.push(LineKind::Status, text);
+                self.push_agent(LineKind::Status, text, &agent);
                 self.provider = provider;
                 self.model = model.unwrap_or_default();
             }
@@ -524,7 +562,7 @@ impl App {
                 duration_ms,
             } => {
                 let text = finished_line(&agent, outcome, Duration::from_millis(duration_ms));
-                self.push(LineKind::Status, text);
+                self.push_agent(LineKind::Status, text, &agent);
                 self.provider = self.config_provider.clone();
                 self.model = self.config_model.clone();
             }
@@ -545,8 +583,10 @@ impl App {
                     // this event, so the status line and the heading name it.
                     self.status = Some(format!("{} running...", agent_display(&self.agent)));
                     // The run's output streams into the main pane next to earlier
-                    // output; a heading keeps runs visually separate (T24.1).
-                    self.push(LineKind::Heading, format!("── {}", self.agent));
+                    // output; a heading keeps runs visually separate (T24.1),
+                    // with the agent's name in its own fixed colour (T110.1).
+                    let agent = self.agent.clone();
+                    self.push_agent(LineKind::Heading, format!("── {agent}"), &agent);
                 } else if self.planning {
                     // The run's outcome is the notice line in the output pane; the
                     // status bar returns to its normal content instead of repeating
@@ -648,6 +688,12 @@ impl App {
 
     fn push(&mut self, kind: LineKind, text: String) {
         self.output.push(kind, text);
+    }
+
+    /// Pushes a line that names an agent (T110.1): the name keeps its fixed
+    /// colour identity in every surface that renders it.
+    fn push_agent(&mut self, kind: LineKind, text: String, agent: &str) {
+        self.output.push_agent(kind, text, agent);
     }
 
     fn append(&mut self, chunk: &str) {

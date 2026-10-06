@@ -719,7 +719,7 @@ fn output_frame_title_colours_only_the_agent_type() {
         &buffer,
         x,
         " Builder",
-        Theme::DARK.frame_title_builder,
+        Theme::agent_name_color(Theme::DARK, "builder"),
         true,
     );
     assert_segment(&buffer, x + 8, " | Claude", detail, false);
@@ -740,7 +740,7 @@ fn output_frame_title_colours_only_the_agent_type() {
         &buffer,
         x,
         " Planner",
-        Theme::DARK.frame_title_planner,
+        Theme::agent_name_color(Theme::DARK, "planner"),
         true,
     );
     assert_segment(&buffer, x + 8, " | Claude", detail, false);
@@ -1217,9 +1217,10 @@ fn a_discovery_run_leaves_its_own_finished_line() {
 }
 
 #[test]
-fn the_lifecycle_status_lines_carry_the_task_heading_colour() {
+fn the_lifecycle_status_lines_carry_the_task_heading_colour_outside_the_agent_name() {
+    use patok_tui::Theme;
     use ratatui::style::Color;
-    let theme = patok_tui::Theme::DARK;
+    let theme = Theme::DARK;
     let status = theme.agent_text.pane_status;
     // The lifecycle status colour matches the task/heading colour (T96.1).
     assert_ne!(status, Color::Reset);
@@ -1234,10 +1235,16 @@ fn the_lifecycle_status_lines_carry_the_task_heading_colour() {
             .unwrap_or_else(|| panic!("the line {text:?} is on screen"))
     }
 
+    // The agent name inside the line keeps its own fixed colour (T110.1),
+    // the rest of the line the status colour.
     let finished_app = finished_run("builder", SessionOutcome::Finished, 125_000);
     let buffer = draw_buffer(&finished_app);
     let (row, x) = cell_of(&buffer, "Builder finished in 2 min 05 sec");
-    assert_eq!(buffer[(x, row)].style().fg, Some(status));
+    assert_eq!(
+        buffer[(x, row)].style().fg,
+        Some(Theme::agent_name_color(theme, "builder"))
+    );
+    assert_eq!(buffer[(x + 8, row)].style().fg, Some(status));
 
     let mut app = app();
     app.apply(EngineEvent::PhaseChanged {
@@ -1258,7 +1265,11 @@ fn the_lifecycle_status_lines_carry_the_task_heading_colour() {
     });
     let buffer = draw_buffer(&app);
     let (row, x) = cell_of(&buffer, "Builder started (mock, m-brand)");
-    assert_eq!(buffer[(x, row)].style().fg, Some(status));
+    assert_eq!(
+        buffer[(x, row)].style().fg,
+        Some(Theme::agent_name_color(theme, "builder"))
+    );
+    assert_eq!(buffer[(x + 8, row)].style().fg, Some(status));
 }
 
 #[test]

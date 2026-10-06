@@ -15,6 +15,35 @@ struct Setup {
     config: EngineConfig,
 }
 
+/// Strips ANSI escape sequences (`\x1b[...m` colour wraps) from a buffer, so
+/// substring and ordering assertions can run against the plain text the
+/// escapes wrap (the colored run wraps pieces of a line, not whole lines).
+fn strip_escapes(buffer: &str) -> String {
+    let mut plain = String::with_capacity(buffer.len());
+    let mut rest = buffer;
+    while let Some(start) = rest.find('\x1b') {
+        plain.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        // SGR sequences only: `\x1b[`, colour parameters, a final `m`.
+        let Some(body) = after.strip_prefix('[') else {
+            plain.push('\x1b');
+            rest = after;
+            continue;
+        };
+        match body.find('m') {
+            Some(end) if body[..end].bytes().all(|b| b.is_ascii_digit() || b == b';') => {
+                rest = &body[end + 1..];
+            }
+            _ => {
+                plain.push_str("\x1b[");
+                rest = body;
+            }
+        }
+    }
+    plain.push_str(rest);
+    plain
+}
+
 fn setup() -> Setup {
     let project = tempfile::tempdir().unwrap();
     let runtime = tempfile::tempdir().unwrap();
@@ -160,14 +189,16 @@ async fn colored_output_uses_escapes_and_keeps_the_lines() {
         buffer.contains("\x1b["),
         "the colored run must emit escape sequences: {buffer:?}"
     );
-    // The escape sequences wrap whole lines, so every frame line survives
-    // verbatim and in the frame's order.
-    let heading = buffer.find("── T1.1: add hello").expect(&buffer);
-    let started = buffer.find("Builder started (mock)").expect(&buffer);
-    let text = buffer.find("hello from the agent").expect(&buffer);
-    let result = buffer.find("result: ok").expect(&buffer);
-    let finished = buffer.find("Builder finished in").expect(&buffer);
-    let done = buffer.find("✔ T1.1 done").expect(&buffer);
+    // The escape sequences wrap pieces of a line — the agent name wears its
+    // own colour inside the lifecycle lines (T110.1) — so the ordering and
+    // substring assertions run on the escape-stripped text.
+    let plain = strip_escapes(&buffer);
+    let heading = plain.find("── T1.1: add hello").expect(&plain);
+    let started = plain.find("Builder started (mock)").expect(&plain);
+    let text = plain.find("hello from the agent").expect(&plain);
+    let result = plain.find("result: ok").expect(&plain);
+    let finished = plain.find("Builder finished in").expect(&plain);
+    let done = plain.find("✔ T1.1 done").expect(&plain);
     assert!(
         heading < started && started < text && text < result && result < finished,
         "buffer: {buffer}"

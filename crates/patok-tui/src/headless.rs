@@ -37,8 +37,9 @@ pub enum HeadlessOutcome {
 /// status lines -- to `out` line by line as it arrives. Ends once every task in the
 /// store is done, the build fails, an engine error stops it, or `interrupt` is
 /// cancelled. The previous run mode is restored on every exit path. With `color`,
-/// the streamed lines wear the user's theme colours (the same kind-to-colour
-/// mapping the frame renders with); without it the output stays plain.
+/// the streamed lines wear the user's theme colours — the same kind-to-colour and
+/// agent-name-to-colour mappings the frame renders with; without it the output
+/// stays plain.
 pub async fn run_until<W: Write>(
     mut client: EngineClient<Channel>,
     out: &mut W,
@@ -347,8 +348,10 @@ async fn restore_mode<W: Write>(
 /// Streams the output frame's lines to a writer as they are built: completed lines
 /// are written whole, the still-streaming last line is written in tail deltas, so
 /// what arrives on the writer matches what the frame displays at every moment.
-/// With a theme, every written piece is wrapped in the line kind's theme colour;
-/// without one the bytes are the plain text.
+/// With a theme, every written piece is wrapped in the line kind's theme colour and
+/// an agent's name inside a line wears the agent's own fixed colour (T110.1);
+/// without a theme the bytes are the plain text. Name-bearing lines are only ever
+/// opened by a push, never by a streaming append, so they are always written whole.
 #[derive(Default)]
 struct Printer {
     /// The theme whose colours wrap the output, or `None` for plain output.
@@ -382,7 +385,7 @@ impl Printer {
             let kind = last.kind;
             if self.partial.is_empty() {
                 if !text.is_empty() {
-                    out.write_all(self.wrap(text, kind).as_bytes())?;
+                    out.write_all(self.whole(last).as_bytes())?;
                     out.flush()?;
                     self.partial = text.clone();
                 }
@@ -395,7 +398,7 @@ impl Printer {
             } else {
                 // Not a prefix anymore (defensive): the line is rewritten whole.
                 if !text.is_empty() {
-                    out.write_all(self.wrap(text, kind).as_bytes())?;
+                    out.write_all(self.whole(last).as_bytes())?;
                     out.flush()?;
                 }
                 self.partial = text.clone();
@@ -408,7 +411,14 @@ impl Printer {
     fn complete<W: Write>(&mut self, out: &mut W, line: &OutLine) -> std::io::Result<()> {
         match line.text.strip_prefix(self.partial.as_str()) {
             Some(tail) if !tail.is_empty() => {
-                out.write_all(self.wrap(tail, line.kind).as_bytes())?
+                // Nothing of this line was streamed before: it is written
+                // whole, agent name and all (T110.1).
+                let bytes = if self.partial.is_empty() {
+                    self.whole(line)
+                } else {
+                    self.wrap(tail, line.kind).into_owned()
+                };
+                out.write_all(bytes.as_bytes())?
             }
             Some(_) => {}
             None => out.write_all(self.wrap(&line.text, line.kind).as_bytes())?,
@@ -438,6 +448,40 @@ impl Printer {
         out.write_all(self.wrap(&text, LineKind::Notice).as_bytes())?;
         out.write_all(b"\n")?;
         out.flush()
+    }
+
+    /// One whole line as written bytes: a line that names an agent (T110.1)
+    /// colours the name in the agent's own fixed colour between the line
+    /// kind's colour; every other line is wrapped in the kind's colour alone.
+    fn whole(&self, line: &OutLine) -> String {
+        let Some((before, name, after)) = line.name_pieces() else {
+            return self.wrap(&line.text, line.kind).into_owned();
+        };
+        let Some(theme) = self.theme else {
+            return line.text.clone();
+        };
+        let kind_colour = Theme::line_color(theme, line.kind);
+        let name_colour = Theme::agent_name_color(theme, line.agent.as_deref().unwrap_or_default());
+        let bold = line.kind == LineKind::Heading;
+        let piece = |text: &str, colour: ratatui::style::Color| {
+            let styled = crossterm::style::style(text).with(term_color(colour));
+            let styled = if bold {
+                styled.attribute(crossterm::style::Attribute::Bold)
+            } else {
+                styled
+            };
+            styled.to_string()
+        };
+        // Empty pieces emit nothing: the name line stays a tight two escapes.
+        let mut bytes = String::new();
+        if !before.is_empty() {
+            bytes.push_str(&piece(before, kind_colour));
+        }
+        bytes.push_str(&piece(name, name_colour));
+        if !after.is_empty() {
+            bytes.push_str(&piece(after, kind_colour));
+        }
+        bytes
     }
 
     /// Wraps one written piece in the line kind's theme colour: the colour prefix,
@@ -601,5 +645,46 @@ mod tests {
         // The deltas were never written twice.
         assert_eq!(buffer.matches("hello").count(), 1, "buffer: {buffer:?}");
         assert_eq!(buffer.matches("T1.1 done").count(), 1, "buffer: {buffer:?}");
+    }
+
+    /// A line that names an agent (T110.1) writes the name in the agent's own
+    /// fixed colour and the rest in the line kind's colour: the dark theme's
+    /// builder green for `Builder`, the status magenta for the remainder. A
+    /// colourless printer writes the raw text unchanged.
+    #[test]
+    fn agent_name_lines_colour_the_name() {
+        let mut app = app_with_one_task();
+        app.apply(EngineEvent::AgentStarted {
+            agent: "builder".into(),
+            provider: "mock".into(),
+            model: None,
+        });
+        // Coloured: the whole line is exactly the two coloured pieces and
+        // the newline, so the name span is the only builder-coloured text.
+        let mut out = Vec::new();
+        let mut printer = Printer {
+            theme: Some(Theme::DARK),
+            ..Printer::default()
+        };
+        printer.drain(&mut out, &app).unwrap();
+        printer.finish(&mut out).unwrap();
+        let name = crossterm::style::style("Builder")
+            .with(term_color(Theme::agent_name_color(Theme::DARK, "builder")))
+            .to_string();
+        let rest = crossterm::style::style(" started (mock)")
+            .with(term_color(Theme::line_color(Theme::DARK, LineKind::Status)))
+            .to_string();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!("{name}{rest}\n"),
+            "the name wears the agent colour, the rest the kind colour"
+        );
+
+        // Plain: no escapes at all.
+        let mut out = Vec::new();
+        let mut printer = Printer::default();
+        printer.drain(&mut out, &app).unwrap();
+        printer.finish(&mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "Builder started (mock)\n");
     }
 }

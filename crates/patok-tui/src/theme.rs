@@ -28,6 +28,16 @@
 //! `--color` output read the subclass through [`Theme::line_color`], so the
 //! two cannot drift.
 //!
+//! The agent *name* colours are fixated the same way (T110.1): each agent
+//! (planner, builder, reviewer, research, discovery, orchestrator) keeps one
+//! hue family in every built-in theme, held in the [`AgentNames`] subclass
+//! and reached through [`Theme::agent_name_color`]. A palette only adjusts
+//! an anchor's lightness so the name reads on its background; the identity
+//! never remaps onto a palette role. Every surface that renders an agent by
+//! name -- the output frame title, the lifecycle status lines, the planning
+//! heading, the status bar's run message and the headless `--color` output --
+//! routes through the same mapping.
+//!
 //! Field-to-use map (all sites are in `ui.rs` unless noted):
 //!
 //! | Field | Renderer | Use |
@@ -50,11 +60,9 @@
 //! | `agent_text.error` | `style_of`, headless `--color` | error lines |
 //! | `agent_text.notice` | `style_of`, headless `--color` | notice lines |
 //! | `agent_text.heading` | `style_of`, headless `--color` | markdown headings (bold added by the renderer) |
-//! | `frame_title_builder` | `render_output` | the agent type name in the output frame title while the builder runs |
-//! | `frame_title_planner` | `render_output` | the agent type name in the output frame title while the planner runs |
-//! | `frame_title_research` | `render_output` | the agent type name in the output frame title while the research agent runs (T68.1) |
+//! | `agent_names.*` | `render_output`, `visual_lines`, `status_widget`, headless `--color` | every agent name rendered by identity (T110.1): the output frame title's agent type name, the agent name inside the lifecycle started/finished lines, the planning heading's name and the status bar's "{Agent} running..." message |
 //! | `frame_title_detail` | `render_output`, `render_tasks` | output frame title's separator, provider, model and timer; everything after the word `Tasks` in the tasks frame title (T67.1): the pipe separator, the completed, total and left counts, the slash, the dash and the word `left` |
-//! | `agent_text.pane_status` | `style_of`, headless `--color` | the agent lifecycle status lines in the output pane: the started line (T78.1) and the finished line (T42.1), in the same colour as the heading/task lines (T96.1) |
+//! | `agent_text.pane_status` | `style_of`, headless `--color` | the agent lifecycle status lines in the output pane (T78.1, T42.1) outside the agent name itself, which wears its own fixed colour (T110.1) |
 //! | `pane_empty` | `render_pane` | "no output yet" placeholder |
 //! | `task_done` | `render_tasks` | done task rows |
 //! | `task_running` | `render_tasks` | running task rows (bold added by the renderer) |
@@ -120,6 +128,75 @@ const ERROR_ANCHOR: (u8, u8, u8) = (0xE0, 0x52, 0x52);
 const NOTICE_ANCHOR: (u8, u8, u8) = (0xD9, 0xB0, 0x2B);
 /// Heading and pane-status lines: magenta.
 const HEADING_ANCHOR: (u8, u8, u8) = (0xB7, 0x6B, 0xD8);
+
+/// The agent name colours (T110.1): one fixed colour identity per agent,
+/// the same in every built-in theme. Like the line kinds, a palette only
+/// adjusts an anchor's lightness so the name reads on its background; the
+/// hue family never remaps onto a palette role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentNames {
+    /// The planner's name: magenta.
+    pub planner: Color,
+    /// The builder's name: green.
+    pub builder: Color,
+    /// The reviewer's name: orange.
+    pub reviewer: Color,
+    /// The research agent's name: blue.
+    pub research: Color,
+    /// The discovery agent's name: cyan.
+    pub discovery: Color,
+    /// The orchestrator's name: rose.
+    pub orchestrator: Color,
+    /// Any other agent's name: the neutral gray, like the result lines.
+    pub other: Color,
+}
+
+/// The canonical anchor colours of the agent names (T110.1): one RGB triple
+/// per agent, fixed for every built-in theme. Planner, research and discovery
+/// reuse the line-kind family anchors so the fixated identities match the
+/// default theme's existing look; reviewer and orchestrator take families the
+/// kinds do not use. The chromatic anchors sit more than 34 degrees apart on
+/// the hue wheel, so no two agents can ever be confused.
+/// The planner's name: magenta, the heading family.
+const PLANNER_NAME_ANCHOR: (u8, u8, u8) = HEADING_ANCHOR;
+/// The builder's name: green.
+const BUILDER_NAME_ANCHOR: (u8, u8, u8) = (0x8A, 0xC9, 0x5A);
+/// The reviewer's name: orange.
+const REVIEWER_NAME_ANCHOR: (u8, u8, u8) = (0xE0, 0x84, 0x3D);
+/// The research agent's name: blue, the thinking family.
+const RESEARCH_NAME_ANCHOR: (u8, u8, u8) = THINKING_ANCHOR;
+/// The discovery agent's name: cyan, the tool family.
+const DISCOVERY_NAME_ANCHOR: (u8, u8, u8) = TOOL_ANCHOR;
+/// The orchestrator's name: rose.
+const ORCHESTRATOR_NAME_ANCHOR: (u8, u8, u8) = (0xE0, 0x6C, 0x9A);
+/// Any other agent's name: the neutral gray, the result family.
+const OTHER_NAME_ANCHOR: (u8, u8, u8) = RESULT_ANCHOR;
+
+impl AgentNames {
+    /// Resolves the agent name colours for a palette theme (T110.1): every
+    /// agent keeps its canonical anchor; the theme's background only adjusts
+    /// each anchor's lightness until the pair reads, exactly like the agent
+    /// line kinds (T108.1). The truecolor setting picks the emission.
+    fn resolve(background: (u8, u8, u8), truecolor: bool) -> AgentNames {
+        let colour = |rgb: (u8, u8, u8)| {
+            if truecolor {
+                Color::Rgb(rgb.0, rgb.1, rgb.2)
+            } else {
+                Color::Indexed(rgb_to_indexed(rgb))
+            }
+        };
+        let name = |anchor: (u8, u8, u8)| colour(adjust_lightness(anchor, background));
+        AgentNames {
+            planner: name(PLANNER_NAME_ANCHOR),
+            builder: name(BUILDER_NAME_ANCHOR),
+            reviewer: name(REVIEWER_NAME_ANCHOR),
+            research: name(RESEARCH_NAME_ANCHOR),
+            discovery: name(DISCOVERY_NAME_ANCHOR),
+            orchestrator: name(ORCHESTRATOR_NAME_ANCHOR),
+            other: name(OTHER_NAME_ANCHOR),
+        }
+    }
+}
 
 /// The WCAG contrast ratio a palette's lightness adjustment (T108.1) targets:
 /// the least an agent line colour must reach against its theme's background.
@@ -296,13 +373,9 @@ pub struct Theme {
     /// The agent output line colours (T108.1), held apart from the chrome
     /// fields so the output identity stays stable across theme refactoring.
     pub agent_text: AgentText,
-    /// The agent type name in the output frame title while the builder runs.
-    pub frame_title_builder: Color,
-    /// The agent type name in the output frame title while the planner runs.
-    pub frame_title_planner: Color,
-    /// The agent type name in the output frame title while the research agent
-    /// runs (T68.1).
-    pub frame_title_research: Color,
+    /// The agent name colours (T110.1): one fixed identity per agent, the
+    /// same hue family in every built-in theme.
+    pub agent_names: AgentNames,
     /// The output frame title's separator, provider, model and timer text (T37.1),
     /// and everything after the word `Tasks` in the tasks frame title (T67.1):
     /// the pipe separator, the completed, total and left counts, the slash, the
@@ -381,9 +454,15 @@ impl Theme {
             pane_status: Color::Magenta,
             heading: Color::Magenta,
         },
-        frame_title_builder: Color::Green,
-        frame_title_planner: Color::Magenta,
-        frame_title_research: Color::LightBlue,
+        agent_names: AgentNames {
+            planner: Color::Magenta,
+            builder: Color::Green,
+            reviewer: Color::LightYellow,
+            research: Color::LightBlue,
+            discovery: Color::Cyan,
+            orchestrator: Color::LightMagenta,
+            other: Color::DarkGray,
+        },
         frame_title_detail: Color::DarkGray,
         pane_empty: Color::DarkGray,
         task_done: Color::DarkGray,
@@ -442,6 +521,23 @@ impl Theme {
             LineKind::Heading => theme.agent_text.heading,
         }
     }
+
+    /// The fixed colour of one agent's name (T110.1): the same hue family in
+    /// every built-in theme, only adjusted for readability on the theme's
+    /// background. Unknown agents fall back to the neutral `other` colour.
+    /// Shared by the frame's agent-name surfaces and the headless mode's
+    /// `--color` output, so the two cannot drift.
+    pub fn agent_name_color(theme: Theme, agent: &str) -> Color {
+        match agent {
+            "planner" => theme.agent_names.planner,
+            "builder" => theme.agent_names.builder,
+            "reviewer" => theme.agent_names.reviewer,
+            "research" => theme.agent_names.research,
+            "discovery" => theme.agent_names.discovery,
+            "orchestrator" => theme.agent_names.orchestrator,
+            _ => theme.agent_names.other,
+        }
+    }
 }
 
 /// One published palette's signature roles, as raw RGB triples. Each palette
@@ -465,12 +561,13 @@ struct Palette {
 }
 
 /// One theme's chrome mapping (T109.1): the raw RGB triple every
-/// non-agent-text semantic field of [`Theme`] resolves to, in the same order
-/// as the `Theme` fields minus `agent_text`. Each built-in palette owns one
+/// non-fixated semantic field of [`Theme`] resolves to, in the same order
+/// as the `Theme` fields minus the fixated subclasses. Each built-in palette owns one
 /// table — there is no shared mapping rule — so a theme can tune any chrome
 /// use (chip backgrounds, cursor, muted text) without touching the others.
-/// The agent line colours are fixated separately by [`AgentText`] (T108.1)
-/// and never come from here.
+/// The agent line colours and agent name colours are fixated separately by
+/// [`AgentText`] (T108.1) and [`AgentNames`] (T110.1) and never come from
+/// here.
 struct Chrome {
     /// The shell's base background, painted over the whole frame first.
     background: (u8, u8, u8),
@@ -496,13 +593,6 @@ struct Chrome {
     status_key: (u8, u8, u8),
     /// Status-bar key-chip labels.
     status_label: (u8, u8, u8),
-    /// The agent type name in the output frame title while the builder runs.
-    frame_title_builder: (u8, u8, u8),
-    /// The agent type name in the output frame title while the planner runs.
-    frame_title_planner: (u8, u8, u8),
-    /// The agent type name in the output frame title while the research agent
-    /// runs (T68.1).
-    frame_title_research: (u8, u8, u8),
     /// The output frame title's detail text (T37.1) and everything after the
     /// word `Tasks` in the tasks frame title (T67.1).
     frame_title_detail: (u8, u8, u8),
@@ -585,9 +675,6 @@ const ATOM_ONE_DARK_CHROME: Chrome = Chrome {
     status_message: ATOM_ONE_DARK.yellow,
     status_key: ATOM_ONE_DARK.foreground,
     status_label: (0x6E, 0x77, 0x86),
-    frame_title_builder: ATOM_ONE_DARK.green,
-    frame_title_planner: ATOM_ONE_DARK.magenta,
-    frame_title_research: ATOM_ONE_DARK.blue,
     frame_title_detail: (0x6E, 0x77, 0x86),
     pane_empty: (0x6E, 0x77, 0x86),
     task_done: (0x6E, 0x77, 0x86),
@@ -641,9 +728,6 @@ const ATOM_ONE_LIGHT_CHROME: Chrome = Chrome {
     status_message: ATOM_ONE_LIGHT.yellow,
     status_key: ATOM_ONE_LIGHT.foreground,
     status_label: (0x86, 0x87, 0x8E),
-    frame_title_builder: ATOM_ONE_LIGHT.green,
-    frame_title_planner: ATOM_ONE_LIGHT.magenta,
-    frame_title_research: ATOM_ONE_LIGHT.blue,
     frame_title_detail: (0x86, 0x87, 0x8E),
     pane_empty: (0x86, 0x87, 0x8E),
     task_done: (0x86, 0x87, 0x8E),
@@ -695,9 +779,6 @@ const TOKYO_NIGHT_DARK_CHROME: Chrome = Chrome {
     status_message: TOKYO_NIGHT_DARK.yellow,
     status_key: TOKYO_NIGHT_DARK.surface,
     status_label: TOKYO_NIGHT_DARK.muted,
-    frame_title_builder: TOKYO_NIGHT_DARK.green,
-    frame_title_planner: TOKYO_NIGHT_DARK.magenta,
-    frame_title_research: TOKYO_NIGHT_DARK.blue,
     frame_title_detail: TOKYO_NIGHT_DARK.muted,
     pane_empty: TOKYO_NIGHT_DARK.muted,
     task_done: TOKYO_NIGHT_DARK.muted,
@@ -750,9 +831,6 @@ const TOKYO_NIGHT_DAY_CHROME: Chrome = Chrome {
     status_message: TOKYO_NIGHT_DAY.yellow,
     status_key: TOKYO_NIGHT_DAY.foreground,
     status_label: (0x71, 0x7A, 0xAA),
-    frame_title_builder: TOKYO_NIGHT_DAY.green,
-    frame_title_planner: TOKYO_NIGHT_DAY.magenta,
-    frame_title_research: TOKYO_NIGHT_DAY.blue,
     frame_title_detail: (0x71, 0x7A, 0xAA),
     pane_empty: (0x71, 0x7A, 0xAA),
     task_done: (0x71, 0x7A, 0xAA),
@@ -804,9 +882,6 @@ const CATPPUCCIN_MOCHA_CHROME: Chrome = Chrome {
     status_message: CATPPUCCIN_MOCHA.yellow,
     status_key: CATPPUCCIN_MOCHA.foreground,
     status_label: CATPPUCCIN_MOCHA.muted,
-    frame_title_builder: CATPPUCCIN_MOCHA.green,
-    frame_title_planner: CATPPUCCIN_MOCHA.magenta,
-    frame_title_research: CATPPUCCIN_MOCHA.blue,
     frame_title_detail: CATPPUCCIN_MOCHA.muted,
     pane_empty: CATPPUCCIN_MOCHA.muted,
     task_done: CATPPUCCIN_MOCHA.muted,
@@ -861,9 +936,6 @@ const CATPPUCCIN_LATTE_CHROME: Chrome = Chrome {
     status_message: (0xBB, 0x77, 0x18),
     status_key: CATPPUCCIN_LATTE.foreground,
     status_label: CATPPUCCIN_LATTE.muted,
-    frame_title_builder: (0x3D, 0x98, 0x29),
-    frame_title_planner: CATPPUCCIN_LATTE.magenta,
-    frame_title_research: CATPPUCCIN_LATTE.blue,
     frame_title_detail: CATPPUCCIN_LATTE.muted,
     pane_empty: CATPPUCCIN_LATTE.muted,
     task_done: CATPPUCCIN_LATTE.muted,
@@ -916,9 +988,6 @@ const SOLARIZED_DARK_CHROME: Chrome = Chrome {
     status_message: SOLARIZED_DARK.yellow,
     status_key: SOLARIZED_DARK.foreground,
     status_label: SOLARIZED_DARK.muted,
-    frame_title_builder: SOLARIZED_DARK.green,
-    frame_title_planner: SOLARIZED_DARK.magenta,
-    frame_title_research: SOLARIZED_DARK.blue,
     frame_title_detail: SOLARIZED_DARK.muted,
     pane_empty: SOLARIZED_DARK.muted,
     task_done: SOLARIZED_DARK.muted,
@@ -973,9 +1042,6 @@ const SOLARIZED_LIGHT_CHROME: Chrome = Chrome {
     status_message: (0xAB, 0x81, 0x00),
     status_key: SOLARIZED_LIGHT.foreground,
     status_label: (0x76, 0x87, 0x87),
-    frame_title_builder: (0x7C, 0x8F, 0x00),
-    frame_title_planner: SOLARIZED_LIGHT.magenta,
-    frame_title_research: SOLARIZED_LIGHT.blue,
     frame_title_detail: (0x76, 0x87, 0x87),
     pane_empty: (0x76, 0x87, 0x87),
     task_done: (0x76, 0x87, 0x87),
@@ -1027,9 +1093,6 @@ const GRUVBOX_DARK_CHROME: Chrome = Chrome {
     status_message: GRUVBOX_DARK.yellow,
     status_key: GRUVBOX_DARK.foreground,
     status_label: GRUVBOX_DARK.muted,
-    frame_title_builder: GRUVBOX_DARK.green,
-    frame_title_planner: GRUVBOX_DARK.magenta,
-    frame_title_research: GRUVBOX_DARK.blue,
     frame_title_detail: GRUVBOX_DARK.muted,
     pane_empty: GRUVBOX_DARK.muted,
     task_done: GRUVBOX_DARK.muted,
@@ -1081,9 +1144,6 @@ const GRUVBOX_LIGHT_CHROME: Chrome = Chrome {
     status_message: GRUVBOX_LIGHT.yellow,
     status_key: GRUVBOX_LIGHT.foreground,
     status_label: GRUVBOX_LIGHT.muted,
-    frame_title_builder: GRUVBOX_LIGHT.green,
-    frame_title_planner: GRUVBOX_LIGHT.magenta,
-    frame_title_research: GRUVBOX_LIGHT.blue,
     frame_title_detail: GRUVBOX_LIGHT.muted,
     pane_empty: GRUVBOX_LIGHT.muted,
     task_done: GRUVBOX_LIGHT.muted,
@@ -1170,9 +1230,7 @@ impl Palette {
             status_key: colour(chrome.status_key),
             status_label: colour(chrome.status_label),
             agent_text: AgentText::resolve(self.background, truecolor),
-            frame_title_builder: colour(chrome.frame_title_builder),
-            frame_title_planner: colour(chrome.frame_title_planner),
-            frame_title_research: colour(chrome.frame_title_research),
+            agent_names: AgentNames::resolve(self.background, truecolor),
             frame_title_detail: colour(chrome.frame_title_detail),
             pane_empty: colour(chrome.pane_empty),
             task_done: colour(chrome.task_done),
@@ -1291,9 +1349,13 @@ mod tests {
         assert_eq!(dark.agent_text.notice, Color::Yellow);
         assert_eq!(dark.agent_text.pane_status, Color::Magenta);
         assert_eq!(dark.agent_text.heading, Color::Magenta);
-        assert_eq!(dark.frame_title_builder, Color::Green);
-        assert_eq!(dark.frame_title_planner, Color::Magenta);
-        assert_eq!(dark.frame_title_research, Color::LightBlue);
+        assert_eq!(dark.agent_names.planner, Color::Magenta);
+        assert_eq!(dark.agent_names.builder, Color::Green);
+        assert_eq!(dark.agent_names.reviewer, Color::LightYellow);
+        assert_eq!(dark.agent_names.research, Color::LightBlue);
+        assert_eq!(dark.agent_names.discovery, Color::Cyan);
+        assert_eq!(dark.agent_names.orchestrator, Color::LightMagenta);
+        assert_eq!(dark.agent_names.other, Color::DarkGray);
         assert_eq!(dark.frame_title_detail, Color::DarkGray);
         assert_eq!(dark.pane_empty, Color::DarkGray);
         assert_eq!(dark.task_done, Color::DarkGray);
@@ -1342,9 +1404,13 @@ mod tests {
             theme.agent_text.notice,
             theme.agent_text.pane_status,
             theme.agent_text.heading,
-            theme.frame_title_builder,
-            theme.frame_title_planner,
-            theme.frame_title_research,
+            theme.agent_names.planner,
+            theme.agent_names.builder,
+            theme.agent_names.reviewer,
+            theme.agent_names.research,
+            theme.agent_names.discovery,
+            theme.agent_names.orchestrator,
+            theme.agent_names.other,
             theme.frame_title_detail,
             theme.pane_empty,
             theme.task_done,
@@ -1527,6 +1593,141 @@ mod tests {
         }
     }
 
+    /// Every agent keeps the same name colour identity in every built-in
+    /// theme (T110.1): the default stays on its value-locked named ANSI
+    /// colours, and every palette emits each agent's canonical anchor hue —
+    /// planner magenta, builder green, reviewer orange, research blue,
+    /// discovery cyan, orchestrator rose — with only the anchor's lightness
+    /// adjusted to the palette's background. Any other agent name stays the
+    /// near-neutral gray. Identity is asserted in truecolor mode; the
+    /// 256-colour mode derives from the same RGB.
+    #[test]
+    fn agent_name_identity_is_fixed_across_themes() {
+        let anchors = [
+            ("planner", PLANNER_NAME_ANCHOR),
+            ("builder", BUILDER_NAME_ANCHOR),
+            ("reviewer", REVIEWER_NAME_ANCHOR),
+            ("research", RESEARCH_NAME_ANCHOR),
+            ("discovery", DISCOVERY_NAME_ANCHOR),
+            ("orchestrator", ORCHESTRATOR_NAME_ANCHOR),
+        ];
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            if key == ThemeKey::Dark {
+                assert_eq!(Theme::agent_name_color(theme, "planner"), Color::Magenta);
+                assert_eq!(Theme::agent_name_color(theme, "builder"), Color::Green);
+                assert_eq!(
+                    Theme::agent_name_color(theme, "reviewer"),
+                    Color::LightYellow
+                );
+                assert_eq!(Theme::agent_name_color(theme, "research"), Color::LightBlue);
+                assert_eq!(Theme::agent_name_color(theme, "discovery"), Color::Cyan);
+                assert_eq!(
+                    Theme::agent_name_color(theme, "orchestrator"),
+                    Color::LightMagenta
+                );
+                assert_eq!(
+                    Theme::agent_name_color(theme, "something-new"),
+                    Color::DarkGray
+                );
+                continue;
+            }
+            // The tolerance covers byte-rounding quantization, not a real
+            // remapping: the anchor hues sit more than thirty degrees apart.
+            for (name, anchor) in anchors {
+                let Color::Rgb(r, g, b) = Theme::agent_name_color(theme, name) else {
+                    panic!("{key:?} must emit RGB in truecolor mode");
+                };
+                let hue = rgb_to_hsl((r, g, b)).0;
+                let anchor_hue = rgb_to_hsl(anchor).0;
+                let drift = (hue - anchor_hue)
+                    .abs()
+                    .min(360.0 - (hue - anchor_hue).abs());
+                assert!(
+                    drift <= 2.0,
+                    "{key:?} agent {name} drifted {drift:.1} degrees off its anchor hue"
+                );
+            }
+            let Color::Rgb(r, g, b) = Theme::agent_name_color(theme, "something-new") else {
+                panic!("{key:?} must emit RGB in truecolor mode");
+            };
+            let spread = r.max(g).max(b) - r.min(g).min(b);
+            assert!(
+                spread <= 8,
+                "{key:?} unknown agent must stay a neutral gray, got ({r}, {g}, {b})"
+            );
+        }
+    }
+
+    /// Every agent name colour stays readable and distinct on its theme's
+    /// background (T110.1): after the palette's lightness adjustment each of
+    /// the seven identities differs from the background, reaches the WCAG
+    /// contrast threshold, is pairwise distinct as a value, and the six
+    /// chromatic agents keep at least fifteen degrees of pairwise hue
+    /// separation, so no two agents can be confused on any theme. The
+    /// default theme is excluded because its background is the terminal
+    /// default (`Color::Reset`); its identity is value-locked by the DARK
+    /// test above. Asserted in truecolor mode.
+    #[test]
+    fn agent_names_are_readable_and_distinct_on_every_theme_background() {
+        let names = [
+            "planner",
+            "builder",
+            "reviewer",
+            "research",
+            "discovery",
+            "orchestrator",
+            "something-new",
+        ];
+        for key in every_key().into_iter().filter(|key| *key != ThemeKey::Dark) {
+            let theme = Theme::resolve(key, Some(true));
+            let Color::Rgb(r, g, b) = theme.background else {
+                panic!("{key:?} palettes always emit RGB backgrounds");
+            };
+            let background = (r, g, b);
+            let mut resolved = Vec::new();
+            for name in names {
+                let Color::Rgb(r, g, b) = Theme::agent_name_color(theme, name) else {
+                    panic!("{key:?} must emit RGB in truecolor mode");
+                };
+                let colour = (r, g, b);
+                assert_ne!(
+                    colour, background,
+                    "{key:?} agent {name} must differ from the theme background"
+                );
+                let ratio = contrast_ratio(colour, background);
+                assert!(
+                    ratio >= READABLE_CONTRAST,
+                    "{key:?} agent {name} reaches only {ratio} against the background"
+                );
+                resolved.push(colour);
+            }
+            for (i, left) in resolved.iter().enumerate() {
+                for right in &resolved[i + 1..] {
+                    assert_ne!(
+                        left, right,
+                        "{key:?} two agent name colours resolved identically"
+                    );
+                }
+            }
+            // The chromatic identities: circular hue distance, never a
+            // remapping's near-miss.
+            let hues: Vec<f64> = resolved[..6]
+                .iter()
+                .map(|&(r, g, b)| rgb_to_hsl((r, g, b)).0)
+                .collect();
+            for (i, &left) in hues.iter().enumerate() {
+                for &right in &hues[i + 1..] {
+                    let distance = (left - right).abs().min(360.0 - (left - right).abs());
+                    assert!(
+                        distance >= 15.0,
+                        "{key:?} two agent name hues sit only {distance:.1} degrees apart"
+                    );
+                }
+            }
+        }
+    }
+
     /// Every chrome semantic field of a theme, in a fixed order matching the
     /// [`Chrome`] struct, for the per-theme table checks.
     fn every_chrome_field(theme: &Theme) -> Vec<Color> {
@@ -1543,9 +1744,6 @@ mod tests {
             theme.status_message,
             theme.status_key,
             theme.status_label,
-            theme.frame_title_builder,
-            theme.frame_title_planner,
-            theme.frame_title_research,
             theme.frame_title_detail,
             theme.pane_empty,
             theme.task_done,
@@ -1572,12 +1770,12 @@ mod tests {
         ]
     }
 
-    /// Every non-agent-text semantic field resolves from the theme's own
+    /// Every non-fixated semantic field resolves from the theme's own
     /// [`Chrome`] table (T109.1): a theme that silently fell back to a shared
     /// mapping rule would fail this. A field added to `Theme` without a
-    /// `Chrome` counterpart fails to compile. The agent text fields are
-    /// asserted separately above (T108.1). Checked in truecolor mode; the
-    /// 256-colour mode derives from the same triples.
+    /// `Chrome` counterpart fails to compile. The agent text and agent name
+    /// fields are asserted separately above (T108.1, T110.1). Checked in
+    /// truecolor mode; the 256-colour mode derives from the same triples.
     #[test]
     fn chrome_mapping_is_per_theme() {
         for key in every_key().into_iter().filter(|key| *key != ThemeKey::Dark) {
@@ -1596,9 +1794,6 @@ mod tests {
                 chrome.status_message,
                 chrome.status_key,
                 chrome.status_label,
-                chrome.frame_title_builder,
-                chrome.frame_title_planner,
-                chrome.frame_title_research,
                 chrome.frame_title_detail,
                 chrome.pane_empty,
                 chrome.task_done,
@@ -1700,9 +1895,6 @@ mod tests {
                 ("foreground", chrome.foreground),
                 ("status_label", chrome.status_label),
                 ("status_message", chrome.status_message),
-                ("frame_title_builder", chrome.frame_title_builder),
-                ("frame_title_planner", chrome.frame_title_planner),
-                ("frame_title_research", chrome.frame_title_research),
                 ("frame_title_detail", chrome.frame_title_detail),
                 ("pane_empty", chrome.pane_empty),
                 ("task_done", chrome.task_done),

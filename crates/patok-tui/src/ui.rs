@@ -1141,15 +1141,10 @@ pub fn finished_line(agent: &str, outcome: SessionOutcome, duration: Duration) -
 fn render_output(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
     let timer = app.session_elapsed().map(format_elapsed);
-    // Only the agent type name keeps its agent colour (T11.1, T24.1); the
-    // separator, provider, model and timer render in the theme's low-emphasis
-    // detail colour (T37.1). The research agent keeps its own colour too
-    // (T68.1).
-    let title_colour = match app.agent.as_str() {
-        "planner" => theme.frame_title_planner,
-        "research" => theme.frame_title_research,
-        _ => theme.frame_title_builder,
-    };
+    // The agent type name keeps its fixed agent colour in every theme (T11.1,
+    // T24.1, T110.1); the separator, provider, model and timer render in the
+    // theme's low-emphasis detail colour (T37.1).
+    let title_colour = Theme::agent_name_color(theme, &app.agent);
     let (left, right) = output_title_spans(
         &agent_display(&app.agent),
         provider_display_name(&app.provider),
@@ -1220,8 +1215,22 @@ fn render_pane(
 
 /// One logical output line as visual rows: plain text hard-wraps; thinking renders
 /// as markdown first, so headings, emphasis, lists and code blocks show up styled.
+/// A line that names an agent (T110.1) keeps the line kind's style everywhere
+/// except the name itself, which wears the agent's own fixed colour.
 fn visual_lines(theme: Theme, line: &OutLine, width: usize) -> Vec<Line<'static>> {
     let style = style_of(theme, line.kind);
+    if let Some((before, name, after)) = line.name_pieces() {
+        let name_style = style.fg(Theme::agent_name_color(
+            theme,
+            line.agent.as_deref().unwrap_or_default(),
+        ));
+        let row = Line::from(vec![
+            Span::styled(before, style),
+            Span::styled(name, name_style),
+            Span::styled(after, style),
+        ]);
+        return wrap_line(&row, width);
+    }
     if line.kind == LineKind::Thinking {
         markdown_lines(&line.text, style)
             .into_iter()
@@ -1402,10 +1411,31 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
             // chip, right-aligned padding when it fits -- none when it would
             // underflow, so the Paragraph truncates at the right edge.
             let pad = width.saturating_sub(left_width + 1 + message.chars().count());
-            vec![
-                Span::raw(" ".repeat(pad + 1)),
-                Span::styled(message.clone(), Style::new().fg(theme.status_message)),
-            ]
+            let mut spans = vec![Span::raw(" ".repeat(pad + 1))];
+            // While a planner or research run is under way the message leads
+            // with the agent's display name (T110.1): the name wears the
+            // agent's own fixed colour inside the message colour. Any other
+            // message renders as one piece.
+            let name = agent_display(&app.agent);
+            if let Some(rest) = (app.planning)
+                .then(|| message.strip_prefix(name.as_str()))
+                .flatten()
+            {
+                spans.push(Span::styled(
+                    name,
+                    Style::new().fg(Theme::agent_name_color(theme, &app.agent)),
+                ));
+                spans.push(Span::styled(
+                    rest.to_string(),
+                    Style::new().fg(theme.status_message),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    message.clone(),
+                    Style::new().fg(theme.status_message),
+                ));
+            }
+            spans
         }
         None => {
             let mut keys = Vec::new();
