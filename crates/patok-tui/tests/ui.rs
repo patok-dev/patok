@@ -1217,59 +1217,78 @@ fn a_discovery_run_leaves_its_own_finished_line() {
 }
 
 #[test]
-fn the_lifecycle_status_lines_carry_the_task_heading_colour_outside_the_agent_name() {
+fn the_lifecycle_status_lines_carry_the_status_colour_in_full() {
+    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
     use patok_tui::Theme;
     use ratatui::style::Color;
-    let theme = Theme::DARK;
-    let status = theme.agent_text.pane_status;
-    // The lifecycle status colour matches the task/heading colour (T96.1).
-    assert_ne!(status, Color::Reset);
-    assert_eq!(status, theme.agent_text.heading);
 
     fn cell_of(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
         (0..24)
             .find_map(|y| {
                 let row: String = (0..80).map(|x| buffer[(x, y)].symbol()).collect();
-                row.find(text).map(|x| (y, x as u16))
+                // A byte index would run past the line on rows that carry
+                // multibyte symbols (the frame border), so the match's column
+                // is the character count before it.
+                row.find(text)
+                    .map(|at| (y, row[..at].chars().count() as u16))
             })
             .unwrap_or_else(|| panic!("the line {text:?} is on screen"))
     }
 
-    // The agent name inside the line keeps its own fixed colour (T110.1),
-    // the rest of the line the status colour.
-    let finished_app = finished_run("builder", SessionOutcome::Finished, 125_000);
-    let buffer = draw_buffer(&finished_app);
-    let (row, x) = cell_of(&buffer, "Builder finished in 2 min 05 sec");
-    assert_eq!(
-        buffer[(x, row)].style().fg,
-        Some(Theme::agent_name_color(theme, "builder"))
-    );
-    assert_eq!(buffer[(x + 8, row)].style().fg, Some(status));
+    /// Asserts every cell of the line spelling `text` carries the theme's
+    /// pane-status colour, the agent's name inside it included (T117.1).
+    fn assert_whole_line(buffer: &ratatui::buffer::Buffer, theme: Theme, text: &str, key: &str) {
+        let status = theme.agent_text.pane_status;
+        let (row, x) = cell_of(buffer, text);
+        for (i, _) in text.chars().enumerate() {
+            assert_eq!(
+                buffer[(x + i as u16, row)].style().fg,
+                Some(status),
+                "cell ({}, {}) of {text:?} on {key:?}",
+                x + i as u16,
+                row
+            );
+        }
+    }
 
-    let mut app = app();
-    app.apply(EngineEvent::PhaseChanged {
-        phase: Phase::Running,
-    });
-    app.apply(EngineEvent::TaskStarted {
-        id: "T1.2".into(),
-        description: "add the parser for task files".into(),
-    });
-    app.apply(EngineEvent::AgentStarted {
-        agent: "builder".into(),
-        provider: "mock".into(),
-        model: Some("m-brand".into()),
-    });
-    app.apply(EngineEvent::AgentChanged {
-        agent: "builder".into(),
-        started_ms: 0,
-    });
-    let buffer = draw_buffer(&app);
-    let (row, x) = cell_of(&buffer, "Builder started (mock, m-brand)");
-    assert_eq!(
-        buffer[(x, row)].style().fg,
-        Some(Theme::agent_name_color(theme, "builder"))
-    );
-    assert_eq!(buffer[(x + 8, row)].style().fg, Some(status));
+    // The whole lifecycle line wears the status colour on every built-in
+    // theme; the fixated agent-name colour reaches only the frame title.
+    for name in THEME_KEYS {
+        let key = ThemeKey::parse(name).expect("THEME_KEYS holds valid names");
+        let theme = Theme::resolve(key, Some(true));
+        // The lifecycle status colour matches the task/heading colour (T96.1).
+        let status = theme.agent_text.pane_status;
+        assert_ne!(status, Color::Reset);
+        assert_eq!(status, theme.agent_text.heading);
+
+        let mut finished_app = finished_run("builder", SessionOutcome::Finished, 125_000);
+        finished_app.tui.theme = key;
+        finished_app.tui.truecolor = Some(true);
+        let buffer = draw_buffer(&finished_app);
+        assert_whole_line(&buffer, theme, "Builder finished in 2 min 05 sec", name);
+
+        let mut app = app();
+        app.tui.theme = key;
+        app.tui.truecolor = Some(true);
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        app.apply(EngineEvent::TaskStarted {
+            id: "T1.2".into(),
+            description: "add the parser for task files".into(),
+        });
+        app.apply(EngineEvent::AgentStarted {
+            agent: "builder".into(),
+            provider: "mock".into(),
+            model: Some("m-brand".into()),
+        });
+        app.apply(EngineEvent::AgentChanged {
+            agent: "builder".into(),
+            started_ms: 0,
+        });
+        let buffer = draw_buffer(&app);
+        assert_whole_line(&buffer, theme, "Builder started (mock, m-brand)", name);
+    }
 }
 
 #[test]

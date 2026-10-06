@@ -40,10 +40,10 @@
 //! hue family in every built-in theme, held in the [`AgentNames`] subclass
 //! and reached through [`Theme::agent_name_color`]. A palette only adjusts
 //! an anchor's lightness so the name reads on its background; the identity
-//! never remaps onto a palette role. Every surface that renders an agent by
-//! name -- the output frame title, the lifecycle status lines, the planning
-//! heading, the status bar's run message and the headless `--color` output --
-//! routes through the same mapping.
+//! never remaps onto a palette role. The mapping feeds only the output frame
+//! title's agent type name; every other agent-name occurrence — the lifecycle
+//! status lines, the planning heading, the status bar's run message and the
+//! headless `--color` output — wears the surrounding text's colour (T117.1).
 //!
 //! Class-to-use map (all sites are in `ui.rs` unless noted):
 //!
@@ -67,8 +67,8 @@
 //! | `agent_text.error` | `style_of`, headless `--color` | error lines |
 //! | `agent_text.notice` | `style_of`, headless `--color` | notice lines |
 //! | `agent_text.heading` | `style_of`, headless `--color` | markdown headings (bold added by the renderer) |
-//! | `agent_names.*` | `render_output`, `visual_lines`, `status_widget`, headless `--color` | every agent name rendered by identity (T110.1): the output frame title's agent type name, the agent name inside the lifecycle started/finished lines, the planning heading's name and the status bar's "{Agent} running..." message |
-//! | `agent_text.pane_status` | `style_of`, headless `--color` | the agent lifecycle status lines in the output pane (T78.1, T42.1) outside the agent name itself, which wears its own fixed colour (T110.1) |
+//! | `agent_names.*` | `render_output` | the output frame title's agent type name only (T110.1, T117.1) |
+//! | `agent_text.pane_status` | `style_of`, headless `--color` | the agent lifecycle status lines in the output pane (T78.1, T42.1), the agent name included (T117.1) |
 
 use crate::app::LineKind;
 use patok_core::config::Theme as ThemeKey;
@@ -454,8 +454,7 @@ impl Theme {
     /// The fixed colour of one agent's name (T110.1): the same hue family in
     /// every built-in theme, only adjusted for readability on the theme's
     /// background. Unknown agents fall back to the neutral `other` colour.
-    /// Shared by the frame's agent-name surfaces and the headless mode's
-    /// `--color` output, so the two cannot drift.
+    /// Used only by the output frame title's agent type name (T117.1).
     pub fn agent_name_color(theme: Theme, agent: &str) -> Color {
         match agent {
             "planner" => theme.agent_names.planner,

@@ -1194,8 +1194,9 @@ fn render_output(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
     let timer = app.session_elapsed().map(format_elapsed);
     // The agent type name keeps its fixed agent colour in every theme (T11.1,
-    // T24.1, T110.1); the separator, provider, model and timer render in the
-    // theme's low-emphasis detail colour (T37.1).
+    // T24.1, T110.1); the frame title is the one surface that keeps the
+    // fixated name colour (T117.1), and the separator, provider, model and
+    // timer render in the theme's low-emphasis detail colour (T37.1).
     let title_colour = Theme::agent_name_color(theme, &app.agent);
     let (left, right) = output_title_spans(
         &agent_display(&app.agent),
@@ -1267,22 +1268,10 @@ fn render_pane(
 
 /// One logical output line as visual rows: plain text hard-wraps; thinking renders
 /// as markdown first, so headings, emphasis, lists and code blocks show up styled.
-/// A line that names an agent (T110.1) keeps the line kind's style everywhere
-/// except the name itself, which wears the agent's own fixed colour.
+/// Every line, the agent's name inside it included, wears its line kind's colour;
+/// the fixated per-agent name colour reaches only the output frame title (T117.1).
 fn visual_lines(theme: Theme, line: &OutLine, width: usize) -> Vec<Line<'static>> {
     let style = style_of(theme, line.kind);
-    if let Some((before, name, after)) = line.name_pieces() {
-        let name_style = style.fg(Theme::agent_name_color(
-            theme,
-            line.agent.as_deref().unwrap_or_default(),
-        ));
-        let row = Line::from(vec![
-            Span::styled(before, style),
-            Span::styled(name, name_style),
-            Span::styled(after, style),
-        ]);
-        return wrap_line(&row, width);
-    }
     if line.kind == LineKind::Thinking {
         markdown_lines(&line.text, style)
             .into_iter()
@@ -1464,29 +1453,13 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
             // underflow, so the Paragraph truncates at the right edge.
             let pad = width.saturating_sub(left_width + 1 + message.chars().count());
             let mut spans = vec![Span::raw(" ".repeat(pad + 1))];
-            // While a planner or research run is under way the message leads
-            // with the agent's display name (T110.1): the name wears the
-            // agent's own fixed colour inside the message colour. Any other
-            // message renders as one piece.
-            let name = agent_display(&app.agent);
-            if let Some(rest) = (app.planning)
-                .then(|| message.strip_prefix(name.as_str()))
-                .flatten()
-            {
-                spans.push(Span::styled(
-                    name,
-                    Style::new().fg(Theme::agent_name_color(theme, &app.agent)),
-                ));
-                spans.push(Span::styled(
-                    rest.to_string(),
-                    Style::new().fg(theme.highlighted_text),
-                ));
-            } else {
-                spans.push(Span::styled(
-                    message.clone(),
-                    Style::new().fg(theme.highlighted_text),
-                ));
-            }
+            // The message renders as one piece in the highlighted-text colour,
+            // the agent's display name inside it included (T117.1); the
+            // fixated per-agent name colour reaches only the frame title.
+            spans.push(Span::styled(
+                message.clone(),
+                Style::new().fg(theme.highlighted_text),
+            ));
             spans
         }
         None => {
@@ -1551,4 +1524,162 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     };
     spans.extend(right);
     Paragraph::new(Line::from(spans))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+    use patok_core::event::{Phase, Snapshot};
+    use patok_core::pipeline::PipelineState;
+    use patok_core::task::Task;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+
+    /// Every built-in theme variant, in `THEME_KEYS` order.
+    fn every_key() -> Vec<ThemeKey> {
+        THEME_KEYS
+            .iter()
+            .map(|key| ThemeKey::parse(key).expect("THEME_KEYS holds valid names"))
+            .collect()
+    }
+
+    /// A minimal app with one pending task, in the idle phase.
+    fn app_with_one_task() -> App {
+        App::new(
+            Snapshot {
+                project_dir: String::new(),
+                phase: Phase::Startup,
+                tasks: vec![Task {
+                    id: "T1.1".into(),
+                    origin: Some('T'),
+                    description: String::new(),
+                    done: false,
+                    line: 1,
+                    raw: String::new(),
+                }],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: String::new(),
+                model: String::new(),
+                settings: Default::default(),
+                pipeline: PipelineState::today(),
+                recent: vec![],
+            },
+            "test".into(),
+        )
+    }
+
+    /// The output frame title is the one surface keeping the fixated
+    /// per-agent name colour (T117.1), on every built-in theme: the name span
+    /// carries it (bold), every other span stays muted detail.
+    #[test]
+    fn output_frame_title_keeps_the_agent_colour_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            for agent in ["planner", "builder", "research"] {
+                let colour = Theme::agent_name_color(theme, agent);
+                let (left, right) = output_title_spans(
+                    &agent_display(agent),
+                    "Mock",
+                    "mock-model",
+                    Some("01:23"),
+                    80,
+                    colour,
+                    theme.muted_text,
+                );
+                let name = &left[0];
+                assert_eq!(name.style.fg, Some(colour), "{key:?}/{agent}");
+                assert!(
+                    name.style.add_modifier.contains(Modifier::BOLD),
+                    "{key:?}/{agent}"
+                );
+                for span in left[1..].iter().chain(&right) {
+                    assert_eq!(span.style.fg, Some(theme.muted_text), "{key:?}/{agent}");
+                }
+            }
+        }
+    }
+
+    /// A pane line that names an agent wears its line kind's colour in full on
+    /// every built-in theme (T117.1): the lifecycle status lines in the
+    /// pane-status colour, the planning heading in the heading colour (bold),
+    /// and the name is never dropped or restyled on its own.
+    #[test]
+    fn agent_name_lines_wear_the_kind_colour_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            for (kind, text) in [
+                (LineKind::Status, started_line("builder", "mock", None)),
+                (
+                    LineKind::Status,
+                    finished_line("builder", SessionOutcome::Finished, Duration::from_secs(45)),
+                ),
+                (LineKind::Heading, "── planner".to_string()),
+            ] {
+                let colour = Theme::line_color(theme, kind);
+                let rows = visual_lines(
+                    theme,
+                    &OutLine {
+                        kind,
+                        text: text.clone(),
+                    },
+                    40,
+                );
+                let mut joined = String::new();
+                for row in &rows {
+                    for span in &row.spans {
+                        // The kind's colour rides the line's style, patched by
+                        // the span's own; the agent's name inherits it like the
+                        // rest of the line instead of carrying its own colour.
+                        let effective = row.style.patch(span.style);
+                        assert_eq!(effective.fg, Some(colour), "{key:?}/{kind:?}: {text:?}");
+                        assert_eq!(
+                            effective.add_modifier.contains(Modifier::BOLD),
+                            kind == LineKind::Heading,
+                            "{key:?}/{kind:?}: {text:?}"
+                        );
+                        joined.push_str(&span.content);
+                    }
+                }
+                assert_eq!(joined, text, "{key:?}/{kind:?}");
+            }
+        }
+    }
+
+    /// The status bar's planning message wears the highlighted-text colour in
+    /// full on every built-in theme (T117.1), the agent's display name inside
+    /// it included — never the fixated per-agent name colour.
+    #[test]
+    fn planning_status_message_wears_the_highlighted_colour_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.planning = true;
+            app.agent = "planner".into();
+            let message = "Planner running...";
+            app.status = Some(message.into());
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+            status_widget(&app, 100).render(buffer.area, &mut buffer);
+            let row: String = (0..100).map(|x| buffer[(x, 0)].symbol()).collect();
+            // A byte index would mis-column on multibyte symbols, so the
+            // match's column is the character count before it.
+            let x = row
+                .find(message)
+                .map(|at| row[..at].chars().count())
+                .unwrap_or_else(|| panic!("{message:?} on {key:?}")) as u16;
+            for (i, _) in message.chars().enumerate() {
+                assert_eq!(
+                    buffer[(x + i as u16, 0)].style().fg,
+                    Some(theme.highlighted_text),
+                    "cell ({}, 0) on {key:?}",
+                    x + i as u16
+                );
+            }
+        }
+    }
 }

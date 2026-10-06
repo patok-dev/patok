@@ -189,8 +189,7 @@ async fn colored_output_uses_escapes_and_keeps_the_lines() {
         buffer.contains("\x1b["),
         "the colored run must emit escape sequences: {buffer:?}"
     );
-    // The escape sequences wrap pieces of a line — the agent name wears its
-    // own colour inside the lifecycle lines (T110.1) — so the ordering and
+    // The escape sequences wrap whole lines (T117.1), so the ordering and
     // substring assertions run on the escape-stripped text.
     let plain = strip_escapes(&buffer);
     let heading = plain.find("── T1.1: add hello").expect(&plain);
