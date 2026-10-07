@@ -11,8 +11,8 @@ expression: output_scrolled
       ↓     └──────────────────────────────────────────────────────────────────┘
 [  Review  ]┌ Tasks | 20/40 - 20 left ─────────────────────────────────────────┐
             │✔ T9.15  done thing 15                                            │
-[   Ship   ]│✔ T9.16  done thing 16                                            │
-[ Discover ]│✔ T9.17  done thing 17                                            │
+[ Discover ]│✔ T9.16  done thing 16                                            │
+            │✔ T9.17  done thing 17                                            │
             │✔ T9.18  done thing 18                                            │
             │✔ T9.19  done thing 19                                            │
             │✔ T9.20  done thing 20                                            │

@@ -2613,18 +2613,17 @@ fn rail(events: &[EngineEvent]) -> Vec<PipelineState> {
         .collect()
 }
 
-/// The (plan, build, review, ship) tile statuses of one rail state.
-fn walk(state: &PipelineState) -> (TileStatus, TileStatus, TileStatus, TileStatus) {
+/// The (plan, build, review) tile statuses of one rail state.
+fn walk(state: &PipelineState) -> (TileStatus, TileStatus, TileStatus) {
     (
         state.stage_status(Stage::Plan).unwrap(),
         state.stage_status(Stage::Build).unwrap(),
         state.stage_status(Stage::Review).unwrap(),
-        state.ship,
     )
 }
 
 #[tokio::test]
-async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
+async fn a_build_run_walks_the_pipeline_tiles_plan_build_review() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
         vec![Step::Event(AgentEvent::Result {
@@ -2655,8 +2654,8 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
     // Plan pending, then active in the plan session, then done while the builder
     // runs; the build tile goes done when the builder session completes, so the
     // stages before the running one are always done. The review stage is skipped
-    // (review off), so its tile goes done with the skip; then ship active around
-    // the commit, then everything muted again.
+    // (review off), so its tile goes done with the skip; then everything is
+    // muted again.
     let walked: Vec<_> = rail.iter().map(walk).collect();
     assert_eq!(
         walked,
@@ -2665,44 +2664,12 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
                 TileStatus::Pending,
                 TileStatus::Pending,
                 TileStatus::Pending,
-                TileStatus::Muted
             ),
-            (
-                TileStatus::Active,
-                TileStatus::Pending,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Active,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Active
-            ),
-            (
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted
-            ),
+            (TileStatus::Active, TileStatus::Pending, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
+            (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],
         "{rail:#?}"
     );
@@ -2731,38 +2698,11 @@ async fn a_build_without_the_plan_stage_walks_build_directly() {
                 TileStatus::Pending,
                 TileStatus::Pending,
                 TileStatus::Pending,
-                TileStatus::Muted
             ),
-            (
-                TileStatus::Done,
-                TileStatus::Active,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Active
-            ),
-            (
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted
-            ),
+            (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
+            (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],
         "{:#?}",
         rail(&events)
@@ -2788,12 +2728,7 @@ async fn a_review_run_shows_the_build_tile_done_while_the_reviewer_is_active() {
     // The build tile is done while the reviewer runs: the stages before the
     // running one are always done.
     assert!(
-        walked.contains(&(
-            TileStatus::Done,
-            TileStatus::Done,
-            TileStatus::Active,
-            TileStatus::Muted
-        )),
+        walked.contains(&(TileStatus::Done, TileStatus::Done, TileStatus::Active,)),
         "the reviewer-active rail state is missing: {walked:#?}"
     );
     // The regression guard: the build and review tiles are never both
@@ -2801,18 +2736,13 @@ async fn a_review_run_shows_the_build_tile_done_while_the_reviewer_is_active() {
     assert!(
         !walked
             .iter()
-            .any(|(_, build, review, _)| *build == TileStatus::Active
+            .any(|(_, build, review)| *build == TileStatus::Active
                 && *review == TileStatus::Active),
         "the build tile is still in-progress while the reviewer runs: {walked:#?}"
     );
     assert_eq!(
         walked.last().unwrap(),
-        &(
-            TileStatus::Muted,
-            TileStatus::Muted,
-            TileStatus::Muted,
-            TileStatus::Muted
-        ),
+        &(TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         "{walked:#?}"
     );
 }
@@ -2895,7 +2825,6 @@ async fn an_idle_engine_reports_every_tile_muted() {
             }
         ]
     );
-    assert_eq!(pipeline.ship, TileStatus::Muted);
     assert_eq!(pipeline.discover, TileStatus::Muted);
 }
 

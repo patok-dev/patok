@@ -11,8 +11,8 @@ expression: "draw(&app, 80, 14)"
       ↓     └──────────────────────────────────────────────────────────────────┘
 [  Review  ]┌ Tasks | 2/3 - 1 left ────────────────────────────────────────────┐
             │✔ T1.2  add the parser for task files                             │
-[   Ship   ]│○ T1.3  wire the engine to the shell                              │
-[ Discover ]│                                                                  │
+[ Discover ]│○ T1.3  wire the engine to the shell                              │
+            │                                                                  │
             │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
             └──────────────────────────────────────────────────────────────────┘
  STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit

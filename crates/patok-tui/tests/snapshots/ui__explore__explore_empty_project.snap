@@ -11,8 +11,8 @@ expression: screen
       ↓     └──────────────────────────────────────────────────────────────────┘
 [  Review  ]┌ Tasks | 0/0 - 0 left ────────────────────────────────────────────┐
             │no tasks in TASKS.md                                              │
-[   Ship   ]│                                                                  │
 [ Discover ]│                                                                  │
+            │                                                                  │
             │ a add tasks · i inject task · Enter run discovery · ↑↓ scroll    │
             └──────────────────────────────────────────────────────────────────┘
  STOPPED  sprint         Enter  run discovery  ?  settings  t  theme  d  detach

@@ -11,8 +11,8 @@ expression: screen
       ↓     └──────────────────────────────────────────────────────────────────┘
 [  Review  ]┌ Tasks | 2/2 - 0 left ────────────────────────────────────────────┐
             │✔ T1.2  second done                                               │
-[   Ship   ]│                                                                  │
 [ Discover ]│                                                                  │
+            │                                                                  │
             │ a add tasks · i inject task · Enter run discovery · ↑↓ scroll    │
             └──────────────────────────────────────────────────────────────────┘
  STOPPED  sprint                                               transient warning

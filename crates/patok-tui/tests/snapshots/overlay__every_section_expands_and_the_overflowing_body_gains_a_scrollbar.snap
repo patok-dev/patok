@@ -11,8 +11,8 @@ expression: screen
      │      [ ] review in loop                                                               ││────┘
 [  Re│      confidence threshold  0.5                                                        ││────┐
      │  ▾ Timeouts and pauses                                                                ││    │
-[   S│      agent timeout  600                                                               ││    │
-[ Dis│      pause between tasks  10                                                          ││    │
+[ Dis│      agent timeout  600                                                               ││    │
+     │      pause between tasks  10                                                          ││    │
      │      pause between agents  3                                                          ││    │
      │      pause between cycles  30                                                         ││    │
      │      engine idle timeout  1800                                                        ││    │

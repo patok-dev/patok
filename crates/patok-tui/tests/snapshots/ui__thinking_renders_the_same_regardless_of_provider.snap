@@ -11,8 +11,8 @@ expression: claude_screen
       ↓     ┌ Tasks | 1/3 - 2 left ────────────────────────────────────────────┐
 [  Review  ]│✔ T1.1  scaffold the workspace                                    │
             │○ T1.2  add the parser for task files                             │
-[   Ship   ]│○ T1.3  wire the engine to the shell                              │
-[ Discover ]│                                                                  │
+[ Discover ]│○ T1.3  wire the engine to the shell                              │
+            │                                                                  │
             │                                                                  │
             └──────────────────────────────────────────────────────────────────┘
  RUNNING  sprint     Esc  stop build  ?  settings  t  theme  d  detach  q  quit

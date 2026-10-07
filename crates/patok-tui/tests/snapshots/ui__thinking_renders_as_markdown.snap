@@ -11,8 +11,8 @@ expression: screen
       ↓     │- run cargo test                                                  │
 [  Review  ]│Finally:                                                          │
             │  let tasks = parse(&text);                                       │
-[   Ship   ]│                                                                  │
 [ Discover ]│                                                                  │
+            │                                                                  │
             │                                                                  │
             │                                                                  │
             │                                                                  │

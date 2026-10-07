@@ -11,8 +11,8 @@ expression: screen
      │      provider  ‹ claude ›                                                             █│────┘
 [  Re│      model  (not set)                                                                 █│────┐
      │      research provider  ‹ claude ›                                                    █│    │
-[   S│      research model  sonnet                                                           █│    │
-[ Dis│      planner provider  ‹ claude ›                                                     █│    │
+[ Dis│      research model  sonnet                                                           █│    │
+     │      planner provider  ‹ claude ›                                                     █│    │
      │      planner model  opus                                                              █│    │
      │      builder provider  ‹ claude ›                                                     █│    │
      │      builder model  opus                                                              █│    │

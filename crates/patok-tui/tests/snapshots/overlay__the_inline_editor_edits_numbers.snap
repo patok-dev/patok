@@ -11,8 +11,8 @@ expression: "draw(&app, W, H)"
      │      discovery model  opus                                                            ││────┘
 [  Re│  ▾ Pipeline                                                                           ││────┐
      │      run mode  ‹ sprint ›                                                             ││    │
-[   S│      [ ] plan enabled                                                                 ││    │
-[ Dis│      [ ] skip planner for simple                                                      █│    │
+[ Dis│      [ ] plan enabled                                                                 ││    │
+     │      [ ] skip planner for simple                                                      █│    │
      │      [ ] skip research for simple                                                     █│    │
      │      [ ] skip review for simple                                                       █│    │
      │      review confidence threshold  5                                                   █│    │

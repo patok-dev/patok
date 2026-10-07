@@ -5676,7 +5676,7 @@ mod pipeline {
 
     /// The tiles and their colours follow the pipeline state through a
     /// plan-then-build run: the plan stage accent and bold while it runs, then
-    /// green once the build stage takes over, and SHIP green while shipping.
+    /// green once the build stage takes over.
     #[test]
     fn the_tiles_follow_the_pipeline_state_through_a_plan_then_build_run() {
         let theme = Theme::DARK;
@@ -5710,23 +5710,6 @@ mod pipeline {
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
             ("[ B ]".to_string(), Some(theme.accent), true)
-        );
-
-        // Shipping: SH is green while shipping and bold; both stages stay green.
-        app.apply(EngineEvent::PipelineChanged {
-            state: PipelineState {
-                ship: TileStatus::Active,
-                ..stage_state(TileStatus::Done, TileStatus::Done)
-            },
-        });
-        let buffer = draw_buffer(&app);
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Ship)),
-            ("[ SH ]".to_string(), Some(theme.success), true)
-        );
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ B ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -5786,9 +5769,8 @@ mod pipeline {
         );
     }
 
-    /// The SH and DI tiles reflect their flags: DISCOVER muted in sprint
-    /// mode, accent while a round runs and green after one ran, SHIP green
-    /// while shipping.
+    /// The DI tile reflects its flag: DISCOVER muted in sprint
+    /// mode, accent while a round runs and green after one ran.
     #[test]
     fn the_standalone_tiles_reflect_their_flags() {
         let theme = Theme::DARK;
@@ -5843,9 +5825,9 @@ mod pipeline {
         });
         draw_buffer(&shell);
 
-        // The pointer crosses the plan and ship tiles: no action, no focus or
-        // scroll change, and the status line keeps its key hints.
-        for id in [TileId::Plan, TileId::Ship] {
+        // The pointer crosses the plan and discover tiles: no action, no focus
+        // or scroll change, and the status line keeps its key hints.
+        for id in [TileId::Plan, TileId::Discover] {
             let rect = tile_rect(&shell, id);
             assert_eq!(shell.on_mouse(moved(rect.x + 2, rect.y)), Action::None);
         }
@@ -5855,7 +5837,7 @@ mod pipeline {
         assert!(hints.contains(" settings "), "{hints}");
         assert!(hints.contains(" stop build "), "{hints}");
         assert!(!hints.trim_end().ends_with("Plan"), "{hints}");
-        assert!(!hints.trim_end().ends_with("Ship"), "{hints}");
+        assert!(!hints.trim_end().ends_with("Discover"), "{hints}");
 
         // The same holds over the normal-mode boxes and while idle.
         let mut idle = app();
@@ -5933,13 +5915,12 @@ mod pipeline {
             shell.tui.rail_mode = RailMode::Compact;
         }
 
-        let ids = [TileId::Plan, TileId::Build, TileId::Ship, TileId::Discover];
+        let ids = [TileId::Plan, TileId::Build, TileId::Discover];
         // The letters, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, SHIP muted, DI done.
+        // every shell: Plan done, Build active, DI done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
             ("[ P ]".to_string(), Some(theme.success), false),
             ("[ B ]".to_string(), Some(theme.accent), true),
-            ("[ SH ]".to_string(), Some(theme.muted_text), false),
             ("[ DI ]".to_string(), Some(theme.success), false),
         ];
 
@@ -6039,18 +6020,16 @@ mod pipeline {
             }
             let width = rail_width(mode);
             // The tiles' text, colours and boldness, the same per status in
-            // both modes: Plan done, Build active, SHIP muted, DI done.
+            // both modes: Plan done, Build active, DI done.
             let expected: Vec<(String, Option<Color>, bool)> = match mode {
                 RailMode::Compact => vec![
                     ("[ P ]".to_string(), Some(theme.success), false),
                     ("[ B ]".to_string(), Some(theme.accent), true),
-                    ("[ SH ]".to_string(), Some(theme.muted_text), false),
                     ("[ DI ]".to_string(), Some(theme.success), false),
                 ],
                 RailMode::Normal | RailMode::Detailed => vec![
                     ("[   Plan   ]".to_string(), Some(theme.success), false),
                     ("[  Build   ]".to_string(), Some(theme.accent), true),
-                    ("[   Ship   ]".to_string(), Some(theme.muted_text), false),
                     ("[ Discover ]".to_string(), Some(theme.success), false),
                 ],
             };
@@ -6083,11 +6062,7 @@ mod pipeline {
                 // below keep their old relative offsets.
                 let rects = rail_tile_rects(&shell.pipeline, area, mode);
                 let rows: Vec<u16> = rects.iter().map(|(_, rect)| rect.y).collect();
-                assert_eq!(
-                    rows,
-                    vec![area.y + 1, area.y + 3, area.y + 5, area.y + 6],
-                    "{name}"
-                );
+                assert_eq!(rows, vec![area.y + 1, area.y + 3, area.y + 5], "{name}");
                 // The connector moved with the tiles: still exactly one row
                 // below the first stage tile.
                 assert_eq!(
@@ -6215,11 +6190,10 @@ mod pipeline {
         }
 
         // The full names, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, SHIP muted, DI done.
+        // every shell: Plan done, Build active, DI done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
             ("[   Plan   ]".to_string(), Some(theme.success), false),
             ("[  Build   ]".to_string(), Some(theme.accent), true),
-            ("[   Ship   ]".to_string(), Some(theme.muted_text), false),
             ("[ Discover ]".to_string(), Some(theme.success), false),
         ];
         let width = rail_width(RailMode::Normal);

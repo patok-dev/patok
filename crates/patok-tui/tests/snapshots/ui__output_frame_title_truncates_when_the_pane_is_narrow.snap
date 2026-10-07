@@ -11,6 +11,6 @@ expression: "draw(&app, 40, 12)"
       ↓     └──────────────────────────┘
 [  Review  ]┌ Tasks | 1/3 - 2 left ────┐
             │○ T1.2  add the parser for│
-[   Ship   ]│ a add tasks              │
-[ Discover ]└──────────────────────────┘
+[ Discover ]│ a add tasks              │
+            └──────────────────────────┘
  STOPPED  sprint     Enter  start build

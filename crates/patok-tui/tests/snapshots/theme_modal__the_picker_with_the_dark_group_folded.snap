@@ -11,8 +11,8 @@ expression: "draw(&app, 80, 24)"
       ↓     └│  ▾ Light                                           │────────────┘
 [  Review  ]┌│      atom_one_light                                │────────────┐
             ││      tokyo_night_day                               │            │
-[   Ship   ]││      catppuccin_latte                              │            │
-[ Discover ]││      solarized_light                               │            │
+[ Discover ]││      catppuccin_latte                              │            │
+            ││      solarized_light                               │            │
             ││      gruvbox_light                                 │            │
             ││                                                    │            │
             ││                                                    │            │

@@ -11,8 +11,8 @@ expression: screen
      │      discovery provider  ‹ claude ›                                                   ││────┘
 [  Re│      discovery model  opus                                                            ││────┐
      │  ▾ Pipeline                                                                           ││    │
-[   S│      run mode  ‹ sprint ›                                                             ││    │
-[ Dis│      [ ] plan enabled                                                                 ││    │
+[ Dis│      run mode  ‹ sprint ›                                                             ││    │
+     │      [ ] plan enabled                                                                 ││    │
      │      [ ] skip planner for simple                                                      █│    │
      │      [ ] skip research for simple                                                     █│    │
      │      [ ] skip review for simple                                                       █│    │

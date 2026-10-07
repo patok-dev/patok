@@ -11,8 +11,8 @@ expression: screen
       ↓     └──────────────────────────────────────────────────────────────────────────────────────┘
 [  Re┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐────┐
      │▶ ▾ Provider and model                                                                  │    │
-[   S│      engine version: 0.1.0                                                             │    │
-[ Dis│      shell version: 0.0.0                                                              │    │
+[ Dis│      engine version: 0.1.0                                                             │    │
+     │      shell version: 0.0.0                                                              │    │
      │      provider  ‹ claude ›                                                              │    │
      │      model  (not set)                                                                  │    │
      │      research provider  ‹ claude ›                                                     │    │

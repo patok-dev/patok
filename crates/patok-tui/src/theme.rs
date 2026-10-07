@@ -59,7 +59,7 @@
 //! | `highlighted_text` | `status_widget`, `render_tasks`, `render_dialog`, `button_line`, `render_settings_overlay`, `settings_row_line`, `render_settings_confirm`, `render_stop_dialog`, `theme_row_line`, `render_scrollbar` | the status bar's message, the STOPPING chip, new tasks, the add-task dialog's status line, every modal's " [ Key ] " markers, the settings overlay's error line, and the selected row of every selection-bearing modal (T118.1): the theme picker's selected entry (T115.1), the settings overlay's focused row, the unsaved-changes and stop dialogs' selected choices, and the overlay scrollbar thumb (T121.1) |
 //! | `chip_neutral` | `status_widget` | STOPPED, run-mode and key-chip backgrounds |
 //! | `contrast_text` | `status_widget`, `render_dialog` | foreground on every status chip and the dialog input's block cursor |
-//! | `success` | `status_widget`, `render_tasks`, `pipeline::tile_style` | the RUNNING chip, running task rows, done rail tiles (T50.1) and SHIP while shipping |
+//! | `success` | `status_widget`, `render_tasks`, `pipeline::tile_style` | the RUNNING chip, running task rows, done rail tiles (T50.1) |
 //! | `chip_planning` | `status_widget` | PLANNING status chip background |
 //! | `chip_discovering` | `status_widget` | DISCOVERING status chip background |
 //! | `accent` | `render_dialog`, `pipeline::tile_style` | the dialog input's block cursor background, the active rail tile and DISCOVER while a round runs |

@@ -11,8 +11,8 @@ expression: "draw(&open(), 60, 16)"
    │  Cancel -- keep the build running                  │  │
 [  │                                                    │──┘
    │                                                    │──┐
-[  │                                                    │  │
-[ D│ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │  │
+[ D│                                                    │  │
+   │ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │  │
    └────────────────────────────────────────────────────┘  │
             │                                              │
             │                                              │

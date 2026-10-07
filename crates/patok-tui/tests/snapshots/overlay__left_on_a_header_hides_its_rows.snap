@@ -11,8 +11,8 @@ expression: screen
      │      engine version: 0.1.0                                                            █│────┘
 [  Re│      shell version: 0.0.0                                                             █│────┐
      │      provider  ‹ claude ›                                                             █│    │
-[   S│      model  (not set)                                                                 █│    │
-[ Dis│      research provider  ‹ claude ›                                                    █│    │
+[ Dis│      model  (not set)                                                                 █│    │
+     │      research provider  ‹ claude ›                                                    █│    │
      │      research model  sonnet                                                           █│    │
      │      planner provider  ‹ claude ›                                                     █│    │
      │      planner model  opus                                                              █│    │

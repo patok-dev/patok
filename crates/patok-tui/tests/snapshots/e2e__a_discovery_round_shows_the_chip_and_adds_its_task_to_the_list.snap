@@ -11,8 +11,8 @@ expression: screen
       ↓     ┌ Tasks | 1/1 - 0 left ────────────────────────────────────────────┐
 [  Review  ]│✔ T1.1  add hello                                                 │
             │                                                                  │
-[   Ship   ]│                                                                  │
 [ Discover ]│                                                                  │
+            │                                                                  │
             │                                                                  │
             └──────────────────────────────────────────────────────────────────┘
  DISCOVERING  continuous      Esc  stop build  ?  settings  t  theme  d  detach

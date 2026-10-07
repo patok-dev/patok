@@ -189,8 +189,6 @@ struct State {
     build: TileStatus,
     /// The review stage tile's status within the running task (T70.1).
     review: TileStatus,
-    /// The ship tile's status: active while the engine commits a task.
-    ship: TileStatus,
     /// The leading task-ID number of the current batch-review group: a contiguous run of same-numbered tasks.
     group_number: Option<String>,
     /// The full HEAD SHA the current batch-review group started at (or the
@@ -543,7 +541,6 @@ impl Engine {
                     plan: TileStatus::Muted,
                     build: TileStatus::Muted,
                     review: TileStatus::Muted,
-                    ship: TileStatus::Muted,
                     group_number: None,
                     group_base: None,
                     discovery_ran: false,
@@ -728,7 +725,6 @@ impl Engine {
                     },
                 })
                 .collect(),
-            ship: state.ship,
             discover,
         };
         if pipeline != state.pipeline {
@@ -737,25 +733,23 @@ impl Engine {
         }
     }
 
-    /// A task's tiles start over: both stages pending, ship muted (the statuses
+    /// A task's tiles start over: both stages pending (the statuses
     /// reset per task).
     fn task_tiles_started_locked(&self, state: &mut State) {
         state.research = TileStatus::Pending;
         state.plan = TileStatus::Pending;
         state.build = TileStatus::Pending;
         state.review = TileStatus::Pending;
-        state.ship = TileStatus::Muted;
         self.refresh_pipeline_locked(state);
     }
 
-    /// A task ended: its stage and ship tiles are muted again, whatever the
+    /// A task ended: its stage tiles are muted again, whatever the
     /// outcome.
     fn task_tiles_finished_locked(&self, state: &mut State) {
         state.research = TileStatus::Muted;
         state.plan = TileStatus::Muted;
         state.build = TileStatus::Muted;
         state.review = TileStatus::Muted;
-        state.ship = TileStatus::Muted;
         self.refresh_pipeline_locked(state);
     }
 
@@ -2062,7 +2056,7 @@ impl Engine {
                     self.write_claims_file(&task.id, &review::trim_claims(claims));
                 }
                 // The build tile is done once the builder session completed: the
-                // stages before the running one are always done, so review and ship never render with the build
+                // stages before the running one are always done, so review never renders with the build
                 // still in-progress.
                 {
                     let mut state = self.state();
@@ -2713,7 +2707,6 @@ impl Engine {
             }
         }
         self.reconcile();
-        self.ship_committing();
         let kind = if validated {
             CommitKind::Feat
         } else {
@@ -3000,14 +2993,6 @@ impl Engine {
                 format!("cannot write {}: {e}", path.display()),
             ),
         }
-    }
-
-    /// The ship tile turns active while the engine commits a task, around both commit sites -- the `feat` commit of a completed task
-    /// and the `WIP` commit on the failure path. `finish_task` mutes it again.
-    fn ship_committing(&self) {
-        let mut state = self.state();
-        state.ship = TileStatus::Active;
-        self.refresh_pipeline_locked(&mut state);
     }
 
     fn report_commit(&self, commit: Option<&str>) {

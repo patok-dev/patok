@@ -11,8 +11,8 @@ expression: screen
       ↓     │- fix the task.rs fixture                                         │
 [  Review  ]│- run cargo test                                                  │
             │Finally:                                                          │
-[   Ship   ]│  let tasks = parse(&text);                                       │
-[ Discover ]│                                                                  │
+[ Discover ]│  let tasks = parse(&text);                                       │
+            │                                                                  │
             │                                                                  │
             │                                                                  │
             │                                                                  │

@@ -11,8 +11,8 @@ expression: screen
       ↓│      engine version: 0.1.0                                                        █│Which CLI provider and model the agent││──────┘
 [  Revi│      shell version: 0.0.0                                                         █│roles run on. A change applies at the ││──────┐
        │      provider  ‹ claude ›                                                         █│next task or agent start; whatever is ││      │
-[   Shi│      model  (not set)                                                             █│already running keeps the value it    ││      │
-[ Disco│      research provider  ‹ claude ›                                                █│started with.                         ││      │
+[ Disco│      model  (not set)                                                             █│already running keeps the value it    ││      │
+       │      research provider  ‹ claude ›                                                █│started with.                         ││      │
        │      research model  sonnet                                                       █│                                      ││      │
        │      planner provider  ‹ claude ›                                                 █│                                      ││      │
        │      planner model  opus                                                          █│                                      ││      │
