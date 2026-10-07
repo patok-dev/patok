@@ -4135,9 +4135,9 @@ mod hints {
     /// drop at 80 columns -- the leading hints stay).
     const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start build · ↑↓ scroll";
     /// The focused output frame's strip with every hint that fits the
-    /// 80-column frame (T124.1 dropped the leading `v rail view` entry --
-    /// the `v` key still flips the rail view, the strip just does not say so
-    /// -- which makes the trailing `Tab tasks` hint fit).
+    /// 80-column frame (T124.1 dropped the leading `v rail view` entry,
+    /// which makes the trailing `Tab tasks` hint fit; T125.1 removed the
+    /// `v` binding itself).
     const OUTPUT_STRIP: &str = " ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks";
 
     #[test]
@@ -5880,7 +5880,7 @@ mod pipeline {
     }
 
     #[test]
-    fn detailed_mode_displays_configured_agent_provider_and_model_and_v_toggles() {
+    fn detailed_mode_displays_configured_agent_provider_and_model_and_ignores_v() {
         let mut shell = app();
         shell.settings.insert(
             "provider".into(),
@@ -5895,6 +5895,9 @@ mod pipeline {
         assert!(screen.contains("claude"), "{screen}");
         assert!(screen.contains("sonnet-plan"), "{screen}");
         assert_eq!(rail_width(RailMode::Detailed), rail_width(RailMode::Normal));
+        // T125.1 removed the `v` rail-view binding: a bare `v` is a no-op
+        // in the shell and the rail mode only changes through the settings
+        // overlay.
         assert_eq!(
             shell.on_key(crossterm::event::KeyEvent::new(
                 crossterm::event::KeyCode::Char('v'),
@@ -5902,7 +5905,7 @@ mod pipeline {
             )),
             Action::None
         );
-        assert_eq!(shell.tui.rail_mode, RailMode::Compact);
+        assert_eq!(shell.tui.rail_mode, RailMode::Detailed);
         assert!(
             rail_tile_rects(
                 &shell.pipeline,

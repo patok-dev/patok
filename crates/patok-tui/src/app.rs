@@ -847,15 +847,6 @@ impl App {
             return self.on_overlay_key(key);
         }
         match key.code {
-            KeyCode::Char('v') if !ctrl => {
-                self.tui.rail_mode = if self.tui.rail_mode == patok_core::config::RailMode::Detailed
-                {
-                    patok_core::config::RailMode::Compact
-                } else {
-                    patok_core::config::RailMode::Detailed
-                };
-                Action::None
-            }
             KeyCode::Char('d') => Action::Detach,
             // The theme picker's key (T43.1): it opens from any state except
             // while another modal has the keyboard (the guards above), and it

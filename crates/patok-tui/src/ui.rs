@@ -256,9 +256,8 @@ fn task_hints(app: &App) -> Vec<&'static str> {
 /// The agent output frame's key hints (T71.1): the keys its focused state
 /// owns -- the scroll keys move the output, PageUp/PageDown page through it,
 /// `End` resumes the live follow, and Tab moves the keys to the other frame.
-/// T124.1 dropped the leading `v rail view` entry -- the `v` key still flips
-/// the rail view, the strip just does not say so (as T75.1 did for the idle
-/// `q quit` hint).
+/// T124.1 dropped the leading `v rail view` entry (as T75.1 did for the
+/// idle `q quit` hint), and T125.1 removed the `v` binding itself.
 fn output_hints() -> Vec<&'static str> {
     vec!["↑↓ scroll", "PgUp/PgDn page", "End follow", "Tab tasks"]
 }
