@@ -17,6 +17,19 @@ pub enum CommitKind {
     Wip,
 }
 
+/// A new commit made by [`Git::commit_all`]: the short SHA for display and
+/// the full SHA for the open-group record.
+// The open-group wiring reads `full` in a later task; the allowance is
+// removed when the engine starts using the field.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Commit {
+    /// The new commit's short SHA, for display.
+    pub short: String,
+    /// The new commit's full SHA, for the open-group record.
+    pub full: String,
+}
+
 pub struct Git {
     dir: PathBuf,
 }
@@ -56,6 +69,27 @@ impl Git {
             .success()
             .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
             .filter(|sha| !sha.is_empty())
+    }
+
+    /// The current HEAD's full SHA, or `None` outside a repository.
+    // Consumed by the open-group wiring in a later task; remove then.
+    #[allow(dead_code)]
+    pub async fn head_full_sha(&self) -> Option<String> {
+        let out = self.run(&["rev-parse", "HEAD"]).await?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .filter(|sha| !sha.is_empty())
+    }
+
+    /// Whether `ancestor` is an ancestor of `descendant`, built on
+    /// `git merge-base --is-ancestor`: false when the command fails -- a
+    /// non-ancestor pair, a missing SHA, or no repository.
+    // Consumed by the open-group wiring in a later task; remove then.
+    #[allow(dead_code)]
+    pub async fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
+        self.succeeds(&["merge-base", "--is-ancestor", ancestor, descendant])
+            .await
     }
 
     /// The commit log's subjects, newest first: `(short sha, subject)` pairs,
@@ -124,15 +158,16 @@ impl Git {
         }
     }
 
-    /// Stages everything and commits. Returns the short SHA, or `None` when nothing was
-    /// committed: not a repository, nothing staged, or the commit failed. All three are
-    /// normal outcomes, not errors (Part I, 9.1).
+    /// Stages everything and commits. Returns the new commit's short SHA
+    /// (for display) and full SHA (for the open-group record), or `None` when
+    /// nothing was committed: not a repository, nothing staged, or the commit
+    /// failed. All three are normal outcomes, not errors (Part I, 9.1).
     pub async fn commit_all(
         &self,
         kind: CommitKind,
         task_id: &str,
         description: &str,
-    ) -> Option<String> {
+    ) -> Option<Commit> {
         if !self.is_repo().await {
             return None;
         }
@@ -177,8 +212,15 @@ impl Git {
         {
             return None;
         }
-        let out = self.run(&["rev-parse", "--short", "HEAD"]).await?;
-        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        let full = self.run(&["rev-parse", "HEAD"]).await?;
+        let short = self.run(&["rev-parse", "--short", "HEAD"]).await?;
+        if !full.status.success() || !short.status.success() {
+            return None;
+        }
+        Some(Commit {
+            full: String::from_utf8_lossy(&full.stdout).trim().to_string(),
+            short: String::from_utf8_lossy(&short.stdout).trim().to_string(),
+        })
     }
 }
 
@@ -212,17 +254,66 @@ mod tests {
         init_repo(dir.path()).await;
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         let git = Git::new(dir.path());
-        let sha = git
+        let commit = git
             .commit_all(CommitKind::Feat, "T1.1", "do the thing")
             .await
             .unwrap();
-        assert!(!sha.is_empty());
+        assert!(!commit.short.is_empty());
+        assert!(commit.full.starts_with(&commit.short), "{}", commit.full);
+        assert_eq!(Some(commit.full.clone()), git.head_full_sha().await);
         let log = git.run(&["log", "--format=%s%n%b---", "-2"]).await.unwrap();
         let log = String::from_utf8_lossy(&log.stdout).to_string();
         assert!(log.contains("feat(T1.1): do the thing"), "{log}");
         assert!(log.contains("Implemented and validated by autonomous build loop."));
         assert!(log.contains("Automated by: patok"));
         assert!(log.contains("chore: initial commit"));
+    }
+
+    #[tokio::test]
+    async fn full_sha_and_is_ancestor_walk_a_linear_history() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        let git = Git::new(dir.path());
+        assert!(git.head_full_sha().await.is_none(), "no commit yet");
+        git.commit_all(CommitKind::Feat, "T1.1", "first").await;
+        let base = git.head_full_sha().await.unwrap();
+        std::fs::write(dir.path().join("b.txt"), "b").unwrap();
+        git.commit_all(CommitKind::Wip, "T1.2", "second").await;
+        let head = git.head_full_sha().await.unwrap();
+        for sha in [&base, &head] {
+            assert_eq!(sha.len(), 40, "a full SHA is 40 hex chars: {sha}");
+            assert!(
+                sha.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "{sha}"
+            );
+        }
+        assert_ne!(base, head);
+        let short = git.head_sha().await.unwrap();
+        assert!(head.starts_with(&short), "{head} vs {short}");
+        assert!(git.is_ancestor(&base, &head).await);
+        assert!(
+            !git.is_ancestor(&head, &base).await,
+            "the newer commit is not an ancestor of the older one"
+        );
+    }
+
+    #[tokio::test]
+    async fn is_ancestor_false_for_a_missing_sha_and_a_non_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        let git = Git::new(dir.path());
+        git.commit_all(CommitKind::Feat, "T1.1", "first").await;
+        let missing = "0".repeat(40);
+        assert!(!git.is_ancestor(&missing, "HEAD").await);
+        assert!(!git.is_ancestor("HEAD", &missing).await);
+        let outside = tempfile::tempdir().unwrap();
+        assert!(
+            !Git::new(outside.path()).is_ancestor("HEAD", "HEAD").await,
+            "no repository"
+        );
     }
 
     #[tokio::test]

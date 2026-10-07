@@ -2656,6 +2656,7 @@ impl Engine {
             .git()
             .commit_all(kind, &task.id, &task.description)
             .await;
+        let commit = commit.map(|commit| commit.short);
         self.report_commit(commit.as_deref());
         commit
     }
