@@ -656,7 +656,7 @@ impl SettingsOverlay {
         }
         // hjkl alias the arrows everywhere the arrows act on the overlay (T25.1):
         // this is never reached while an editor is open (the letters keep typing
-        // there) and the close dialog above ignores them like the arrows.
+        // there) and the close dialog above treats j/k like the arrows too.
         let code = match key.code {
             KeyCode::Char('h') if !ctrl => KeyCode::Left,
             KeyCode::Char('j') if !ctrl => KeyCode::Down,
@@ -691,13 +691,16 @@ impl SettingsOverlay {
         }
     }
 
-    /// The unsaved-changes dialog's keys: Up/Down move the selection, Enter
-    /// confirms it, Esc cancels back to the overlay, and everything else is
-    /// swallowed. Ctrl+C is handled before this runs (it detaches from anywhere).
+    /// The unsaved-changes dialog's keys: Up and k move the selection up,
+    /// Down and j move it down, Enter confirms it, Esc cancels back to the
+    /// overlay, and everything else is swallowed. Ctrl+C is handled before this
+    /// runs (it detaches from anywhere).
     fn on_confirm_key(&mut self, code: KeyCode) -> Action {
         match code {
-            KeyCode::Up => self.confirm_selected = self.confirm_selected.saturating_sub(1),
-            KeyCode::Down => {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.confirm_selected = self.confirm_selected.saturating_sub(1)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.confirm_selected = (self.confirm_selected + 1).min(SETTINGS_CHOICES.len() - 1);
             }
             KeyCode::Esc => self.confirm_open = false,
@@ -1392,6 +1395,46 @@ mod tests {
         assert_eq!(subject.on_key(key(KeyCode::Enter), None), Action::None);
         assert!(subject.open);
         assert!(subject.dirty());
+    }
+
+    #[test]
+    fn the_close_dialog_moves_with_j_and_k() {
+        // Dirty: Esc opens the dialog with Save selected.
+        let mut subject = overlay();
+        subject
+            .drafts
+            .insert("plan_enabled".into(), SettingValue::Bool(true));
+        assert!(subject.dirty());
+        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
+        assert!(subject.confirm_open);
+        assert_eq!(subject.confirm_selected, 0);
+        // k clamps at the first row; j walks to the last and clamps there.
+        assert_eq!(subject.on_key(key(KeyCode::Char('k')), None), Action::None);
+        assert_eq!(subject.confirm_selected, 0);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(subject.confirm_selected, 1);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(subject.confirm_selected, 2);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(subject.confirm_selected, 2);
+        // Enter on Cancel (row 2) leaves the overlay open with drafts intact.
+        assert_eq!(subject.on_key(key(KeyCode::Enter), None), Action::None);
+        assert!(!subject.confirm_open);
+        assert!(subject.open);
+        assert!(subject.dirty());
+
+        // Reopening resets to Save; a j move selects Discard, which closes and
+        // throws the drafts away.
+        subject.on_key(key(KeyCode::Esc), None);
+        assert!(subject.confirm_open);
+        assert_eq!(subject.confirm_selected, 0);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(
+            subject.on_key(key(KeyCode::Enter), None),
+            Action::CloseSettings
+        );
+        assert!(!subject.open);
+        assert!(subject.drafts.is_empty());
     }
 
     #[test]
