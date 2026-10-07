@@ -2,18 +2,18 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: "draw(&app, W, H)"
 ---
-             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                                        │
-      ↓      │                                                                                     │
-[   Plan    ]│                                                                                     │
+            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                                         │
+      ↓     │                                                                                      │
+[   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[   B│      shell version: 0.0.0                                                             █│    │
+[  Bu│      shell version: 0.0.0                                                             █│    │
      │      provider  ‹ claude ›                                                             █│────┘
 [  Re│      model  (not set)                                                                 █│────┐
      │      research provider  ‹ claude ›                                                    █│    │
 [   S│      research model  sonnet                                                           █│    │
 [ Dis│      planner provider  ‹ claude ›                                                     █│    │
-[ Lea│      planner model  opus                                                              █│    │
+     │      planner model  opus                                                              █│    │
      │      builder provider  ‹ claude ›                                                     █│    │
      │      builder model  opus                                                              █│    │
      │      reviewer provider  ‹ claude ›                                                    ││    │
@@ -38,7 +38,7 @@ expression: "draw(&app, W, H)"
      │                                                                                        │    │
      │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
      └────────────────────────────────────────────────────────────────────────────────────────┘    │
-             │                                                                                     │
-             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
-             └─────────────────────────────────────────────────────────────────────────────────────┘
+            │                                                                                      │
+            │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output             │
+            └──────────────────────────────────────────────────────────────────────────────────────┘
  STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit

@@ -135,8 +135,8 @@ message PipelineTile {
 }
 
 // The pipeline rail: the enabled stage
-// tiles in order, then the three standalone tiles -- ship (SH), discover
-// (DI) and learnings (LN). The engine is the source of truth: the shell only
+// tiles in order, then the standalone tiles -- ship (SH) and discover
+// (DI). The engine is the source of truth: the shell only
 // renders this state.
 message PipelineState {
   // The enabled stages in pipeline order, one tile each with its letter's
@@ -147,8 +147,6 @@ message PipelineState {
   // DI: muted in sprint run mode, active while a discovery round runs, done
   // once a round ran in the session.
   TileStatus discover = 3;
-  // LN: done once any learning was learned in the session.
-  TileStatus learnings = 4;
 }
 
 message TaskListChanged {}

@@ -2,17 +2,17 @@
 source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
-             ┌ Builder ────────────────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                    │
-      ↓      │                                                                 │
-[   Plan    ]│                                                                 │
-      ↓      │                                                                 │
-[   Build   ]│                                                                 │
-      ↓      └─────────────────────────────────────────────────────────────────┘
-[  Review   ]┌ Tasks | 0/0 - 0 left ───────────────────────────────────────────┐
-             │no tasks in TASKS.md                                             │
-[   Ship    ]│                                                                 │
-[ Discover  ]│                                                                 │
-[ Learnings ]│ a add tasks · i inject task · Enter run discovery · ↑↓ scroll   │
-             └─────────────────────────────────────────────────────────────────┘
+            ┌ Builder ─────────────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                     │
+      ↓     │                                                                  │
+[   Plan   ]│                                                                  │
+      ↓     │                                                                  │
+[  Build   ]│                                                                  │
+      ↓     └──────────────────────────────────────────────────────────────────┘
+[  Review  ]┌ Tasks | 0/0 - 0 left ────────────────────────────────────────────┐
+            │no tasks in TASKS.md                                              │
+[   Ship   ]│                                                                  │
+[ Discover ]│                                                                  │
+            │ a add tasks · i inject task · Enter run discovery · ↑↓ scroll    │
+            └──────────────────────────────────────────────────────────────────┘
  STOPPED  sprint         Enter  run discovery  ?  settings  t  theme  d  detach

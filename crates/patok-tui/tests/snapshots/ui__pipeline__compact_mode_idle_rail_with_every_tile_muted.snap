@@ -13,7 +13,7 @@ expression: "draw(&app, 80, 24)"
       │✔ T1.1  scaffold the workspace                                          │
 [ SH ]│○ T1.2  add the parser for task files                                   │
 [ DI ]│○ T1.3  wire the engine to the shell                                    │
-[ LN ]│                                                                        │
+      │                                                                        │
       │                                                                        │
       │                                                                        │
       │                                                                        │

@@ -2,18 +2,18 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: screen
 ---
-             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                                                                                │
-      ↓      │                                                                                                                             │
-[   Plan    ]│                                                                                                                             │
+            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                                                                                 │
+      ↓     │                                                                                                                              │
+[   Plan   ]│                                                                                                                              │
       ↓┌──────────────────────────────────────────────────── Settings -- Patok ────────────────────────────────────────────── [ x ] ┐      │
-[   Bui│▶ ▾ Provider and model                                                             █┌───────── Provider and model ─────────┐│      │
+[  Buil│▶ ▾ Provider and model                                                             █┌───────── Provider and model ─────────┐│      │
       ↓│      engine version: 0.1.0                                                        █│Which CLI provider and model the agent││──────┘
 [  Revi│      shell version: 0.0.0                                                         █│roles run on. A change applies at the ││──────┐
        │      provider  ‹ claude ›                                                         █│next task or agent start; whatever is ││      │
 [   Shi│      model  (not set)                                                             █│already running keeps the value it    ││      │
 [ Disco│      research provider  ‹ claude ›                                                █│started with.                         ││      │
-[ Learn│      research model  sonnet                                                       █│                                      ││      │
+       │      research model  sonnet                                                       █│                                      ││      │
        │      planner provider  ‹ claude ›                                                 █│                                      ││      │
        │      planner model  opus                                                          █│                                      ││      │
        │      builder provider  ‹ claude ›                                                 █│                                      ││      │
@@ -38,7 +38,7 @@ expression: screen
        │                                                                                                                            │      │
        │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                                                                   [ Esc ] Close │      │
        └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘      │
-             │                                                                                                                             │
-             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output                                                    │
-             └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+            │                                                                                                                              │
+            │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output                                                     │
+            └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  STOPPED  sprint                                                              Enter  start build  ?  settings  t  theme  d  detach  q  quit

@@ -13,7 +13,7 @@ expression: "draw(&app, 80, 24)"
       │                                                                        │
 [ SH ]│                                                                        │
 [ DI ]│                                                                        │
-[ LN ]│                                                                        │
+      │                                                                        │
       │                                                                        │
       │                                                                        │
       │ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks                    │

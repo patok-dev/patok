@@ -2,27 +2,27 @@
 source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
-             ┌ Planner ────────────────────────────────────────────────────────┐
-[ Research  ]│Reading TASKS.md to see what exists.                             │
-      ↓      │▸ Edit TASKS.md                                                  │
-[   Plan    ]│2 tasks added.                                                   │
-      ↓      │                                                                 │
-[   Build   ]│                                                                 │
-      ↓      └─────────────────────────────────────────────────────────────────┘
-[  Review   ]┌ Tasks | 1/5 - 4 left ───────────────────────────────────────────┐
-             │✔ T1.1  scaffold the workspace                                   │
-[   Ship    ]│○ T1.2  add the parser for task files                            │
-[ Discover  ]│○ T1.3  wire the engine to the shell                             │
-[ Learnings ]│○ T2.1  login page                                               │
-             │○ T2.2  logout button                                            │
-             │                                                                 │
-             │                                                                 │
-             │                                                                 │
-             │                                                                 │
-             │                                                                 │
-             │                                                                 │
-             │                                                                 │
-             │                                                                 │
-             │ a add tasks · i inject task · Enter start build · ↑↓ scroll     │
-             └─────────────────────────────────────────────────────────────────┘
+            ┌ Planner ─────────────────────────────────────────────────────────┐
+[ Research ]│Reading TASKS.md to see what exists.                              │
+      ↓     │▸ Edit TASKS.md                                                   │
+[   Plan   ]│2 tasks added.                                                    │
+      ↓     │                                                                  │
+[  Build   ]│                                                                  │
+      ↓     └──────────────────────────────────────────────────────────────────┘
+[  Review  ]┌ Tasks | 1/5 - 4 left ────────────────────────────────────────────┐
+            │✔ T1.1  scaffold the workspace                                    │
+[   Ship   ]│○ T1.2  add the parser for task files                             │
+[ Discover ]│○ T1.3  wire the engine to the shell                              │
+            │○ T2.1  login page                                                │
+            │○ T2.2  logout button                                             │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
+            └──────────────────────────────────────────────────────────────────┘
  STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit

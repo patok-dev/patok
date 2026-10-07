@@ -2,18 +2,18 @@
 source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
-             ┌ Builder ────────────────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                    │
+            ┌ Builder ─────────────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                     │
     ┌ What do you want to do? ────────────────────────────────────── [ x ] ┐   │
 [   │Press Enter to run Discovery agent                                    │   │
     │                                                                      │   │
-[   │                                                                      │   │
+[  B│                                                                      │   │
     │                                                                      │───┘
 [  R│                                                                      │───┐
     │                                                                      │   │
 [   │                                                                      │   │
 [ Di│                                                                      │   │
-[ Le│                                                                      │   │
+    │                                                                      │   │
     │                                                                      │   │
     │                                                                      │   │
     │                                                                      │   │
@@ -24,5 +24,5 @@ expression: screen
     │                                                                      │   │
     │ ↑↓←→ move · Shift-Enter new line ·    [ Enter ] Start  [ Esc ] Close │   │
     └──────────────────────────────────────────────────────────────────────┘   │
-             └─────────────────────────────────────────────────────────────────┘
+            └──────────────────────────────────────────────────────────────────┘
  STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit

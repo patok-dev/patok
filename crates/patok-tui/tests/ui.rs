@@ -263,7 +263,7 @@ fn header_shows_only_the_status_chip_and_run_mode() {
             .trim_start()
             .starts_with("┌ Builder")
     );
-    assert!(idle.lines().nth(1).unwrap().starts_with("[ Research  ]"));
+    assert!(idle.lines().nth(1).unwrap().starts_with("[ Research ]"));
 
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
@@ -862,7 +862,7 @@ fn the_timer_hides_while_idle_and_returns_for_the_next_session() {
             .lines()
             .nth(1)
             .unwrap()
-            .starts_with("[ Research  ]"),
+            .starts_with("[ Research ]"),
         "the rail's first tile sits one row below the top"
     );
     assert!(!title.contains("00:00"), "{title}");
@@ -4041,7 +4041,7 @@ mod view {
         // rail's blank top row (T63.1); the output frame starts beside the
         // blank row on the frame's first row (the header row is gone).
         assert!(lines[0].trim_start().starts_with("┌ Builder"));
-        assert!(lines[1].contains("[ Research  ]"));
+        assert!(lines[1].contains("[ Research ]"));
         let tasks = app.tasks_area.get();
         assert!(lines[usize::from(tasks.y)].contains("┌ Tasks | 1/3 - 2 left"));
         assert!(screen.contains("working on it"));
@@ -5786,25 +5786,20 @@ mod pipeline {
         );
     }
 
-    /// The SH, DI and LN tiles reflect their flags: DISCOVER muted in sprint
-    /// mode, accent while a round runs and green after one ran, LEARNINGS
-    /// green once a learning was learned, SHIP green while shipping.
+    /// The SH and DI tiles reflect their flags: DISCOVER muted in sprint
+    /// mode, accent while a round runs and green after one ran, SHIP green
+    /// while shipping.
     #[test]
     fn the_standalone_tiles_reflect_their_flags() {
         let theme = Theme::DARK;
 
-        // Sprint mode, engine idle: DI renders muted in the rail, and LN
-        // stays muted until a learning was learned this session.
+        // Sprint mode, engine idle: DI renders muted in the rail.
         let mut app = app();
         app.tui.rail_mode = RailMode::Compact;
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
             ("[ DI ]".to_string(), Some(theme.muted_text), false)
-        );
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Learnings)),
-            ("[ LN ]".to_string(), Some(theme.muted_text), false)
         );
 
         // A discovery round runs: DI is accent and bold in the rail.
@@ -5821,13 +5816,11 @@ mod pipeline {
             ("[ DI ]".to_string(), Some(theme.accent), true)
         );
 
-        // The round ran in this session: DI and LN turn green (LN once any
-        // learning was learned).
+        // The round ran in this session: DI turns green.
         app.apply(EngineEvent::DiscoveryChanged { discovering: false });
         app.apply(EngineEvent::PipelineChanged {
             state: PipelineState {
                 discover: TileStatus::Done,
-                learnings: TileStatus::Done,
                 ..stage_state(TileStatus::Muted, TileStatus::Muted)
             },
         });
@@ -5835,10 +5828,6 @@ mod pipeline {
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
             ("[ DI ]".to_string(), Some(theme.success), false)
-        );
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Learnings)),
-            ("[ LN ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -5888,12 +5877,12 @@ mod pipeline {
         );
         shell.settings.insert(
             "planner_model".into(),
-            patok_core::config::SettingValue::Str("sonnet-plan".into()),
+            patok_core::config::SettingValue::Str("sonnet-xl".into()),
         );
         shell.tui.rail_mode = RailMode::Detailed;
         let screen = draw(&shell, 100, 30);
         assert!(screen.contains("claude"), "{screen}");
-        assert!(screen.contains("sonnet-plan"), "{screen}");
+        assert!(screen.contains("sonnet-xl"), "{screen}");
         assert_eq!(rail_width(RailMode::Detailed), rail_width(RailMode::Normal));
         // T125.1 removed the `v` rail-view binding: a bare `v` is a no-op
         // in the shell and the rail mode only changes through the settings
@@ -5927,7 +5916,6 @@ mod pipeline {
         let theme = Theme::DARK;
         let state = PipelineState {
             discover: TileStatus::Done,
-            learnings: TileStatus::Done,
             ..stage_state(TileStatus::Done, TileStatus::Active)
         };
         let mut planning = app();
@@ -5945,21 +5933,14 @@ mod pipeline {
             shell.tui.rail_mode = RailMode::Compact;
         }
 
-        let ids = [
-            TileId::Plan,
-            TileId::Build,
-            TileId::Ship,
-            TileId::Discover,
-            TileId::Learnings,
-        ];
+        let ids = [TileId::Plan, TileId::Build, TileId::Ship, TileId::Discover];
         // The letters, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, SHIP muted, DI and LN done.
+        // every shell: Plan done, Build active, SHIP muted, DI done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
             ("[ P ]".to_string(), Some(theme.success), false),
             ("[ B ]".to_string(), Some(theme.accent), true),
             ("[ SH ]".to_string(), Some(theme.muted_text), false),
             ("[ DI ]".to_string(), Some(theme.success), false),
-            ("[ LN ]".to_string(), Some(theme.success), false),
         ];
 
         // The whole rail area's drawn cells, as the equality reference:
@@ -6038,7 +6019,6 @@ mod pipeline {
         let theme = Theme::DARK;
         let state = PipelineState {
             discover: TileStatus::Done,
-            learnings: TileStatus::Done,
             ..stage_state(TileStatus::Done, TileStatus::Active)
         };
 
@@ -6059,21 +6039,19 @@ mod pipeline {
             }
             let width = rail_width(mode);
             // The tiles' text, colours and boldness, the same per status in
-            // both modes: Plan done, Build active, SHIP muted, DI and LN done.
+            // both modes: Plan done, Build active, SHIP muted, DI done.
             let expected: Vec<(String, Option<Color>, bool)> = match mode {
                 RailMode::Compact => vec![
                     ("[ P ]".to_string(), Some(theme.success), false),
                     ("[ B ]".to_string(), Some(theme.accent), true),
                     ("[ SH ]".to_string(), Some(theme.muted_text), false),
                     ("[ DI ]".to_string(), Some(theme.success), false),
-                    ("[ LN ]".to_string(), Some(theme.success), false),
                 ],
                 RailMode::Normal | RailMode::Detailed => vec![
-                    ("[   Plan    ]".to_string(), Some(theme.success), false),
-                    ("[   Build   ]".to_string(), Some(theme.accent), true),
-                    ("[   Ship    ]".to_string(), Some(theme.muted_text), false),
-                    ("[ Discover  ]".to_string(), Some(theme.success), false),
-                    ("[ Learnings ]".to_string(), Some(theme.success), false),
+                    ("[   Plan   ]".to_string(), Some(theme.success), false),
+                    ("[  Build   ]".to_string(), Some(theme.accent), true),
+                    ("[   Ship   ]".to_string(), Some(theme.muted_text), false),
+                    ("[ Discover ]".to_string(), Some(theme.success), false),
                 ],
             };
 
@@ -6107,7 +6085,7 @@ mod pipeline {
                 let rows: Vec<u16> = rects.iter().map(|(_, rect)| rect.y).collect();
                 assert_eq!(
                     rows,
-                    vec![area.y + 1, area.y + 3, area.y + 5, area.y + 6, area.y + 7,],
+                    vec![area.y + 1, area.y + 3, area.y + 5, area.y + 6],
                     "{name}"
                 );
                 // The connector moved with the tiles: still exactly one row
@@ -6219,7 +6197,6 @@ mod pipeline {
         let theme = Theme::DARK;
         let state = PipelineState {
             discover: TileStatus::Done,
-            learnings: TileStatus::Done,
             ..stage_state(TileStatus::Done, TileStatus::Active)
         };
         let mut planning = app();
@@ -6238,16 +6215,15 @@ mod pipeline {
         }
 
         // The full names, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, SHIP muted, DI and LN done.
+        // every shell: Plan done, Build active, SHIP muted, DI done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
-            ("[   Plan    ]".to_string(), Some(theme.success), false),
-            ("[   Build   ]".to_string(), Some(theme.accent), true),
-            ("[   Ship    ]".to_string(), Some(theme.muted_text), false),
-            ("[ Discover  ]".to_string(), Some(theme.success), false),
-            ("[ Learnings ]".to_string(), Some(theme.success), false),
+            ("[   Plan   ]".to_string(), Some(theme.success), false),
+            ("[  Build   ]".to_string(), Some(theme.accent), true),
+            ("[   Ship   ]".to_string(), Some(theme.muted_text), false),
+            ("[ Discover ]".to_string(), Some(theme.success), false),
         ];
         let width = rail_width(RailMode::Normal);
-        assert_eq!(width, 13, "the longest name (Learnings) plus its padding");
+        assert_eq!(width, 12, "the longest name (Discover) plus its padding");
 
         // The whole rail area's drawn cells, as the cross-state equality
         // reference: symbol, foreground, background and modifiers.
@@ -6319,7 +6295,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[   Plan    ]".to_string(), Some(Theme::DARK.accent), true)
+            ("[   Plan   ]".to_string(), Some(Theme::DARK.accent), true)
         );
         let width = rail_width(RailMode::Normal);
         assert_eq!(app.pipeline_area.get().width, width);

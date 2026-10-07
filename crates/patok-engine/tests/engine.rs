@@ -2897,7 +2897,6 @@ async fn an_idle_engine_reports_every_tile_muted() {
     );
     assert_eq!(pipeline.ship, TileStatus::Muted);
     assert_eq!(pipeline.discover, TileStatus::Muted);
-    assert_eq!(pipeline.learnings, TileStatus::Muted);
 }
 
 #[tokio::test]
@@ -2943,27 +2942,6 @@ async fn an_attaching_shell_receives_the_current_pipeline_state() {
             .any(|e| matches!(e, EngineEvent::PipelineChanged { .. }))
     );
     collect_until(&mut attachment.events, is_phase_startup).await;
-}
-
-#[tokio::test]
-async fn a_learned_learning_marks_the_learnings_tile_done() {
-    let fixture = Fixture::new(TASKS);
-    let engine = fixture.engine(scripted());
-    let mut attachment = engine.attach().unwrap();
-
-    engine.record_learning_learned();
-    let events = collect_until(&mut attachment.events, |e| {
-        matches!(e, EngineEvent::PipelineChanged { .. })
-    })
-    .await;
-
-    assert_eq!(
-        rail(&events)[0],
-        PipelineState {
-            learnings: TileStatus::Done,
-            ..PipelineState::today()
-        }
-    );
 }
 
 mod provider_config {

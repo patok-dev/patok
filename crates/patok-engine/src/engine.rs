@@ -199,10 +199,6 @@ struct State {
     group_base: Option<String>,
     /// A discovery round ran to completion this session.
     discovery_ran: bool,
-    /// A learning was learned this session; recorded through
-    /// [`Engine::record_learning_learned`], the post-review extractor's future
-    /// hook -- learning extraction is not implemented yet.
-    learning_learned: bool,
 }
 
 /// The central in-memory configuration: the merged, normalized
@@ -551,7 +547,6 @@ impl Engine {
                     group_number: None,
                     group_base: None,
                     discovery_ran: false,
-                    learning_learned: false,
                 }),
                 events,
                 phase,
@@ -735,11 +730,6 @@ impl Engine {
                 .collect(),
             ship: state.ship,
             discover,
-            learnings: if state.learning_learned {
-                TileStatus::Done
-            } else {
-                TileStatus::Muted
-            },
         };
         if pipeline != state.pipeline {
             state.pipeline = pipeline.clone();
@@ -1607,16 +1597,6 @@ impl Engine {
     /// Whether `id` was appended through the UI's append-tasks flow this session.
     pub fn is_ui_added(&self, id: &str) -> bool {
         self.state().ui_added_ids.iter().any(|i| i == id)
-    }
-
-    /// Records that a learning was learned this session, so the pipeline rail's
-    /// LEARNINGS tile turns done. This is the hook
-    /// the post-review learning extractor will call once it exists; the engine
-    /// owns the flag because the session is its lifetime.
-    pub fn record_learning_learned(&self) {
-        let mut state = self.state();
-        state.learning_learned = true;
-        self.refresh_pipeline_locked(&mut state);
     }
 
     /// Runs one agent session on the configured provider: its normalised events are streamed

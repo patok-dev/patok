@@ -31,7 +31,7 @@ pub const RAIL_WIDTH: u16 = 6;
 const RAIL_TOP_GAP: u16 = 1;
 
 /// One rail tile: the four stage tiles and
-/// the three standalone tiles SH, DI and LN.
+/// the two standalone tiles SH and DI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TileId {
     Research,
@@ -40,18 +40,16 @@ pub enum TileId {
     Review,
     Ship,
     Discover,
-    Learnings,
 }
 
 /// Every tile, stage and standalone, in rail order.
-const TILES: [TileId; 7] = [
+const TILES: [TileId; 6] = [
     TileId::Research,
     TileId::Plan,
     TileId::Build,
     TileId::Review,
     TileId::Ship,
     TileId::Discover,
-    TileId::Learnings,
 ];
 
 impl TileId {
@@ -76,7 +74,7 @@ impl TileId {
         }
     }
 
-    /// The tile's letter or letters: R, P, B, RV for the stages, SH, DI and LN for the standalone tiles.
+    /// The tile's letter or letters: R, P, B, RV for the stages, SH and DI for the standalone tiles.
     pub fn letters(self) -> &'static str {
         match self {
             Self::Research => "R",
@@ -85,17 +83,15 @@ impl TileId {
             Self::Review => "RV",
             Self::Ship => "SH",
             Self::Discover => "DI",
-            Self::Learnings => "LN",
         }
     }
 
     /// The tile's full user-facing name, carried by the normal-mode box
-    /// (Research, Plan, Build, Review, Ship, Discover, Learnings).
+    /// (Research, Plan, Build, Review, Ship, Discover).
     pub fn label(self) -> &'static str {
         match self {
             Self::Ship => "Ship",
             Self::Discover => "Discover",
-            Self::Learnings => "Learnings",
             other => other.stage().map(Stage::name).unwrap_or_default(),
         }
     }
@@ -138,12 +134,11 @@ pub fn tile_text(id: TileId, mode: RailMode) -> String {
 }
 
 /// One tile's status in `state`: the stage's status for a stage tile, the
-/// standalone flag for SH, DI and LN.
+/// standalone flag for SH and DI.
 pub fn tile_status(state: &PipelineState, id: TileId) -> TileStatus {
     match id {
         TileId::Ship => state.ship,
         TileId::Discover => state.discover,
-        TileId::Learnings => state.learnings,
         other => other
             .stage()
             .and_then(|stage| state.stage_status(stage))
@@ -171,7 +166,7 @@ pub fn tile_style(id: TileId, status: TileStatus, theme: Theme) -> Style {
 
 /// The rail's tile rects, top to bottom: one blank row (T63.1) between the
 /// top of the rail area and the first tile, then the enabled stage tiles in
-/// order, a gap and the three standalone tiles -- all shifted down by exactly
+/// order, a gap and the standalone tiles -- all shifted down by exactly
 /// `RAIL_TOP_GAP` rows. Tiles past the area's bottom are dropped, so a short
 /// terminal clips the rail's tail.
 pub fn rail_tile_rects(state: &PipelineState, area: Rect, mode: RailMode) -> Vec<(TileId, Rect)> {
@@ -192,7 +187,7 @@ pub fn rail_tile_rects(state: &PipelineState, area: Rect, mode: RailMode) -> Vec
     if !state.stages.is_empty() {
         row += if mode == RailMode::Detailed { 4 } else { 1 };
     }
-    for id in [TileId::Ship, TileId::Discover, TileId::Learnings] {
+    for id in [TileId::Ship, TileId::Discover] {
         if let Some(rect) = rail_tile_rect(id, area, row, mode) {
             rects.push((id, rect));
         }
@@ -231,7 +226,7 @@ pub fn rail_connector_rects(state: &PipelineState, area: Rect, mode: RailMode) -
 /// Draws the vertical rail into its fixed-width
 /// column left of the frames, in every engine state (T53.1): one small tile
 /// per enabled stage in order, connected by down-arrow lines, then a gap and
-/// the three standalone tiles SH, DI and LN -- the letter tiles of compact
+/// the two standalone tiles SH and DI -- the letter tiles of compact
 /// mode or the equal-width full-name boxes of normal mode (T57.1), the mode
 /// read live from the tui settings so a change relayouts the next frame.
 /// The rail opens with one purely blank row above its first tile (T63.1),
@@ -304,7 +299,7 @@ mod tests {
 
     /// Today's rail: the four stage tiles in order with one blank row (T63.1)
     /// above the first, a connector between consecutive stage tiles, a gap,
-    /// then the three standalone tiles.
+    /// then the standalone tiles.
     #[test]
     fn rail_rects_run_top_to_bottom_with_a_connector_row() {
         let area = Rect::new(0, 1, RAIL_WIDTH, 22);
@@ -319,7 +314,6 @@ mod tests {
                 (TileId::Review, 8),
                 (TileId::Ship, 10),
                 (TileId::Discover, 11),
-                (TileId::Learnings, 12),
             ]
         );
         // The top row of the rail area holds no tile: the first tile sits
@@ -367,7 +361,7 @@ mod tests {
     fn normal_mode_boxes_are_equally_wide_with_centred_names_and_arrows() {
         let mode = RailMode::Normal;
         let longest = longest_label();
-        assert_eq!(longest, "Learnings".len());
+        assert_eq!(longest, "Discover".len());
         assert_eq!(rail_width(mode), u16::try_from(longest + 4).unwrap());
         assert_eq!(rail_width(RailMode::Compact), RAIL_WIDTH);
 
@@ -385,9 +379,9 @@ mod tests {
             let padding = (longest - name.chars().count()) / 2;
             assert_eq!(left - 2, padding, "{id:?}: {text}");
         }
-        assert_eq!(tile_text(TileId::Plan, mode), "[   Plan    ]");
-        assert_eq!(tile_text(TileId::Ship, mode), "[   Ship    ]");
-        assert_eq!(tile_text(TileId::Learnings, mode), "[ Learnings ]");
+        assert_eq!(tile_text(TileId::Plan, mode), "[   Plan   ]");
+        assert_eq!(tile_text(TileId::Ship, mode), "[   Ship   ]");
+        assert_eq!(tile_text(TileId::Discover, mode), "[ Discover ]");
 
         // The rects fill the column's width, one per tile, in the same order
         // and rows as compact mode.
@@ -482,17 +476,8 @@ mod tests {
                 TileId::Review.label(),
                 TileId::Ship.label(),
                 TileId::Discover.label(),
-                TileId::Learnings.label(),
             ],
-            [
-                "Research",
-                "Plan",
-                "Build",
-                "Review",
-                "Ship",
-                "Discover",
-                "Learnings"
-            ]
+            ["Research", "Plan", "Build", "Review", "Ship", "Discover"]
         );
     }
 }

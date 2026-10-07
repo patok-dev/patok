@@ -2,27 +2,27 @@
 source: crates/patok-tui/tests/ui.rs
 expression: tasks_scrolled
 ---
-             ┌ Builder ────────────────────────────────────────────────────────┐
-[ Research  ]│output line 26                                                   │
-      ↓      │output line 27                                                   │
-[   Plan    ]│output line 28                                                   │
-      ↓      │output line 29                                                   │
-[   Build   ]│output line 30                                                   │
-      ↓      └─────────────────────────────────────────────────────────────────┘
-[  Review   ]┌ Tasks | 20/40 - 20 left ────────────────────────────────────────┐
-             │✔ T9.15  done thing 15                                           │
-[   Ship    ]│✔ T9.16  done thing 16                                           │
-[ Discover  ]│✔ T9.17  done thing 17                                           │
-[ Learnings ]│✔ T9.18  done thing 18                                           │
-             │✔ T9.19  done thing 19                                           │
-             │✔ T9.20  done thing 20                                           │
-             │○ T9.21  later thing 21                                          │
-             │○ T9.22  later thing 22                                          │
-             │○ T9.23  later thing 23                                          │
-             │○ T9.24  later thing 24                                          │
-             │○ T9.25  later thing 25                                          │
-             │○ T9.26  later thing 26                                          │
-             │○ T9.27  later thing 27                                          │
-             │ a add tasks · i inject task · Enter start build · ↑↓ scroll     │
-             └─────────────────────────────────────────────────────────────────┘
+            ┌ Builder ─────────────────────────────────────────────────────────┐
+[ Research ]│output line 26                                                    │
+      ↓     │output line 27                                                    │
+[   Plan   ]│output line 28                                                    │
+      ↓     │output line 29                                                    │
+[  Build   ]│output line 30                                                    │
+      ↓     └──────────────────────────────────────────────────────────────────┘
+[  Review  ]┌ Tasks | 20/40 - 20 left ─────────────────────────────────────────┐
+            │✔ T9.15  done thing 15                                            │
+[   Ship   ]│✔ T9.16  done thing 16                                            │
+[ Discover ]│✔ T9.17  done thing 17                                            │
+            │✔ T9.18  done thing 18                                            │
+            │✔ T9.19  done thing 19                                            │
+            │✔ T9.20  done thing 20                                            │
+            │○ T9.21  later thing 21                                           │
+            │○ T9.22  later thing 22                                           │
+            │○ T9.23  later thing 23                                           │
+            │○ T9.24  later thing 24                                           │
+            │○ T9.25  later thing 25                                           │
+            │○ T9.26  later thing 26                                           │
+            │○ T9.27  later thing 27                                           │
+            │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
+            └──────────────────────────────────────────────────────────────────┘
  STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit

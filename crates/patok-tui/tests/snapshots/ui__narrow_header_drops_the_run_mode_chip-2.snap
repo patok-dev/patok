@@ -7,7 +7,7 @@ expression: screen
       ↓  │ │
 [   Plan │ │
       ↓  │ │
-[   Build│ │
+[  Build │ │
       ↓  └─┘
 [  Review┌ ┐
          └─┘
