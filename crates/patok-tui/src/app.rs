@@ -21,8 +21,8 @@ use crate::overlay::{
 };
 use crate::theme::{Theme, theme_modal_groups};
 use crate::ui::{
-    agent_display, finished_line, footer_button_rects, frame_at, settings_row_at, started_line,
-    theme_row_at,
+    agent_display, finished_line, footer_button_rects, frame_at, menu_row_at, settings_row_at,
+    started_line, theme_row_at,
 };
 
 /// Output lines kept; older ones scroll off for good.
@@ -455,6 +455,10 @@ pub struct App {
     /// The m menu's close button rect at the last render (T66.1); a click on
     /// it runs the menu's Esc key.
     pub menu_close: Cell<Rect>,
+    /// The m menu's body rect at the last render (T137.1); its rows' mouse
+    /// hit-testing reads it -- a left click on a rendered row selects and
+    /// runs that entry.
+    pub menu_body: Cell<Rect>,
     /// The status bar's m menu chip rect at the last render (T133.1); a left
     /// click on it opens the m menu (the m key's action) and a click while
     /// the menu is open closes it. The zero rect a chip-less render records
@@ -564,6 +568,7 @@ impl App {
             menu_selected: 0,
             menu_footer: Cell::new(Rect::default()),
             menu_close: Cell::new(Rect::default()),
+            menu_body: Cell::new(Rect::default()),
             menu_chip: Cell::new(Rect::default()),
             enter_chip: Cell::new(Rect::default()),
             stop_chip: Cell::new(Rect::default()),
@@ -1399,9 +1404,12 @@ impl App {
     /// line's buttons runs exactly that button's key through the menu's key
     /// path -- Enter runs the selected entry and Esc closes with no effect.
     /// A click on the title row's close button runs the menu's Esc key the
-    /// same way (T66.1). A click on the status bar's m menu chip closes the
+    /// same way (T66.1). A left click inside a rendered entry row moves the
+    /// selection to that row and runs it -- exactly the `m` plus Enter
+    /// path (T137.1). A click on the status bar's m menu chip closes the
     /// menu, the second half of the chip's toggle (T133.1). Everything else
-    /// is swallowed, as before.
+    /// -- the border, the title, the footer's non-button columns, the shell
+    /// behind the modal -- is swallowed, as before.
     fn on_menu_mouse(&mut self, mouse: MouseEvent) -> Action {
         if chip_clicked(&mouse, self.menu_chip.get()) {
             self.menu_open = false;
@@ -1410,14 +1418,28 @@ impl App {
         if close_clicked(&mouse, self.menu_close.get()) {
             return self.on_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
-        match footer_button_code(
+        if let Some(code) = footer_button_code(
             &mouse,
             self.menu_footer.get(),
             &[("Enter", "Confirm"), ("Esc", "Close")],
         ) {
-            Some(code) => self.on_menu_key(KeyEvent::new(code, KeyModifiers::NONE)),
-            None => Action::None,
+            return self.on_menu_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+            let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+            let body = self.menu_body.get();
+            let entries = menu_entries(self.phase == Phase::Running);
+            let visible = entries.len().min(usize::from(body.height));
+            if let Some(index) = menu_row_at(position, body, visible) {
+                // The click is the row's Enter key verbatim: it moves the
+                // highlight to the row, then runs the Enter dispatch -- so a
+                // click and `m` plus Enter on the same row are
+                // indistinguishable.
+                self.menu_selected = index;
+                return self.on_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            }
+        }
+        Action::None
     }
 
     /// The settings overlay's mouse handling (T59.1, T136.1): a click on the

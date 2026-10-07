@@ -896,7 +896,10 @@ pub fn menu_area(screen: Rect, running: bool) -> Rect {
 /// selected-row style (T118.1) -- and a two-zone bottom line of hints left,
 /// buttons right (T59.1), styled like the stop dialog. Each entry runs the
 /// action its direct key binding triggers; the stop row renders only
-/// while a build runs. Rendered on top of everything else.
+/// while a build runs. Each rendered row is clickable: a left click moves
+/// the selection to the row and runs it (T137.1), so the body rect is
+/// recorded for the app's mouse hit-testing. Rendered on top of everything
+/// else.
 fn render_menu(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let running = app.phase == Phase::Running;
@@ -911,6 +914,7 @@ fn render_menu(frame: &mut Frame, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.menu_body.set(body);
     let lines: Vec<Line> = menu_entries(running)
         .iter()
         .enumerate()
@@ -969,6 +973,18 @@ pub fn theme_area(screen: Rect) -> Rect {
 /// past the last visible entry (a folded group's hidden area). A pure
 /// hit-test like `frame_at`.
 pub fn theme_row_at(position: Position, body: Rect, visible_len: usize) -> Option<usize> {
+    if !body.contains(position) {
+        return None;
+    }
+    let row = usize::from(position.y - body.y);
+    (row < visible_len).then_some(row)
+}
+
+/// The m menu's entry the pointer sits on (T137.1): the entry index when
+/// the position is on one of the body's rendered rows, `None` on the border,
+/// the title, the footer or the shell behind the modal. A pure hit-test
+/// like [`theme_row_at`].
+pub fn menu_row_at(position: Position, body: Rect, visible_len: usize) -> Option<usize> {
     if !body.contains(position) {
         return None;
     }
