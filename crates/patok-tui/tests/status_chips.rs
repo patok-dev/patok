@@ -186,7 +186,7 @@ fn the_chips_are_inert_in_the_wrong_state() {
 #[test]
 fn the_chips_are_inert_while_a_status_message_shows() {
     let mut idle = app();
-    idle.status = Some("Planner running...".into());
+    idle.status = Some("The planner is already running.".into());
     draw(&idle, 80, 14);
     assert_eq!(idle.enter_chip.get(), ratatui::layout::Rect::default());
     assert_eq!(idle.stop_chip.get(), ratatui::layout::Rect::default());

@@ -1577,7 +1577,7 @@ fn the_s_key_triggers_nothing_in_any_state() {
     assert!(!running.stop_open);
     assert_eq!(running.status, None);
 
-    // During a planner run: no refusal, the run's own notice stays.
+    // During a planner run: no refusal, no message.
     let mut planning = app();
     planning.apply(EngineEvent::AgentChanged {
         agent: "planner".into(),
@@ -1585,7 +1585,7 @@ fn the_s_key_triggers_nothing_in_any_state() {
     });
     planning.apply(EngineEvent::PlanningChanged { planning: true });
     assert_eq!(planning.on_key(s), Action::None);
-    assert_eq!(planning.status.as_deref(), Some("Planner running..."));
+    assert_eq!(planning.status, None);
 
     // During a discovery round: no refusal, no message.
     let mut discovering = app();
@@ -1644,9 +1644,7 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
         started_ms: 0,
     });
     planning.apply(EngineEvent::PlanningChanged { planning: true });
-    // The transient planner notice covers the strip while it runs (T29.1);
-    // clearing it shows the planning state's persistent hints.
-    planning.status = None;
+    assert_eq!(planning.status, None);
     assert_eq!(strip(&planning), merged(" PLANNING  sprint ", " m  menu"));
 
     let mut discovering = app();
@@ -2651,7 +2649,11 @@ mod dialog {
             screen.contains("Reading TASKS.md to see what exists."),
             "{screen}"
         );
-        assert!(screen.contains("Planner running..."), "{screen}");
+        // The run's own notice no longer appears in the status bar; the
+        // strip keeps the planning chips and the menu hint (T139.1).
+        let bottom = screen.lines().last().unwrap();
+        assert!(bottom.contains(" m  menu"), "{screen}");
+        assert!(!bottom.contains("running..."), "{screen}");
         insta::assert_snapshot!(screen);
     }
 
@@ -3093,12 +3095,12 @@ mod dialog {
 
         let mut app = self::app();
         app.apply(EngineEvent::PlanningChanged { planning: true });
-        // The event's own status line ("planner running...") stays as it is;
-        // the key itself adds nothing to it.
-        let before = app.status.clone();
+        // The event sets no status any more (T139.1); the key itself adds
+        // nothing to it either.
+        assert_eq!(app.status, None);
         press(&mut app, KeyCode::Char('a'));
         assert!(!app.dialog_open);
-        assert_eq!(app.status, before);
+        assert_eq!(app.status, None);
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('a'));
         assert!(!app.dialog_open);

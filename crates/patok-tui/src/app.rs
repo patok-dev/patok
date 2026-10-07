@@ -21,8 +21,8 @@ use crate::overlay::{
 };
 use crate::theme::{Theme, theme_modal_groups};
 use crate::ui::{
-    agent_display, finished_line, footer_button_rects, frame_at, menu_row_at, settings_row_at,
-    started_line, theme_row_at,
+    finished_line, footer_button_rects, frame_at, menu_row_at, settings_row_at, started_line,
+    theme_row_at,
 };
 
 /// Output lines kept; older ones scroll off for good.
@@ -694,15 +694,10 @@ impl App {
             }
             EngineEvent::PlanningChanged { planning } => {
                 let was_idle = self.is_idle();
-                if planning {
-                    // The engine announces the run's agent (the planner, or the
-                    // research agent for a queue-creation run, T69.1) before
-                    // this event, so the status line names it.
-                    self.status = Some(format!("{} running...", agent_display(&self.agent)));
-                } else if self.planning {
-                    // The run's outcome is the notice line in the output pane; the
-                    // status bar returns to its normal content instead of repeating
-                    // it (T29.1).
+                // A status message set during the run (a busy refusal)
+                // clears with it; the run's own outcome is the notice line
+                // in the output pane, not the status bar (T29.1).
+                if !planning && self.planning {
                     self.status = None;
                 }
                 self.planning = planning;

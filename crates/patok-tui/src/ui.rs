@@ -1836,11 +1836,11 @@ mod tests {
         }
     }
 
-    /// The status bar's planning message wears the highlighted-text colour in
-    /// full on every built-in theme (T117.1), the agent's display name inside
-    /// it included — never the fixated per-agent name colour.
+    /// The status bar's status message wears the highlighted-text colour in
+    /// full on every built-in theme (T117.1) — never the fixated per-agent
+    /// name colour.
     #[test]
-    fn planning_status_message_wears_the_highlighted_colour_on_every_theme() {
+    fn status_messages_wear_the_highlighted_colour_on_every_theme() {
         for key in every_key() {
             let theme = Theme::resolve(key, Some(true));
             let mut app = app_with_one_task();
@@ -1848,7 +1848,7 @@ mod tests {
             app.tui.truecolor = Some(true);
             app.planning = true;
             app.agent = "planner".into();
-            let message = "Planner running...";
+            let message = "The planner is already running.";
             app.status = Some(message.into());
             let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
             status_widget(&app, buffer.area).render(buffer.area, &mut buffer);

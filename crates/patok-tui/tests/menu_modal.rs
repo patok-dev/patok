@@ -329,7 +329,6 @@ fn the_stop_build_entry_is_running_only() {
     // Esc binding's scope.
     let mut app = app();
     app.apply(EngineEvent::PlanningChanged { planning: true });
-    app.status = None;
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     for _ in 0..5 {
         assert_eq!(press(&mut app, KeyCode::Down), Action::None);
@@ -530,7 +529,7 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
 #[test]
 fn the_menu_chip_is_inert_while_a_status_message_shows() {
     let mut app = app();
-    app.status = Some("Planner running...".into());
+    app.status = Some("The planner is already running.".into());
     draw(&app, 80, 14);
     assert_eq!(app.menu_chip.get(), ratatui::layout::Rect::default());
     assert_eq!(
