@@ -1114,7 +1114,8 @@ impl App {
         Action::None
     }
 
-    /// The m menu's keys: Up/Down move the selection, Enter runs the selected
+    /// The m menu's keys: Up/Down -- j/k aliasing them, the theme picker's
+    /// convention -- move the selection, Enter runs the selected
     /// entry -- exactly the action its direct key binding triggers -- Esc
     /// closes with no effect, and everything else is swallowed. Ctrl+C is
     /// handled before this runs (it detaches from anywhere).
@@ -1122,8 +1123,10 @@ impl App {
         let entries = menu_entries(self.phase == Phase::Running);
         match key.code {
             KeyCode::Esc => self.menu_open = false,
-            KeyCode::Up => self.menu_selected = self.menu_selected.saturating_sub(1),
-            KeyCode::Down => {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.menu_selected = self.menu_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.menu_selected = (self.menu_selected + 1).min(entries.len() - 1);
             }
             KeyCode::Enter => {

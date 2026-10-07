@@ -234,6 +234,73 @@ fn the_menu_keys_run_the_entries_actions() {
     assert!(!app.stopping);
 }
 
+/// j and k alias Up and Down while the menu is open -- the theme picker's
+/// convention -- so the highlight moves with them, clamps at both ends
+/// exactly like the arrows, Enter still runs the highlighted entry and Esc
+/// still closes without acting.
+#[test]
+fn the_menu_moves_with_j_and_k() {
+    // k clamps at the first row, the menu staying open.
+    let mut app = open();
+    assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
+    assert_eq!(app.menu_selected, 0);
+    assert!(app.menu_open);
+
+    // j walks the idle list and clamps at the last row: four entries, so
+    // the fourth press stays on Quit.
+    let mut app = open();
+    for expected in [1, 2, 3, 3] {
+        assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
+        assert_eq!(app.menu_selected, expected);
+    }
+    assert!(!app.overlay.open);
+    assert!(!app.theme_modal.open);
+    assert!(!app.stop_open);
+
+    // k moves back up one row.
+    assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
+    assert_eq!(app.menu_selected, 2);
+
+    // Enter runs the j-moved entry: two j presses land on Detach.
+    let mut app = open();
+    for _ in 0..2 {
+        assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
+    }
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::Detach);
+    assert!(!app.menu_open);
+
+    // Esc still closes without acting after a j press.
+    let mut app = open();
+    assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
+    assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+    assert!(!app.menu_open);
+    assert!(!app.overlay.open);
+    assert!(!app.theme_modal.open);
+    assert!(!app.stop_open);
+
+    // Running: five entries, so the j clamp reaches the stop row and k
+    // walks back up.
+    let mut app = running_app();
+    assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
+    for _ in 0..6 {
+        assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
+    }
+    assert_eq!(app.menu_selected, 4);
+    assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
+    assert_eq!(app.menu_selected, 3);
+    assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
+    assert_eq!(app.menu_selected, 2);
+
+    // Enter on the running list's stop row opens the stop dialog.
+    for _ in 0..2 {
+        assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
+    }
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    assert!(!app.menu_open);
+    assert!(app.stop_open);
+    assert_eq!(app.stop_selected, 0);
+}
+
 /// The stop entry joins only while a build runs, so the Down clamp
 /// stops one row earlier while idle: no stop row hides below the fold.
 #[test]
