@@ -98,6 +98,19 @@ pub struct AgentText {
     pub heading: Color,
 }
 
+/// One theme's literal agent line colours, taken verbatim instead of the
+/// fixed anchors (no lightness adjustment).
+#[derive(Clone, Copy)]
+struct AgentTextRgb {
+    thinking: (u8, u8, u8),
+    tool: (u8, u8, u8),
+    result: (u8, u8, u8),
+    error: (u8, u8, u8),
+    notice: (u8, u8, u8),
+    pane_status: (u8, u8, u8),
+    heading: (u8, u8, u8),
+}
+
 /// The canonical anchor colours of the agent line kinds (T108.1): one RGB
 /// triple per kind, fixed for every built-in theme so the kind's colour
 /// identity never changes. A palette only adjusts an anchor's lightness
@@ -524,6 +537,9 @@ struct Classes {
     accent: (u8, u8, u8),
     /// The scrollbar-rail special class: the overlay scrollbar's rail.
     scrollbar_rail: (u8, u8, u8),
+    /// Literal agent line colours that replace the fixed anchors for one
+    /// theme; `None` resolves the anchors against the background.
+    agent_text: Option<AgentTextRgb>,
 }
 
 const ATOM_ONE_DARK: Palette = Palette {
@@ -565,6 +581,7 @@ const ATOM_ONE_DARK_CLASSES: Classes = Classes {
     chip_discovering: ATOM_ONE_DARK.blue,
     accent: (0x8B, 0xC4, 0xF3),
     scrollbar_rail: ATOM_ONE_DARK.muted,
+    agent_text: None,
 };
 
 const ATOM_ONE_LIGHT: Palette = Palette {
@@ -598,6 +615,7 @@ const ATOM_ONE_LIGHT_CLASSES: Classes = Classes {
     chip_discovering: ATOM_ONE_LIGHT.blue,
     accent: (0x1F, 0x60, 0xF0),
     scrollbar_rail: ATOM_ONE_LIGHT.muted,
+    agent_text: None,
 };
 
 const TOKYO_NIGHT_DARK: Palette = Palette {
@@ -634,6 +652,19 @@ const TOKYO_NIGHT_DARK_CLASSES: Classes = Classes {
     chip_discovering: TOKYO_NIGHT_DARK.blue,
     accent: (0xA5, 0xC0, 0xFA),
     scrollbar_rail: TOKYO_NIGHT_DARK.surface,
+    agent_text: Some(TOKYO_NIGHT_DARK_AGENT_TEXT),
+};
+
+/// Tokyo Night Dark keeps its own palette-derived agent line colours rather
+/// than the shared anchors: blue, cyan, muted, red, yellow and magenta.
+const TOKYO_NIGHT_DARK_AGENT_TEXT: AgentTextRgb = AgentTextRgb {
+    thinking: TOKYO_NIGHT_DARK.blue,
+    tool: (0x7D, 0xCF, 0xFF),
+    result: TOKYO_NIGHT_DARK.muted,
+    error: (0xF7, 0x76, 0x8E),
+    notice: (0xE0, 0xAF, 0x68),
+    pane_status: TOKYO_NIGHT_DARK.magenta,
+    heading: TOKYO_NIGHT_DARK.magenta,
 };
 
 const TOKYO_NIGHT_DAY: Palette = Palette {
@@ -667,6 +698,7 @@ const TOKYO_NIGHT_DAY_CLASSES: Classes = Classes {
     chip_discovering: TOKYO_NIGHT_DAY.blue,
     accent: (0x18, 0x6D, 0xE1),
     scrollbar_rail: TOKYO_NIGHT_DAY.muted,
+    agent_text: None,
 };
 
 const CATPPUCCIN_MOCHA: Palette = Palette {
@@ -699,6 +731,7 @@ const CATPPUCCIN_MOCHA_CLASSES: Classes = Classes {
     chip_discovering: CATPPUCCIN_MOCHA.blue,
     accent: (0xB5, 0xD0, 0xFC),
     scrollbar_rail: CATPPUCCIN_MOCHA.muted,
+    agent_text: None,
 };
 
 const CATPPUCCIN_LATTE: Palette = Palette {
@@ -733,6 +766,7 @@ const CATPPUCCIN_LATTE_CLASSES: Classes = Classes {
     chip_discovering: CATPPUCCIN_LATTE.blue,
     accent: (0x0A, 0x52, 0xE0),
     scrollbar_rail: CATPPUCCIN_LATTE.muted,
+    agent_text: None,
 };
 
 const SOLARIZED_DARK: Palette = Palette {
@@ -768,6 +802,7 @@ const SOLARIZED_DARK_CLASSES: Classes = Classes {
     chip_discovering: (0x4C, 0xA2, 0xDF),
     accent: (0x78, 0xB9, 0xE6),
     scrollbar_rail: SOLARIZED_DARK.muted,
+    agent_text: None,
 };
 
 const SOLARIZED_LIGHT: Palette = Palette {
@@ -803,6 +838,7 @@ const SOLARIZED_LIGHT_CLASSES: Classes = Classes {
     chip_discovering: SOLARIZED_LIGHT.blue,
     accent: (0x21, 0x7A, 0xB8),
     scrollbar_rail: SOLARIZED_LIGHT.muted,
+    agent_text: None,
 };
 
 const GRUVBOX_DARK: Palette = Palette {
@@ -834,6 +870,7 @@ const GRUVBOX_DARK_CLASSES: Classes = Classes {
     chip_discovering: GRUVBOX_DARK.blue,
     accent: (0xA1, 0xBA, 0xB1),
     scrollbar_rail: GRUVBOX_DARK.muted,
+    agent_text: None,
 };
 
 const GRUVBOX_LIGHT: Palette = Palette {
@@ -866,6 +903,7 @@ const GRUVBOX_LIGHT_CLASSES: Classes = Classes {
     chip_discovering: GRUVBOX_LIGHT.blue,
     accent: (0x06, 0x52, 0x60),
     scrollbar_rail: GRUVBOX_LIGHT.muted,
+    agent_text: None,
 };
 
 /// The palette of a non-default theme key.
@@ -921,7 +959,18 @@ impl Palette {
             normal_text: colour(classes.normal_text),
             muted_text: colour(classes.muted_text),
             highlighted_text: colour(classes.highlighted_text),
-            agent_text: AgentText::resolve(self.background, truecolor),
+            agent_text: match classes.agent_text {
+                Some(rgb) => AgentText {
+                    thinking: colour(rgb.thinking),
+                    tool: colour(rgb.tool),
+                    result: colour(rgb.result),
+                    error: colour(rgb.error),
+                    notice: colour(rgb.notice),
+                    pane_status: colour(rgb.pane_status),
+                    heading: colour(rgb.heading),
+                },
+                None => AgentText::resolve(self.background, truecolor),
+            },
             agent_names: AgentNames::resolve(self.background, truecolor),
             chip_neutral: colour(classes.chip_neutral),
             contrast_text: colour(classes.contrast_text),
@@ -1171,6 +1220,25 @@ mod tests {
                 assert_eq!(Theme::line_color(theme, LineKind::Heading), Color::Magenta);
                 continue;
             }
+            if key == ThemeKey::TokyoNightDark {
+                // Value-locked literals, not the shared anchors.
+                for (kind, rgb) in [
+                    (LineKind::Thinking, (0x7A, 0xA2, 0xF7)),
+                    (LineKind::Tool, (0x7D, 0xCF, 0xFF)),
+                    (LineKind::Result, (0x56, 0x5F, 0x89)),
+                    (LineKind::Error, (0xF7, 0x76, 0x8E)),
+                    (LineKind::Notice, (0xE0, 0xAF, 0x68)),
+                    (LineKind::Status, (0xBB, 0x9A, 0xF7)),
+                    (LineKind::Heading, (0xBB, 0x9A, 0xF7)),
+                ] {
+                    assert_eq!(
+                        Theme::line_color(theme, kind),
+                        Color::Rgb(rgb.0, rgb.1, rgb.2),
+                        "TokyoNightDark {kind:?} must keep its literal colour"
+                    );
+                }
+                continue;
+            }
             // Byte rounding can nudge the recomputed hue by a degree or two,
             // so the tolerance covers quantization, not a real remapping: the
             // anchor hues are more than thirty degrees apart.
@@ -1215,7 +1283,12 @@ mod tests {
     /// truecolor mode; the 256-colour mode derives from the same RGB.
     #[test]
     fn agent_text_is_readable_on_every_theme_background() {
-        for key in every_key().into_iter().filter(|key| *key != ThemeKey::Dark) {
+        // Tokyo Night Dark takes literal line colours (its muted result is
+        // below the bar by choice), pinned by the identity test instead.
+        for key in every_key()
+            .into_iter()
+            .filter(|key| !matches!(key, ThemeKey::Dark | ThemeKey::TokyoNightDark))
+        {
             let theme = Theme::resolve(key, Some(true));
             let Color::Rgb(r, g, b) = theme.background else {
                 panic!("{key:?} palettes always emit RGB backgrounds");
