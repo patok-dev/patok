@@ -13,6 +13,6 @@ expression: screen
             ││ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │            │
 [ Discover ]│└────────────────────────────────────────────────────┘            │
             │                                                                  │
-            │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
+            │ a add tasks · i inject task · Enter start · ↑↓ scroll            │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                    Enter  start build  m  menu
+ STOPPED  sprint                                          Enter  start  m  menu

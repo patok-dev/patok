@@ -248,7 +248,7 @@ fn task_hints(app: &App) -> Vec<&'static str> {
     let mut hints = vec!["a add tasks", "i inject task"];
     if app.is_idle() {
         hints.push(if app.tasks.iter().any(|t| !t.done) {
-            "Enter start build"
+            "Enter start"
         } else {
             "Enter run discovery"
         });
@@ -1575,7 +1575,7 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
                 keys.push((
                     "Enter",
                     if app.tasks.iter().any(|t| !t.done) {
-                        "start build"
+                        "start"
                     } else {
                         "run discovery"
                     },

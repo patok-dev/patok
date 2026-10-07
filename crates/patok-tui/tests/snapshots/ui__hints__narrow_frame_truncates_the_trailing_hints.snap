@@ -13,6 +13,6 @@ expression: "draw(&app, 60, 14)"
             │✔ T1.1  scaffold the workspace                │
 [ Discover ]│○ T1.2  add the parser for task files         │
             │○ T1.3  wire the engine to the shell          │
-            │ a add tasks · i inject task                  │
+            │ a add tasks · i inject task · Enter start    │
             └──────────────────────────────────────────────┘
- STOPPED  sprint                Enter  start build  m  menu
+ STOPPED  sprint                      Enter  start  m  menu

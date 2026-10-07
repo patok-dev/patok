@@ -251,10 +251,7 @@ fn header_shows_only_the_status_chip_and_run_mode() {
     // shorter strip the m menu leaves (T128.1) right-aligns its two pairs.
     assert_eq!(
         idle.lines().last().unwrap(),
-        format!(
-            " STOPPED  sprint {}Enter  start build  m  menu",
-            " ".repeat(35)
-        )
+        format!(" STOPPED  sprint {}Enter  start  m  menu", " ".repeat(41))
     );
     assert!(!idle.contains("Waiting..."));
     // The body starts on the frame's first row (the header row is gone,
@@ -524,19 +521,16 @@ fn narrow_header_drops_the_run_mode_chip() {
     let status = screen.lines().last().unwrap();
     assert_eq!(
         status,
-        format!(
-            " STOPPED  sprint {}Enter  start build  m  menu",
-            " ".repeat(15)
-        )
+        format!(" STOPPED  sprint {}Enter  start  m  menu", " ".repeat(21))
     );
     assert!(!status.contains(" detach"), "{status}");
     assert!(!status.contains(" quit"), "{status}");
-    // 40 columns exercise the tail drop again: the Enter pair fits, the
-    // menu pair goes as a whole, no half chip ever shows.
+    // 40 columns fit both remaining pairs whole: the shorter Enter hint
+    // (T129.1) lets the menu pair join the line, right-aligned.
     let screen = draw(&app(), 40, 12);
     assert_eq!(
         screen.lines().last().unwrap(),
-        format!(" STOPPED  sprint {}Enter  start build", " ".repeat(4))
+        " STOPPED  sprint  Enter  start  m  menu"
     );
 }
 
@@ -1632,7 +1626,7 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     let idle = app();
     assert_eq!(
         strip(&idle),
-        merged(" STOPPED  sprint ", " Enter  start build  m  menu")
+        merged(" STOPPED  sprint ", " Enter  start  m  menu")
     );
 
     let mut running = app();
@@ -3408,7 +3402,7 @@ mod explore {
         let strip = explore.lines().last().unwrap();
         // Pending tasks remain, so Enter starts the build loop (T46.1).
         assert!(strip.contains(" Enter "), "{strip}");
-        assert!(strip.contains(" start build "), "{strip}");
+        assert!(strip.contains(" start "), "{strip}");
         assert!(!strip.contains(" run discovery "), "{strip}");
         // The old add-task title wording is gone from the strip.
         assert!(!strip.contains("What do you want to do?"), "{strip}");
@@ -3424,7 +3418,7 @@ mod explore {
         let strip = screen.lines().last().unwrap();
         assert!(strip.contains(" Enter "), "{strip}");
         assert!(strip.contains(" run discovery "), "{strip}");
-        assert!(!strip.contains(" start build "), "{strip}");
+        assert!(!strip.contains(" start "), "{strip}");
 
         // An empty task list is complete too: Enter runs a discovery round.
         let mut empty = app_with("");
@@ -4138,7 +4132,7 @@ mod hints {
     /// frame (T75.1 dropped the idle `q quit` entry; T76.1 added the `i
     /// inject task` entry, whose width makes the trailing `Tab output` hint
     /// drop at 80 columns -- the leading hints stay).
-    const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start build · ↑↓ scroll";
+    const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start · ↑↓ scroll";
     /// The focused output frame's strip with every hint that fits the
     /// 80-column frame (T124.1 dropped the leading `v rail view` entry,
     /// which makes the trailing `Tab tasks` hint fit; T125.1 removed the
@@ -4335,51 +4329,41 @@ mod hints {
         let hints = [
             "a add tasks",
             "i inject task",
-            "Enter start build",
+            "Enter start",
             "↑↓ scroll",
             "Tab output",
         ];
         // One leading space plus ` · ` between hints: the cumulative widths
-        // are 12, 28, 48, 60 and 73 columns.
+        // are 12, 28, 42, 54 and 67 columns.
         assert!(fitted_hints(&hints, 0).is_empty());
         assert!(fitted_hints(&hints, 11).is_empty());
         assert_eq!(fitted_hints(&hints, 12), ["a add tasks"]);
         assert_eq!(fitted_hints(&hints, 27), ["a add tasks"]);
         assert_eq!(fitted_hints(&hints, 28), ["a add tasks", "i inject task"]);
-        assert_eq!(fitted_hints(&hints, 47), ["a add tasks", "i inject task"]);
+        assert_eq!(fitted_hints(&hints, 41), ["a add tasks", "i inject task"]);
         assert_eq!(
-            fitted_hints(&hints, 48),
-            ["a add tasks", "i inject task", "Enter start build"]
+            fitted_hints(&hints, 42),
+            ["a add tasks", "i inject task", "Enter start"]
         );
         assert_eq!(
-            fitted_hints(&hints, 59),
-            ["a add tasks", "i inject task", "Enter start build"]
+            fitted_hints(&hints, 53),
+            ["a add tasks", "i inject task", "Enter start"]
         );
         assert_eq!(
-            fitted_hints(&hints, 60),
-            [
-                "a add tasks",
-                "i inject task",
-                "Enter start build",
-                "↑↓ scroll"
-            ]
+            fitted_hints(&hints, 54),
+            ["a add tasks", "i inject task", "Enter start", "↑↓ scroll"]
         );
         assert_eq!(
-            fitted_hints(&hints, 72),
-            [
-                "a add tasks",
-                "i inject task",
-                "Enter start build",
-                "↑↓ scroll"
-            ]
+            fitted_hints(&hints, 66),
+            ["a add tasks", "i inject task", "Enter start", "↑↓ scroll"]
         );
-        assert_eq!(fitted_hints(&hints, 73), hints);
+        assert_eq!(fitted_hints(&hints, 67), hints);
     }
 
     #[test]
     fn a_narrow_frame_drops_trailing_hints_inside_its_borders() {
         // 60 columns leave the focused task list 45 inner columns: the first
-        // two hints fit and everything from `Enter start build` drops.
+        // three hints fit and everything from `↑↓ scroll` drops.
         let app = app();
         let mut terminal = Terminal::new(TestBackend::new(60, H)).unwrap();
         terminal.draw(|frame| render(frame, &app)).unwrap();
@@ -4387,7 +4371,10 @@ mod hints {
         let tasks = app.tasks_area.get();
         let row = bottom_row(tasks);
         let rendered = row_text(buffer, row);
-        assert_eq!(rendered.trim_end(), " a add tasks · i inject task");
+        assert_eq!(
+            rendered.trim_end(),
+            " a add tasks · i inject task · Enter start"
+        );
         // The strip never reaches the frame's borders.
         assert_eq!(buffer[(tasks.x, row.y)].symbol(), "│");
         assert_eq!(buffer[(tasks.right() - 1, row.y)].symbol(), "│");

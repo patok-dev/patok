@@ -13,4 +13,4 @@ expression: "draw(&app, 40, 12)"
             │○ T1.2  add the parser for│
 [ Discover ]│ a add tasks              │
             └──────────────────────────┘
- STOPPED  sprint     Enter  start build
+ STOPPED  sprint  Enter  start  m  menu

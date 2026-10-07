@@ -279,7 +279,7 @@ fn the_status_bar_keeps_the_enter_and_menu_hints() {
     let screen = draw(&idle, 80, 14);
     let strip = screen.lines().last().unwrap();
     assert!(strip.contains(" Enter "), "{strip}");
-    assert!(strip.contains(" start build "), "{strip}");
+    assert!(strip.contains(" start "), "{strip}");
     assert!(strip.contains(" m "), "{strip}");
     assert!(strip.trim_end().ends_with(" menu"), "{strip}");
     for gone in [

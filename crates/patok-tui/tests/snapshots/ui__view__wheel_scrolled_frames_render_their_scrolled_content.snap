@@ -23,6 +23,6 @@ expression: tasks_scrolled
             │○ T9.25  later thing 25                                           │
             │○ T9.26  later thing 26                                           │
             │○ T9.27  later thing 27                                           │
-            │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
+            │ a add tasks · i inject task · Enter start · ↑↓ scroll            │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                    Enter  start build  m  menu
+ STOPPED  sprint                                          Enter  start  m  menu

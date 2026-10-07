@@ -39,6 +39,6 @@ expression: "draw(&app, W, H)"
      │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
      └────────────────────────────────────────────────────────────────────────────────────────┘    │
             │                                                                                      │
-            │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output             │
+            │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                   │
             └──────────────────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                                        Enter  start build  m  menu
+ STOPPED  sprint                                                              Enter  start  m  menu

@@ -1353,11 +1353,11 @@ fn the_list_ends_with_the_last_entry_and_no_enter_button() {
     assert!(screen.contains("rail mode"), "{screen}");
     assert!(!screen.contains("Close settings"), "{screen}");
     // No line carries a stray Enter button: the only Enter hints are the status
-    // bar's "Enter start build" and the footer's "Enter/Space edit".
+    // bar's "Enter start" and the footer's "Enter/Space edit".
     for line in screen.split('\n') {
         if line.contains("Enter") {
             assert!(
-                line.contains("Enter/Space") || line.contains("start build"),
+                line.contains("Enter/Space") || line.contains("start"),
                 "an Enter button row rendered: {line:?}"
             );
         }
