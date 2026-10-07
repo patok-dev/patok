@@ -25,4 +25,4 @@ expression: screen
             │                                                                  │
             │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit
+ STOPPED  sprint                                    Enter  start build  m  menu

@@ -15,4 +15,4 @@ expression: claude_screen
             │                                                                  │
             │                                                                  │
             └──────────────────────────────────────────────────────────────────┘
- RUNNING  sprint     Esc  stop build  ?  settings  t  theme  d  detach  q  quit
+ RUNNING  sprint                                                        m  menu

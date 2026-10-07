@@ -1,0 +1,18 @@
+---
+source: crates/patok-tui/tests/menu_modal.rs
+expression: screen
+---
+            ┌ Builder | Claude ────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                     │
+      ↓     │                                                                  │
+[   Plan   ]│┌─────────────────────── Menu ──────────────── [ x ] ┐            │
+      ↓     ││▶ Settings -- open the settings overlay             │            │
+[  Build   ]││  Theme -- pick the colour theme                    │            │
+      ↓     └│  Detach -- leave the engine running                │────────────┘
+[  Review  ]┌│  Quit -- stop the app                              │────────────┐
+            ││ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │            │
+[ Discover ]│└────────────────────────────────────────────────────┘            │
+            │                                                                  │
+            │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
+            └──────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                    Enter  start build  m  menu

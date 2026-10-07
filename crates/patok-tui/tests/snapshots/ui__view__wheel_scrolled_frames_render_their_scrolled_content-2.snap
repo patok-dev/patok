@@ -25,4 +25,4 @@ expression: output_scrolled
             │○ T9.27  later thing 27                                           │
             │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit
+ STOPPED  sprint                                    Enter  start build  m  menu

@@ -15,4 +15,4 @@ expression: screen
             │○ T1.3  wire the engine to the shell                              │
             │ a add tasks · i inject task · Enter start build · ↑↓ scroll      │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  continuous       Enter  start build  ?  settings  t  theme  d  detach
+ STOPPED  continuous                                Enter  start build  m  menu

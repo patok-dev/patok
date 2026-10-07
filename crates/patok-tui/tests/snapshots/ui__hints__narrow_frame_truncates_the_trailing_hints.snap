@@ -15,4 +15,4 @@ expression: "draw(&app, 60, 14)"
             │○ T1.3  wire the engine to the shell          │
             │ a add tasks · i inject task                  │
             └──────────────────────────────────────────────┘
- STOPPED  sprint  Enter  start build  ?  settings  t  theme
+ STOPPED  sprint                Enter  start build  m  menu

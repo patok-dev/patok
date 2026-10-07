@@ -9,7 +9,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use std::time::Duration;
 
-use crate::app::{App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOICES};
+use crate::app::{
+    App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOICES, menu_entries,
+};
 use crate::markdown::markdown_lines;
 use crate::overlay::{
     Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset,
@@ -93,6 +95,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     if app.stop_open {
         render_stop_dialog(frame, app);
+    }
+    if app.menu_open {
+        render_menu(frame, app);
     }
     if app.theme_modal.open {
         render_theme_modal(frame, app);
@@ -870,6 +875,78 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
     );
 }
 
+/// The m menu's rect: a small centered modal, at least 54 columns wide and
+/// tall enough for its rows -- the border (2), the entry rows and the footer
+/// (1) -- clamped to the screen; the stop-build entry adds one row while a
+/// build runs.
+pub fn menu_area(screen: Rect, running: bool) -> Rect {
+    let width = (screen.width * 3 / 5).max(54).min(screen.width);
+    let height = (menu_entries(running).len() + 3).min(usize::from(screen.height)) as u16;
+    Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    )
+}
+
+/// The m menu (the `m` key): a centered " Menu " modal listing the status
+/// bar's former secondary hints as rows -- the selected choice in the shared
+/// selected-row style (T118.1) -- and a two-zone bottom line of hints left,
+/// buttons right (T59.1), styled like the stop dialog. Each entry runs the
+/// action its direct key binding triggers; the stop-build row renders only
+/// while a build runs. Rendered on top of everything else.
+fn render_menu(frame: &mut Frame, app: &App) {
+    let theme = app.theme();
+    let running = app.phase == Phase::Running;
+    let area = menu_area(frame.area(), running);
+    frame.render_widget(Clear, area);
+    app.menu_close.set(close_button_rect(area));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .style(base_style(theme))
+        .title_top(Line::from(" Menu ").centered())
+        .title_top(close_button_line(theme).right_aligned());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let lines: Vec<Line> = menu_entries(running)
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| {
+            let focused = index == app.menu_selected;
+            let marker = if focused { "▶ " } else { "  " };
+            let mut line = Line::from(vec![
+                Span::raw(marker),
+                Span::raw(choice.label()),
+                Span::styled(
+                    format!(" -- {}", choice.detail()),
+                    Style::new().fg(if focused {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
+                ),
+            ]);
+            if focused {
+                line = line.style(selected_row_style(theme));
+            }
+            line
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), body);
+    // The bottom line's two zones (T59.1): the selection hint on the left, the
+    // Confirm and Close buttons on the right.
+    app.menu_footer.set(footer);
+    render_modal_footer(
+        frame,
+        footer,
+        &["↑↓ move"],
+        &[("Enter", "Confirm"), ("Esc", "Close")],
+        theme,
+    );
+}
+
 /// The theme picker's rect (T43.1, T116.1): a centered modal, at least 54
 /// columns wide and tall enough for its full grouped list -- the border (2),
 /// the two group headers, the eleven one-line entries (13 body rows) and the
@@ -1439,7 +1516,10 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
 /// fit -- and the status content on the right: a transient message, else the
 /// key-hint chips, right-aligned. Hint chips drop as whole chip+label pairs
 /// from the tail when they do not fit; a message is never dropped -- it
-/// truncates at the line's right edge like a bare status bar message.
+/// truncates at the line's right edge like a bare status bar message. The
+/// secondary hints (settings, theme, detach, quit and the running Esc stop
+/// dialog) moved behind the m menu, so the zone carries only the idle Enter
+/// hint and the m menu chip.
 fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     let theme = app.theme();
     // A discovery round runs either on an idle engine or inside a session's empty-queue gap
@@ -1501,19 +1581,10 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
                     },
                 ));
             }
-            // Esc opens the stop dialog while a build runs (T46.1); during a
-            // planner or discovery run it does nothing, so no hint.
-            if app.phase == Phase::Running {
-                keys.push(("Esc", "stop build"));
-            }
-            keys.extend([
-                ("?", "settings"),
-                // The theme picker (T43.1) opens with `t` from any engine
-                // state, so its hint sits beside the other modal key.
-                ("t", "theme"),
-                ("d", "detach"),
-                ("q", "quit"),
-            ]);
+            // The m menu chip: the settings, theme, detach and quit hints and
+            // the running Esc stop-build hint live behind the menu modal, so
+            // the bar keeps one chip for all of them.
+            keys.push(("m", "menu"));
             // A pair drops as a whole from the tail when it does not fit the
             // zone left of the chips, so no half-cut chip ever shows; the kept
             // prefix is right-aligned. The chips' own padding separates them

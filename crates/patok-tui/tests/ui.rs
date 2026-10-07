@@ -247,10 +247,14 @@ fn header_shows_only_the_status_chip_and_run_mode() {
     let mut app = app();
     let idle = draw(&app, 80, 14);
     // The merged status line (T86.1): the chips on the left, the key hints
-    // right-aligned behind them. At 80 columns the idle line fits whole.
+    // right-aligned behind them. At 80 columns the idle line fits whole; the
+    // shorter strip the m menu leaves (T128.1) right-aligns its two pairs.
     assert_eq!(
         idle.lines().last().unwrap(),
-        " STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit"
+        format!(
+            " STOPPED  sprint {}Enter  start build  m  menu",
+            " ".repeat(35)
+        )
     );
     assert!(!idle.contains("Waiting..."));
     // The body starts on the frame's first row (the header row is gone,
@@ -513,16 +517,27 @@ fn narrow_header_drops_the_run_mode_chip() {
     let screen = draw(&app(), 12, 10);
     assert_eq!(screen.lines().last().unwrap(), " STOPPED");
     insta::assert_snapshot!(screen);
-    // 60 columns keep both chips and drop whole hint pairs from the tail
-    // (T86.1): ` d detach` and ` q quit` go, no half chip ever shows.
+    // 60 columns keep both chips and every hint pair: the secondary hints
+    // moved behind the m menu (T128.1), so the two pairs that remain -- the
+    // idle Enter hint and the menu chip -- fit whole, right-aligned.
     let screen = draw(&app(), 60, 12);
     let status = screen.lines().last().unwrap();
     assert_eq!(
         status,
-        " STOPPED  sprint  Enter  start build  ?  settings  t  theme"
+        format!(
+            " STOPPED  sprint {}Enter  start build  m  menu",
+            " ".repeat(15)
+        )
     );
     assert!(!status.contains(" detach"), "{status}");
     assert!(!status.contains(" quit"), "{status}");
+    // 40 columns exercise the tail drop again: the Enter pair fits, the
+    // menu pair goes as a whole, no half chip ever shows.
+    let screen = draw(&app(), 40, 12);
+    assert_eq!(
+        screen.lines().last().unwrap(),
+        format!(" STOPPED  sprint {}Enter  start build", " ".repeat(4))
+    );
 }
 
 #[test]
@@ -1598,15 +1613,16 @@ fn the_s_key_triggers_nothing_in_any_state() {
     assert!(!stopping.stop_open);
 }
 
-/// The theme picker (T43.1) opens with `t` from every engine state, so the
-/// status bar advertises it beside the other modal key in all of them.
+/// The m menu opens with `m` from every engine state, so the status bar
+/// advertises it beside the idle Enter hint in all of them (T128.1); the
+/// settings, theme, detach and quit chips it replaced are gone.
 #[test]
-fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
+fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     use ratatui::style::Modifier;
 
     // A wide terminal fits the merged status line whole (T86.1): the chips on
     // the left, the hint strip right-aligned behind them, so the exact line
-    // pins the theme button's place and the order of every other hint.
+    // pins the menu chip's place and the order of the remaining hint.
     let strip = |app: &App| draw(app, 130, 14).lines().last().unwrap().to_string();
     let merged = |chips: &str, hints: &str| {
         let pad = 130 - chips.chars().count() - hints.chars().count() - 1;
@@ -1616,23 +1632,14 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
     let idle = app();
     assert_eq!(
         strip(&idle),
-        merged(
-            " STOPPED  sprint ",
-            " Enter  start build  ?  settings  t  theme  d  detach  q  quit"
-        )
+        merged(" STOPPED  sprint ", " Enter  start build  m  menu")
     );
 
     let mut running = app();
     running.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
     });
-    assert_eq!(
-        strip(&running),
-        merged(
-            " RUNNING  sprint ",
-            " Esc  stop build  ?  settings  t  theme  d  detach  q  quit"
-        )
-    );
+    assert_eq!(strip(&running), merged(" RUNNING  sprint ", " m  menu"));
 
     let mut planning = app();
     planning.apply(EngineEvent::AgentChanged {
@@ -1643,44 +1650,39 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
     // The transient planner notice covers the strip while it runs (T29.1);
     // clearing it shows the planning state's persistent hints.
     planning.status = None;
-    assert_eq!(
-        strip(&planning),
-        merged(
-            " PLANNING  sprint ",
-            " ?  settings  t  theme  d  detach  q  quit"
-        )
-    );
+    assert_eq!(strip(&planning), merged(" PLANNING  sprint ", " m  menu"));
 
     let mut discovering = app();
     discovering.apply(EngineEvent::DiscoveryChanged { discovering: true });
     assert_eq!(
         strip(&discovering),
-        merged(
-            " DISCOVERING  sprint ",
-            " ?  settings  t  theme  d  detach  q  quit"
-        )
+        merged(" DISCOVERING  sprint ", " m  menu")
     );
 
     // The add-tasks, Tab and scroll chips are gone from the status line
-    // (T73.1); their keys still work and the in-frame hints strip of T71.1
-    // keeps advertising them inside the panes.
+    // (T73.1), and so are the secondary chips the m menu replaced: their keys
+    // still work through the menu's entries.
     for app in [&idle, &running, &planning, &discovering] {
         let strip = strip(app);
         assert!(!strip.contains(" add tasks "), "{strip}");
         assert!(!strip.contains(" scroll "), "{strip}");
         assert!(!strip.contains(" Tab "), "{strip}");
+        assert!(!strip.contains(" settings "), "{strip}");
+        assert!(!strip.contains(" theme "), "{strip}");
+        assert!(!strip.contains(" detach "), "{strip}");
+        assert!(!strip.contains(" quit "), "{strip}");
+        assert!(!strip.contains(" stop build "), "{strip}");
     }
 
-    // The shorter strip now fits an 80-column line whole, up to the quit
+    // The shorter strip now fits an 80-column line whole, through the menu
     // chip; no `s` chip survives anywhere.
     let narrow = draw(&idle, 80, 14).lines().last().unwrap().to_string();
-    assert!(narrow.contains(" settings "), "{narrow}");
-    assert!(narrow.contains(" theme "), "{narrow}");
-    assert!(narrow.ends_with("quit"), "{narrow}");
+    assert!(narrow.contains(" menu"), "{narrow}");
+    assert!(narrow.ends_with("menu"), "{narrow}");
     assert!(!narrow.contains(" s "), "{narrow}");
 
-    // The theme button wears the same status-bar colours as the settings
-    // hint beside it, so it recolours with the active theme (T34.1).
+    // The menu chip wears the same status-bar colours as the Enter hint
+    // beside it, so it recolours with the active theme (T34.1).
     let theme = patok_tui::Theme::DARK;
     let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
     terminal.draw(|frame| render(frame, &idle)).unwrap();
@@ -1694,33 +1696,32 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
             .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
             .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
     };
-    let settings = column(&[" ", "?", " "]);
-    let theme_key = column(&[" ", "t", " "]);
-    let detach = column(&[" ", "d", " "]);
+    let enter = column(&[" ", "E", "n", "t", "e", "r", " "]);
+    let menu_key = column(&[" ", "m", " "]);
     for offset in 0..3u16 {
         assert_eq!(
-            buffer[(theme_key as u16 + offset, row)].style(),
-            buffer[(settings as u16 + offset, row)].style(),
-            "the theme chip must wear the settings chip's colours"
+            buffer[(menu_key as u16 + offset, row)].style(),
+            buffer[(enter as u16 + offset, row)].style(),
+            "the menu chip must wear the Enter chip's colours"
         );
     }
-    let chip = buffer[(theme_key as u16, row)].style();
+    let chip = buffer[(menu_key as u16, row)].style();
     assert_eq!(chip.fg, Some(theme.contrast_text));
     assert_eq!(chip.bg, Some(theme.chip_neutral));
     assert!(chip.add_modifier.contains(Modifier::BOLD));
-    for offset in 0..7u16 {
+    for offset in 0..6u16 {
         assert_eq!(
-            buffer[(theme_key as u16 + 3 + offset, row)].style(),
-            buffer[(settings as u16 + 3 + offset, row)].style(),
-            "the theme label must wear the settings label's colours"
+            buffer[(menu_key as u16 + 3 + offset, row)].style(),
+            buffer[(enter as u16 + 7 + offset, row)].style(),
+            "the menu label must wear the Enter label's colours"
         );
     }
     assert_eq!(
-        buffer[(theme_key as u16 + 3, row)].style().fg,
+        buffer[(menu_key as u16 + 3, row)].style().fg,
         Some(theme.muted_text)
     );
-    // The theme label ends right where the detach chip begins.
-    assert_eq!(symbols[theme_key + 3..detach].concat(), " theme ");
+    // The menu label is the strip's last content.
+    assert_eq!(symbols[menu_key + 3..menu_key + 9].concat(), " menu ");
 }
 
 /// The status bar's key hints are chips, not modal buttons (T46.1): in both
@@ -1747,20 +1748,20 @@ fn the_status_bar_hints_never_wear_the_button_accent() {
                 .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
                 .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
         };
-        let settings = column(&[" ", "?", " "]);
+        let menu_key = column(&[" ", "m", " "]);
         for offset in 0..3u16 {
-            let style = buffer[(settings as u16 + offset, row)].style();
+            let style = buffer[(menu_key as u16 + offset, row)].style();
             assert_eq!(style.fg, Some(theme.contrast_text), "the chip text colour");
             assert_eq!(style.bg, Some(theme.chip_neutral), "the chip background");
         }
-        for offset in 0..10u16 {
+        for offset in 0..6u16 {
             assert_eq!(
-                buffer[(settings as u16 + 3 + offset, row)].style().fg,
+                buffer[(menu_key as u16 + 3 + offset, row)].style().fg,
                 Some(theme.muted_text),
                 "the label colour"
             );
         }
-        assert_eq!(symbols[settings + 3..settings + 13].concat(), " settings ");
+        assert_eq!(symbols[menu_key + 3..menu_key + 9].concat(), " menu ");
         for x in 0..130u16 {
             assert_ne!(
                 buffer[(x, row)].style().fg,
@@ -2614,10 +2615,10 @@ mod dialog {
         assert!(screen.contains("2 tasks added."), "{screen}");
         let bottom = screen.lines().last().unwrap();
         assert!(!bottom.contains(" add tasks "), "{screen}");
-        assert!(bottom.contains(" settings "), "{screen}");
+        assert!(bottom.contains(" menu"), "{screen}");
         // The add-tasks chip is gone from the strip (T73.1); the shorter
-        // strip fits an 80-column line whole, through the quit chip.
-        assert!(bottom.ends_with("quit"), "{screen}");
+        // strip fits an 80-column line whole, through the menu chip.
+        assert!(bottom.ends_with("menu"), "{screen}");
         assert!(!bottom.contains("Added 2 tasks"), "{screen}");
         insta::assert_snapshot!(screen);
     }
@@ -2634,7 +2635,7 @@ mod dialog {
         let screen = draw(&app, 80, 24);
         assert!(screen.contains("planner result rejected"), "{screen}");
         let bottom = screen.lines().last().unwrap();
-        assert!(bottom.contains(" settings "), "{screen}");
+        assert!(bottom.contains(" menu"), "{screen}");
         assert!(!bottom.contains(" add tasks "), "{screen}");
         assert!(!bottom.contains("planner result rejected"), "{screen}");
         insta::assert_snapshot!(screen);
@@ -2666,7 +2667,7 @@ mod dialog {
         assert_eq!(app.status, None);
         let screen = draw(&app, 80, 24);
         let bottom = screen.lines().last().unwrap();
-        assert!(bottom.contains(" settings "), "{screen}");
+        assert!(bottom.contains(" menu"), "{screen}");
         assert!(!bottom.contains(" add tasks "), "{screen}");
         assert!(!bottom.contains("1 task added."), "{screen}");
         // The quit message still lands on the last line (a quit from idle uses
@@ -3447,8 +3448,12 @@ mod explore {
         let running = draw(&app, 80, 14);
         let strip = running.lines().last().unwrap();
         assert!(!strip.contains(" Enter "), "{strip}");
-        assert!(strip.contains(" Esc "), "{strip}");
-        assert!(strip.contains(" stop build "), "{strip}");
+        // The running strip keeps only the menu chip: the Esc stop-build
+        // hint moved behind the m menu (T128.1).
+        assert!(!strip.contains(" Esc "), "{strip}");
+        assert!(!strip.contains(" stop build "), "{strip}");
+        assert!(strip.contains(" m "), "{strip}");
+        assert!(strip.contains(" menu"), "{strip}");
     }
 
     #[test]
@@ -5834,8 +5839,8 @@ mod pipeline {
         assert_eq!(shell.focus, FrameFocus::Output);
         assert_eq!((shell.scroll, shell.task_scroll), (0, 0));
         let hints = draw(&shell, 130, 24).lines().last().unwrap().to_string();
-        assert!(hints.contains(" settings "), "{hints}");
-        assert!(hints.contains(" stop build "), "{hints}");
+        assert!(hints.contains(" menu"), "{hints}");
+        assert!(!hints.contains(" stop build "), "{hints}");
         assert!(!hints.trim_end().ends_with("Plan"), "{hints}");
         assert!(!hints.trim_end().ends_with("Discover"), "{hints}");
 

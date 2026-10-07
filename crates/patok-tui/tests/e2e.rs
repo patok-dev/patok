@@ -1009,11 +1009,12 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
     assert!(screen.contains("T2.1"), "{screen}");
     assert!(screen.contains("write the greeting tests"), "{screen}");
     let bottom = screen.lines().last().unwrap();
-    assert!(bottom.contains(" settings "), "{screen}");
-    // The add-tasks, scroll and Tab chips left the status line (T73.1); the
-    // shorter strip fits this width whole, through the quit chip.
+    assert!(bottom.contains(" menu "), "{screen}");
+    // The add-tasks, scroll and Tab chips left the status line (T73.1), and
+    // the secondary chips moved behind the m menu (T128.1); the shorter strip
+    // fits this width whole, through the menu chip.
     assert!(!bottom.contains(" add tasks "), "{screen}");
-    assert!(bottom.trim_end().ends_with(" quit"), "{screen}");
+    assert!(bottom.trim_end().ends_with(" menu"), "{screen}");
     assert!(!bottom.contains("1 task added."), "{screen}");
 
     engine.shutdown_token().cancel();

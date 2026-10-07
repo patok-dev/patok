@@ -15,4 +15,4 @@ expression: screen
             │                                                                  │
             │ a add tasks · i inject task · Enter run discovery · ↑↓ scroll    │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint         Enter  run discovery  ?  settings  t  theme  d  detach
+ STOPPED  sprint                                  Enter  run discovery  m  menu

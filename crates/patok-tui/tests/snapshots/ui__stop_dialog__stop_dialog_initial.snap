@@ -17,4 +17,4 @@ expression: "draw(&open(), 60, 16)"
             │                                              │
             │                                              │
             └──────────────────────────────────────────────┘
- RUNNING  sprint     Esc  stop build  ?  settings  t  theme
+ RUNNING  sprint                                    m  menu

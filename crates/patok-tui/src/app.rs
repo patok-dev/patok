@@ -215,6 +215,63 @@ pub const STOP_CHOICES: [StopChoice; 3] = [
     StopChoice::Cancel,
 ];
 
+/// The m menu's choices (the `m` key, which replaced the status bar's
+/// secondary key-hint chips): what the rows do, in the order they render.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuChoice {
+    /// Open the settings overlay -- the `?` binding's action.
+    Settings,
+    /// Open the theme picker -- the `t` binding's action.
+    Theme,
+    /// Detach -- the `d` binding's action.
+    Detach,
+    /// Quit -- the `q` binding's action.
+    Quit,
+    /// Open the stop dialog -- the Esc binding's action, so it joins only
+    /// while a build runs, matching that binding's scope.
+    StopBuild,
+}
+
+impl MenuChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            MenuChoice::Settings => "Settings",
+            MenuChoice::Theme => "Theme",
+            MenuChoice::Detach => "Detach",
+            MenuChoice::Quit => "Quit",
+            MenuChoice::StopBuild => "Stop build",
+        }
+    }
+
+    /// The one-line explanation rendered after the label.
+    pub fn detail(self) -> &'static str {
+        match self {
+            MenuChoice::Settings => "open the settings overlay",
+            MenuChoice::Theme => "pick the colour theme",
+            MenuChoice::Detach => "leave the engine running",
+            MenuChoice::Quit => "stop the app",
+            MenuChoice::StopBuild => "open the stop dialog",
+        }
+    }
+}
+
+/// The m menu's rows while a build runs (`running`), top to bottom;
+/// `menu_selected` indexes this list. The stop-build entry joins only while a
+/// build runs, matching the Esc binding's scope (planner and discovery runs
+/// get none), so the key handler's clamp and the renderer read one list.
+pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
+    let mut entries = vec![
+        MenuChoice::Settings,
+        MenuChoice::Theme,
+        MenuChoice::Detach,
+        MenuChoice::Quit,
+    ];
+    if running {
+        entries.push(MenuChoice::StopBuild);
+    }
+    entries
+}
+
 /// The status shown while a soft stop is pending (the first `q` or the stop
 /// dialog's soft-stop choice, before the running task finishes): it names the
 /// two keys that act on the pending stop.
@@ -385,6 +442,16 @@ pub struct App {
     /// The stop dialog's close button rect at the last render (T66.1); a click
     /// on it runs the dialog's Esc key.
     pub stop_close: Cell<Rect>,
+    /// The m menu is open (the `m` key, from any engine state).
+    pub menu_open: bool,
+    /// The m menu's selected row; indexes [`menu_entries`].
+    pub menu_selected: usize,
+    /// The m menu's bottom line rect at the last render; its buttons' mouse
+    /// hit-testing reads it (T59.1).
+    pub menu_footer: Cell<Rect>,
+    /// The m menu's close button rect at the last render (T66.1); a click on
+    /// it runs the menu's Esc key.
+    pub menu_close: Cell<Rect>,
     /// Text typed into the add-task dialog; kept when the dialog is closed.
     pub dialog_text: String,
     /// Cursor in `dialog_text` as a character index; read it through [`App::cursor`].
@@ -469,6 +536,10 @@ impl App {
             stop_selected: 0,
             stop_footer: Cell::new(Rect::default()),
             stop_close: Cell::new(Rect::default()),
+            menu_open: false,
+            menu_selected: 0,
+            menu_footer: Cell::new(Rect::default()),
+            menu_close: Cell::new(Rect::default()),
             dialog_text: String::new(),
             dialog_cursor: 0,
             dialog_goal_col: None,
@@ -840,6 +911,11 @@ impl App {
         if self.stop_open {
             return self.on_stop_key(key);
         }
+        // The m menu swallows every other key while it is open, so nothing
+        // leaks to the shell either.
+        if self.menu_open {
+            return self.on_menu_key(key);
+        }
         if self.dialog_open {
             return self.on_dialog_key(key, ctrl);
         }
@@ -855,6 +931,16 @@ impl App {
             KeyCode::Char('t') if !ctrl => {
                 self.status = None;
                 self.open_theme();
+                Action::None
+            }
+            // The m menu's key: it opens from any engine state except while
+            // another modal has the keyboard (the guards above), so the
+            // status bar's secondary hints (settings, theme, detach, quit and
+            // the running Esc stop dialog) live behind one chip instead.
+            KeyCode::Char('m') if !ctrl => {
+                self.status = None;
+                self.menu_open = true;
+                self.menu_selected = 0;
                 Action::None
             }
             // S-Tab flips the run mode between `sprint` and `continuous`
@@ -887,21 +973,7 @@ impl App {
                 }
                 _ => Action::None,
             },
-            KeyCode::Char('q') => {
-                self.stopping = true;
-                if self.phase == Phase::Running || self.planning || self.discovering {
-                    // While a run is active the first q soft-stops the build
-                    // loop: the current task finishes, no further task starts,
-                    // and the app keeps running. Esc cancels the stop, and a
-                    // second q interrupts.
-                    self.status = Some(SOFT_STOP_PENDING.into());
-                    Action::Quit
-                } else {
-                    // Idle: nothing to wind down, so q quits the app directly.
-                    self.status = Some("Stopping the engine...".into());
-                    Action::Interrupt
-                }
-            }
+            KeyCode::Char('q') => self.quit_action(),
             KeyCode::Char('r') if self.version_mismatch => {
                 self.stopping = true;
                 self.status = Some(
@@ -952,6 +1024,28 @@ impl App {
         }
     }
 
+    /// The quit action (the `q` key and the m menu's Quit entry, one shared
+    /// path): while a run is active the first press soft-stops the build loop
+    /// -- the current task finishes, no further task starts, and the app
+    /// keeps running; Esc cancels the stop and a second press interrupts.
+    /// Idle, nothing needs winding down, so it stops the app directly. A
+    /// press while a soft stop is already pending interrupts instead; the
+    /// main match's stopping guard reaches the `q` key before this helper,
+    /// so that branch serves the menu's path, where no guard runs first.
+    fn quit_action(&mut self) -> Action {
+        if self.stopping {
+            return Action::Interrupt;
+        }
+        self.stopping = true;
+        if self.phase == Phase::Running || self.planning || self.discovering {
+            self.status = Some(SOFT_STOP_PENDING.into());
+            Action::Quit
+        } else {
+            self.status = Some("Stopping the engine...".into());
+            Action::Interrupt
+        }
+    }
+
     /// Flips the run mode to its other value (S-Tab, T60.1): the newly selected
     /// mode is named in the status bar and carried by the returned action, which
     /// the driver sends through the settings-change flow. The chip follows the
@@ -994,6 +1088,46 @@ impl App {
                         Action::Interrupt
                     }
                     StopChoice::Cancel => Action::None,
+                };
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    /// The m menu's keys: Up/Down move the selection, Enter runs the selected
+    /// entry -- exactly the action its direct key binding triggers -- Esc
+    /// closes with no effect, and everything else is swallowed. Ctrl+C is
+    /// handled before this runs (it detaches from anywhere).
+    fn on_menu_key(&mut self, key: KeyEvent) -> Action {
+        let entries = menu_entries(self.phase == Phase::Running);
+        match key.code {
+            KeyCode::Esc => self.menu_open = false,
+            KeyCode::Up => self.menu_selected = self.menu_selected.saturating_sub(1),
+            KeyCode::Down => {
+                self.menu_selected = (self.menu_selected + 1).min(entries.len() - 1);
+            }
+            KeyCode::Enter => {
+                self.menu_open = false;
+                return match entries[self.menu_selected.min(entries.len() - 1)] {
+                    MenuChoice::Settings => {
+                        self.status = None;
+                        self.overlay.open();
+                        Action::None
+                    }
+                    MenuChoice::Theme => {
+                        self.status = None;
+                        self.open_theme();
+                        Action::None
+                    }
+                    MenuChoice::Detach => Action::Detach,
+                    MenuChoice::Quit => self.quit_action(),
+                    MenuChoice::StopBuild => {
+                        self.status = None;
+                        self.stop_open = true;
+                        self.stop_selected = 0;
+                        Action::None
+                    }
                 };
             }
             _ => {}
@@ -1210,6 +1344,25 @@ impl App {
             &[("Enter", "Confirm"), ("Esc", "Close")],
         ) {
             Some(code) => self.on_stop_key(KeyEvent::new(code, KeyModifiers::NONE)),
+            None => Action::None,
+        }
+    }
+
+    /// The m menu's mouse handling (T59.1): a click on one of the bottom
+    /// line's buttons runs exactly that button's key through the menu's key
+    /// path -- Enter runs the selected entry and Esc closes with no effect.
+    /// A click on the title row's close button runs the menu's Esc key the
+    /// same way (T66.1). Everything else is swallowed, as before.
+    fn on_menu_mouse(&mut self, mouse: MouseEvent) -> Action {
+        if close_clicked(&mouse, self.menu_close.get()) {
+            return self.on_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        }
+        match footer_button_code(
+            &mouse,
+            self.menu_footer.get(),
+            &[("Enter", "Confirm"), ("Esc", "Close")],
+        ) {
+            Some(code) => self.on_menu_key(KeyEvent::new(code, KeyModifiers::NONE)),
             None => Action::None,
         }
     }
@@ -1704,6 +1857,9 @@ impl App {
         }
         if self.stop_open {
             return self.on_stop_mouse(mouse);
+        }
+        if self.menu_open {
+            return self.on_menu_mouse(mouse);
         }
         if self.dialog_open {
             return self.on_dialog_mouse(mouse);
