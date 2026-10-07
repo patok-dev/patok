@@ -4134,7 +4134,11 @@ mod hints {
     /// inject task` entry, whose width makes the trailing `Tab output` hint
     /// drop at 80 columns -- the leading hints stay).
     const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start build · ↑↓ scroll";
-    const OUTPUT_STRIP: &str = " v rail view · ↑↓ scroll · PgUp/PgDn page · End follow";
+    /// The focused output frame's strip with every hint that fits the
+    /// 80-column frame (T124.1 dropped the leading `v rail view` entry --
+    /// the `v` key still flips the rail view, the strip just does not say so
+    /// -- which makes the trailing `Tab tasks` hint fit).
+    const OUTPUT_STRIP: &str = " ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks";
 
     #[test]
     fn the_focused_task_list_shows_its_hints_along_its_bottom_edge() {
@@ -4168,7 +4172,7 @@ mod hints {
         );
         assert_eq!(
             OUTPUT_STRIP,
-            " v rail view · ↑↓ scroll · PgUp/PgDn page · End follow"
+            " ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks"
         );
         // The unfocused output frame has no strip, so exactly one of the two
         // frames shows hints at any time.

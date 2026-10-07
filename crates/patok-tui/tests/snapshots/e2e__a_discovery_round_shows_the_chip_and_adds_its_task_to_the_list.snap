@@ -6,7 +6,7 @@ expression: screen
 [ Research  ]│Not committed (not a git repository, nothing to commit, or the co│
       ↓      │mmit failed).                                                    │
 [   Plan    ]│✔ T1.1 done                                                      │
-      ↓      │ v rail view · ↑↓ scroll · PgUp/PgDn page · End follow           │
+      ↓      │ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks             │
 [   Build   ]└─────────────────────────────────────────────────────────────────┘
       ↓      ┌ Tasks | 1/1 - 0 left ───────────────────────────────────────────┐
 [  Review   ]│✔ T1.1  add hello                                                │
