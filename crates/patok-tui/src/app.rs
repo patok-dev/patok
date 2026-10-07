@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use patok_core::config::{ApplyTiming, SettingValue, THEME_KEYS, Theme as ThemeKey, TuiSettings};
+use patok_core::config::{ApplyTiming, SettingValue, Theme as ThemeKey, TuiSettings};
 use patok_core::event::{
     AgentEvent, EngineEvent, NoticeLevel, Phase, Snapshot, TaskOutcome, Usage,
 };
@@ -16,8 +16,10 @@ use patok_core::scenario::{ProjectScan, Scenario, SpecState};
 use patok_core::task::Task;
 use ratatui::layout::Rect;
 
-use crate::overlay::{Entry, Schema, SettingsOverlay, StatusLevel};
-use crate::theme::Theme;
+use crate::overlay::{
+    Entry, Row, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries, header_fold,
+};
+use crate::theme::{Theme, theme_modal_groups};
 use crate::ui::{
     agent_display, finished_line, footer_button_rects, frame_at, started_line, theme_row_at,
 };
@@ -243,15 +245,23 @@ pub enum DialogKind {
     Inject,
 }
 
-/// The theme picker modal's state (T43.1) -- its own modal state, distinct from
-/// the settings overlay's: the selection's row among the built-in themes, the
-/// theme that was active when the modal opened (Esc restores it exactly), the
-/// live preview applied to the whole shell while browsing, and the body rect
-/// recorded at the last render for mouse hit-testing.
+/// The theme picker modal's state (T43.1, T116.1) -- its own modal state,
+/// distinct from the settings overlay's: the built-in themes grouped into a
+/// foldable Dark group followed by a foldable Light group (both expanded on
+/// open), the selection's position among the visible entries (the group
+/// headers and the expanded groups' rows, in list order), the theme that was
+/// active when the modal opened (Esc restores it exactly), the live preview
+/// applied to the whole shell while browsing, and the body rect recorded at
+/// the last render for mouse hit-testing.
 #[derive(Default)]
 pub struct ThemeModal {
     pub open: bool,
+    /// The selected entry's index into the visible list (headers plus the
+    /// expanded groups' rows); a header selection never previews or commits.
     pub selected: usize,
+    /// Per-group expanded flag, parallel to [`theme_modal_groups`]; both
+    /// groups open expanded.
+    pub expanded: [bool; 2],
     pub original: ThemeKey,
     pub preview: Option<ThemeKey>,
     /// The modal's body rect at the last render; mouse hit-testing reads it.
@@ -262,6 +272,38 @@ pub struct ThemeModal {
     /// The modal's close button rect at the last render (T66.1); a click on
     /// it runs the modal's Esc key.
     pub close: Cell<Rect>,
+}
+
+impl ThemeModal {
+    /// The picker's visible entries in display order: the Dark header and its
+    /// rows while expanded, then the Light header and its rows while expanded
+    /// -- the same shared fold mechanism the settings overlay's sections use.
+    pub(crate) fn entries(&self) -> Vec<Entry<&'static str>> {
+        let groups = theme_modal_groups();
+        let rows = [groups[0].1.as_slice(), groups[1].1.as_slice()];
+        group_entries(&rows, &self.expanded)
+            .into_iter()
+            .map(|entry| entry.map_row(|name| *name))
+            .collect()
+    }
+
+    /// The selected entry. The visible list is never empty -- every group
+    /// always renders its header -- so this never fails.
+    pub(crate) fn selected_entry(&self) -> Entry<&'static str> {
+        let entries = self.entries();
+        entries[clamp_focus(self.selected, entries.len())]
+    }
+
+    /// Flips a group's fold and clamps the selection into the (possibly
+    /// shortened) visible list; folding never hides a header, so the
+    /// selection always stays on a visible entry.
+    fn toggle(&mut self, group: usize) {
+        if let Some(flag) = self.expanded.get_mut(group) {
+            *flag = !*flag;
+        }
+        let len = self.entries().len();
+        self.selected = clamp_focus(self.selected, len);
+    }
 }
 
 pub struct App {
@@ -542,11 +584,8 @@ impl App {
                 if planning {
                     // The engine announces the run's agent (the planner, or the
                     // research agent for a queue-creation run, T69.1) before
-                    // this event, so the status line and the heading name it.
+                    // this event, so the status line names it.
                     self.status = Some(format!("{} running...", agent_display(&self.agent)));
-                    // The run's output streams into the main pane next to earlier
-                    // output; a heading keeps runs visually separate (T24.1).
-                    self.push(LineKind::Heading, format!("── {}", self.agent));
                 } else if self.planning {
                     // The run's outcome is the notice line in the output pane; the
                     // status bar returns to its normal content instead of repeating
@@ -971,56 +1010,100 @@ impl App {
         Action::None
     }
 
-    /// Opens the theme picker (the `t` key, T43.1): the selection starts on the
-    /// active theme, and the theme active now is remembered, so Esc restores it
-    /// exactly. Nothing is previewed or persisted yet.
+    /// Opens the theme picker (the `t` key, T43.1): the selection starts on
+    /// the active theme, and the theme active now is remembered, so Esc
+    /// restores it exactly. Both groups open expanded (T116.1), the fold state
+    /// resetting with every open. Nothing is previewed or persisted yet.
     fn open_theme(&mut self) {
         self.theme_modal.open = true;
         self.theme_modal.original = self.tui.theme;
-        self.theme_modal.selected = THEME_KEYS
+        self.theme_modal.expanded = [true, true];
+        let active = self.tui.theme.as_str();
+        self.theme_modal.selected = self
+            .theme_modal
+            .entries()
             .iter()
-            .position(|name| *name == self.tui.theme.as_str())
+            .position(|entry| matches!(entry, Entry::Row(name) if *name == active))
             .unwrap_or(0);
         self.theme_modal.preview = None;
     }
 
-    /// The theme picker's keys (T43.1): Up/Down and j/k move the selection onto
-    /// an entry and immediately live-preview it, Esc restores the theme the
-    /// picker opened with and closes, Enter keeps the previewed theme and hands
-    /// it to the driver for persistence; everything else is swallowed.
+    /// The theme picker's keys (T43.1, T116.1): Up/Down and j/k move the
+    /// selection through the visible entries -- the group headers and the
+    /// expanded groups' rows, in list order -- and immediately live-preview
+    /// it when it lands on a row; a header takes only the highlight and
+    /// leaves the preview alone. The acting keys follow the selected entry:
+    /// on a header, Enter/Space toggle the fold and Left folds an expanded
+    /// one while Right unfolds a folded one (the settings overlay's header
+    /// rule, h/l aliasing the arrows); on a row, Enter keeps the previewed
+    /// theme and hands it to the driver for persistence. Esc restores the
+    /// theme the picker opened with and closes; everything else is swallowed.
     fn on_theme_key(&mut self, key: KeyEvent, ctrl: bool) -> Action {
-        match key.code {
+        // h/l alias Left/Right on the headers (the settings overlay's hjkl
+        // convention); j/k are matched directly below.
+        let code = match key.code {
+            KeyCode::Char('h') if !ctrl => KeyCode::Left,
+            KeyCode::Char('l') if !ctrl => KeyCode::Right,
+            code => code,
+        };
+        match code {
             KeyCode::Esc => {
                 self.theme_modal.preview = None;
                 self.theme_modal.open = false;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.preview_theme(self.theme_modal.selected.saturating_sub(1));
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.preview_theme((self.theme_modal.selected + 1).min(THEME_KEYS.len() - 1));
-            }
-            KeyCode::Enter if !ctrl => return self.commit_theme(),
-            _ => {}
+            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
+            code => match self.theme_modal.selected_entry() {
+                Entry::Header(group) => {
+                    if header_fold(code, self.theme_modal.expanded[group]).is_some() {
+                        self.theme_modal.toggle(group);
+                    }
+                }
+                // Enter on a theme row commits; every other key is swallowed.
+                Entry::Row(_) if code == KeyCode::Enter && !ctrl => return self.commit_theme(),
+                Entry::Row(_) => {}
+            },
         }
         Action::None
     }
 
-    /// The theme of the selected row: a built-in name, always parseable; the
-    /// remembered original is a fallback a corrupt list could never hit.
-    fn selected_theme(&self) -> ThemeKey {
-        THEME_KEYS
-            .get(self.theme_modal.selected)
-            .and_then(|name| ThemeKey::parse(name))
-            .unwrap_or(self.theme_modal.original)
+    /// Moves the selection one visible entry (`delta` sign) and previews the
+    /// entry it lands on when it is a row; a header takes only the highlight.
+    /// The visible list contains no entry of a collapsed group, so collapsed
+    /// entries are skipped by construction; the clamp keeps both ends put.
+    fn move_selection(&mut self, delta: isize) {
+        let len = self.theme_modal.entries().len();
+        let target = clamp_focus(self.theme_modal.selected.saturating_add_signed(delta), len);
+        if let Entry::Row(name) = self.theme_modal.entries()[target] {
+            self.theme_modal.preview =
+                Some(ThemeKey::parse(name).unwrap_or(self.theme_modal.original));
+        }
+        self.theme_modal.selected = target;
     }
 
-    /// Points the selection at `row` and immediately previews that theme: the
-    /// whole shell recolours on the next render with nothing persisted and no
-    /// engine round trip, since the theme is a tui-schema field.
-    fn preview_theme(&mut self, row: usize) {
-        self.theme_modal.selected = row;
-        self.theme_modal.preview = Some(self.selected_theme());
+    /// The theme of the selected row, when the selection is on one: a
+    /// built-in name, always parseable. On a header there is no row theme, so
+    /// the remembered original serves as the same safety fallback a corrupt
+    /// list could never hit.
+    fn selected_theme(&self) -> ThemeKey {
+        match self.theme_modal.selected_entry() {
+            Entry::Row(name) => ThemeKey::parse(name).unwrap_or(self.theme_modal.original),
+            Entry::Header(_) => self.theme_modal.original,
+        }
+    }
+
+    /// Points the selection at visible entry `index` and immediately previews
+    /// that theme when it is a row: the whole shell recolours on the next
+    /// render with nothing persisted and no engine round trip, since the
+    /// theme is a tui-schema field. A header takes only the highlight; the
+    /// preview stays what it was.
+    fn preview_entry(&mut self, index: usize) {
+        let len = self.theme_modal.entries().len();
+        self.theme_modal.selected = clamp_focus(index, len);
+        self.theme_modal.preview = match self.theme_modal.selected_entry() {
+            Entry::Row(name) => Some(ThemeKey::parse(name).unwrap_or(self.theme_modal.original)),
+            Entry::Header(_) => self.theme_modal.preview,
+        };
     }
 
     /// The Enter path: keep the currently previewed theme active, close the
@@ -1047,24 +1130,30 @@ impl App {
         self.status = Some(error);
     }
 
-    /// The theme picker's mouse handling (T43.1): the pointer moving onto a row
-    /// moves the selection there and previews it, and a click on a row previews
-    /// and then commits -- exactly like hovering plus Enter. A click on one of
-    /// the footer's buttons runs that button's key (T59.1), and a click on the
-    /// title row's close button runs the picker's Esc key -- the previewed
+    /// The theme picker's mouse handling (T43.1, T116.1): the pointer moving
+    /// onto a visible entry moves the selection there and previews it when it
+    /// is a row -- a header takes only the highlight -- and a click on a row
+    /// previews and then commits, exactly like hovering plus Enter, while a
+    /// click on a header toggles its fold and commits nothing. A click on one
+    /// of the footer's buttons runs that button's key (T59.1), and a click on
+    /// the title row's close button runs the picker's Esc key -- the previewed
     /// theme is dropped and the opening one restored (T66.1). Events outside
-    /// the rows and every other kind are swallowed, so nothing underneath
-    /// scrolls or focuses.
+    /// the visible entries and every other kind are swallowed, so nothing
+    /// underneath scrolls or focuses.
     fn on_theme_mouse(&mut self, mouse: MouseEvent) -> Action {
         if close_clicked(&mouse, self.theme_modal.close.get()) {
             return self.on_theme_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false);
         }
         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let row = theme_row_at(position, self.theme_modal.area.get());
+        let row = theme_row_at(
+            position,
+            self.theme_modal.area.get(),
+            self.theme_modal.entries().len(),
+        );
         match mouse.kind {
             MouseEventKind::Moved => {
                 if let Some(row) = row {
-                    self.preview_theme(row);
+                    self.preview_entry(row);
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -1078,8 +1167,14 @@ impl App {
                     return self.on_theme_key(KeyEvent::new(code, KeyModifiers::NONE), false);
                 }
                 if let Some(row) = row {
-                    self.preview_theme(row);
-                    return self.commit_theme();
+                    match self.theme_modal.entries()[row] {
+                        // A header click folds its group; it never commits.
+                        Entry::Header(group) => self.theme_modal.toggle(group),
+                        Entry::Row(_) => {
+                            self.preview_entry(row);
+                            return self.commit_theme();
+                        }
+                    }
                 }
             }
             _ => {}
@@ -1522,7 +1617,7 @@ impl App {
     /// edits drafts, not the live settings), otherwise the engine-reported readout
     /// for daemon fields and the shell's tui mirror for tui fields (`truecolor` as
     /// its auto/on/off choice).
-    pub(crate) fn setting_value(&self, entry: Entry) -> Option<SettingValue> {
+    pub(crate) fn setting_value(&self, entry: Entry<&'static Row>) -> Option<SettingValue> {
         let Entry::Row(row) = entry else {
             return None;
         };
@@ -1702,4 +1797,141 @@ fn draft_display(key: &str, value: &SettingValue) -> SettingValue {
         );
     }
     value.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: vec![],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: BTreeMap::new(),
+                pipeline: PipelineState::today(),
+                recent: vec![],
+            },
+            "0.1.0".into(),
+        )
+    }
+
+    fn opened() -> App {
+        let mut app = app();
+        app.open_theme();
+        app
+    }
+
+    fn press(app: &mut App, code: KeyCode) -> Action {
+        app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn entries_of(app: &App) -> Vec<Entry<&'static str>> {
+        app.theme_modal.entries()
+    }
+
+    /// The picker's structure (T116.1): with both groups expanded, the visible
+    /// list is the Dark header, the dark themes, the Light header and the
+    /// light themes, in `theme_modal_groups` order.
+    #[test]
+    fn the_picker_lists_two_groups_with_all_entries_visible() {
+        let app = opened();
+        let groups = theme_modal_groups();
+        let mut expected = vec![Entry::Header(0)];
+        expected.extend(groups[0].1.iter().map(|name| Entry::Row(*name)));
+        expected.push(Entry::Header(1));
+        expected.extend(groups[1].1.iter().map(|name| Entry::Row(*name)));
+        assert_eq!(expected.len(), 13, "two headers plus the eleven built-ins");
+        assert_eq!(entries_of(&app), expected);
+        assert_eq!(entries_of(&app)[0], Entry::Header(0));
+        assert_eq!(entries_of(&app)[7], Entry::Header(1));
+        assert_eq!(app.theme_modal.expanded, [true, true]);
+    }
+
+    /// Toggling a header hides and shows its entries, and the selection stays
+    /// on a visible entry (clamped into the shortened list).
+    #[test]
+    fn toggling_a_header_hides_and_shows_its_entries() {
+        let mut app = opened();
+        let is_dark = |entry: &Entry<&'static str>| match entry {
+            Entry::Row(name) => ThemeKey::parse(name).is_some_and(ThemeKey::is_dark),
+            Entry::Header(_) => false,
+        };
+
+        // Folding Dark leaves its header, the Light header and the light rows.
+        app.theme_modal.toggle(0);
+        let entries = entries_of(&app);
+        assert_eq!(entries.len(), 7);
+        assert!(!entries.iter().any(is_dark), "no dark row stays visible");
+        assert_eq!(entries[0], Entry::Header(0));
+        assert_eq!(entries[1], Entry::Header(1));
+        // Unfolding brings every dark row back.
+        app.theme_modal.toggle(0);
+        assert_eq!(entries_of(&app).len(), 13);
+
+        // Folding Light is symmetric: the two headers and the dark rows.
+        app.theme_modal.toggle(1);
+        let entries = entries_of(&app);
+        assert_eq!(entries.len(), 8);
+        assert_eq!(entries[7], Entry::Header(1));
+        assert!(entries[1..7].iter().all(is_dark));
+        app.theme_modal.toggle(1);
+        assert_eq!(entries_of(&app).len(), 13);
+
+        // A selection past the shortened list clamps onto the last entry.
+        app.theme_modal.selected = 12;
+        app.theme_modal.toggle(0);
+        assert_eq!(app.theme_modal.selected, 6);
+        app.theme_modal.toggle(0);
+        assert_eq!(entries_of(&app).len(), 13);
+    }
+
+    /// Navigation walks the visible list only: entries of a collapsed group
+    /// are never landed on, and moves that would leave the list clamp.
+    #[test]
+    fn collapsed_entries_are_skipped_during_navigation() {
+        let mut app = opened();
+        assert_eq!(app.theme_modal.selected, 1, "the active theme's row");
+
+        // Fold Dark from its header.
+        assert_eq!(press(&mut app, KeyCode::Up), Action::None);
+        assert_eq!(app.theme_modal.selected, 0);
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert_eq!(app.theme_modal.expanded, [false, true]);
+
+        // Down from the Dark header lands on the Light header -- never on a
+        // hidden dark row -- and the preview is untouched on a header.
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        assert_eq!(app.theme_modal.selected, 1);
+        assert_eq!(app.theme_modal.preview, None);
+        // The next Down lands on the first light row and previews it.
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        assert_eq!(app.theme_modal.selected, 2);
+        assert_eq!(app.theme_modal.preview, Some(ThemeKey::AtomOneLight));
+        // Up from a light row lands back on the Light header, not a dark row.
+        assert_eq!(press(&mut app, KeyCode::Up), Action::None);
+        assert_eq!(app.theme_modal.selected, 1);
+        assert_eq!(app.theme_modal.preview, Some(ThemeKey::AtomOneLight));
+
+        // With both groups folded, navigation moves only between the headers
+        // and clamps at both ends.
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert_eq!(app.theme_modal.expanded, [false, false]);
+        for _ in 0..3 {
+            assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+            assert!(app.theme_modal.selected <= 1);
+        }
+        assert_eq!(app.theme_modal.selected, 1);
+        for _ in 0..3 {
+            assert_eq!(press(&mut app, KeyCode::Up), Action::None);
+            assert!(app.theme_modal.selected <= 1);
+        }
+        assert_eq!(app.theme_modal.selected, 0);
+    }
 }

@@ -78,6 +78,20 @@ impl Theme {
             Self::GruvboxLight => "gruvbox_light",
         }
     }
+
+    /// Whether the theme is a dark variant: the default `dark` built-in and the
+    /// five dark palettes. The theme picker's modal groups on this (T114.1).
+    pub fn is_dark(self) -> bool {
+        matches!(
+            self,
+            Self::Dark
+                | Self::AtomOneDark
+                | Self::TokyoNightDark
+                | Self::CatppuccinMocha
+                | Self::SolarizedDark
+                | Self::GruvboxDark
+        )
+    }
 }
 
 impl fmt::Display for Theme {

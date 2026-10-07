@@ -58,6 +58,32 @@ impl Git {
             .filter(|sha| !sha.is_empty())
     }
 
+    /// The commit log's subjects, newest first: `(short sha, subject)` pairs,
+    /// split at the first tab. Empty outside a repository.
+    pub async fn log_subjects(&self) -> Vec<(String, String)> {
+        match self.run(&["log", "--format=%h%x09%s"]).await {
+            Some(out) => String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let (sha, subject) = line.split_once('\t')?;
+                    (!sha.is_empty() && !subject.is_empty())
+                        .then(|| (sha.to_string(), subject.to_string()))
+                })
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The short SHA of `sha`'s parent, or `None` for a root commit or a failure.
+    pub async fn parent_sha(&self, sha: &str) -> Option<String> {
+        let parent = format!("{sha}^");
+        let out = self.run(&["rev-parse", "--short", &parent]).await?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .filter(|parent| !parent.is_empty())
+    }
+
     /// The changed files of the working tree: the `git status --porcelain` names, plus, when `base` is
     /// given, the names that differ from it -- so a batch review's changed set
     /// spans every commit of the group. Returns an empty vector outside a
@@ -231,6 +257,36 @@ mod tests {
         git.commit_all(CommitKind::Feat, "T1.1", "first").await;
         let sha = git.head_sha().await.unwrap();
         assert!(!sha.is_empty());
+    }
+
+    #[tokio::test]
+    async fn log_subjects_and_parent_sha_walk_the_history() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let git = Git::new(dir.path());
+        assert!(git.log_subjects().await.is_empty(), "no commit yet");
+        assert!(git.parent_sha("HEAD").await.is_none(), "no commit yet");
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        git.commit_all(CommitKind::Feat, "T1.1", "first").await;
+        std::fs::write(dir.path().join("b.txt"), "b").unwrap();
+        git.commit_all(CommitKind::Wip, "T1.2", "second").await;
+        // Newest first, the short sha joined to the subject at a tab.
+        let log = git.log_subjects().await;
+        assert_eq!(log.len(), 3, "{log:?}");
+        assert_eq!(log[0].1, "WIP(T1.2): second");
+        assert_eq!(log[1].1, "feat(T1.1): first");
+        assert_eq!(log[2].1, "chore: initial commit");
+        // The parent of the newest commit is the one before it; the initial
+        // commit is the root and has none.
+        assert_eq!(
+            git.parent_sha(&log[0].0).await.as_deref(),
+            Some(log[1].0.as_str())
+        );
+        assert_eq!(
+            git.parent_sha(&log[2].0).await,
+            None,
+            "the root commit has no parent"
+        );
     }
 
     #[tokio::test]

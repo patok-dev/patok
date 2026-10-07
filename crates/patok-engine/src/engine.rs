@@ -1072,7 +1072,8 @@ impl Engine {
         let cancel = CancellationToken::new();
         state.cancel = cancel.clone();
         // A new session starts a new batch-review group: the same leading number recurring after a different task ran
-        // starts a fresh group with a fresh base.
+        // starts a fresh group with a fresh base, and an interrupted group's
+        // base is re-derived from the commit history (see `note_group`).
         state.group_number = None;
         state.group_base = None;
         state.current_task = Some(task.id.clone());
@@ -2120,9 +2121,13 @@ impl Engine {
     }
 
     /// Records the task's batch-review group: a contiguous run of same-leading-number task IDs in execution
-    /// order. A changed number starts a new group and captures the current
-    /// HEAD as its base, so the group's last review diffs across every commit
-    /// made for the group. The group state is reset at each session start.
+    /// order. A changed number starts a new group and derives its base from
+    /// the commit history, so the group's last review diffs across every
+    /// commit made for the group -- also across a restart of an interrupted
+    /// group (a failed review left the group's commits in the log; a rerun
+    /// must still review them all). The group state is reset at each session
+    /// start, which makes the re-derivation below re-run for the session's
+    /// first task.
     async fn note_group(&self, task_id: &str) {
         let number = review::leading_number(task_id);
         {
@@ -2131,10 +2136,44 @@ impl Engine {
                 return;
             }
         }
-        let base = self.git().head_sha().await;
+        let base = self.group_base(number.as_deref()).await;
         let mut state = self.state();
         state.group_number = number;
         state.group_base = base;
+    }
+
+    /// The base a new batch-review group diffs against. When the newest
+    /// commits already carry the group's leading number -- a rerun of the
+    /// group's last task after its review failed, or a soft stop mid-group --
+    /// the base is the parent of the oldest contiguous such commit, so the
+    /// group's diff span survives the session restart; when the group's
+    /// first commit is the root, git's empty tree stands in. Otherwise (a
+    /// fresh group: no same-number commit is at the top of the history, the
+    /// same leading number recurring after a different task ran) the base is
+    /// the current HEAD, exactly as before.
+    async fn group_base(&self, number: Option<&str>) -> Option<String> {
+        let Some(number) = number else {
+            return self.git().head_sha().await;
+        };
+        let git = self.git();
+        let log = git.log_subjects().await;
+        let run: Vec<&str> = log
+            .iter()
+            .take_while(|(_, subject)| {
+                review::subject_task_id(subject)
+                    .and_then(review::leading_number)
+                    .as_deref()
+                    == Some(number)
+            })
+            .map(|(sha, _)| sha.as_str())
+            .collect();
+        match run.last() {
+            Some(oldest) => git
+                .parent_sha(oldest)
+                .await
+                .or_else(|| Some(String::from("4b825dc642cb6eb9a060e54bf8d69288fbee4904"))),
+            None => git.head_sha().await,
+        }
     }
 
     /// Writes the builder's build claims to the project data directory as

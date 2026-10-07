@@ -3899,6 +3899,215 @@ async fn batch_review_defers_every_task_but_the_last_and_the_last_diff_spans_the
     assert!(reviewer_prompt.contains("## Build Claims"));
 }
 
+/// T107.1: the batch review passes the group's last task, ticks it, and the
+/// orchestrator advances to the next group's task.
+#[tokio::test]
+async fn batch_review_passes_the_groups_last_task_and_advances_to_the_next_group() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n- [ ] T2.1: add the third file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // Every task finished done in one session, the two groups' reviews included.
+    assert!(events.iter().all(|e| !matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Failed | TaskOutcome::Cancelled,
+            ..
+        }
+    )));
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T2.1", "review"]);
+    // The group's last task and the next group's task are ticked with their
+    // reviews run; the deferred tasks carry the build-only token.
+    let file = fixture.tasks_file();
+    assert!(
+        file.contains("- [x] T1.1: [--.B-] add the first file"),
+        "{file}"
+    );
+    assert!(
+        file.contains("- [x] T1.2: [--.BR] add the second file"),
+        "{file}"
+    );
+    assert!(
+        file.contains("- [x] T2.1: [--.BR] add the third file"),
+        "{file}"
+    );
+    let log = fixture.git(&["log", "--format=%s"]);
+    assert!(log.contains("feat(T1.1)"), "{log}");
+    assert!(log.contains("feat(T1.2)"), "{log}");
+    assert!(log.contains("feat(T2.1)"), "{log}");
+    // T2.1's group base is fresh: its review sees only its own file.
+    let second_reviewer_prompt = &sessions[4].prompt;
+    assert!(
+        second_reviewer_prompt.contains("third.txt"),
+        "{second_reviewer_prompt}"
+    );
+    assert!(
+        !second_reviewer_prompt.contains("first.txt"),
+        "the second group's diff should not span the first group: {second_reviewer_prompt}"
+    );
+}
+
+/// T107.1: the loop the fix removes. The group's last task fails its review
+/// once (the WIP commit preserves the work, the line stays unchecked), and
+/// the restart that reruns it must restore the group's diff base from the
+/// commit history, so the rerun's review has the whole group to review, can
+/// pass, tick the task, and advance to the next group.
+#[tokio::test]
+async fn a_restart_after_a_failed_review_of_a_groups_last_task_passes_the_rerun_and_advances() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n- [ ] T2.1: add the third file\n";
+    let fixture = Fixture::new(tasks);
+    // The scripts cover both runs: the mock indexes them by the global session
+    // counter across start_build calls on the same instance.
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        // The rerun's builder changes nothing new: its work is in the WIP commit.
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The first run: T1.2's review failed, the task stayed pending with the
+    // review-run unvalidated token, and the WIP commit preserved the work.
+    assert!(events.iter().any(|e| matches!(
+        e,
+        EngineEvent::TaskFinished {
+            id,
+            outcome: TaskOutcome::Failed,
+            ..
+        } if id == "T1.2"
+    )));
+    let file = fixture.tasks_file();
+    assert!(
+        file.contains("- [ ] T1.2: [--.BR!] add the second file"),
+        "{file}"
+    );
+    let log = fixture.git(&["log", "--format=%s"]);
+    assert!(log.contains("WIP(T1.2)"), "{log}");
+    assert!(!log.contains("feat(T2.1)"), "{log}");
+
+    // The restart (what the TUI's Enter and a fresh headless run do).
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The rerun's review ran with the group's whole diff restored: no empty
+    // changed-files gate, and the reviewer prompt spans the group's commits.
+    assert!(
+        !notices(&events)
+            .iter()
+            .any(|(level, text)| *level == NoticeLevel::Error
+                && text == "T1.2: no changed files to review"),
+        "{:?}",
+        notices(&events)
+    );
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["T1.1", "T1.2", "review", "T1.2", "review", "T2.1", "review"]
+    );
+    let rerun_reviewer_prompt = &sessions[4].prompt;
+    assert!(
+        rerun_reviewer_prompt.contains("first.txt"),
+        "the restored group base should span the group's first commit: {rerun_reviewer_prompt}"
+    );
+    assert!(
+        rerun_reviewer_prompt.contains("second.txt"),
+        "{rerun_reviewer_prompt}"
+    );
+    // T1.2 passed, was ticked, committed as feat, and the orchestrator
+    // advanced to T2.1, which finished its own group too.
+    let file = fixture.tasks_file();
+    assert!(
+        file.contains("- [x] T1.2: [--.BR] add the second file"),
+        "{file}"
+    );
+    assert!(
+        file.contains("- [x] T2.1: [--.BR] add the third file"),
+        "{file}"
+    );
+    let log = fixture.git(&["log", "--format=%s"]);
+    assert!(log.contains("feat(T1.2)"), "{log}");
+    assert!(log.contains("feat(T2.1)"), "{log}");
+}
+
+/// T107.1: the same restart recovery for a single-task group, whose failed
+/// review leaves the group's only WIP commit at HEAD.
+#[tokio::test]
+async fn a_restart_after_a_failed_review_of_a_single_task_group_passes_the_rerun() {
+    let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("greeting.txt", "hello\n", "none"),
+        review_fail(),
+        builder_with_claims("greeting.txt", "hello\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+    assert!(events.iter().any(|e| matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Failed,
+            ..
+        }
+    )));
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [ ] T1.1: [--.BR!] add the greeting file")
+    );
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(
+        !notices(&events)
+            .iter()
+            .any(|(level, text)| *level == NoticeLevel::Error
+                && text == "T1.1: no changed files to review"),
+        "{:?}",
+        notices(&events)
+    );
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "review", "T1.1", "review"]);
+    assert!(
+        sessions[3].prompt.contains("greeting.txt"),
+        "{}",
+        sessions[3].prompt
+    );
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.1: [--.BR] add the greeting file")
+    );
+    let log = fixture.git(&["log", "--format=%s"]);
+    assert!(log.contains("feat(T1.1)"), "{log}");
+}
+
 #[tokio::test]
 async fn a_multipass_review_reviews_each_file_then_integrates() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");

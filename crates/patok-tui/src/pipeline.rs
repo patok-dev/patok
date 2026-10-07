@@ -157,10 +157,10 @@ pub fn tile_status(state: &PipelineState, id: TileId) -> TileStatus {
 /// SHIP, which the spec colours green while shipping.
 pub fn tile_style(id: TileId, status: TileStatus, theme: Theme) -> Style {
     let colour = match status {
-        TileStatus::Muted | TileStatus::Pending => theme.rail_muted,
-        TileStatus::Done => theme.rail_done,
-        TileStatus::Active if id == TileId::Ship => theme.rail_done,
-        TileStatus::Active => theme.rail_active,
+        TileStatus::Muted | TileStatus::Pending => theme.muted_text,
+        TileStatus::Done => theme.success,
+        TileStatus::Active if id == TileId::Ship => theme.success,
+        TileStatus::Active => theme.accent,
     };
     if status == TileStatus::Active {
         Style::new().fg(colour).add_modifier(Modifier::BOLD)
@@ -258,7 +258,7 @@ pub fn render_rail(frame: &mut Frame, app: &App, area: Rect) {
                 if detail_rect.y < area.y.saturating_add(area.height) {
                     frame.render_widget(
                         Paragraph::new(label)
-                            .style(Style::new().fg(theme.rail_muted))
+                            .style(Style::new().fg(theme.muted_text))
                             .wrap(ratatui::widgets::Wrap { trim: true }),
                         detail_rect,
                     );
@@ -268,7 +268,7 @@ pub fn render_rail(frame: &mut Frame, app: &App, area: Rect) {
     }
     for rect in rail_connector_rects(state, area, mode) {
         frame.render_widget(
-            Paragraph::new(Span::styled("↓", Style::new().fg(theme.rail_connector))),
+            Paragraph::new(Span::styled("↓", Style::new().fg(theme.muted_text))),
             rect,
         );
     }
@@ -447,23 +447,23 @@ mod tests {
         let theme = Theme::DARK;
         for status in [TileStatus::Muted, TileStatus::Pending] {
             let style = tile_style(TileId::Plan, status, theme);
-            assert_eq!(style.fg, Some(theme.rail_muted));
+            assert_eq!(style.fg, Some(theme.muted_text));
             assert!(!style.add_modifier.contains(Modifier::BOLD));
         }
         let done = tile_style(TileId::Plan, TileStatus::Done, theme);
-        assert_eq!(done.fg, Some(theme.rail_done));
+        assert_eq!(done.fg, Some(theme.success));
         assert!(!done.add_modifier.contains(Modifier::BOLD));
         let active = tile_style(TileId::Plan, TileStatus::Active, theme);
-        assert_eq!(active.fg, Some(theme.rail_active));
+        assert_eq!(active.fg, Some(theme.accent));
         assert!(active.add_modifier.contains(Modifier::BOLD));
         // SHIP is green while shipping, not accent.
         let shipping = tile_style(TileId::Ship, TileStatus::Active, theme);
-        assert_eq!(shipping.fg, Some(theme.rail_done));
+        assert_eq!(shipping.fg, Some(theme.success));
         assert!(shipping.add_modifier.contains(Modifier::BOLD));
         // DISCOVER is accent while a round runs.
         assert_eq!(
             tile_style(TileId::Discover, TileStatus::Active, theme).fg,
-            Some(theme.rail_active)
+            Some(theme.accent)
         );
     }
 

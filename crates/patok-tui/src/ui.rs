@@ -1,6 +1,6 @@
 //! Rendering. Reads the [`App`], draws a frame, never blocks on I/O.
 
-use patok_core::config::{SettingValue, THEME_KEYS, Theme as ThemeKey};
+use patok_core::config::SettingValue;
 use patok_core::event::{Phase, SessionOutcome};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -11,9 +11,11 @@ use std::time::Duration;
 
 use crate::app::{App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOICES};
 use crate::markdown::markdown_lines;
-use crate::overlay::{Entry, FieldKind, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset};
+use crate::overlay::{
+    Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset,
+};
 use crate::pipeline::{rail_width, render_rail};
-use crate::theme::Theme;
+use crate::theme::{Theme, theme_modal_groups};
 
 /// Entry rows indent this many spaces past the focus marker, nesting them under
 /// their section header; headers keep the bare marker margin.
@@ -35,6 +37,15 @@ pub const INJECT_WATERMARK: &str = "Type the task; it lands as an unchecked task
 /// for the built-in themes, and is a no-op for the default one.
 fn base_style(theme: Theme) -> Style {
     Style::new().fg(theme.foreground).bg(theme.background)
+}
+
+/// The selected row's style shared by every selection-bearing modal (T118.1):
+/// the highlighted-text foreground on the normal modal background, bold --
+/// only the foreground switches, the background never does.
+fn selected_row_style(theme: Theme) -> Style {
+    base_style(theme)
+        .fg(theme.highlighted_text)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -183,12 +194,12 @@ pub fn close_button_rect(area: Rect) -> Rect {
 fn button_line(key: &str, label: &str, theme: Theme) -> Line<'static> {
     let mut spans = vec![Span::styled(
         format!(" [ {key} ] "),
-        Style::new().fg(theme.button_accent),
+        Style::new().fg(theme.highlighted_text),
     )];
     if !label.is_empty() {
         spans.push(Span::styled(
             format!("{label} "),
-            Style::new().fg(theme.foreground),
+            Style::new().fg(theme.normal_text),
         ));
     }
     Line::from(spans)
@@ -283,7 +294,7 @@ fn render_hints_strip(frame: &mut Frame, hints_row: Option<Rect>, hints: &[&str]
     if fitted.is_empty() {
         return;
     }
-    frame.render_widget(Paragraph::new(hint_line(&fitted, theme.modal_footer)), row);
+    frame.render_widget(Paragraph::new(hint_line(&fitted, theme.muted_text)), row);
 }
 
 /// Every button's rectangle on a modal's bottom line (T59.1): the buttons
@@ -327,7 +338,7 @@ fn render_modal_footer(
     // the button zone, so the two kinds stay visually distinguishable.
     let hint_zone = Rect::new(footer.x, footer.y, footer.width.saturating_sub(used + 2), 1);
     frame.render_widget(
-        Paragraph::new(hint_line(hints, theme.modal_footer)),
+        Paragraph::new(hint_line(hints, theme.muted_text)),
         hint_zone,
     );
     for ((key, label), rect) in buttons.iter().zip(&rects) {
@@ -414,14 +425,14 @@ fn render_settings_overlay(frame: &mut Frame, app: &App) {
         Some((text, StatusLevel::Error)) => frame.render_widget(
             Paragraph::new(Line::styled(
                 text.clone(),
-                Style::new().fg(theme.settings_error),
+                Style::new().fg(theme.highlighted_text),
             )),
             status_line,
         ),
         Some((text, StatusLevel::Info)) => frame.render_widget(
             Paragraph::new(Line::styled(
                 text.clone(),
-                Style::new().fg(theme.settings_info),
+                Style::new().fg(theme.muted_text),
             )),
             status_line,
         ),
@@ -452,7 +463,7 @@ fn render_settings_help(frame: &mut Frame, help: Rect, app: &App, theme: Theme) 
         .style(base_style(theme))
         .title_top(Line::from(format!(" {label} ")).centered());
     frame.render_widget(
-        Paragraph::new(Line::styled(text, Style::new().fg(theme.settings_help)))
+        Paragraph::new(Line::styled(text, Style::new().fg(theme.muted_text)))
             .wrap(Wrap { trim: true }),
         block.inner(help),
     );
@@ -473,9 +484,10 @@ pub fn settings_confirm_area(screen: Rect) -> Rect {
 }
 
 /// The unsaved-changes dialog (Esc or q on a dirty overlay): a centered
-/// " Unsaved changes " modal with the three choices as a vertical list and a
-/// two-zone bottom line of hints left, buttons right (T59.1), styled like the
-/// stop dialog. Rendered on top of everything else.
+/// " Unsaved changes " modal with the three choices as a vertical list --
+/// the selected choice in the shared selected-row style (T118.1) -- and a
+/// two-zone bottom line of hints left, buttons right (T59.1), styled like
+/// the stop dialog. Rendered on top of everything else.
 fn render_settings_confirm(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = settings_confirm_area(frame.area());
@@ -500,11 +512,15 @@ fn render_settings_confirm(frame: &mut Frame, app: &App) {
                 Span::raw(choice.label()),
                 Span::styled(
                     format!(" -- {}", choice.detail()),
-                    Style::new().fg(theme.choice_detail),
+                    Style::new().fg(if focused {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
                 ),
             ]);
             if focused {
-                line = line.style(Style::new().add_modifier(Modifier::BOLD));
+                line = line.style(selected_row_style(theme));
             }
             line
         })
@@ -522,13 +538,31 @@ fn render_settings_confirm(frame: &mut Frame, app: &App) {
     );
 }
 
+/// One group header line: the focus marker, the fold glyph (▾ expanded, ▸
+/// folded) and the title, bold -- shared by the settings overlay's sections
+/// and the theme picker's Dark/Light groups (T116.1), so the fold glyph
+/// logic exists in one place.
+fn group_header_line(marker: &str, expanded: bool, title: &str) -> Line<'static> {
+    Line::styled(
+        format!("{marker}{} {title}", if expanded { '▾' } else { '▸' }),
+        Style::new().add_modifier(Modifier::BOLD),
+    )
+}
+
 /// One overlay row as a rendered line: section headers carry the collapse marker,
 /// booleans a checkbox, enums their current choice in cycle markers, numbers and text
 /// their value (or the live editor buffer while it is open), read-only rows a muted
 /// report. Entry rows render indented past the focus marker so they nest under their
 /// section header; headers keep the bare marker margin. The
-/// focused row carries a cursor marker and renders bold.
-fn settings_row_line(app: &App, index: usize, entry: &Entry, width: usize) -> Line<'static> {
+/// focused row carries a cursor marker and renders in the shared selected-row
+/// style (T118.1): the highlighted-text foreground on the normal modal
+/// background, bold.
+fn settings_row_line(
+    app: &App,
+    index: usize,
+    entry: &Entry<&'static Row>,
+    width: usize,
+) -> Line<'static> {
     let theme = app.theme();
     let focused = index == app.overlay.focus;
     let marker = if focused { "▶ " } else { "  " };
@@ -540,10 +574,7 @@ fn settings_row_line(app: &App, index: usize, entry: &Entry, width: usize) -> Li
                 .get(*section)
                 .map(|section| section.title)
                 .unwrap_or_default();
-            Line::styled(
-                format!("{marker}{} {title}", if expanded { '▾' } else { '▸' }),
-                Style::new().add_modifier(Modifier::BOLD),
-            )
+            group_header_line(marker, expanded, title)
         }
         Entry::Row(row) => {
             let editor = app
@@ -560,7 +591,11 @@ fn settings_row_line(app: &App, index: usize, entry: &Entry, width: usize) -> Li
                     };
                     Line::styled(
                         format!("{row_marker}{}: {value}", row.label),
-                        Style::new().fg(theme.settings_readonly),
+                        Style::new().fg(if focused {
+                            theme.highlighted_text
+                        } else {
+                            theme.muted_text
+                        }),
                     )
                 }
                 FieldKind::Bool => {
@@ -613,7 +648,7 @@ fn settings_row_line(app: &App, index: usize, entry: &Entry, width: usize) -> Li
         }
     };
     if focused {
-        line = line.style(Style::new().add_modifier(Modifier::BOLD));
+        line = line.style(selected_row_style(theme));
     }
     line
 }
@@ -640,6 +675,8 @@ fn enum_display(app: &App, key: &str, values: &[&str]) -> String {
 }
 
 /// A hand-rendered scrollbar on the body's right edge when the rows overflow.
+/// The thumb wears the theme's `highlighted_text` class and the rail its
+/// `scrollbar_rail` class (T121.1).
 fn render_scrollbar(frame: &mut Frame, theme: Theme, body: Rect, start: usize, total: usize) {
     let height = usize::from(body.height.max(1));
     if total <= height {
@@ -653,7 +690,7 @@ fn render_scrollbar(frame: &mut Frame, theme: Theme, body: Rect, start: usize, t
         if let Some(cell) = frame.buffer_mut().cell_mut((col, body.y + i as u16)) {
             cell.set_symbol(if in_thumb { "█" } else { "│" });
             cell.set_style(if in_thumb {
-                Style::new().fg(theme.scrollbar_thumb)
+                Style::new().fg(theme.highlighted_text)
             } else {
                 Style::new().fg(theme.scrollbar_rail)
             });
@@ -705,7 +742,7 @@ fn render_dialog(frame: &mut Frame, app: &App) {
         frame.render_widget(
             Paragraph::new(Line::styled(
                 message.clone(),
-                Style::new().fg(theme.dialog_status),
+                Style::new().fg(theme.highlighted_text),
             )),
             dialog_status,
         );
@@ -721,14 +758,12 @@ fn render_dialog(frame: &mut Frame, app: &App) {
     // on the cursor style, or a styled space at the end of a logical line or
     // on an empty one. No cell is added, so the letters around the cursor
     // stay in place while it moves.
-    let cursor_style = Style::new()
-        .fg(theme.cursor_foreground)
-        .bg(theme.cursor_background);
+    let cursor_style = Style::new().fg(theme.contrast_text).bg(theme.accent);
     let mut lines: Vec<Line> = if app.dialog_text.is_empty() {
         // The empty-input watermark (T41.1): a dim hint followed by the block
         // cursor, which keeps the focus indicator visible.
         vec![Line::from(vec![
-            Span::styled(watermark, Style::new().fg(theme.dialog_hint)),
+            Span::styled(watermark, Style::new().fg(theme.muted_text)),
             Span::styled(" ", cursor_style),
         ])]
     } else {
@@ -786,7 +821,8 @@ pub fn stop_area(screen: Rect) -> Rect {
 }
 
 /// The stop dialog (Esc while a build runs, T46.1): a centered " Stop build " modal
-/// with the three choices as a vertical list and a two-zone bottom line of hints
+/// with the three choices as a vertical list -- the selected choice in the shared
+/// selected-row style (T118.1) -- and a two-zone bottom line of hints
 /// left, buttons right (T59.1). Rendered on top of everything else.
 fn render_stop_dialog(frame: &mut Frame, app: &App) {
     let theme = app.theme();
@@ -812,11 +848,15 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
                 Span::raw(choice.label()),
                 Span::styled(
                     format!(" -- {}", choice.detail()),
-                    Style::new().fg(theme.choice_detail),
+                    Style::new().fg(if focused {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
                 ),
             ]);
             if focused {
-                line = line.style(Style::new().add_modifier(Modifier::BOLD));
+                line = line.style(selected_row_style(theme));
             }
             line
         })
@@ -834,12 +874,13 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
     );
 }
 
-/// The theme picker's rect (T43.1): a centered modal, at least 54 columns wide
-/// and 14 rows tall -- the border, the eleven one-line entries and the footer
-/// -- clamped to the screen.
+/// The theme picker's rect (T43.1, T116.1): a centered modal, at least 54
+/// columns wide and tall enough for its full grouped list -- the border (2),
+/// the two group headers, the eleven one-line entries (13 body rows) and the
+/// footer (1), so 16 -- clamped to the screen.
 pub fn theme_area(screen: Rect) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
-    let height = 14.min(screen.height);
+    let height = 16.min(screen.height);
     Rect::new(
         screen.x + (screen.width - width) / 2,
         screen.y + (screen.height - height) / 2,
@@ -848,23 +889,27 @@ pub fn theme_area(screen: Rect) -> Rect {
     )
 }
 
-/// The theme picker's row the pointer sits on (T43.1): the row index when the
-/// position is on one of the body's entry rows, `None` on the border, the
-/// footer or the shell behind the modal. A pure hit-test like `frame_at`.
-pub fn theme_row_at(position: Position, body: Rect) -> Option<usize> {
+/// The theme picker's entry the pointer sits on (T43.1, T116.1): the visible
+/// entry index when the position is on one of the body's visible entry rows,
+/// `None` on the border, the footer, the shell behind the modal or a body row
+/// past the last visible entry (a folded group's hidden area). A pure
+/// hit-test like `frame_at`.
+pub fn theme_row_at(position: Position, body: Rect, visible_len: usize) -> Option<usize> {
     if !body.contains(position) {
         return None;
     }
     let row = usize::from(position.y - body.y);
-    (row < THEME_KEYS.len()).then_some(row)
+    (row < visible_len).then_some(row)
 }
 
-/// The theme picker (the `t` key, T43.1): a centered " Theme " modal listing
-/// the built-in themes, each row rendered in its own theme's colours with a
-/// short colour-swatch strip, a selection marker and a two-zone bottom line
-/// of hints left, buttons right (T59.1).
-/// Rendered on top of everything else; the shell underneath is already
-/// recoloured by the live preview, since `App::theme` resolves it.
+/// The theme picker (the `t` key, T43.1, T116.1): a centered " Theme " modal
+/// listing the built-in themes in two collapsible groups, Dark then Light,
+/// mirroring the settings overlay's grouped list -- each header carries the
+/// fold glyph and toggles its group, the entries nest indented under it.
+/// Every row renders in the currently active theme's classes (T115.1), with
+/// a selection marker and a two-zone bottom line of hints left, buttons
+/// right (T59.1). Rendered on top of everything else; the shell underneath
+/// is already recoloured by the live preview, since `App::theme` resolves it.
 fn render_theme_modal(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = theme_area(frame.area());
@@ -879,10 +924,18 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     app.theme_modal.area.set(body);
-    let lines: Vec<Line> = THEME_KEYS
+    let groups = theme_modal_groups();
+    let entries = app.theme_modal.entries();
+    let width = groups
+        .iter()
+        .flat_map(|(_, names)| names.iter())
+        .map(|name| name.len())
+        .max()
+        .unwrap_or(0);
+    let lines: Vec<Line> = entries
         .iter()
         .enumerate()
-        .map(|(index, name)| theme_row_line(app, index, name))
+        .map(|(index, entry)| theme_row_line(app, index, *entry, &groups, width))
         .collect();
     frame.render_widget(Paragraph::new(lines), body);
     // The bottom line's two zones (T59.1): the preview hints on the left, the
@@ -898,38 +951,65 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
     );
 }
 
-/// One theme entry of the picker (T43.1): the name padded to the list's longest
-/// name and a swatch strip of three cells in each of the theme's signature
-/// colours, all on the entry theme's own background and foreground, so the row
-/// previews the theme itself. The selected row carries the marker and renders
-/// bold.
-fn theme_row_line(app: &App, index: usize, name: &str) -> Line<'static> {
-    let entry = Theme::resolve(ThemeKey::parse(name).unwrap_or_default(), app.tui.truecolor);
+/// One visible entry of the picker (T43.1, T115.1, T116.1): a group header
+/// line -- the marker, the fold glyph and the title, bold -- or a theme
+/// entry, the name indented under its header and padded to the list's
+/// longest name, rendered as a normal list row in the currently active
+/// theme's classes instead of previewing the entry's own palette. The
+/// selected entry carries the marker and renders in `highlighted_text`,
+/// bold, through the shared selected-row style (T118.1).
+fn theme_row_line(
+    app: &App,
+    index: usize,
+    entry: Entry<&'static str>,
+    groups: &[(&'static str, Vec<&'static str>)],
+    width: usize,
+) -> Line<'static> {
+    let theme = app.theme();
     let selected = index == app.theme_modal.selected;
     let marker = if selected { "▶ " } else { "  " };
-    let width = THEME_KEYS.iter().map(|name| name.len()).max().unwrap_or(0);
-    let mut spans = vec![
-        Span::raw(marker),
-        Span::styled(format!("{name:<width$}"), Style::new().fg(entry.foreground)),
-        Span::raw("  "),
-    ];
-    for colour in [
-        entry.thinking,
-        entry.task_running,
-        entry.notice,
-        entry.error,
-        entry.heading,
-    ] {
-        spans.push(Span::styled(
-            "███",
-            Style::new().fg(colour).bg(entry.background),
-        ));
+    match entry {
+        Entry::Header(group) => {
+            let (title, expanded) = groups
+                .get(group)
+                .map(|(title, _)| {
+                    (
+                        *title,
+                        app.theme_modal
+                            .expanded
+                            .get(group)
+                            .copied()
+                            .unwrap_or(false),
+                    )
+                })
+                .unwrap_or(("", false));
+            let style = if selected {
+                selected_row_style(theme)
+            } else {
+                base_style(theme)
+                    .fg(theme.foreground)
+                    .add_modifier(Modifier::BOLD)
+            };
+            group_header_line(marker, expanded, title).style(style)
+        }
+        Entry::Row(name) => {
+            let fg = if selected {
+                theme.highlighted_text
+            } else {
+                theme.normal_text
+            };
+            let row_marker = format!("{marker}{}", " ".repeat(ENTRY_INDENT));
+            let spans = vec![
+                Span::styled(row_marker, Style::new().fg(fg)),
+                Span::styled(format!("{name:<width$}"), Style::new().fg(fg)),
+            ];
+            let mut line = Line::from(spans).style(base_style(theme));
+            if selected {
+                line = line.style(selected_row_style(theme));
+            }
+            line
+        }
     }
-    let mut line = Line::from(spans).style(base_style(entry));
-    if selected {
-        line = line.style(base_style(entry).add_modifier(Modifier::BOLD));
-    }
-    line
 }
 
 /// The provider's display name for the output frame title ("claude" -> "Claude").
@@ -1141,15 +1221,11 @@ pub fn finished_line(agent: &str, outcome: SessionOutcome, duration: Duration) -
 fn render_output(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
     let timer = app.session_elapsed().map(format_elapsed);
-    // Only the agent type name keeps its agent colour (T11.1, T24.1); the
-    // separator, provider, model and timer render in the theme's low-emphasis
-    // detail colour (T37.1). The research agent keeps its own colour too
-    // (T68.1).
-    let title_colour = match app.agent.as_str() {
-        "planner" => theme.frame_title_planner,
-        "research" => theme.frame_title_research,
-        _ => theme.frame_title_builder,
-    };
+    // The agent type name keeps its fixed agent colour in every theme (T11.1,
+    // T24.1, T110.1); the frame title is the one surface that keeps the
+    // fixated name colour (T117.1), and the separator, provider, model and
+    // timer render in the theme's low-emphasis detail colour (T37.1).
+    let title_colour = Theme::agent_name_color(theme, &app.agent);
     let (left, right) = output_title_spans(
         &agent_display(&app.agent),
         provider_display_name(&app.provider),
@@ -1157,7 +1233,7 @@ fn render_output(frame: &mut Frame, app: &App, area: Rect) {
         timer.as_deref(),
         usize::from(area.width.saturating_sub(2)),
         title_colour,
-        theme.frame_title_detail,
+        theme.muted_text,
     );
     let mut block = Block::default()
         .borders(Borders::ALL)
@@ -1196,7 +1272,7 @@ fn render_pane(
         frame.render_widget(
             Paragraph::new(Line::styled(
                 empty.to_string(),
-                Style::new().fg(theme.pane_empty),
+                Style::new().fg(theme.muted_text),
             )),
             inner,
         );
@@ -1220,6 +1296,8 @@ fn render_pane(
 
 /// One logical output line as visual rows: plain text hard-wraps; thinking renders
 /// as markdown first, so headings, emphasis, lists and code blocks show up styled.
+/// Every line, the agent's name inside it included, wears its line kind's colour;
+/// the fixated per-agent name colour reaches only the output frame title (T117.1).
 fn visual_lines(theme: Theme, line: &OutLine, width: usize) -> Vec<Line<'static>> {
     let style = style_of(theme, line.kind);
     if line.kind == LineKind::Thinking {
@@ -1289,7 +1367,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 /// `left` -- wears the theme's low-emphasis detail colour (T67.1).
 fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
-    let detail = Style::new().fg(theme.frame_title_detail);
+    let detail = Style::new().fg(theme.muted_text);
     let done = app.tasks.iter().filter(|t| t.done).count();
     let total = app.tasks.len();
     let left = app.tasks.iter().filter(|t| !t.done).count();
@@ -1327,13 +1405,13 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
         .map(|task| {
             let running = app.current_task.as_deref() == Some(task.id.as_str());
             let (mark, style) = match (task.done, running) {
-                (true, _) => ("✔", Style::new().fg(theme.task_done)),
-                (false, true) => ("▶", Style::new().fg(theme.task_running).bold()),
+                (true, _) => ("✔", Style::new().fg(theme.muted_text)),
+                (false, true) => ("▶", Style::new().fg(theme.success).bold()),
                 (false, false) => ("○", Style::new()),
             };
             let style = if app.is_new_task(&task.id) {
                 Style::new()
-                    .fg(theme.task_new)
+                    .fg(theme.highlighted_text)
                     .bold()
                     .add_modifier(Modifier::REVERSED)
             } else {
@@ -1350,7 +1428,7 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::styled(
                 "no tasks in TASKS.md",
-                Style::new().fg(theme.tasks_empty),
+                Style::new().fg(theme.muted_text),
             )),
             content,
         );
@@ -1371,11 +1449,11 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     // A discovery round runs either on an idle engine or inside a session's empty-queue gap
     // (the phase stays Running for the whole session), so it wins over the phase chips.
     let (label, color) = match (app.stopping, app.phase) {
-        (true, _) => ("STOPPING", theme.chip_stopping),
+        (true, _) => ("STOPPING", theme.highlighted_text),
         (false, _) if app.planning => ("PLANNING", theme.chip_planning),
         (false, _) if app.discovering => ("DISCOVERING", theme.chip_discovering),
-        (false, Phase::Running) => ("RUNNING", theme.chip_running),
-        (false, Phase::Startup) => ("STOPPED", theme.chip_stopped),
+        (false, Phase::Running) => ("RUNNING", theme.success),
+        (false, Phase::Startup) => ("STOPPED", theme.chip_neutral),
     };
     let chip = format!(" {label} ");
     // The run-mode chip: a quieter second chip mirroring the engine-reported readout,
@@ -1386,12 +1464,12 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     let fits_mode = chip.chars().count() + mode.chars().count() <= width;
     let mut spans = vec![Span::styled(
         chip,
-        Style::new().fg(theme.chip_text).bg(color).bold(),
+        Style::new().fg(theme.contrast_text).bg(color).bold(),
     )];
     if fits_mode {
         spans.push(Span::styled(
             mode,
-            Style::new().fg(theme.chip_text).bg(theme.run_mode_chip),
+            Style::new().fg(theme.contrast_text).bg(theme.chip_neutral),
         ));
     }
     let left_width: usize = spans.iter().map(|span| span.content.chars().count()).sum();
@@ -1402,10 +1480,15 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
             // chip, right-aligned padding when it fits -- none when it would
             // underflow, so the Paragraph truncates at the right edge.
             let pad = width.saturating_sub(left_width + 1 + message.chars().count());
-            vec![
-                Span::raw(" ".repeat(pad + 1)),
-                Span::styled(message.clone(), Style::new().fg(theme.status_message)),
-            ]
+            let mut spans = vec![Span::raw(" ".repeat(pad + 1))];
+            // The message renders as one piece in the highlighted-text colour,
+            // the agent's display name inside it included (T117.1); the
+            // fixated per-agent name colour reaches only the frame title.
+            spans.push(Span::styled(
+                message.clone(),
+                Style::new().fg(theme.highlighted_text),
+            ));
+            spans
         }
         None => {
             let mut keys = Vec::new();
@@ -1454,11 +1537,14 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
             for (key, label) in kept {
                 right.push(Span::styled(
                     format!(" {key} "),
-                    Style::new().bold().fg(theme.chip_text).bg(theme.status_key),
+                    Style::new()
+                        .bold()
+                        .fg(theme.contrast_text)
+                        .bg(theme.chip_neutral),
                 ));
                 right.push(Span::styled(
                     format!(" {label} "),
-                    Style::new().fg(theme.status_label),
+                    Style::new().fg(theme.muted_text),
                 ));
             }
             right
@@ -1466,4 +1552,235 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     };
     spans.extend(right);
     Paragraph::new(Line::from(spans))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+    use patok_core::event::{Phase, Snapshot};
+    use patok_core::pipeline::PipelineState;
+    use patok_core::task::Task;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
+
+    /// Every built-in theme variant, in `THEME_KEYS` order.
+    fn every_key() -> Vec<ThemeKey> {
+        THEME_KEYS
+            .iter()
+            .map(|key| ThemeKey::parse(key).expect("THEME_KEYS holds valid names"))
+            .collect()
+    }
+
+    /// A minimal app with one pending task, in the idle phase.
+    fn app_with_one_task() -> App {
+        App::new(
+            Snapshot {
+                project_dir: String::new(),
+                phase: Phase::Startup,
+                tasks: vec![Task {
+                    id: "T1.1".into(),
+                    origin: Some('T'),
+                    description: String::new(),
+                    done: false,
+                    line: 1,
+                    raw: String::new(),
+                }],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: String::new(),
+                model: String::new(),
+                settings: Default::default(),
+                pipeline: PipelineState::today(),
+                recent: vec![],
+            },
+            "test".into(),
+        )
+    }
+
+    /// The output frame title is the one surface keeping the fixated
+    /// per-agent name colour (T117.1), on every built-in theme: the name span
+    /// carries it (bold), every other span stays muted detail.
+    #[test]
+    fn output_frame_title_keeps_the_agent_colour_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            for agent in ["planner", "builder", "research"] {
+                let colour = Theme::agent_name_color(theme, agent);
+                let (left, right) = output_title_spans(
+                    &agent_display(agent),
+                    "Mock",
+                    "mock-model",
+                    Some("01:23"),
+                    80,
+                    colour,
+                    theme.muted_text,
+                );
+                let name = &left[0];
+                assert_eq!(name.style.fg, Some(colour), "{key:?}/{agent}");
+                assert!(
+                    name.style.add_modifier.contains(Modifier::BOLD),
+                    "{key:?}/{agent}"
+                );
+                for span in left[1..].iter().chain(&right) {
+                    assert_eq!(span.style.fg, Some(theme.muted_text), "{key:?}/{agent}");
+                }
+            }
+        }
+    }
+
+    /// A pane line that names an agent wears its line kind's colour in full on
+    /// every built-in theme (T117.1): the lifecycle status lines in the
+    /// pane-status colour, the task heading in the heading colour (bold),
+    /// and the name is never dropped or restyled on its own.
+    #[test]
+    fn agent_name_lines_wear_the_kind_colour_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            for (kind, text) in [
+                (LineKind::Status, started_line("builder", "mock", None)),
+                (
+                    LineKind::Status,
+                    finished_line("builder", SessionOutcome::Finished, Duration::from_secs(45)),
+                ),
+                (LineKind::Heading, "── T1.1: add a login page".to_string()),
+            ] {
+                let colour = Theme::line_color(theme, kind);
+                let rows = visual_lines(
+                    theme,
+                    &OutLine {
+                        kind,
+                        text: text.clone(),
+                    },
+                    40,
+                );
+                let mut joined = String::new();
+                for row in &rows {
+                    for span in &row.spans {
+                        // The kind's colour rides the line's style, patched by
+                        // the span's own; the agent's name inherits it like the
+                        // rest of the line instead of carrying its own colour.
+                        let effective = row.style.patch(span.style);
+                        assert_eq!(effective.fg, Some(colour), "{key:?}/{kind:?}: {text:?}");
+                        assert_eq!(
+                            effective.add_modifier.contains(Modifier::BOLD),
+                            kind == LineKind::Heading,
+                            "{key:?}/{kind:?}: {text:?}"
+                        );
+                        joined.push_str(&span.content);
+                    }
+                }
+                assert_eq!(joined, text, "{key:?}/{kind:?}");
+            }
+        }
+    }
+
+    /// The status bar's planning message wears the highlighted-text colour in
+    /// full on every built-in theme (T117.1), the agent's display name inside
+    /// it included — never the fixated per-agent name colour.
+    #[test]
+    fn planning_status_message_wears_the_highlighted_colour_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.planning = true;
+            app.agent = "planner".into();
+            let message = "Planner running...";
+            app.status = Some(message.into());
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+            status_widget(&app, 100).render(buffer.area, &mut buffer);
+            let row: String = (0..100).map(|x| buffer[(x, 0)].symbol()).collect();
+            // A byte index would mis-column on multibyte symbols, so the
+            // match's column is the character count before it.
+            let x = row
+                .find(message)
+                .map(|at| row[..at].chars().count())
+                .unwrap_or_else(|| panic!("{message:?} on {key:?}")) as u16;
+            for (i, _) in message.chars().enumerate() {
+                assert_eq!(
+                    buffer[(x + i as u16, 0)].style().fg,
+                    Some(theme.highlighted_text),
+                    "cell ({}, 0) on {key:?}",
+                    x + i as u16
+                );
+            }
+        }
+    }
+
+    /// The shared selected-row style (T118.1) on every built-in theme: the
+    /// highlighted-text foreground on the normal background, bold -- only the
+    /// foreground switches, the background never does.
+    #[test]
+    fn selected_row_style_wears_highlighted_text_on_the_normal_background() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let style = selected_row_style(theme);
+            assert_eq!(style.fg, Some(theme.highlighted_text), "{key:?}");
+            assert_eq!(style.bg, Some(theme.background), "{key:?}");
+            assert!(
+                style.add_modifier.contains(Modifier::BOLD),
+                "the selected row stays bold on {key:?}"
+            );
+        }
+    }
+
+    /// A thumb cell and a rail cell from a deterministic overflow: body
+    /// 20x6, `start = 0`, `total = 18` gives a thumb of 2 rows at the top,
+    /// so `(19, 0)` is the thumb and `(19, 3)` the rail.
+    fn scrollbar_cells(theme: Theme) -> (ratatui::buffer::Cell, ratatui::buffer::Cell) {
+        let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
+        terminal
+            .draw(|frame| render_scrollbar(frame, theme, Rect::new(0, 0, 20, 6), 0, 18))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (buffer[(19, 0)].clone(), buffer[(19, 3)].clone())
+    }
+
+    /// The scrollbar thumb wears the `highlighted_text` class and the rail its
+    /// `scrollbar_rail` class on every built-in theme, and the two stay
+    /// distinct so the thumb reads against the rail (T121.1).
+    #[test]
+    fn scrollbar_thumb_wears_highlighted_text_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let (thumb, rail) = scrollbar_cells(theme);
+            assert_eq!(thumb.symbol(), "█", "{key:?}");
+            assert_eq!(thumb.style().fg, Some(theme.highlighted_text), "{key:?}");
+            assert_eq!(rail.symbol(), "│", "{key:?}");
+            assert_eq!(rail.style().fg, Some(theme.scrollbar_rail), "{key:?}");
+            assert_ne!(
+                theme.highlighted_text, theme.scrollbar_rail,
+                "the thumb must stay distinct from the rail on {key:?}"
+            );
+        }
+    }
+
+    /// Switching the active theme recolours the scrollbar thumb: no two
+    /// built-in themes share a thumb colour.
+    #[test]
+    fn switching_themes_recolours_the_scrollbar_thumb() {
+        let thumbs: Vec<_> = every_key()
+            .into_iter()
+            .map(|key| {
+                scrollbar_cells(Theme::resolve(key, Some(true)))
+                    .0
+                    .style()
+                    .fg
+            })
+            .collect();
+        for (i, left) in thumbs.iter().enumerate() {
+            for right in &thumbs[i + 1..] {
+                assert_ne!(
+                    left, right,
+                    "two built-in themes share a scrollbar thumb colour"
+                );
+            }
+        }
+    }
 }

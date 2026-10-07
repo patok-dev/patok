@@ -361,12 +361,70 @@ pub(crate) static SECTIONS: &[Section] = &[
     },
 ];
 
-/// One focusable position of the overlay body: a section header or one of its rows.
+/// One focusable position of a collapsible group list: a group header or one
+/// of its rows. The settings overlay uses `Entry<&'static Row>` over its
+/// sections; the theme picker (T116.1) uses `Entry<&'static str>` over its
+/// Dark/Light theme groups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Entry {
+pub enum Entry<T> {
     Header(usize),
-    Row(&'static Row),
+    Row(T),
 }
+
+impl<T> Entry<T> {
+    /// The same entry with its row mapped through `f`; headers pass through.
+    pub fn map_row<U, F: FnOnce(T) -> U>(self, f: F) -> Entry<U> {
+        match self {
+            Entry::Header(index) => Entry::Header(index),
+            Entry::Row(row) => Entry::Row(f(row)),
+        }
+    }
+}
+
+/// The visible entries of a collapsible group list: every group's header
+/// always, its rows (by reference) only while the group is expanded, in
+/// group order -- the one fold mechanism the settings overlay's sections and
+/// the theme picker's Dark/Light groups (T116.1) share.
+pub fn group_entries<'a, T>(groups: &'a [&'a [T]], expanded: &[bool]) -> Vec<Entry<&'a T>> {
+    let mut entries = Vec::new();
+    for (index, rows) in groups.iter().enumerate() {
+        entries.push(Entry::Header(index));
+        if expanded.get(index).copied().unwrap_or(false) {
+            entries.extend(rows.iter().map(Entry::Row));
+        }
+    }
+    entries
+}
+
+/// Whether `code` acts on a group header and to which state it asks the group
+/// to fold: Enter and Space toggle, Left folds an expanded header, Right
+/// unfolds a folded one; every other key -- and the guarded reverse
+/// directions -- is `None`, a no-op. The settings overlay's header keys and
+/// the theme picker's (T116.1) share this one rule.
+pub fn header_fold(code: KeyCode, expanded: bool) -> Option<bool> {
+    match code {
+        KeyCode::Enter | KeyCode::Char(' ') => Some(!expanded),
+        KeyCode::Left if expanded => Some(false),
+        KeyCode::Right if !expanded => Some(true),
+        _ => None,
+    }
+}
+
+/// Focus clamped into a visible entry list. Headers always render, so a group
+/// list is never empty and the clamp always lands on a real entry.
+pub fn clamp_focus(focus: usize, len: usize) -> usize {
+    focus.min(len.saturating_sub(1))
+}
+
+/// The sections' row groups in display order, the input of the shared fold
+/// mechanism ([`group_entries`]); parallel to [`SECTIONS`].
+static SECTION_ROWS: [&[Row]; 5] = [
+    PROVIDER_SECTION,
+    PIPELINE_SECTION,
+    TIMEOUTS_SECTION,
+    GIT_SECTION,
+    DISPLAY_SECTION,
+];
 
 /// The unsaved-changes dialog's choices (Esc or q on a dirty overlay): what the
 /// three rows do, in the order they render.
@@ -527,15 +585,8 @@ impl SettingsOverlay {
 
     /// The focusable entries in display order: each section header and its rows when
     /// the section is expanded.
-    pub fn visible(&self) -> Vec<Entry> {
-        let mut entries = Vec::new();
-        for (index, section) in SECTIONS.iter().enumerate() {
-            entries.push(Entry::Header(index));
-            if self.expanded(index) {
-                entries.extend(section.rows.iter().map(Entry::Row));
-            }
-        }
-        entries
+    pub fn visible(&self) -> Vec<Entry<&'static Row>> {
+        group_entries(&SECTION_ROWS, &self.expanded)
     }
 
     pub(crate) fn expanded(&self, index: usize) -> bool {
@@ -544,7 +595,7 @@ impl SettingsOverlay {
 
     /// The focused entry. The visible list is never empty -- every section always
     /// renders its header -- so this never fails.
-    pub fn focused(&self) -> Entry {
+    pub fn focused(&self) -> Entry<&'static Row> {
         let entries = self.visible();
         entries
             .get(self.focus.min(entries.len() - 1))
@@ -582,7 +633,7 @@ impl SettingsOverlay {
         // Headers always render, so folding the focused header never hides the focus:
         // focus only needs clamping into the (possibly shortened) visible list.
         let len = self.visible().len();
-        self.focus = self.focus.min(len - 1);
+        self.focus = clamp_focus(self.focus, len);
     }
 
     fn move_focus(&mut self, delta: isize) {
@@ -724,13 +775,11 @@ impl SettingsOverlay {
     fn on_row_key(&mut self, code: KeyCode, current: Option<SettingValue>) -> Action {
         match self.focused() {
             Entry::Header(index) => {
-                match code {
-                    KeyCode::Enter | KeyCode::Char(' ') => self.toggle_section(index),
-                    // Left folds an expanded section, Right unfolds a folded one; the
-                    // guards make the reverse directions no-ops.
-                    KeyCode::Left if self.expanded(index) => self.toggle_section(index),
-                    KeyCode::Right if !self.expanded(index) => self.toggle_section(index),
-                    _ => {}
+                // Enter/Space toggle, Left folds an expanded section, Right
+                // unfolds a folded one; the guards make the reverse
+                // directions no-ops (the shared header key rule).
+                if header_fold(code, self.expanded(index)).is_some() {
+                    self.toggle_section(index);
                 }
                 Action::None
             }

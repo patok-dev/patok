@@ -1,15 +1,19 @@
 //! The theme picker modal (T43.1): key and mouse handling through `App::on_key`
 //! and `App::on_mouse`, snapshots of the modal and of the preview-recoloured
-//! shell, and the persistence the Enter and click paths go through.
+//! shell, and the persistence the Enter and click paths go through. The
+//! picker's list is two foldable groups, Dark then Light (T116.1), mirroring
+//! the settings overlay's grouped entries.
 
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use patok_core::config::{ConfigFiles, THEME_KEYS, Theme as ThemeKey};
+use patok_core::config::{ConfigFiles, Theme as ThemeKey};
 use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
-use patok_tui::{Action, App, FrameFocus, ShellSettings, Theme, render, theme_row_at};
+use patok_tui::{
+    Action, App, FrameFocus, ShellSettings, Theme, render, theme_modal_groups, theme_row_at,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -85,16 +89,43 @@ fn theme_of(key: ThemeKey) -> Theme {
     Theme::resolve(key, Some(true))
 }
 
-/// The index of a theme name in the picker's list.
+/// The visible index of a theme name in the picker's two-group list (T114.1's
+/// dark-then-light classification, T116.1's foldable Dark/Light groups): one
+/// past the Dark header inside the dark block, one past both headers inside
+/// the light block.
 fn row_of(name: &str) -> usize {
-    THEME_KEYS.iter().position(|key| *key == name).unwrap()
+    let groups = theme_modal_groups();
+    groups[0]
+        .1
+        .iter()
+        .position(|key| *key == name)
+        .map(|i| 1 + i)
+        .or_else(|| {
+            groups[1]
+                .1
+                .iter()
+                .position(|key| *key == name)
+                .map(|i| 1 + groups[0].1.len() + 1 + i)
+        })
+        .unwrap_or_else(|| panic!("`{name}` is not a built-in theme"))
+}
+
+/// Moves the selection down onto `name`'s visible entry, one Down per entry.
+fn press_down_to(app: &mut App, name: &str) {
+    let target = row_of(name);
+    while app.theme_modal.selected < target {
+        assert_eq!(press(app, KeyCode::Down), Action::None);
+    }
+    assert_eq!(app.theme_modal.selected, target);
 }
 
 #[test]
 fn t_opens_the_picker_from_every_app_state() {
-    // Idle: the selection starts on the active theme, nothing previewed.
+    // Idle: the selection starts on the active theme, both groups expanded,
+    // nothing previewed.
     let idle = open();
     assert_eq!(idle.theme_modal.selected, row_of("dark"));
+    assert_eq!(idle.theme_modal.expanded, [true, true]);
     assert_eq!(idle.theme_modal.preview, None);
     assert_eq!(idle.theme(), theme_of(ThemeKey::Dark));
 
@@ -175,19 +206,24 @@ fn moving_the_selection_previews_without_persisting() {
     let mut app = open();
     assert_eq!(app.tui.theme, ThemeKey::Dark);
     assert_eq!(press(&mut app, KeyCode::Down), Action::None);
-    assert_eq!(app.theme_modal.selected, 1);
+    assert_eq!(app.theme_modal.selected, 2);
     assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneDark));
-    // j moves the same way Down does.
+    // j moves the same way Down does: within the dark block.
     assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
-    assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneLight));
+    assert_eq!(app.theme(), theme_of(ThemeKey::TokyoNightDark));
     // k and Up move back up.
     press(&mut app, KeyCode::Char('k'));
     assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneDark));
     press(&mut app, KeyCode::Up);
     assert_eq!(app.theme(), theme_of(ThemeKey::Dark));
-    // Up past the top stays put.
+    // A header takes the highlight but never previews: crossing the Dark
+    // header onto the Light header leaves the preview alone, and so does
+    // coming back.
     press(&mut app, KeyCode::Up);
-    assert_eq!(app.theme_modal.selected, 0);
+    assert_eq!(app.theme_modal.selected, 0, "the Dark header");
+    assert_eq!(app.theme(), theme_of(ThemeKey::Dark));
+    assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    assert_eq!(app.theme_modal.selected, 1, "the active theme's row again");
     // The committed setting never moved: browsing persists nothing.
     assert_eq!(app.tui.theme, ThemeKey::Dark);
 }
@@ -197,13 +233,14 @@ fn hovering_a_row_previews_it_and_hovering_outside_changes_nothing() {
     let mut app = open();
     draw(&app, 80, 24);
     let body = app.theme_modal.area.get();
-    // The pointer moving onto a row previews that row (T40.1's mouse capture).
+    // The pointer moving onto a row previews that row (T40.1's mouse capture):
+    // with both groups expanded, body row 6 is the gruvbox_dark entry.
     assert_eq!(
         app.on_mouse(mouse(MouseEventKind::Moved, body.x + 4, body.y + 6)),
         Action::None
     );
     assert_eq!(app.theme_modal.selected, 6);
-    assert_eq!(app.theme(), theme_of(ThemeKey::CatppuccinLatte));
+    assert_eq!(app.theme(), theme_of(ThemeKey::GruvboxDark));
     // On the footer -- outside the rows -- nothing changes.
     assert_eq!(
         app.on_mouse(mouse(
@@ -270,9 +307,7 @@ fn keys_and_mouse_are_swallowed_while_the_picker_is_open() {
 #[test]
 fn esc_restores_the_theme_the_picker_opened_with() {
     let mut previewed = open();
-    for _ in 0..row_of("catppuccin_latte") {
-        press(&mut previewed, KeyCode::Down);
-    }
+    press_down_to(&mut previewed, "catppuccin_latte");
     assert_eq!(previewed.theme(), theme_of(ThemeKey::CatppuccinLatte));
     assert_eq!(press(&mut previewed, KeyCode::Esc), Action::None);
     assert!(!previewed.theme_modal.open);
@@ -306,9 +341,7 @@ fn enter_keeps_the_previewed_theme_and_hands_it_to_the_driver() {
 
     // Enter after browsing keeps the previewed one.
     let mut app = open();
-    for _ in 0..row_of("gruvbox_dark") {
-        press(&mut app, KeyCode::Down);
-    }
+    press_down_to(&mut app, "gruvbox_dark");
     assert_eq!(
         press(&mut app, KeyCode::Enter),
         Action::SaveTheme(ThemeKey::GruvboxDark)
@@ -320,6 +353,8 @@ fn enter_keeps_the_previewed_theme_and_hands_it_to_the_driver() {
 
 #[test]
 fn clicking_a_row_previews_then_saves_like_enter() {
+    // A click on the catppuccin_mocha entry (visible row 4, one past the Dark
+    // header) previews and commits it, exactly like hovering plus Enter.
     let mut app = open();
     draw(&app, 80, 24);
     let body = app.theme_modal.area.get();
@@ -327,14 +362,14 @@ fn clicking_a_row_previews_then_saves_like_enter() {
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             body.x + 4,
-            body.y + 3
+            body.y + 4
         )),
-        Action::SaveTheme(ThemeKey::TokyoNightDark)
+        Action::SaveTheme(ThemeKey::CatppuccinMocha)
     );
     assert!(!app.theme_modal.open);
-    assert_eq!(app.theme_modal.selected, 3);
-    assert_eq!(app.tui.theme, ThemeKey::TokyoNightDark);
-    assert_eq!(app.theme(), theme_of(ThemeKey::TokyoNightDark));
+    assert_eq!(app.theme_modal.selected, 4);
+    assert_eq!(app.tui.theme, ThemeKey::CatppuccinMocha);
+    assert_eq!(app.theme(), theme_of(ThemeKey::CatppuccinMocha));
 
     // A click outside the rows changes nothing.
     let mut app = open();
@@ -348,6 +383,224 @@ fn clicking_a_row_previews_then_saves_like_enter() {
         )),
         Action::None
     );
+    assert!(app.theme_modal.open);
+    assert_eq!(app.tui.theme, ThemeKey::Dark);
+}
+
+/// Folding a header hides its entries and unfolding brings them back (T116.1):
+/// Enter on the Dark header removes every dark name from the screen and keeps
+/// the Light group intact; Enter again restores them. Space toggles the same
+/// way, and the Light header behaves identically.
+#[test]
+fn toggling_a_header_hides_and_shows_its_entries() {
+    let mut app = open();
+    press(&mut app, KeyCode::Up);
+    assert_eq!(app.theme_modal.selected, 0, "the Dark header");
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    assert_eq!(app.theme_modal.expanded, [false, true]);
+    assert_eq!(
+        app.theme_modal.selected, 0,
+        "the selection stays on the header"
+    );
+    let screen = draw(&app, 80, 24);
+    assert!(screen.contains("▸ Dark"), "{screen}");
+    assert!(screen.contains("▾ Light"), "{screen}");
+    for name in theme_modal_groups()[0].1.clone() {
+        assert!(!screen.contains(name), "dark `{name}` stays visible");
+    }
+    for name in &theme_modal_groups()[1].1 {
+        assert!(screen.contains(name), "light `{name}` stays visible");
+    }
+    // Enter again unfolds: every dark name is back.
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    assert_eq!(app.theme_modal.expanded, [true, true]);
+    let screen = draw(&app, 80, 24);
+    assert!(screen.contains("▾ Dark"), "{screen}");
+    for name in &theme_modal_groups()[0].1 {
+        assert!(screen.contains(name), "dark `{name}` is back");
+    }
+
+    // Space toggles the same way, on the Light header.
+    let mut app = open();
+    press_down_to(&mut app, "gruvbox_dark");
+    press(&mut app, KeyCode::Down);
+    assert_eq!(app.theme_modal.selected, 7, "the Light header");
+    assert_eq!(press(&mut app, KeyCode::Char(' ')), Action::None);
+    assert_eq!(app.theme_modal.expanded, [true, false]);
+    let screen = draw(&app, 80, 24);
+    assert!(screen.contains("▸ Light"), "{screen}");
+    for name in &theme_modal_groups()[1].1 {
+        assert!(!screen.contains(name), "light `{name}` stays visible");
+    }
+    for name in &theme_modal_groups()[0].1 {
+        assert!(screen.contains(name), "dark `{name}` is back");
+    }
+    assert_eq!(press(&mut app, KeyCode::Char(' ')), Action::None);
+    assert_eq!(app.theme_modal.expanded, [true, true]);
+}
+
+/// Navigation walks the visible list only (T116.1): with the Dark group
+/// folded, Down from the Dark header lands on the Light header and then the
+/// first light theme -- never on a hidden dark row -- and headers never
+/// preview. With both groups folded, movement runs only between the two
+/// headers and clamps at both ends.
+#[test]
+fn collapsed_entries_are_skipped_during_navigation() {
+    let mut app = open();
+    press(&mut app, KeyCode::Up);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.theme_modal.expanded, [false, true]);
+    // Down from the Dark header: the Light header, preview untouched.
+    assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    assert_eq!(app.theme_modal.selected, 1);
+    assert_eq!(app.theme_modal.preview, None);
+    assert_eq!(app.theme(), theme_of(ThemeKey::Dark));
+    // The next Down is the first light row -- never a hidden dark one.
+    assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    assert_eq!(app.theme_modal.preview, Some(ThemeKey::AtomOneLight));
+    assert_eq!(app.theme(), theme_of(ThemeKey::AtomOneLight));
+    // Up from a light row lands on the Light header, not a dark row.
+    assert_eq!(press(&mut app, KeyCode::Up), Action::None);
+    assert_eq!(app.theme_modal.selected, 1);
+    assert_eq!(app.theme_modal.preview, Some(ThemeKey::AtomOneLight));
+
+    // Both groups folded: only the two headers, clamped at both ends.
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    assert_eq!(app.theme_modal.expanded, [false, false]);
+    for _ in 0..3 {
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        assert!(app.theme_modal.selected <= 1);
+    }
+    assert_eq!(app.theme_modal.selected, 1);
+    for _ in 0..3 {
+        assert_eq!(press(&mut app, KeyCode::Up), Action::None);
+        assert!(app.theme_modal.selected <= 1);
+    }
+    assert_eq!(app.theme_modal.selected, 0);
+}
+
+/// The header fold keys mirror the settings overlay's (T116.1): Left folds an
+/// expanded header, Right unfolds a folded one, the reverse directions are
+/// no-ops, h/l alias the arrows -- and on a theme row all four are swallowed.
+#[test]
+fn left_folds_a_header_and_right_unfolds_it() {
+    let mut app = open();
+    press(&mut app, KeyCode::Up);
+    assert_eq!(press(&mut app, KeyCode::Left), Action::None);
+    assert_eq!(app.theme_modal.expanded, [false, true]);
+    // Left on a folded header is a no-op; Right unfolds it.
+    assert_eq!(press(&mut app, KeyCode::Left), Action::None);
+    assert_eq!(app.theme_modal.expanded, [false, true]);
+    assert_eq!(press(&mut app, KeyCode::Right), Action::None);
+    assert_eq!(app.theme_modal.expanded, [true, true]);
+    // Right on an expanded header is a no-op.
+    assert_eq!(press(&mut app, KeyCode::Right), Action::None);
+    assert_eq!(app.theme_modal.expanded, [true, true]);
+    // h/l alias Left/Right.
+    assert_eq!(press(&mut app, KeyCode::Char('h')), Action::None);
+    assert_eq!(app.theme_modal.expanded, [false, true]);
+    assert_eq!(press(&mut app, KeyCode::Char('l')), Action::None);
+    assert_eq!(app.theme_modal.expanded, [true, true]);
+
+    // On a theme row all four keys are swallowed: nothing folds, previews,
+    // commits or closes.
+    press(&mut app, KeyCode::Down);
+    assert_eq!(app.theme_modal.preview, Some(ThemeKey::Dark));
+    for key in [
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Char('h'),
+        KeyCode::Char('l'),
+    ] {
+        assert_eq!(press(&mut app, key), Action::None);
+        assert_eq!(app.theme_modal.expanded, [true, true]);
+        assert!(app.theme_modal.open);
+        assert_eq!(app.tui.theme, ThemeKey::Dark);
+        assert_eq!(app.theme_modal.preview, Some(ThemeKey::Dark));
+    }
+}
+
+/// A header is a fold toggle, never a commit (T116.1): Enter and Space on
+/// either header keep the modal open and the committed theme and preview
+/// exactly what they were.
+#[test]
+fn a_header_never_commits() {
+    let mut app = open();
+    press(&mut app, KeyCode::Up);
+    for key in [KeyCode::Enter, KeyCode::Char(' ')] {
+        let preview = app.theme_modal.preview;
+        assert_eq!(press(&mut app, key), Action::None);
+        assert!(app.theme_modal.open);
+        assert_eq!(app.tui.theme, ThemeKey::Dark);
+        assert_eq!(app.theme_modal.preview, preview);
+    }
+    assert_eq!(app.theme_modal.expanded, [true, true], "toggled back");
+    // The same on the Light header.
+    while app.theme_modal.selected < 7 {
+        press(&mut app, KeyCode::Down);
+    }
+    assert_eq!(app.theme_modal.selected, 7);
+    for key in [KeyCode::Enter, KeyCode::Char(' ')] {
+        let preview = app.theme_modal.preview;
+        assert_eq!(press(&mut app, key), Action::None);
+        assert!(app.theme_modal.open);
+        assert_eq!(app.tui.theme, ThemeKey::Dark);
+        assert_eq!(app.theme_modal.preview, preview);
+    }
+    assert_eq!(app.theme_modal.expanded, [true, true], "toggled back");
+}
+
+/// The pointer on a header moves the highlight without previewing, and a
+/// click on it toggles the fold without committing (T116.1).
+#[test]
+fn hovering_and_clicking_a_header_toggle_without_previewing_or_committing() {
+    let mut app = open();
+    draw(&app, 80, 24);
+    let body = app.theme_modal.area.get();
+    // Hovering the Dark header moves the selection there and previews nothing.
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Moved, body.x + 2, body.y)),
+        Action::None
+    );
+    assert_eq!(app.theme_modal.selected, 0);
+    assert_eq!(app.theme_modal.preview, None);
+    // Clicking it folds the group and commits nothing.
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            body.x + 2,
+            body.y
+        )),
+        Action::None
+    );
+    assert_eq!(app.theme_modal.expanded, [false, true]);
+    assert!(app.theme_modal.open);
+    assert_eq!(app.tui.theme, ThemeKey::Dark);
+    // Hovering the folded header still previews nothing; clicking unfolds.
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Moved, body.x + 2, body.y)),
+        Action::None
+    );
+    assert_eq!(app.theme_modal.preview, None);
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            body.x + 2,
+            body.y
+        )),
+        Action::None
+    );
+    assert_eq!(app.theme_modal.expanded, [true, true]);
+    // The Light header behaves identically.
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            body.x + 2,
+            body.y + 7
+        )),
+        Action::None
+    );
+    assert_eq!(app.theme_modal.expanded, [true, false]);
     assert!(app.theme_modal.open);
     assert_eq!(app.tui.theme, ThemeKey::Dark);
 }
@@ -374,7 +627,7 @@ fn the_picker_shows_a_close_button_top_right() {
     for i in 0..close.width {
         assert_eq!(
             buffer[(close.x + i, close.y)].style().fg,
-            Some(theme_of(ThemeKey::Dark).button_accent),
+            Some(theme_of(ThemeKey::Dark).highlighted_text),
             "button cell {i} wears the accent"
         );
     }
@@ -382,29 +635,25 @@ fn the_picker_shows_a_close_button_top_right() {
     // While previewing another theme the whole shell -- the button included --
     // recolours to it.
     let mut previewed = open();
-    for _ in 0..row_of("tokyo_night_dark") {
-        press(&mut previewed, KeyCode::Down);
-    }
+    press_down_to(&mut previewed, "tokyo_night_dark");
     let buffer = draw_buffer(&previewed);
     for i in 0..close.width {
         assert_eq!(
             buffer[(close.x + i, close.y)].style().fg,
-            Some(theme_of(ThemeKey::TokyoNightDark).button_accent),
+            Some(theme_of(ThemeKey::TokyoNightDark).highlighted_text),
             "button cell {i} wears the previewed theme's accent"
         );
     }
     assert_ne!(
-        theme_of(ThemeKey::Dark).button_accent,
-        theme_of(ThemeKey::TokyoNightDark).button_accent
+        theme_of(ThemeKey::Dark).highlighted_text,
+        theme_of(ThemeKey::TokyoNightDark).highlighted_text
     );
 }
 
 #[test]
 fn clicking_the_close_button_restores_the_opening_theme_like_esc() {
     let mut app = open();
-    for _ in 0..row_of("catppuccin_latte") {
-        press(&mut app, KeyCode::Down);
-    }
+    press_down_to(&mut app, "catppuccin_latte");
     assert_eq!(app.theme(), theme_of(ThemeKey::CatppuccinLatte));
     draw(&app, 80, 24);
     let close = app.theme_modal.close.get();
@@ -423,9 +672,7 @@ fn clicking_the_close_button_restores_the_opening_theme_like_esc() {
 
     // Esc from the same browsed state takes the identical path.
     let mut esc = open();
-    for _ in 0..row_of("catppuccin_latte") {
-        press(&mut esc, KeyCode::Down);
-    }
+    press_down_to(&mut esc, "catppuccin_latte");
     assert_eq!(press(&mut esc, KeyCode::Esc), Action::None);
     assert!(!esc.theme_modal.open);
     assert_eq!(esc.theme_modal.preview, None);
@@ -466,15 +713,24 @@ fn a_failed_save_restores_the_theme_the_picker_opened_with() {
 
 #[test]
 fn theme_row_at_maps_positions_onto_rows() {
-    let body = ratatui::layout::Rect::new(16, 7, 46, 11);
-    let at = |x: u16, y: u16| theme_row_at(ratatui::layout::Position::new(x, y), body);
+    let body = ratatui::layout::Rect::new(16, 7, 46, 13);
+    let at = |x: u16, y: u16| theme_row_at(ratatui::layout::Position::new(x, y), body, 13);
     assert_eq!(at(16, 7), Some(0));
     assert_eq!(at(40, 12), Some(5));
-    assert_eq!(at(61, 17), Some(10));
-    // Past the last row (the footer), on the border and outside the modal.
-    assert_eq!(at(16, 18), None);
+    assert_eq!(at(61, 19), Some(12));
+    // Past the last visible row (the footer), on the border and outside the
+    // modal; and a body row past a shortened (folded) visible list.
+    assert_eq!(at(16, 20), None);
     assert_eq!(at(62, 7), None);
     assert_eq!(at(0, 0), None);
+    assert_eq!(
+        theme_row_at(ratatui::layout::Position::new(16, 14), body, 7),
+        None
+    );
+    assert_eq!(
+        theme_row_at(ratatui::layout::Position::new(16, 14), body, 13),
+        Some(7)
+    );
 }
 
 /// The persistence the Enter and click paths reach, against the real
@@ -493,9 +749,7 @@ fn the_save_path_persists_the_theme_a_fresh_load_resolves() {
 
     // Browsing alone writes nothing: the preview never touches a config file.
     let mut app = open();
-    for _ in 0..row_of("gruvbox_dark") {
-        press(&mut app, KeyCode::Down);
-    }
+    press_down_to(&mut app, "gruvbox_dark");
     assert!(!dir.path().join("config.local.toml").exists());
 
     // The driver's save path (what Enter and a click reach).
@@ -521,24 +775,188 @@ fn the_save_path_persists_the_theme_a_fresh_load_resolves() {
     assert_eq!(shell.settings().theme, ThemeKey::CatppuccinLatte);
 }
 
-/// The picker's screen: the eleven built-ins, the selection marker, the swatch
-/// strips and the footer hints.
+/// The picker's screen: the two group headers, the eleven built-ins nested
+/// under them, the selection marker and the footer hints.
 #[test]
 fn the_picker_with_the_selection_on_a_dark_theme() {
     let mut app = open();
     press(&mut app, KeyCode::Down);
-    assert_eq!(app.theme_modal.selected, 1);
+    assert_eq!(app.theme_modal.selected, 2);
     insta::assert_snapshot!(draw(&app, 80, 24));
 }
 
 #[test]
 fn the_picker_with_the_selection_on_a_light_theme() {
     let mut app = open();
-    for _ in 0..row_of("catppuccin_latte") {
-        press(&mut app, KeyCode::Down);
-    }
+    press_down_to(&mut app, "catppuccin_latte");
     assert_eq!(app.theme_modal.selected, row_of("catppuccin_latte"));
     insta::assert_snapshot!(draw(&app, 80, 24));
+}
+
+/// The picker's screen with a folded group (T116.1): the Dark header folded,
+/// its entries hidden, the Light group intact below.
+#[test]
+fn the_picker_with_the_dark_group_folded() {
+    let mut app = open();
+    press(&mut app, KeyCode::Up);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.theme_modal.expanded, [false, true]);
+    assert_eq!(app.theme_modal.selected, 0);
+    insta::assert_snapshot!(draw(&app, 80, 24));
+}
+
+/// The picker's rows render as a normal list (T115.1): every entry -- headers
+/// included -- wears the active theme's classes: the active `background`, the
+/// names in `normal_text`, the selected row's name in `highlighted_text` --
+/// never the entry's own palette.
+#[test]
+fn the_picker_rows_wear_the_active_theme_not_their_own() {
+    use ratatui::style::Modifier;
+
+    let app = open();
+    let buffer = draw_buffer(&app);
+    let body = app.theme_modal.area.get();
+    let dark = theme_of(ThemeKey::Dark);
+    let selected = row_of("dark");
+    // The visible entries: the Dark header, the dark names, the Light header,
+    // the light names (T116.1).
+    let groups = theme_modal_groups();
+    let mut rows: Vec<(usize, &str)> = Vec::new();
+    rows.extend(
+        groups[0]
+            .1
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (1 + i, *name)),
+    );
+    rows.extend(
+        groups[1]
+            .1
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (1 + groups[0].1.len() + 1 + i, *name)),
+    );
+    for (index, _name) in rows {
+        let row = index as u16;
+        assert_eq!(
+            buffer[(body.x, body.y + row)].bg,
+            dark.background,
+            "row {index} sits on the active background"
+        );
+        // The name sits indented past the focus marker under its header.
+        let expected = if index == selected {
+            dark.highlighted_text
+        } else {
+            dark.normal_text
+        };
+        assert_eq!(
+            buffer[(body.x + 6, body.y + row)].style().fg,
+            Some(expected),
+            "row {index}'s name wears the active theme's class"
+        );
+    }
+    // The two headers wear the active theme too and render bold, whether or
+    // not they carry the selection marker; the unselected marker margin keeps
+    // the glyph at the same column.
+    for (header, title) in [(0usize, "  ▾ Dark"), (7, "  ▾ Light")] {
+        let line: String = (body.x..body.x + title.chars().count() as u16)
+            .map(|x| buffer[(x, body.y + header as u16)].symbol())
+            .collect();
+        assert_eq!(line, title);
+        for i in 0..8u16 {
+            let cell = &buffer[(body.x + i, body.y + header as u16)];
+            assert_eq!(
+                cell.bg, dark.background,
+                "header cell {i} on the active background"
+            );
+            assert!(
+                cell.style().add_modifier.contains(Modifier::BOLD),
+                "header cell {i} is bold"
+            );
+        }
+    }
+    // Not vacuously: a row whose own palette differs from the active theme's
+    // still wears the active theme, not its own background or text colour.
+    let latte = row_of("catppuccin_latte") as u16;
+    let latte_theme = theme_of(ThemeKey::CatppuccinLatte);
+    assert_ne!(latte_theme.background, dark.background);
+    assert_ne!(latte_theme.normal_text, dark.normal_text);
+    assert_eq!(buffer[(body.x, body.y + latte)].bg, dark.background);
+    assert_eq!(
+        buffer[(body.x + 6, body.y + latte)].style().fg,
+        Some(dark.normal_text)
+    );
+}
+
+/// Browsing recolours the rows too (T115.1): with a theme previewed, the
+/// rows wear the preview's classes -- the active theme is the previewed one
+/// while the picker is open, so the list restyles live under navigation.
+#[test]
+fn previewing_recolours_the_rows_too() {
+    let mut app = open();
+    press_down_to(&mut app, "tokyo_night_dark");
+    let tokyo = theme_of(ThemeKey::TokyoNightDark);
+    assert_eq!(app.theme(), tokyo);
+    assert_eq!(app.tui.theme, ThemeKey::Dark, "nothing is committed");
+    let buffer = draw_buffer(&app);
+    let body = app.theme_modal.area.get();
+    // An unselected row wears the preview, not its own palette.
+    let latte = row_of("catppuccin_latte") as u16;
+    let latte_theme = theme_of(ThemeKey::CatppuccinLatte);
+    assert_ne!(latte_theme.background, tokyo.background);
+    assert_ne!(latte_theme.normal_text, tokyo.normal_text);
+    assert_eq!(buffer[(body.x, body.y + latte)].bg, tokyo.background);
+    assert_eq!(
+        buffer[(body.x + 6, body.y + latte)].style().fg,
+        Some(tokyo.normal_text)
+    );
+    // The selected row's name wears the preview's highlight.
+    let selected = row_of("tokyo_night_dark") as u16;
+    assert_eq!(
+        buffer[(body.x + 6, body.y + selected)].style().fg,
+        Some(tokyo.highlighted_text)
+    );
+}
+
+/// The focused group header wears the highlight too (T118.1): the shared
+/// selected-row style covers the picker's headers as well as its entries, so
+/// the header under the selection renders in `highlighted_text` on the normal
+/// background, bold, while an unfocused header keeps the theme's foreground.
+#[test]
+fn the_focused_group_header_wears_the_highlighted_text_colour() {
+    use ratatui::style::Modifier;
+
+    let mut app = open();
+    let light_header = 1 + theme_modal_groups()[0].1.len();
+    while app.theme_modal.selected < light_header {
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    }
+    let buffer = draw_buffer(&app);
+    let body = app.theme_modal.area.get();
+    // Moving the selection previews each entry on the way, so the rows wear
+    // whatever theme is active here, not the opening Dark one.
+    let active = app.theme();
+    // The Light header under the selection: every cell highlighted on the
+    // normal background, bold.
+    for i in 0..8u16 {
+        let cell = &buffer[(body.x + i, body.y + light_header as u16)];
+        assert_eq!(cell.style().fg, Some(active.highlighted_text), "cell {i}");
+        assert_eq!(cell.bg, active.background, "cell {i}");
+        assert!(
+            cell.style().add_modifier.contains(Modifier::BOLD),
+            "cell {i} stays bold"
+        );
+    }
+    // The unfocused Dark header keeps the active theme's foreground, still
+    // bold.
+    for i in 0..8u16 {
+        let cell = &buffer[(body.x + i, body.y)];
+        assert_eq!(cell.style().fg, Some(active.foreground), "cell {i}");
+        assert!(
+            cell.style().add_modifier.contains(Modifier::BOLD),
+            "cell {i} stays bold"
+        );
+    }
 }
 
 /// The style dump of a rendered row: every cell as `symbol|fg|bg`, so a
@@ -570,15 +988,13 @@ fn styled_rows(buffer: &ratatui::buffer::Buffer, rows: &[u16]) -> String {
 #[test]
 fn a_preview_recolours_the_whole_shell() {
     let mut app = open();
-    for _ in 0..row_of("catppuccin_latte") {
-        press(&mut app, KeyCode::Down);
-    }
+    press_down_to(&mut app, "catppuccin_latte");
     let preview = theme_of(ThemeKey::CatppuccinLatte);
     assert_eq!(app.theme(), preview);
     assert_eq!(app.tui.theme, ThemeKey::Dark);
     let buffer = draw_buffer(&app);
     // The status line's chip (row 23, T86.1) and a base row under the modal.
-    assert_eq!(buffer[(0, 23)].bg, preview.chip_stopped);
+    assert_eq!(buffer[(0, 23)].bg, preview.chip_neutral);
     assert_eq!(buffer[(40, 21)].bg, preview.background);
     insta::assert_snapshot!(styled_rows(&buffer, &[23, 21]));
 }
@@ -620,7 +1036,7 @@ mod modal_footer {
         for i in 0..hint_width {
             assert_eq!(
                 buffer[(footer.x + i, row)].style().fg,
-                Some(theme.modal_footer),
+                Some(theme.muted_text),
                 "hint cell {i} wears the footer colour"
             );
         }
@@ -641,14 +1057,14 @@ mod modal_footer {
                 u16::try_from(format!(" [ {key} ] ").chars().count()).unwrap_or(rect.width);
             if !label.is_empty() {
                 assert_ne!(
-                    theme.foreground, theme.button_accent,
+                    theme.foreground, theme.highlighted_text,
                     "the label colour differs from the accent"
                 );
             }
             for i in 0..rect.width {
                 let cell = &buffer[(rect.x + i, row)];
                 let expected = if i < accent_width {
-                    theme.button_accent
+                    theme.highlighted_text
                 } else {
                     theme.foreground
                 };
@@ -669,7 +1085,7 @@ mod modal_footer {
             let cell = &buffer[(x, row)];
             assert_ne!(
                 cell.style().fg,
-                Some(theme.button_accent),
+                Some(theme.highlighted_text),
                 "no hint cell wears the accent at x={x}"
             );
             assert!(
@@ -698,9 +1114,7 @@ mod modal_footer {
     #[test]
     fn picker_bottom_line_two_zones_in_a_previewed_palette_theme() {
         let mut app = open();
-        for _ in 0..row_of("catppuccin_latte") {
-            press(&mut app, KeyCode::Down);
-        }
+        press_down_to(&mut app, "catppuccin_latte");
         assert_eq!(app.theme(), theme_of(ThemeKey::CatppuccinLatte));
         let buffer = draw_buffer(&app);
         assert_two_zones(
@@ -716,9 +1130,7 @@ mod modal_footer {
     fn picker_bottom_line_buttons_answer_clicks() {
         // A click on Save keeps the previewed theme and hands it to the driver.
         let mut app = open();
-        for _ in 0..row_of("gruvbox_dark") {
-            press(&mut app, KeyCode::Down);
-        }
+        press_down_to(&mut app, "gruvbox_dark");
         draw_buffer(&app);
         let rects = patok_tui::footer_button_rects(
             app.theme_modal.footer.get(),
@@ -733,9 +1145,7 @@ mod modal_footer {
 
         // A click on Cancel restores the theme the picker opened with.
         let mut app = open();
-        for _ in 0..row_of("gruvbox_dark") {
-            press(&mut app, KeyCode::Down);
-        }
+        press_down_to(&mut app, "gruvbox_dark");
         draw_buffer(&app);
         let rects = patok_tui::footer_button_rects(
             app.theme_modal.footer.get(),

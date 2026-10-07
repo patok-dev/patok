@@ -37,8 +37,8 @@ pub enum HeadlessOutcome {
 /// status lines -- to `out` line by line as it arrives. Ends once every task in the
 /// store is done, the build fails, an engine error stops it, or `interrupt` is
 /// cancelled. The previous run mode is restored on every exit path. With `color`,
-/// the streamed lines wear the user's theme colours (the same kind-to-colour
-/// mapping the frame renders with); without it the output stays plain.
+/// the streamed lines wear the user's theme colours — the same kind-to-colour
+/// mapping the frame renders with; without it the output stays plain.
 pub async fn run_until<W: Write>(
     mut client: EngineClient<Channel>,
     out: &mut W,
@@ -347,8 +347,10 @@ async fn restore_mode<W: Write>(
 /// Streams the output frame's lines to a writer as they are built: completed lines
 /// are written whole, the still-streaming last line is written in tail deltas, so
 /// what arrives on the writer matches what the frame displays at every moment.
-/// With a theme, every written piece is wrapped in the line kind's theme colour;
-/// without one the bytes are the plain text.
+/// With a theme, every written piece is wrapped in the line kind's theme colour,
+/// the agent's name inside a line included (T117.1); without a theme the bytes
+/// are the plain text. Name-bearing lines are only ever opened by a push, never
+/// by a streaming append, so they are always written whole.
 #[derive(Default)]
 struct Printer {
     /// The theme whose colours wrap the output, or `None` for plain output.
@@ -408,7 +410,13 @@ impl Printer {
     fn complete<W: Write>(&mut self, out: &mut W, line: &OutLine) -> std::io::Result<()> {
         match line.text.strip_prefix(self.partial.as_str()) {
             Some(tail) if !tail.is_empty() => {
-                out.write_all(self.wrap(tail, line.kind).as_bytes())?
+                // Nothing of this line was streamed before: it is written whole.
+                let bytes = if self.partial.is_empty() {
+                    self.wrap(&line.text, line.kind).into_owned()
+                } else {
+                    self.wrap(tail, line.kind).into_owned()
+                };
+                out.write_all(bytes.as_bytes())?
             }
             Some(_) => {}
             None => out.write_all(self.wrap(&line.text, line.kind).as_bytes())?,
@@ -601,5 +609,49 @@ mod tests {
         // The deltas were never written twice.
         assert_eq!(buffer.matches("hello").count(), 1, "buffer: {buffer:?}");
         assert_eq!(buffer.matches("T1.1 done").count(), 1, "buffer: {buffer:?}");
+    }
+
+    /// A line that names an agent (T117.1) wears the line kind's colour in
+    /// full, the agent's name included — the fixated name colour reaches only
+    /// the output frame title. Checked on every built-in theme. A colourless
+    /// printer writes the raw text unchanged.
+    #[test]
+    fn agent_name_lines_wear_the_kind_colour() {
+        use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+
+        let mut app = app_with_one_task();
+        app.apply(EngineEvent::AgentStarted {
+            agent: "builder".into(),
+            provider: "mock".into(),
+            model: None,
+        });
+        // Every built-in theme: the whole line is one kind-coloured piece and
+        // the newline, so no agent-name colour appears anywhere.
+        for name in THEME_KEYS {
+            let key = ThemeKey::parse(name).expect("THEME_KEYS holds valid names");
+            let theme = Theme::resolve(key, Some(true));
+            let mut out = Vec::new();
+            let mut printer = Printer {
+                theme: Some(theme),
+                ..Printer::default()
+            };
+            printer.drain(&mut out, &app).unwrap();
+            printer.finish(&mut out).unwrap();
+            let whole = crossterm::style::style("Builder started (mock)")
+                .with(term_color(Theme::line_color(theme, LineKind::Status)))
+                .to_string();
+            assert_eq!(
+                String::from_utf8(out).unwrap(),
+                format!("{whole}\n"),
+                "the whole line wears the kind colour on {key:?}"
+            );
+        }
+
+        // Plain: no escapes at all.
+        let mut out = Vec::new();
+        let mut printer = Printer::default();
+        printer.drain(&mut out, &app).unwrap();
+        printer.finish(&mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "Builder started (mock)\n");
     }
 }
