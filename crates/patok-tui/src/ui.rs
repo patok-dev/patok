@@ -675,6 +675,8 @@ fn enum_display(app: &App, key: &str, values: &[&str]) -> String {
 }
 
 /// A hand-rendered scrollbar on the body's right edge when the rows overflow.
+/// The thumb wears the theme's `highlighted_text` class and the rail its
+/// `scrollbar_rail` class (T121.1).
 fn render_scrollbar(frame: &mut Frame, theme: Theme, body: Rect, start: usize, total: usize) {
     let height = usize::from(body.height.max(1));
     if total <= height {
@@ -688,7 +690,7 @@ fn render_scrollbar(frame: &mut Frame, theme: Theme, body: Rect, start: usize, t
         if let Some(cell) = frame.buffer_mut().cell_mut((col, body.y + i as u16)) {
             cell.set_symbol(if in_thumb { "█" } else { "│" });
             cell.set_style(if in_thumb {
-                Style::new().fg(theme.accent)
+                Style::new().fg(theme.highlighted_text)
             } else {
                 Style::new().fg(theme.scrollbar_rail)
             });
@@ -1559,6 +1561,8 @@ mod tests {
     use patok_core::event::{Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
     use patok_core::task::Task;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::widgets::Widget;
@@ -1723,6 +1727,60 @@ mod tests {
                 style.add_modifier.contains(Modifier::BOLD),
                 "the selected row stays bold on {key:?}"
             );
+        }
+    }
+
+    /// A thumb cell and a rail cell from a deterministic overflow: body
+    /// 20x6, `start = 0`, `total = 18` gives a thumb of 2 rows at the top,
+    /// so `(19, 0)` is the thumb and `(19, 3)` the rail.
+    fn scrollbar_cells(theme: Theme) -> (ratatui::buffer::Cell, ratatui::buffer::Cell) {
+        let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
+        terminal
+            .draw(|frame| render_scrollbar(frame, theme, Rect::new(0, 0, 20, 6), 0, 18))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (buffer[(19, 0)].clone(), buffer[(19, 3)].clone())
+    }
+
+    /// The scrollbar thumb wears the `highlighted_text` class and the rail its
+    /// `scrollbar_rail` class on every built-in theme, and the two stay
+    /// distinct so the thumb reads against the rail (T121.1).
+    #[test]
+    fn scrollbar_thumb_wears_highlighted_text_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let (thumb, rail) = scrollbar_cells(theme);
+            assert_eq!(thumb.symbol(), "█", "{key:?}");
+            assert_eq!(thumb.style().fg, Some(theme.highlighted_text), "{key:?}");
+            assert_eq!(rail.symbol(), "│", "{key:?}");
+            assert_eq!(rail.style().fg, Some(theme.scrollbar_rail), "{key:?}");
+            assert_ne!(
+                theme.highlighted_text, theme.scrollbar_rail,
+                "the thumb must stay distinct from the rail on {key:?}"
+            );
+        }
+    }
+
+    /// Switching the active theme recolours the scrollbar thumb: no two
+    /// built-in themes share a thumb colour.
+    #[test]
+    fn switching_themes_recolours_the_scrollbar_thumb() {
+        let thumbs: Vec<_> = every_key()
+            .into_iter()
+            .map(|key| {
+                scrollbar_cells(Theme::resolve(key, Some(true)))
+                    .0
+                    .style()
+                    .fg
+            })
+            .collect();
+        for (i, left) in thumbs.iter().enumerate() {
+            for right in &thumbs[i + 1..] {
+                assert_ne!(
+                    left, right,
+                    "two built-in themes share a scrollbar thumb colour"
+                );
+            }
         }
     }
 }
