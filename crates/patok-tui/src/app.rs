@@ -239,7 +239,7 @@ impl MenuChoice {
             MenuChoice::Theme => "Theme",
             MenuChoice::Detach => "Detach",
             MenuChoice::Quit => "Quit",
-            MenuChoice::StopBuild => "Stop build",
+            MenuChoice::StopBuild => "Stop",
         }
     }
 
@@ -256,7 +256,7 @@ impl MenuChoice {
 }
 
 /// The m menu's rows while a build runs (`running`), top to bottom;
-/// `menu_selected` indexes this list. The stop-build entry joins only while a
+/// `menu_selected` indexes this list. The stop entry joins only while a
 /// build runs, matching the Esc binding's scope (planner and discovery runs
 /// get none), so the key handler's clamp and the renderer read one list.
 pub fn menu_entries(running: bool) -> Vec<MenuChoice> {

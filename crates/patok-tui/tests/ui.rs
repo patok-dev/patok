@@ -3442,7 +3442,7 @@ mod explore {
         let running = draw(&app, 80, 14);
         let strip = running.lines().last().unwrap();
         assert!(!strip.contains(" Enter "), "{strip}");
-        // The running strip keeps only the menu chip: the Esc stop-build
+        // The running strip keeps only the menu chip: the Esc stop
         // hint moved behind the m menu (T128.1).
         assert!(!strip.contains(" Esc "), "{strip}");
         assert!(!strip.contains(" stop build "), "{strip}");

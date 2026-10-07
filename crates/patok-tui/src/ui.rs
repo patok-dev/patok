@@ -877,7 +877,7 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
 
 /// The m menu's rect: a small centered modal, at least 54 columns wide and
 /// tall enough for its rows -- the border (2), the entry rows and the footer
-/// (1) -- clamped to the screen; the stop-build entry adds one row while a
+/// (1) -- clamped to the screen; the stop entry adds one row while a
 /// build runs.
 pub fn menu_area(screen: Rect, running: bool) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
@@ -894,7 +894,7 @@ pub fn menu_area(screen: Rect, running: bool) -> Rect {
 /// bar's former secondary hints as rows -- the selected choice in the shared
 /// selected-row style (T118.1) -- and a two-zone bottom line of hints left,
 /// buttons right (T59.1), styled like the stop dialog. Each entry runs the
-/// action its direct key binding triggers; the stop-build row renders only
+/// action its direct key binding triggers; the stop row renders only
 /// while a build runs. Rendered on top of everything else.
 fn render_menu(frame: &mut Frame, app: &App) {
     let theme = app.theme();
@@ -1582,7 +1582,7 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
                 ));
             }
             // The m menu chip: the settings, theme, detach and quit hints and
-            // the running Esc stop-build hint live behind the menu modal, so
+            // the running Esc stop hint live behind the menu modal, so
             // the bar keeps one chip for all of them.
             keys.push(("m", "menu"));
             // A pair drops as a whole from the tail when it does not fit the

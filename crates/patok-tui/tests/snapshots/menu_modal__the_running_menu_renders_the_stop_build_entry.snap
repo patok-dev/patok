@@ -10,7 +10,7 @@ expression: screen
 [  Build   ]└│  Theme -- pick the colour theme                    │────────────┘
       ↓     ┌│  Detach -- leave the engine running                │────────────┐
 [  Review  ]││  Quit -- stop the app                              │            │
-            ││  Stop build -- open the stop dialog                │            │
+            ││  Stop -- open the stop dialog                      │            │
 [ Discover ]││ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │            │
             │└────────────────────────────────────────────────────┘            │
             │                                                                  │

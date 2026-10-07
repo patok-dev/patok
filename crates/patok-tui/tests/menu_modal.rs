@@ -1,6 +1,6 @@
 //! The m menu modal (T128.1): the status bar's secondary key hints moved
 //! behind one `m` chip, so this covers the modal's rendered rows (and the
-//! stop-build row that joins only while a build runs), its key handling per
+//! stop row that joins only while a build runs), its key handling per
 //! entry -- each entry runs exactly the action its direct key binding
 //! triggers -- and the status bar's slimmed-down hint strip.
 
@@ -36,7 +36,7 @@ fn app() -> App {
     app
 }
 
-/// A running engine, so the menu's stop-build entry joins the list.
+/// A running engine, so the menu's stop entry joins the list.
 fn running_app() -> App {
     let mut app = app();
     app.apply(EngineEvent::PhaseChanged {
@@ -92,7 +92,7 @@ fn confirm_entry(app: &mut App, index: usize) -> Action {
 }
 
 /// The menu's rendered rows while the engine is idle: the four secondary
-/// entries in order, no stop-build row, the focus marker on the first row and
+/// entries in order, no stop row, the focus marker on the first row and
 /// the Confirm/Close footer buttons.
 #[test]
 fn the_idle_menu_renders_its_four_entries() {
@@ -112,7 +112,7 @@ fn the_idle_menu_renders_its_four_entries() {
         "{screen}"
     );
     assert!(screen.contains("  Quit -- stop the app"), "{screen}");
-    assert!(!screen.contains("Stop build"), "{screen}");
+    assert!(!screen.contains("Stop --"), "{screen}");
     assert!(screen.contains("Enter"), "{screen}");
     assert!(screen.contains("Confirm"), "{screen}");
     assert!(screen.contains("Esc"), "{screen}");
@@ -120,7 +120,7 @@ fn the_idle_menu_renders_its_four_entries() {
     insta::assert_snapshot!(screen);
 }
 
-/// While a build runs the menu gains its fifth row, the stop-build entry that
+/// While a build runs the menu gains its fifth row, the stop entry that
 /// opens the stop dialog -- the Esc binding's scope is Running-only, so the
 /// menu mirrors it.
 #[test]
@@ -129,7 +129,7 @@ fn the_running_menu_renders_the_stop_build_entry() {
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     let screen = draw(&app, 80, 14);
     assert!(
-        screen.contains("  Stop build -- open the stop dialog"),
+        screen.contains("  Stop -- open the stop dialog"),
         "{screen}"
     );
     insta::assert_snapshot!(screen);
@@ -204,7 +204,7 @@ fn the_menu_keys_run_the_entries_actions() {
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     assert_eq!(confirm_entry(&mut app, 3), Action::Interrupt);
 
-    // Stop build (running only) runs the Esc binding's action: the stop
+    // Stop (running only) runs the Esc binding's action: the stop
     // dialog opens on its first choice, the menu closes.
     let mut app = running_app();
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
@@ -234,7 +234,7 @@ fn the_menu_keys_run_the_entries_actions() {
     assert!(!app.stopping);
 }
 
-/// The stop-build entry joins only while a build runs, so the Down clamp
+/// The stop entry joins only while a build runs, so the Down clamp
 /// stops one row earlier while idle: no stop row hides below the fold.
 #[test]
 fn the_stop_build_entry_is_running_only() {
@@ -245,9 +245,9 @@ fn the_stop_build_entry_is_running_only() {
     }
     assert_eq!(idle.menu_selected, 3);
     let screen = draw(&idle, 80, 14);
-    assert!(!screen.contains("Stop build"), "{screen}");
+    assert!(!screen.contains("Stop --"), "{screen}");
 
-    // Running: five entries, so the clamp reaches the stop-build row.
+    // Running: five entries, so the clamp reaches the stop row.
     let mut running = running_app();
     assert_eq!(press(&mut running, KeyCode::Char('m')), Action::None);
     for _ in 0..6 {
@@ -255,7 +255,7 @@ fn the_stop_build_entry_is_running_only() {
     }
     assert_eq!(running.menu_selected, 4);
     let screen = draw(&running, 80, 14);
-    assert!(screen.contains("Stop build"), "{screen}");
+    assert!(screen.contains("Stop -- open the stop dialog"), "{screen}");
     // The planning and discovery runs get no stop row either, matching the
     // Esc binding's scope.
     let mut app = app();
