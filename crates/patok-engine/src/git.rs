@@ -19,9 +19,6 @@ pub enum CommitKind {
 
 /// A new commit made by [`Git::commit_all`]: the short SHA for display and
 /// the full SHA for the open-group record.
-// The open-group wiring reads `full` in a later task; the allowance is
-// removed when the engine starts using the field.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Commit {
     /// The new commit's short SHA, for display.
@@ -63,6 +60,9 @@ impl Git {
     }
 
     /// The current HEAD's short SHA, or `None` outside a repository.
+    // The open-group record replaced the engine's last use in T123.3; T123.4
+    // removes this and its tests.
+    #[allow(dead_code)]
     pub async fn head_sha(&self) -> Option<String> {
         let out = self.run(&["rev-parse", "--short", "HEAD"]).await?;
         out.status
@@ -72,8 +72,6 @@ impl Git {
     }
 
     /// The current HEAD's full SHA, or `None` outside a repository.
-    // Consumed by the open-group wiring in a later task; remove then.
-    #[allow(dead_code)]
     pub async fn head_full_sha(&self) -> Option<String> {
         let out = self.run(&["rev-parse", "HEAD"]).await?;
         out.status
@@ -85,8 +83,6 @@ impl Git {
     /// Whether `ancestor` is an ancestor of `descendant`, built on
     /// `git merge-base --is-ancestor`: false when the command fails -- a
     /// non-ancestor pair, a missing SHA, or no repository.
-    // Consumed by the open-group wiring in a later task; remove then.
-    #[allow(dead_code)]
     pub async fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
         self.succeeds(&["merge-base", "--is-ancestor", ancestor, descendant])
             .await
@@ -94,6 +90,9 @@ impl Git {
 
     /// The commit log's subjects, newest first: `(short sha, subject)` pairs,
     /// split at the first tab. Empty outside a repository.
+    // The open-group record replaced this in T123.3; T123.4 removes it and
+    /// its tests.
+    #[allow(dead_code)]
     pub async fn log_subjects(&self) -> Vec<(String, String)> {
         match self.run(&["log", "--format=%h%x09%s"]).await {
             Some(out) => String::from_utf8_lossy(&out.stdout)
@@ -109,6 +108,9 @@ impl Git {
     }
 
     /// The short SHA of `sha`'s parent, or `None` for a root commit or a failure.
+    // The open-group record replaced this in T123.3; T123.4 removes it and
+    // its tests.
+    #[allow(dead_code)]
     pub async fn parent_sha(&self, sha: &str) -> Option<String> {
         let parent = format!("{sha}^");
         let out = self.run(&["rev-parse", "--short", &parent]).await?;

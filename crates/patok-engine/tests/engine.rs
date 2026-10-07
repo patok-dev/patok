@@ -4108,6 +4108,288 @@ async fn a_restart_after_a_failed_review_of_a_single_task_group_passes_the_rerun
     assert!(log.contains("feat(T1.1)"), "{log}");
 }
 
+/// The parsed open-group record, failing the test when it is missing.
+fn open_group_record(fixture: &Fixture) -> serde_json::Value {
+    let path = fixture.data.path().join("open-group.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("no open-group record at {}", path.display()));
+    serde_json::from_str(&text).expect("the record parses")
+}
+
+/// T123.3: an interrupted group resumes through the on-disk open-group
+/// record. The first run's failed review keeps the record -- updated to the
+/// WIP commit, its members holding both tasks -- and a fresh engine over the
+/// same repository resumes the group, so the rerun's review diffs the whole
+/// group; the group's completed review then deletes the record.
+#[tokio::test]
+async fn an_interrupted_group_resumes_from_the_open_group_record_after_a_restart() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n- [ ] T2.1: add the third file\n";
+    let fixture = Fixture::new(tasks);
+    // The fixture's initial commit is the group's base.
+    let base = fixture.git(&["rev-parse", "HEAD"]).trim().to_string();
+    // The scripts cover both runs: the mock's session record is shared by
+    // the provider clones, so a fresh engine continues the script index.
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        // The rerun's builder changes nothing new: its work is in the WIP commit.
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The record survived the failed review with the group's whole span:
+    // the base is the initial commit, the last is the WIP commit at HEAD.
+    let record = open_group_record(&fixture);
+    assert_eq!(record["number"], "1", "{record}");
+    assert_eq!(record["base"], base, "{record}");
+    assert_eq!(
+        record["last"],
+        fixture.git(&["rev-parse", "HEAD"]).trim(),
+        "{record}"
+    );
+    let members = record["members"].as_array().expect("members");
+    let ids: Vec<&str> = members.iter().map(|m| m[0].as_str().unwrap()).collect();
+    assert_eq!(ids, ["T1.1", "T1.2"], "{record}");
+    let hashes: Vec<&str> = members.iter().map(|m| m[1].as_str().unwrap()).collect();
+    assert!(
+        hashes
+            .iter()
+            .all(|hash| { hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) }),
+        "{record}"
+    );
+    assert_ne!(hashes[0], hashes[1]);
+
+    // The restart (what the TUI's Enter and a fresh headless run do): a
+    // fresh engine over the same fixture and provider.
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(events.iter().all(|e| !matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Failed | TaskOutcome::Cancelled,
+            ..
+        }
+    )));
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["T1.1", "T1.2", "review", "T1.2", "review", "T2.1", "review"]
+    );
+    // The resumed base restored the group's whole diff.
+    let rerun_reviewer_prompt = &sessions[4].prompt;
+    assert!(
+        rerun_reviewer_prompt.contains("first.txt"),
+        "the resumed group base should span the group's first commit: {rerun_reviewer_prompt}"
+    );
+    assert!(
+        rerun_reviewer_prompt.contains("second.txt"),
+        "{rerun_reviewer_prompt}"
+    );
+    let file = fixture.tasks_file();
+    assert!(
+        file.contains("- [x] T1.2: [--.BR] add the second file"),
+        "{file}"
+    );
+    assert!(
+        file.contains("- [x] T2.1: [--.BR] add the third file"),
+        "{file}"
+    );
+    // The group's completed review deleted the record.
+    assert!(!fixture.data.path().join("open-group.json").exists());
+}
+
+/// T123.3: a moved HEAD invalidates the open-group record: the restart
+/// starts a fresh group whose base is the new HEAD, so the rerun's review
+/// diffs only the rerun's own work.
+#[tokio::test]
+async fn a_moved_head_starts_a_fresh_group_from_the_open_group_record() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        // New content, so the changed-files gate of the rerun's review passes.
+        builder_with_claims("second.txt", "second v2\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+    assert!(
+        fixture.data.path().join("open-group.json").exists(),
+        "the failed review keeps the record"
+    );
+
+    // An external commit moves HEAD past the group's last WIP commit.
+    std::fs::write(fixture.path().join("unrelated.txt"), "unrelated\n").unwrap();
+    fixture.git(&["add", "-A"]);
+    fixture.git(&["commit", "-q", "-m", "external"]);
+
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Done,
+            ..
+        }
+    )));
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T1.2", "review"]);
+    let prompt = &sessions[4].prompt;
+    assert!(prompt.contains("second.txt"), "{prompt}");
+    assert!(
+        !prompt.contains("first.txt"),
+        "a moved HEAD should start a fresh group: {prompt}"
+    );
+    assert!(!prompt.contains("unrelated.txt"), "{prompt}");
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.2: [--.BR] add the second file")
+    );
+    // The fresh group's completed review deleted the record.
+    assert!(!fixture.data.path().join("open-group.json").exists());
+}
+
+/// T123.3: a closed group is never resumed. The group's last task completes
+/// its review and the record is deleted, so a later task of the same number
+/// starts its own fresh group whose diff holds none of the closed group's
+/// commits -- even though HEAD sits at the record's `last` commit, which
+/// would resume a kept record.
+#[tokio::test]
+async fn a_closed_group_is_never_resumed() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The group's last task completed its review: the record is gone.
+    assert!(!fixture.data.path().join("open-group.json").exists());
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.2: [--.BR] add the second file")
+    );
+
+    // A later same-number task appended to the file runs on a fresh engine.
+    let mut tasks = std::fs::read_to_string(fixture.path().join(TASK_FILE)).unwrap();
+    tasks.push_str("- [ ] T1.3: add the third file\n");
+    std::fs::write(fixture.path().join(TASK_FILE), tasks).unwrap();
+
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T1.3", "review"]);
+    let prompt = &sessions[4].prompt;
+    assert!(prompt.contains("third.txt"), "{prompt}");
+    assert!(
+        !prompt.contains("first.txt"),
+        "a closed group must not be resumed: {prompt}"
+    );
+    assert!(!prompt.contains("second.txt"), "{prompt}");
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.3: [--.BR] add the third file")
+    );
+    assert!(!fixture.data.path().join("open-group.json").exists());
+}
+
+/// T123.3: a reused task ID with a different description is not the group's
+/// member anymore: the record starts a fresh group at HEAD, so the rerun's
+/// review diffs only the reworded task's own work.
+#[tokio::test]
+async fn a_reused_task_id_with_a_different_description_starts_a_fresh_group() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        builder_with_claims("renamed.txt", "renamed\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The task is reworded but stays unchecked: same ID, new description.
+    let file = fixture.tasks_file();
+    assert!(
+        file.contains("- [ ] T1.2: [--.BR!] add the second file"),
+        "{file}"
+    );
+    let reworded = file.replace(
+        "- [ ] T1.2: [--.BR!] add the second file",
+        "- [ ] T1.2: [--.BR!] add the renamed file",
+    );
+    std::fs::write(fixture.path().join(TASK_FILE), reworded).unwrap();
+
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Done,
+            ..
+        }
+    )));
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T1.2", "review"]);
+    let prompt = &sessions[4].prompt;
+    assert!(prompt.contains("renamed.txt"), "{prompt}");
+    assert!(
+        !prompt.contains("first.txt"),
+        "the reused ID's fresh group should not span the old commits: {prompt}"
+    );
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.2: [--.BR] add the renamed file")
+    );
+    assert!(!fixture.data.path().join("open-group.json").exists());
+}
+
 #[tokio::test]
 async fn a_multipass_review_reviews_each_file_then_integrates() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");

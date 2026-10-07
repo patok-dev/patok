@@ -458,6 +458,9 @@ pub fn leading_number(task_id: &str) -> Option<String> {
 /// The task ID a commit subject names (`feat(T1.2): …` -> `Some("T1.2")`): the
 /// text between the first `(` and the following `)`. `None` for subjects
 /// without them, so non-patok commits never belong to a batch-review group.
+// The open-group record replaced this in T123.3; T123.4 removes it and its
+// tests.
+#[allow(dead_code)]
 pub fn subject_task_id(subject: &str) -> Option<&str> {
     let start = subject.find('(')? + 1;
     let rest = &subject[start..];
@@ -647,9 +650,6 @@ impl ReviewHistory {
 /// (task ID, description hash) of every task committed into the group.
 /// Stored as `open-group.json` in the data dir; a missing or corrupt file
 /// means no open group.
-// The engine wiring adopts the record in a later task; each allowance is
-// removed when the engine starts using the item.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OpenGroup {
     /// The group's leading task-ID number (`"1"` for `T1.2`).
@@ -662,7 +662,6 @@ pub struct OpenGroup {
     pub members: Vec<(String, String)>,
 }
 
-#[allow(dead_code)]
 impl OpenGroup {
     /// Loads the open group from `path`; a missing or corrupt file is no
     /// open group.
@@ -694,7 +693,6 @@ impl OpenGroup {
 
 /// The SHA-256 hex digest of a task description: the description's identity
 /// for group membership, stable across restarts.
-#[allow(dead_code)]
 pub fn description_hash(description: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(description.as_bytes());
@@ -706,7 +704,6 @@ pub fn description_hash(description: &str) -> String {
 }
 
 /// Whether an interrupted batch-review group resumes or starts fresh.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResumeDecision {
     /// Reuse the open group's base so the review still diffs every commit
@@ -723,7 +720,6 @@ pub enum ResumeDecision {
 /// from `members`). Anything else -- a moved HEAD, a non-ancestor base, a
 /// different number, or a reused ID whose description hash differs -- starts
 /// a fresh group.
-#[allow(dead_code)]
 pub fn resume_decision(
     record: &OpenGroup,
     head: &str,
