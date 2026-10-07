@@ -547,15 +547,19 @@ const ATOM_ONE_DARK: Palette = Palette {
 /// literal and `accent` a lightened blue literal — brighter than the
 /// DISCOVERING chip — so the theme's classes are its own (T112.1); the
 /// decorative scrollbar rail keeps the palette value. `highlighted_text`
-/// takes Atom One Dark's signature cyan — distinct from the blue DISCOVERING
-/// chip and the lightened-blue `accent` — so the theme's highlight is its
-/// own (T119.1).
+/// takes a magenta literal of the planner-name family (T120.1) — between
+/// the planner anchor `B7 6B D8` and the palette's own magenta, so the
+/// highlight echoes the PLANNING identity without duplicating the PLANNING
+/// chip — and it clears [`READABLE_CONTRAST`] on the background. It stays
+/// unique among the eleven built-in themes' highlights (T119.1): apart
+/// from Atom One Light's darkened magenta and the default dark theme's
+/// value-locked yellow.
 const ATOM_ONE_DARK_CLASSES: Classes = Classes {
     background: ATOM_ONE_DARK.background,
     foreground: ATOM_ONE_DARK.foreground,
     normal_text: (0xC8, 0xCD, 0xD5),
     muted_text: (0x6E, 0x77, 0x86),
-    highlighted_text: (0x56, 0xB6, 0xC2),
+    highlighted_text: (0xBF, 0x72, 0xE0),
     chip_neutral: ATOM_ONE_DARK.foreground,
     contrast_text: ATOM_ONE_DARK.background,
     success: ATOM_ONE_DARK.green,
@@ -1468,11 +1472,20 @@ mod tests {
     /// other theme's value differs from it and is unique among the eleven,
     /// and each non-dark theme resolves the class straight from its own
     /// [`Classes`] table, so every consumer reading the class off the active
-    /// theme follows the theme's definition.
+    /// theme follows the theme's definition. Atom One Dark's highlight
+    /// moved from its signature cyan to the planner-name magenta family
+    /// (T120.1), still unique among the eleven and clear of the
+    /// readability bar.
     #[test]
     fn highlighted_text_is_theme_specific() {
         // The default's value lock, explicit for this class.
         assert_eq!(Theme::DARK.highlighted_text, Color::Yellow);
+        // Atom One Dark's own lock (T120.1): the highlight moved from the
+        // signature cyan to the planner-name magenta family.
+        assert_eq!(
+            classes_of(ThemeKey::AtomOneDark).highlighted_text,
+            (0xBF, 0x72, 0xE0)
+        );
         for key in every_key().into_iter().filter(|key| *key != ThemeKey::Dark) {
             let theme = Theme::resolve(key, Some(true));
             assert_ne!(
