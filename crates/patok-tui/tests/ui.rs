@@ -6449,7 +6449,12 @@ mod pipeline {
             .iter()
             .position(|entry| matches!(entry, Entry::Row(row) if row.key == "rail_mode"))
             .expect("the rail mode row is visible");
-        app.overlay.focus = index;
+        // Walk the focus there with the keys so the offset follows the
+        // selection into view (T136.1).
+        let _ = draw(&app, 100, 30);
+        while app.overlay.focus < index {
+            app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
         let screen = draw(&app, 100, 30);
         assert!(screen.contains("rail mode  ‹ normal ›"), "{screen}");
     }

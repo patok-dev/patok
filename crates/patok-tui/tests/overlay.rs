@@ -10,7 +10,7 @@ use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
 use patok_tui::{
-    Action, App, Entry, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
+    Action, App, Entry, FieldKind, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
     SETTINGS_HELP_PANEL_WIDTH, settings_area, settings_body_areas,
 };
 use ratatui::Terminal;
@@ -114,7 +114,7 @@ fn focus_field(app: &mut App, field: &str) {
         .iter()
         .position(|entry| matches!(entry, Entry::Row(row) if row.key == field))
         .unwrap_or_else(|| panic!("`{field}` is not visible"));
-    app.overlay.focus = index;
+    move_focus_to(app, index);
 }
 
 /// Puts the overlay's focus on a section header.
@@ -125,7 +125,22 @@ fn focus_header(app: &mut App, index: usize) {
         .iter()
         .position(|entry| *entry == Entry::Header(index))
         .expect("the header is visible");
-    app.overlay.focus = header;
+    move_focus_to(app, header);
+}
+
+/// Walks the focus to `index` with the navigation keys, one row per press,
+/// the only way the focus moves for a user -- so the scroll offset follows
+/// the selection like it does in the shell (T136.1). The draw first records
+/// the list viewport the follow reads.
+fn move_focus_to(app: &mut App, index: usize) {
+    let _ = draw(app, W, H);
+    while app.overlay.focus < index {
+        press(app, KeyCode::Down);
+    }
+    while app.overlay.focus > index {
+        press(app, KeyCode::Up);
+    }
+    assert_eq!(app.overlay.focus, index);
 }
 
 /// Puts focus on a section header and toggles it with Enter.
@@ -673,9 +688,13 @@ fn all_sections_folded_show_only_their_headers() {
 fn every_section_expands_and_the_overflowing_body_gains_a_scrollbar() {
     let mut app = open();
     // Every section opens expanded, so the full row model -- the tui-schema fields
-    // included -- is showing; the bottom rows only render once the body scrolls to
-    // the focused last entry row.
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    // included -- is showing; the bottom rows only render once the body scrolls
+    // to the focused last entry row, reached through the keys so the offset
+    // follows the selection (T136.1).
+    let _ = draw(&app, W, H);
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::PageDown);
+    }
     let screen = draw(&app, W, H);
     assert!(screen.contains("auto-push remote"), "{screen}");
     assert!(screen.contains("‹ dark ›"), "{screen}");
@@ -825,8 +844,12 @@ fn arrows_move_focus_and_pages_jump() {
     assert!(app.overlay.focus > 10);
     press(&mut app, KeyCode::PageUp);
     assert!(app.overlay.focus < 10);
-    // The focused row stays on screen when the body scrolls.
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    // The focused row stays on screen when the body scrolls: the last row,
+    // reached through the keys, drags the offset along with it (T136.1).
+    let _ = draw(&app, W, H);
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::PageDown);
+    }
     let screen = draw(&app, W, H);
     assert!(screen.contains("update channel"), "{screen}");
     assert!(screen.contains("│"), "{screen}");
@@ -1146,33 +1169,42 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         assert_eq!(app.overlay.scroll.get(), scroll, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    // Folding Pipeline while scrolled to the bottom shortens the list to 33 rows:
-    // the focus clamps into it and the draw pulls the offset back into range.
+    // Folding Pipeline while scrolled to the bottom shortens the list to 33
+    // rows: walking the focus to the header and back down with the keys keeps
+    // every step visible, and the offset clamps into the shortened range.
     let header = app
         .overlay
         .visible()
         .iter()
         .position(|entry| *entry == Entry::Header(1))
         .unwrap();
-    app.overlay.focus = header;
+    while app.overlay.focus > header {
+        press(&mut app, KeyCode::Up);
+    }
     press(&mut app, KeyCode::Left);
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::Down);
+    }
     let screen = draw(&app, W, 24);
     assert_eq!(app.overlay.visible().len(), 33);
     assert_eq!(app.overlay.focus, 32);
     assert_eq!(app.overlay.scroll.get(), 21);
     assert_cursor_visible(&app, &screen, 12);
-    // Unfolding grows the list again; whatever the focus, the next draw keeps it
-    // on screen -- here at the very bottom, back at the maximum offset.
+    // Unfolding grows the list again; walking back down to the very bottom
+    // keeps the cursor visible, back at the maximum offset.
     let header = app
         .overlay
         .visible()
         .iter()
         .position(|entry| *entry == Entry::Header(1))
         .unwrap();
-    app.overlay.focus = header;
+    while app.overlay.focus > header {
+        press(&mut app, KeyCode::Up);
+    }
     press(&mut app, KeyCode::Right);
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::Down);
+    }
     let screen = draw(&app, W, 24);
     assert_eq!(app.overlay.visible().len(), 44);
     assert_eq!(app.overlay.scroll.get(), 32);
@@ -1443,8 +1475,12 @@ fn the_last_row_still_edits_and_drafts() {
     let mut app = open();
     // Focus the last entry row: rail mode, a tui-schema enum reading "normal"
     // -- the default since T58.1, shown when the key is unset. Enter cycles to
-    // the detailed view mode (T89.1).
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    // the detailed view mode (T89.1). The keys walk the focus there so the
+    // offset follows the selection (T136.1).
+    let _ = draw(&app, W, H);
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::PageDown);
+    }
     assert!(matches!(
         app.overlay.focused(),
         Entry::Row(row) if row.key == "rail_mode"
@@ -1650,7 +1686,9 @@ mod modal_footer {
         assert!(app.overlay.confirm_open);
         assert!(app.overlay.dirty());
 
-        // Clicks on the hint zone and on a settings row change nothing.
+        // Clicks on the hint zone change nothing; since T136.1 a click inside
+        // a list row selects it and runs its Enter -- the Bool row that spot
+        // lands on drafts its toggle, like focusing it and pressing Enter.
         let mut app = open();
         buffer(&app);
         let footer = app.overlay.footer.get();
@@ -1661,8 +1699,15 @@ mod modal_footer {
             Action::None
         );
         assert!(app.settings_open());
-        assert_eq!(app.overlay.focus, 0);
-        assert!(!app.overlay.dirty());
+        let clicked = app.overlay.focused();
+        assert!(matches!(clicked, Entry::Row(row) if row.kind == FieldKind::Bool));
+        assert_eq!(
+            app.overlay.drafts.get(match clicked {
+                Entry::Row(row) => row.key,
+                _ => "",
+            }),
+            Some(&SettingValue::Bool(true))
+        );
     }
 
     #[test]
@@ -1900,8 +1945,9 @@ mod close_button {
         assert_eq!(app.overlay.confirm_selected, 0);
         assert!(app.overlay.dirty());
 
-        // Clicks on the title row outside the button and on a settings row
-        // change nothing.
+        // Clicks on the title row outside the button change nothing; since
+        // T136.1 a click inside a list row selects it and runs its Enter --
+        // the enum row that spot lands on cycles and drafts its next choice.
         let mut app = open();
         buffer(&app);
         let close = app.overlay.close.get();
@@ -1909,7 +1955,9 @@ mod close_button {
         assert!(app.settings_open());
         assert_eq!(app.on_mouse(click(close.x + 3, close.y + 10)), Action::None);
         assert!(app.settings_open());
-        assert!(!app.overlay.dirty());
+        let clicked = app.overlay.focused();
+        assert!(matches!(clicked, Entry::Row(row) if matches!(row.kind, FieldKind::Enum(_))));
+        assert!(app.overlay.dirty());
     }
 
     #[test]

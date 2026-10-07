@@ -13,9 +13,7 @@ use crate::app::{
     App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOICES, menu_entries,
 };
 use crate::markdown::markdown_lines;
-use crate::overlay::{
-    Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset,
-};
+use crate::overlay::{Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel};
 use crate::pipeline::{rail_width, render_rail};
 use crate::theme::{Theme, theme_modal_groups};
 
@@ -408,15 +406,18 @@ fn render_settings_overlay(frame: &mut Frame, app: &App) {
         .enumerate()
         .map(|(index, entry)| settings_row_line(app, index, entry, usize::from(list.width)))
         .collect();
-    // Keep the focused row on screen with a 4-row margin: the view scrolls only
-    // once the cursor approaches an edge, then follows keeping that margin.
+    // The offset follows the cursor from the key path (`move_focus`) and the
+    // wheel moves it freely (`scroll_by`); the render only records the list
+    // rect and clamps the offset into the scrollable range, so folds and
+    // resizes self-heal without pulling the wheel's free offset back into
+    // the cursor's margin band.
     let height = usize::from(list.height.max(1));
-    let start = scroll_offset(
-        app.overlay.focus,
-        lines.len(),
-        height,
-        app.overlay.scroll.get(),
-    );
+    let start = app
+        .overlay
+        .scroll
+        .get()
+        .min(lines.len().saturating_sub(height));
+    app.overlay.list.set(list);
     app.overlay.scroll.set(start);
     frame.render_widget(Paragraph::new(lines[start..].to_vec()), list);
     render_scrollbar(frame, theme, list, start, lines.len());
@@ -973,6 +974,23 @@ pub fn theme_row_at(position: Position, body: Rect, visible_len: usize) -> Optio
     }
     let row = usize::from(position.y - body.y);
     (row < visible_len).then_some(row)
+}
+
+/// The settings list's entry the pointer sits on: the visible entry index
+/// when the position is on one of the list's rendered rows (offset by the
+/// current scroll), `None` outside the list rect or on a viewport row past
+/// the last visible entry. A pure hit-test like [`theme_row_at`].
+pub fn settings_row_at(
+    position: Position,
+    list: Rect,
+    scroll: usize,
+    visible_len: usize,
+) -> Option<usize> {
+    if !list.contains(position) {
+        return None;
+    }
+    let index = scroll + usize::from(position.y - list.y);
+    (index < visible_len).then_some(index)
 }
 
 /// The theme picker (the `t` key, T43.1, T116.1): a centered " Theme " modal

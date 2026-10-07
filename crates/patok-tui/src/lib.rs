@@ -36,5 +36,5 @@ pub use ui::{
     dialog_area, finished_line, fitted_hints, footer_button_rects, format_elapsed, frame_at,
     frame_constraints, human_duration, menu_area, output_title, output_title_parts,
     output_title_spans, render, settings_area, settings_body_areas, settings_confirm_area,
-    started_line, stop_area, theme_area, theme_row_at,
+    settings_row_at, started_line, stop_area, theme_area, theme_row_at,
 };

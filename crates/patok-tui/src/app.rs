@@ -21,7 +21,8 @@ use crate::overlay::{
 };
 use crate::theme::{Theme, theme_modal_groups};
 use crate::ui::{
-    agent_display, finished_line, footer_button_rects, frame_at, started_line, theme_row_at,
+    agent_display, finished_line, footer_button_rects, frame_at, settings_row_at, started_line,
+    theme_row_at,
 };
 
 /// Output lines kept; older ones scroll off for good.
@@ -1419,19 +1420,58 @@ impl App {
         }
     }
 
-    /// The settings overlay's mouse handling (T59.1): a click on the bottom
-    /// line's Close button runs exactly the Esc key through the overlay's key
-    /// path -- a clean overlay closes, a dirty one opens the unsaved-changes
-    /// dialog. A click on the title row's close button runs the same Esc key
-    /// (T66.1). Everything else is swallowed, as before.
+    /// The settings overlay's mouse handling (T59.1, T136.1): a click on the
+    /// bottom line's Close button runs exactly the Esc key through the
+    /// overlay's key path -- a clean overlay closes, a dirty one opens the
+    /// unsaved-changes dialog. A click on the title row's close button runs
+    /// the same Esc key (T66.1). A wheel step scrolls the list one row per
+    /// step without moving the selection, clamped at the list's ends, and a
+    /// left click inside a rendered list row runs that row's Enter key
+    /// verbatim -- it selects the row first, so a click and Enter on the
+    /// same row are indistinguishable. The inline editor is modal like its
+    /// keys: while it is open, row clicks and wheel steps are swallowed.
+    /// Everything else is swallowed, as before.
     fn on_overlay_mouse(&mut self, mouse: MouseEvent) -> Action {
         if close_clicked(&mouse, self.overlay.close.get()) {
             return self.on_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
-        match footer_button_code(&mouse, self.overlay.footer.get(), &[("Esc", "Close")]) {
-            Some(code) => self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE)),
-            None => Action::None,
+        if let Some(code) =
+            footer_button_code(&mouse, self.overlay.footer.get(), &[("Esc", "Close")])
+        {
+            return self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
+        // The inline editor is modal: while it is open, row clicks and wheel
+        // steps are swallowed, like every key that is not the editor's.
+        if self.overlay.editor.is_some() {
+            return Action::None;
+        }
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.overlay.scroll_by(-1);
+            }
+            MouseEventKind::ScrollDown => {
+                self.overlay.scroll_by(1);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+                let row = settings_row_at(
+                    position,
+                    self.overlay.list.get(),
+                    self.overlay.scroll.get(),
+                    self.overlay.visible().len(),
+                );
+                if let Some(index) = row {
+                    // The click is the row's Enter key verbatim: it moves
+                    // the focus to the row, then runs the Enter dispatch,
+                    // which reads the row's current value -- so a click and
+                    // Enter on the same row are indistinguishable.
+                    self.overlay.focus = index;
+                    return self.on_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+            }
+            _ => {}
+        }
+        Action::None
     }
 
     /// The unsaved-changes dialog's mouse handling (T59.1): a click on one of
@@ -2306,5 +2346,173 @@ mod tests {
         app.apply(EngineEvent::PlanningChanged { planning: true });
         let elapsed = app.session_elapsed().expect("the timer runs");
         assert!(elapsed < Duration::from_secs(1), "elapsed {elapsed:?}");
+    }
+
+    /// A mouse event of `kind` at (`column`, `row`).
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// An app with the settings overlay open over a recorded 10-row list
+    /// viewport (T136.1); the close and footer rects stay zero, so clicks
+    /// there miss naturally.
+    fn settings_app() -> (App, Rect) {
+        let mut app = app();
+        app.overlay.open();
+        let list = Rect::new(10, 5, 60, 10);
+        app.overlay.list.set(list);
+        (app, list)
+    }
+
+    /// A left click on the list's `index`-th visible row.
+    fn click_row(app: &mut App, list: Rect, index: usize) -> Action {
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            list.x + 2,
+            list.y + index as u16,
+        ))
+    }
+
+    /// The visible index of `field`'s row.
+    fn visible_index(app: &App, field: &str) -> usize {
+        app.overlay
+            .visible()
+            .iter()
+            .position(|entry| matches!(entry, Entry::Row(row) if row.key == field))
+            .unwrap_or_else(|| panic!("`{field}` is not visible"))
+    }
+
+    /// Wheel steps scroll the list one row per step without moving the
+    /// selection, clamped at the first and the last row (T136.1).
+    #[test]
+    fn wheel_steps_scroll_the_list_without_moving_the_selection() {
+        let (mut app, list) = settings_app();
+        let len = app.overlay.visible().len();
+        let over = (list.x + 2, list.y + 2);
+
+        // One wheel step moves the offset exactly one row; the selection,
+        // the drafts and the editor stay put.
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::ScrollDown, over.0, over.1)),
+            Action::None
+        );
+        assert_eq!(app.overlay.scroll.get(), 1);
+        assert_eq!(app.overlay.focus, 0);
+        assert!(app.overlay.drafts.is_empty());
+        assert!(app.overlay.editor.is_none());
+
+        // Scrolling down past the end clamps at the last offset that still
+        // fills the viewport.
+        for _ in 0..len {
+            app.on_mouse(mouse(MouseEventKind::ScrollDown, over.0, over.1));
+        }
+        assert_eq!(app.overlay.scroll.get(), len - 10);
+        assert_eq!(app.overlay.focus, 0);
+
+        // Scrolling back up clamps at the first row.
+        for _ in 0..(len + 10) {
+            app.on_mouse(mouse(MouseEventKind::ScrollUp, over.0, over.1));
+        }
+        assert_eq!(app.overlay.scroll.get(), 0);
+        assert_eq!(app.overlay.focus, 0);
+        assert!(app.overlay.drafts.is_empty());
+        assert!(app.overlay.editor.is_none());
+    }
+
+    /// A left click inside a list row selects it and runs its Enter key
+    /// verbatim: a header folds, a Text row opens the inline editor and a
+    /// Bool row drafts the toggle (T136.1).
+    #[test]
+    fn a_click_on_a_row_selects_and_runs_its_enter() {
+        let (mut app, list) = settings_app();
+        let full = app.overlay.visible().len();
+
+        // A header click folds its section, and a second one unfolds it --
+        // exactly Enter's behaviour on a header.
+        assert_eq!(click_row(&mut app, list, 0), Action::None);
+        assert_eq!(app.overlay.focus, 0);
+        assert!(app.overlay.visible().len() < full);
+        assert_eq!(click_row(&mut app, list, 0), Action::None);
+        assert_eq!(app.overlay.visible().len(), full);
+
+        // A Text row's click opens the same inline editor Enter opens,
+        // prefilled with the row's current value (no readout yet: empty).
+        let model = visible_index(&app, "model");
+        assert_eq!(click_row(&mut app, list, model), Action::None);
+        assert_eq!(app.overlay.focus, model);
+        let editor = app
+            .overlay
+            .editor
+            .take()
+            .expect("the click opened the editor");
+        assert_eq!(editor.field, "model");
+        assert_eq!(editor.buffer, "");
+
+        // A Bool row's click drafts the toggle Enter drafts. The wheel
+        // scrolled it into view first, so the click also proves the
+        // hit-test sees the scrolled rows.
+        for _ in 0..10 {
+            app.on_mouse(mouse(MouseEventKind::ScrollDown, list.x + 2, list.y + 2));
+        }
+        let plan = visible_index(&app, "plan_enabled");
+        let scrolled = plan - app.overlay.scroll.get();
+        assert_eq!(click_row(&mut app, list, scrolled), Action::None);
+        assert_eq!(app.overlay.focus, plan);
+        assert_eq!(
+            app.overlay.drafts.get("plan_enabled"),
+            Some(&SettingValue::Bool(true))
+        );
+    }
+
+    /// A click on a blank viewport row below the list's last entry and a
+    /// click outside the list rect entirely change nothing (T136.1).
+    #[test]
+    fn a_click_outside_the_list_rows_does_nothing() {
+        let (mut app, list) = settings_app();
+        // Fold every section by clicking its header: the list holds only
+        // its five headers, leaving blank viewport rows below them.
+        for index in 0..5 {
+            let header = app
+                .overlay
+                .visible()
+                .iter()
+                .position(|entry| *entry == Entry::Header(index))
+                .unwrap();
+            assert_eq!(click_row(&mut app, list, header), Action::None);
+        }
+        assert_eq!(app.overlay.visible().len(), 5);
+
+        let before = (app.overlay.focus, app.overlay.scroll.get());
+        assert_eq!(click_row(&mut app, list, 7), Action::None, "a blank row");
+        // (0, 1) is outside the list rect and below the footer line the zero
+        // rects still derive their phantom buttons on.
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 1)),
+            Action::None,
+            "outside the list rect"
+        );
+        assert_eq!((app.overlay.focus, app.overlay.scroll.get()), before);
+        assert!(app.overlay.drafts.is_empty());
+        assert!(app.overlay.editor.is_none());
+    }
+
+    /// The inline editor is modal for the mouse too: wheel steps over the
+    /// overlay are swallowed while it is open (T136.1).
+    #[test]
+    fn wheel_steps_are_swallowed_while_the_editor_is_open() {
+        let (mut app, list) = settings_app();
+        // The same Enter path a click on a Text row runs opens the editor.
+        let model = visible_index(&app, "model");
+        click_row(&mut app, list, model);
+        assert!(app.overlay.editor.is_some());
+        for _ in 0..5 {
+            app.on_mouse(mouse(MouseEventKind::ScrollDown, list.x + 2, list.y + 2));
+        }
+        assert_eq!(app.overlay.scroll.get(), 0, "the editor swallows the wheel");
     }
 }
