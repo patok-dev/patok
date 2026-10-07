@@ -1635,7 +1635,7 @@ mod tests {
 
     /// A pane line that names an agent wears its line kind's colour in full on
     /// every built-in theme (T117.1): the lifecycle status lines in the
-    /// pane-status colour, the planning heading in the heading colour (bold),
+    /// pane-status colour, the task heading in the heading colour (bold),
     /// and the name is never dropped or restyled on its own.
     #[test]
     fn agent_name_lines_wear_the_kind_colour_on_every_theme() {
@@ -1647,7 +1647,7 @@ mod tests {
                     LineKind::Status,
                     finished_line("builder", SessionOutcome::Finished, Duration::from_secs(45)),
                 ),
-                (LineKind::Heading, "── planner".to_string()),
+                (LineKind::Heading, "── T1.1: add a login page".to_string()),
             ] {
                 let colour = Theme::line_color(theme, kind);
                 let rows = visual_lines(

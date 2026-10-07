@@ -584,11 +584,8 @@ impl App {
                 if planning {
                     // The engine announces the run's agent (the planner, or the
                     // research agent for a queue-creation run, T69.1) before
-                    // this event, so the status line and the heading name it.
+                    // this event, so the status line names it.
                     self.status = Some(format!("{} running...", agent_display(&self.agent)));
-                    // The run's output streams into the main pane next to earlier
-                    // output; a heading keeps runs visually separate (T24.1).
-                    self.push(LineKind::Heading, format!("── {}", self.agent));
                 } else if self.planning {
                     // The run's outcome is the notice line in the output pane; the
                     // status bar returns to its normal content instead of repeating

@@ -3,10 +3,10 @@ source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
              ┌ Planner ────────────────────────────────────────────────────────┐
-[ Research  ]│── planner                                                       │
-      ↓      │Reading TASKS.md to see what exists.                             │
-[   Plan    ]│▸ Edit TASKS.md                                                  │
-      ↓      │2 tasks added.                                                   │
+[ Research  ]│Reading TASKS.md to see what exists.                             │
+      ↓      │▸ Edit TASKS.md                                                  │
+[   Plan    ]│2 tasks added.                                                   │
+      ↓      │                                                                 │
 [   Build   ]│                                                                 │
       ↓      └─────────────────────────────────────────────────────────────────┘
 [  Review   ]┌ Tasks | 1/5 - 4 left ───────────────────────────────────────────┐

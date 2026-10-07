@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 80, 24)"
 ---
       ┌ Planner ──────────────────────────────────────────────────────── 00:00 ┐
- [ R ]│── planner                                                              │
+ [ R ]│no output yet                                                           │
    ↓  │                                                                        │
  [ P ]│                                                                        │
    ↓  │                                                                        │
