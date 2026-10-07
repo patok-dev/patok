@@ -460,6 +460,21 @@ pub struct App {
     /// -- a showing status message, a pair dropped for width -- contains no
     /// real position, so a click misses naturally.
     pub menu_chip: Cell<Rect>,
+    /// The status bar's idle Enter chip rect at the last render (T134.1); a
+    /// left click on it runs the Enter key's action through `enter_key` --
+    /// it starts the build loop while pending tasks remain and runs a
+    /// discovery round once the queue is complete. The zero rect a chip-less
+    /// render records -- a showing status message, a pair dropped for width,
+    /// a busy engine -- contains no real position, so a click misses
+    /// naturally.
+    pub enter_chip: Cell<Rect>,
+    /// The status bar's running Esc stop chip rect at the last render
+    /// (T134.1); a left click on it runs the Esc key's action while a build
+    /// runs -- it opens the stop dialog. The zero rect a chip-less render
+    /// records -- a showing status message, a pair dropped for width, any
+    /// other engine state -- contains no real position, so a click misses
+    /// naturally.
+    pub stop_chip: Cell<Rect>,
     /// Text typed into the add-task dialog; kept when the dialog is closed.
     pub dialog_text: String,
     /// Cursor in `dialog_text` as a character index; read it through [`App::cursor`].
@@ -549,6 +564,8 @@ impl App {
             menu_footer: Cell::new(Rect::default()),
             menu_close: Cell::new(Rect::default()),
             menu_chip: Cell::new(Rect::default()),
+            enter_chip: Cell::new(Rect::default()),
+            stop_chip: Cell::new(Rect::default()),
             dialog_text: String::new(),
             dialog_cursor: 0,
             dialog_goal_col: None,
@@ -1876,15 +1893,17 @@ impl App {
     }
 
     /// Mouse events on the merged view: a click inside one of the two frames
-    /// focuses it; a click on the status bar's m menu chip opens the m menu,
-    /// the m key's action (T133.1); a wheel step scrolls the frame the
-    /// pointer is over, one line per step, without moving the focus. Events
-    /// outside both frames and open modals change nothing. Every open modal
-    /// handles its own mouse events and swallows the rest, so nothing
-    /// underneath reacts while it is open: the theme picker keeps its row
-    /// hover and click behaviour (T43.1) and every modal's bottom-line
-    /// buttons respond to a click on their rectangle with exactly the action
-    /// their key triggers (T59.1).
+    /// focuses it; a click on the status bar's interactive chips runs the
+    /// action its key triggers -- the m menu chip opens the m menu (T133.1),
+    /// the idle Enter chip starts the build loop or runs a discovery round,
+    /// and the running Esc stop chip opens the stop dialog (T134.1) -- and a
+    /// wheel step scrolls the frame the pointer is over, one line per step,
+    /// without moving the focus. Events outside both frames and open modals
+    /// change nothing. Every open modal handles its own mouse events and
+    /// swallows the rest, so nothing underneath reacts while it is open: the
+    /// theme picker keeps its row hover and click behaviour (T43.1) and every
+    /// modal's bottom-line buttons respond to a click on their rectangle with
+    /// exactly the action their key triggers (T59.1).
     pub fn on_mouse(&mut self, mouse: MouseEvent) -> Action {
         if self.theme_modal.open {
             return self.on_theme_mouse(mouse);
@@ -1914,8 +1933,29 @@ impl App {
                     self.status = None;
                     self.menu_open = true;
                     self.menu_selected = 0;
-                } else if let Some(frame) = frame {
-                    self.focus = frame;
+                    Action::None
+                } else if chip_clicked(&mouse, self.enter_chip.get()) {
+                    // The Enter chip is the Enter key's mouse alias
+                    // (T134.1): start the build loop or run a discovery
+                    // round, exactly the key's action -- `enter_key` carries
+                    // the key's busy guard too.
+                    self.enter_key()
+                } else if chip_clicked(&mouse, self.stop_chip.get()) && self.phase == Phase::Running
+                {
+                    // The Esc chip is the Esc key's mouse alias (T134.1):
+                    // it opens the stop dialog, the key's action while a
+                    // build runs. The chip renders only in that state, so
+                    // the guard mirrors the key arm and the zero rect makes
+                    // any other state miss naturally.
+                    self.status = None;
+                    self.stop_open = true;
+                    self.stop_selected = 0;
+                    Action::None
+                } else {
+                    if let Some(frame) = frame {
+                        self.focus = frame;
+                    }
+                    Action::None
                 }
             }
             // Wheel steps scroll the hovered frame only; the focus stays put.
@@ -1923,15 +1963,16 @@ impl App {
                 if let Some(frame) = frame {
                     self.scroll_frame(frame, 1);
                 }
+                Action::None
             }
             MouseEventKind::ScrollDown => {
                 if let Some(frame) = frame {
                     self.scroll_frame(frame, -1);
                 }
+                Action::None
             }
-            _ => {}
+            _ => Action::None,
         }
-        Action::None
     }
 }
 
@@ -1948,11 +1989,13 @@ fn close_clicked(mouse: &MouseEvent, close: Rect) -> bool {
     close.contains(position)
 }
 
-/// Whether a left click lands on the status bar's m menu chip (T133.1): the
-/// click must be a press inside the chip's rectangle, which the renderer
-/// recorded at the last render through [`crate::ui::status_widget`]. The
-/// zero rect a chip-less render records contains no real position, so the
-/// click misses there naturally, like [`close_clicked`] for close buttons.
+/// Whether a left click lands on one of the status bar's interactive chips
+/// (T133.1, T134.1): the click must be a press inside the chip's rectangle,
+/// which the renderer recorded at the last render through
+/// [`crate::ui::status_widget`] -- the m menu chip, the idle Enter chip and
+/// the running Esc stop chip are mouse aliases of their keys. The zero rect a
+/// chip-less render records contains no real position, so the click misses
+/// there naturally, like [`close_clicked`] for close buttons.
 /// Every other mouse event misses too.
 fn chip_clicked(mouse: &MouseEvent, chip: Rect) -> bool {
     if mouse.kind != MouseEventKind::Down(MouseButton::Left) {

@@ -336,12 +336,14 @@ fn the_stop_build_entry_is_running_only() {
 }
 
 /// The status bar's slimmed-down strip: the Enter hint leads while the engine
-/// is idle, the m menu chip follows, and none of the secondary chips the menu
-/// replaced survive -- while the direct `?`, `t`, `d`, `q` and Esc bindings
-/// keep working unchanged.
+/// is idle, the Esc stop hint (T134.1) and the m menu chip follow while a
+/// build runs, and none of the secondary chips the menu replaced survive --
+/// while the direct `?`, `t`, `d`, `q` and Esc bindings keep working
+/// unchanged.
 #[test]
 fn the_status_bar_keeps_the_enter_and_menu_hints() {
-    // Idle: both hints, none of the chips the menu replaced.
+    // Idle: the Enter hint and the menu chip, none of the chips the menu
+    // replaced.
     let idle = app();
     let screen = draw(&idle, 80, 14);
     let strip = screen.lines().last().unwrap();
@@ -360,12 +362,15 @@ fn the_status_bar_keeps_the_enter_and_menu_hints() {
         assert!(!strip.contains(gone), "{strip}");
     }
 
-    // Running: the Enter hint leaves, the menu chip stays.
+    // Running: the Enter hint leaves, the Esc stop chip (T134.1) joins and
+    // the menu chip stays.
     let running = running_app();
     let screen = draw(&running, 80, 14);
     let strip = screen.lines().last().unwrap();
     assert!(!strip.contains(" Enter "), "{strip}");
     assert!(!strip.contains(" stop build "), "{strip}");
+    assert!(strip.contains(" Esc "), "{strip}");
+    assert!(strip.contains(" stop "), "{strip}");
     assert!(strip.contains(" m "), "{strip}");
     assert!(strip.trim_end().ends_with(" menu"), "{strip}");
 

@@ -1633,7 +1633,10 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     running.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
     });
-    assert_eq!(strip(&running), merged(" RUNNING  sprint ", " m  menu"));
+    assert_eq!(
+        strip(&running),
+        merged(" RUNNING  sprint ", " Esc  stop  m  menu")
+    );
 
     let mut planning = app();
     planning.apply(EngineEvent::AgentChanged {
@@ -1675,10 +1678,9 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     assert!(narrow.ends_with("menu"), "{narrow}");
     assert!(!narrow.contains(" s "), "{narrow}");
 
-    // The menu chip is the strip's one interactive element (T133.1): it wears
-    // the modal buttons' accent so it reads as a button and recolours with
-    // the active theme, while the Enter hint keeps the plain chip colours
-    // and the label stays muted detail.
+    // The interactive chips (T133.1, T134.1): the Enter and m key spans both
+    // wear the modal buttons' accent so they read as buttons and recolour
+    // with the active theme, while the labels stay muted detail.
     let theme = patok_tui::Theme::DARK;
     let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
     terminal.draw(|frame| render(frame, &idle)).unwrap();
@@ -1694,25 +1696,15 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     };
     let enter = column(&[" ", "E", "n", "t", "e", "r", " "]);
     let menu_key = column(&[" ", "m", " "]);
-    let chip = buffer[(menu_key as u16, row)].style();
-    assert_eq!(chip.fg, Some(theme.highlighted_text));
-    assert_eq!(chip.bg, Some(theme.background));
-    assert!(!chip.add_modifier.contains(Modifier::BOLD));
-    assert_ne!(
-        buffer[(menu_key as u16, row)].style(),
-        buffer[(enter as u16, row)].style(),
-        "the menu chip must read as a button, not a plain chip"
-    );
-    assert_eq!(
-        buffer[(enter as u16, row)].style().fg,
-        Some(theme.contrast_text),
-        "the Enter chip keeps the chip colours"
-    );
-    assert_eq!(
-        buffer[(enter as u16, row)].style().bg,
-        Some(theme.chip_neutral),
-        "the Enter chip keeps the chip background"
-    );
+    for (name, x) in [("Enter", enter), ("m", menu_key)] {
+        let style = buffer[(x as u16, row)].style();
+        assert_eq!(style.fg, Some(theme.highlighted_text), "the {name} accent");
+        assert_eq!(style.bg, Some(theme.background), "the {name} background");
+        assert!(
+            !style.add_modifier.contains(Modifier::BOLD),
+            "the {name} key stays unbold"
+        );
+    }
     for offset in 0..6u16 {
         assert_eq!(
             buffer[(menu_key as u16 + 3 + offset, row)].style(),
@@ -1728,24 +1720,27 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     assert_eq!(symbols[menu_key + 3..menu_key + 9].concat(), " menu ");
 }
 
-/// The status bar's key hints are chips, not modal buttons (T46.1): in both
-/// the default and a palette theme the Enter chip wears the chip colours and
-/// every label the muted status colour. The one exception is the interactive
-/// m menu chip (T133.1): it is a button, so its three cells carry the modal
-/// button accent -- and no other status-bar cell does.
+/// The status bar's interactive chips are buttons (T133.1, T134.1): in both
+/// the default and a palette theme the idle Enter chip and the running Esc
+/// stop chip join the m menu chip in wearing the modal button accent --
+/// the accent foreground, no chip background, no bold -- while every label
+/// keeps the muted status colour. No other status-bar cell does.
 #[test]
-fn only_the_menu_chip_wears_the_button_accent() {
+fn only_the_interactive_chips_wear_the_button_accent() {
     use patok_core::config::Theme as ThemeKey;
+    use ratatui::style::Modifier;
 
     for theme_key in [ThemeKey::Dark, ThemeKey::TokyoNightDark] {
-        let mut app = app();
-        app.tui.theme = theme_key;
-        app.tui.truecolor = Some(true);
         let theme = patok_tui::Theme::resolve(theme_key, Some(true));
         let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
-        let buffer = terminal.backend().buffer();
         let row: u16 = 13;
+
+        // The idle strip: the Enter and m key spans are the buttons.
+        let mut idle = app();
+        idle.tui.theme = theme_key;
+        idle.tui.truecolor = Some(true);
+        terminal.draw(|frame| render(frame, &idle)).unwrap();
+        let buffer = terminal.backend().buffer();
         // One symbol per column, so chip positions stay column indices.
         let symbols: Vec<&str> = (0..130u16).map(|x| buffer[(x, row)].symbol()).collect();
         let column = |chip: &[&str]| {
@@ -1755,38 +1750,84 @@ fn only_the_menu_chip_wears_the_button_accent() {
         };
         let enter = column(&[" ", "E", "n", "t", "e", "r", " "]);
         let menu_key = column(&[" ", "m", " "]);
-        // The Enter chip keeps the plain chip look: contrast text on the
-        // neutral chip background.
-        for offset in 0..3u16 {
-            let style = buffer[(enter as u16 + offset, row)].style();
-            assert_eq!(style.fg, Some(theme.contrast_text), "the chip text colour");
-            assert_eq!(style.bg, Some(theme.chip_neutral), "the chip background");
+        for (name, x, width) in [
+            ("Enter chip", enter as u16, 7u16),
+            ("m chip", menu_key as u16, 3),
+        ] {
+            for offset in 0..width {
+                let style = buffer[(x + offset, row)].style();
+                assert_eq!(style.fg, Some(theme.highlighted_text), "{name} accent");
+                assert_eq!(style.bg, Some(theme.background), "{name} background");
+                assert!(!style.add_modifier.contains(Modifier::BOLD), "{name} bold");
+            }
         }
-        // The m menu chip is the strip's one button: the accent foreground,
-        // no chip background.
-        for offset in 0..3u16 {
-            let style = buffer[(menu_key as u16 + offset, row)].style();
-            assert_eq!(style.fg, Some(theme.highlighted_text), "the button accent");
-            assert_eq!(style.bg, Some(theme.background), "no chip background");
-        }
-        for offset in 0..6u16 {
-            assert_eq!(
-                buffer[(menu_key as u16 + 3 + offset, row)].style().fg,
-                Some(theme.muted_text),
-                "the label colour"
-            );
+        for (name, x) in [
+            ("start label", enter as u16 + 7),
+            ("menu label", menu_key as u16 + 3),
+        ] {
+            for offset in 0..6u16 {
+                assert_eq!(
+                    buffer[(x + offset, row)].style().fg,
+                    Some(theme.muted_text),
+                    "the {name} colour"
+                );
+            }
         }
         assert_eq!(symbols[menu_key + 3..menu_key + 9].concat(), " menu ");
-        // No status-bar cell outside the m chip's three columns carries the
-        // button accent.
+        // No status-bar cell outside the two key spans carries the button
+        // accent.
         for x in 0..130u16 {
-            if (menu_key as u16..menu_key as u16 + 3).contains(&x) {
+            if (enter as u16..enter as u16 + 7).contains(&x)
+                || (menu_key as u16..menu_key as u16 + 3).contains(&x)
+            {
                 continue;
             }
             assert_ne!(
                 buffer[(x, row)].style().fg,
                 Some(theme.highlighted_text),
-                "no status-bar cell but the m chip wears the button accent at x={x}"
+                "no status-bar cell but the Enter and m chips wears the button accent at x={x}"
+            );
+        }
+
+        // The running strip: the Esc stop chip joins the buttons the same
+        // way.
+        let mut running = app();
+        running.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        running.tui.theme = theme_key;
+        running.tui.truecolor = Some(true);
+        terminal.draw(|frame| render(frame, &running)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let symbols: Vec<&str> = (0..130u16).map(|x| buffer[(x, row)].symbol()).collect();
+        let column = |chip: &[&str]| {
+            (0..=130 - chip.len())
+                .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
+                .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
+        };
+        let esc = column(&[" ", "E", "s", "c", " "]);
+        let menu_key = column(&[" ", "m", " "]);
+        for (name, x, width) in [
+            ("Esc chip", esc as u16, 5u16),
+            ("m chip", menu_key as u16, 3),
+        ] {
+            for offset in 0..width {
+                let style = buffer[(x + offset, row)].style();
+                assert_eq!(style.fg, Some(theme.highlighted_text), "{name} accent");
+                assert_eq!(style.bg, Some(theme.background), "{name} background");
+                assert!(!style.add_modifier.contains(Modifier::BOLD), "{name} bold");
+            }
+        }
+        for x in 0..130u16 {
+            if (esc as u16..esc as u16 + 5).contains(&x)
+                || (menu_key as u16..menu_key as u16 + 3).contains(&x)
+            {
+                continue;
+            }
+            assert_ne!(
+                buffer[(x, row)].style().fg,
+                Some(theme.highlighted_text),
+                "no running status-bar cell but the Esc and m chips wears the button accent at x={x}"
             );
         }
     }
@@ -3468,9 +3509,10 @@ mod explore {
         let running = draw(&app, 80, 14);
         let strip = running.lines().last().unwrap();
         assert!(!strip.contains(" Enter "), "{strip}");
-        // The running strip keeps only the menu chip: the Esc stop
-        // hint moved behind the m menu (T128.1).
-        assert!(!strip.contains(" Esc "), "{strip}");
+        // The running strip shows the Esc stop hint as a real chip (T134.1)
+        // beside the menu chip.
+        assert!(strip.contains(" Esc "), "{strip}");
+        assert!(strip.contains(" stop "), "{strip}");
         assert!(!strip.contains(" stop build "), "{strip}");
         assert!(strip.contains(" m "), "{strip}");
         assert!(strip.contains(" menu"), "{strip}");

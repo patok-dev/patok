@@ -15,4 +15,4 @@ expression: claude_screen
             │                                                                  │
             │                                                                  │
             └──────────────────────────────────────────────────────────────────┘
- RUNNING  sprint                                                        m  menu
+ RUNNING  sprint                                             Esc  stop  m  menu

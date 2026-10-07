@@ -435,13 +435,16 @@ async fn event_loop(
                     }
                 },
                 Some(Ok(TermEvent::Paste(text))) => app.on_paste(&text),
-                // A click inside one of the two frames focuses it (T30.1); the
-                // theme picker's row click saves its theme (T43.1).
-                Some(Ok(TermEvent::Mouse(mouse))) => {
-                    if let Action::SaveTheme(theme) = app.on_mouse(mouse) {
-                        save_theme(&mut shell_settings, app, theme);
-                    }
-                }
+                // A click inside one of the two frames focuses it (T30.1);
+                // the theme picker's row click saves its theme (T43.1); the
+                // status bar's chips run their keys' actions (T134.1).
+                Some(Ok(TermEvent::Mouse(mouse))) => match app.on_mouse(mouse) {
+                    Action::None => {}
+                    Action::StartBuild => start_build(client, app).await,
+                    Action::RunDiscovery => run_discovery(client, app).await,
+                    Action::SaveTheme(theme) => save_theme(&mut shell_settings, app, theme),
+                    _ => {}
+                },
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e.into()),
                 None => return Ok(Outcome::Detached { completed: app.completed }),

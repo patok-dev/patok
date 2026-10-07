@@ -26,11 +26,16 @@ impl Fixture {
             data: tempfile::tempdir().unwrap(),
         };
         std::fs::write(fixture.project.path().join("TASKS.md"), tasks).unwrap();
+        // The fixture is hermetic against the machine's global git config:
+        // an empty repo-local `core.excludesfile` switches off the user's
+        // global ignore list, which may otherwise ignore the very files the
+        // fixture and the engine commit by name (TASKS.md, SPEC.md).
         for args in [
             &["init", "-q", "-b", "main"][..],
             &["config", "user.name", "Test"],
             &["config", "user.email", "test@example.com"],
             &["config", "commit.gpgsign", "false"],
+            &["config", "core.excludesfile", ""],
             &["add", "-A"],
             &["commit", "-q", "-m", "initial"],
         ] {

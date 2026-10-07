@@ -1517,12 +1517,13 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
 /// key-hint chips, right-aligned. Hint chips drop as whole chip+label pairs
 /// from the tail when they do not fit; a message is never dropped -- it
 /// truncates at the line's right edge like a bare status bar message. The
-/// secondary hints (settings, theme, detach, quit and the running Esc stop
-/// dialog) moved behind the m menu, so the zone carries only the idle Enter
-/// hint and the m menu chip. The m chip is the strip's one interactive
-/// element (T133.1): it wears the modal buttons' accent colour so it reads
-/// as a button, and its rect is recorded on [`App::menu_chip`] for the mouse
-/// hit-test -- a left click on it toggles the menu.
+/// secondary hints (settings, theme, detach, quit) live behind the m menu,
+/// so the zone carries the idle Enter hint, the running Esc stop hint
+/// (T134.1) and the m menu chip. All three are interactive (T133.1,
+/// T134.1): each wears the modal buttons' accent colour so it reads as a
+/// button, and each records its rect on [`App::menu_chip`],
+/// [`App::enter_chip`] or [`App::stop_chip`] for the mouse hit-test -- a
+/// left click on one runs its key's action.
 fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     let width = usize::from(area.width);
     let theme = app.theme();
@@ -1554,10 +1555,12 @@ fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     }
     let left_width: usize = spans.iter().map(|span| span.content.chars().count()).sum();
 
-    // The m chip's rect resets every render: a showing message or a pair
-    // dropped for width leaves the zero rect, which contains no real
+    // The interactive chips' rects reset every render: a showing message or
+    // a pair dropped for width leaves the zero rect, which contains no real
     // position, so a click misses naturally.
     app.menu_chip.set(Rect::default());
+    app.enter_chip.set(Rect::default());
+    app.stop_chip.set(Rect::default());
     let right = match &app.status {
         Some(message) => {
             // Bare text: one separating space so it does not glue to the mode
@@ -1589,9 +1592,17 @@ fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
                     },
                 ));
             }
-            // The m menu chip: the settings, theme, detach and quit hints and
-            // the running Esc stop hint live behind the menu modal, so
-            // the bar keeps one chip for all of them.
+            // The Esc stop chip (T134.1): the Esc binding's scope while a
+            // build runs -- a pending soft stop's Esc cancels the stop
+            // instead, so the chip hides while one is pending. A click on it
+            // opens the stop dialog, exactly like the key; the m menu keeps
+            // its stop entry too.
+            if app.phase == Phase::Running && !app.stopping {
+                keys.push(("Esc", "stop"));
+            }
+            // The m menu chip: the settings, theme, detach and quit hints
+            // live behind the menu modal, so the bar keeps one chip for all
+            // of them.
             keys.push(("m", "menu"));
             // A pair drops as a whole from the tail when it does not fit the
             // zone left of the chips, so no half-cut chip ever shows; the kept
@@ -1611,29 +1622,36 @@ fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
             let mut right = vec![Span::raw(" ".repeat(zone.saturating_sub(used)))];
             // The running column of the hint zone: the pad ends where the
             // first kept pair starts, and each span advances it by its own
-            // character count, so the m chip's rect is the exact columns its
-            // key span occupies.
+            // character count, so every interactive chip's rect is the
+            // exact columns its key span occupies.
             let mut column = left_width + zone.saturating_sub(used);
             for (key, label) in kept {
                 let key_span = format!(" {key} ");
-                // The m chip is the interactive one (T133.1): it records its
-                // rect for the mouse hit-test and wears the modal buttons'
-                // accent, so it reads as a button; the other key chips keep
-                // the plain chip look.
-                let key_style = if key == "m" {
-                    let key_width = key_span.chars().count();
-                    app.menu_chip.set(Rect::new(
-                        area.x + u16::try_from(column).unwrap_or(0),
-                        area.y,
-                        u16::try_from(key_width).unwrap_or(0),
-                        1,
-                    ));
-                    Style::new().fg(theme.highlighted_text)
-                } else {
-                    Style::new()
+                // The interactive chips (T133.1, T134.1) -- the m menu chip,
+                // the idle Enter chip and the running Esc stop chip --
+                // record their rect for the mouse hit-test and wear the
+                // modal buttons' accent, so each reads as a button; any other
+                // key chip keeps the plain chip look.
+                let key_style = match key {
+                    "m" | "Enter" | "Esc" => {
+                        let key_width = key_span.chars().count();
+                        let rect = Rect::new(
+                            area.x + u16::try_from(column).unwrap_or(0),
+                            area.y,
+                            u16::try_from(key_width).unwrap_or(0),
+                            1,
+                        );
+                        match key {
+                            "m" => app.menu_chip.set(rect),
+                            "Enter" => app.enter_chip.set(rect),
+                            _ => app.stop_chip.set(rect),
+                        }
+                        Style::new().fg(theme.highlighted_text)
+                    }
+                    _ => Style::new()
                         .bold()
                         .fg(theme.contrast_text)
-                        .bg(theme.chip_neutral)
+                        .bg(theme.chip_neutral),
                 };
                 right.push(Span::styled(key_span, key_style));
                 column += key.chars().count() + 2;
@@ -1807,13 +1825,13 @@ mod tests {
         }
     }
 
-    /// The status bar's m menu chip wears the button accent on every built-in
-    /// theme (T133.1): the highlighted-text foreground, no background, no
-    /// bold -- the same key-marker style as the modal buttons -- so it reads
-    /// as the interactive chip it is, distinct from the plain Enter chip
-    /// beside it.
+    /// The status bar's interactive chips wear the button accent on every
+    /// built-in theme (T133.1, T134.1): the m menu chip and the idle Enter
+    /// chip both carry the highlighted-text foreground, no background, no
+    /// bold -- the same key-marker style as the modal buttons -- so each
+    /// reads as the button it is.
     #[test]
-    fn the_menu_chip_wears_the_button_accent_on_every_theme() {
+    fn the_interactive_chips_wear_the_button_accent_on_every_theme() {
         for key in every_key() {
             let theme = Theme::resolve(key, Some(true));
             let mut app = app_with_one_task();
@@ -1824,28 +1842,31 @@ mod tests {
             let row: String = (0..100).map(|x| buffer[(x, 0)].symbol()).collect();
             // A byte index would mis-column on multibyte symbols, so the
             // match's column is the character count before it.
-            let x = row
-                .find(" m ")
-                .map(|at| row[..at].chars().count())
-                .unwrap_or_else(|| panic!("the m chip on {key:?}")) as u16;
-            for column in x..x + 3 {
-                let style = buffer[(column, 0)].style();
-                assert_eq!(
-                    style.fg,
-                    Some(theme.highlighted_text),
-                    "cell ({column}, 0) on {key:?}"
-                );
-                // The chip look is gone: no chip background, no bold -- the
-                // bare buffer's cells carry Reset backgrounds.
-                assert_ne!(
-                    style.bg,
-                    Some(theme.chip_neutral),
-                    "cell ({column}, 0) on {key:?}"
-                );
-                assert!(
-                    !style.add_modifier.contains(Modifier::BOLD),
-                    "cell ({column}, 0) on {key:?}"
-                );
+            for chip in [" Enter ", " m "] {
+                let x = row
+                    .find(chip)
+                    .map(|at| row[..at].chars().count())
+                    .unwrap_or_else(|| panic!("the {chip:?} chip on {key:?}"))
+                    as u16;
+                for column in x..x + chip.chars().count() as u16 {
+                    let style = buffer[(column, 0)].style();
+                    assert_eq!(
+                        style.fg,
+                        Some(theme.highlighted_text),
+                        "cell ({column}, 0) on {key:?}"
+                    );
+                    // The chip look is gone: no chip background, no bold -- the
+                    // bare buffer's cells carry Reset backgrounds.
+                    assert_ne!(
+                        style.bg,
+                        Some(theme.chip_neutral),
+                        "cell ({column}, 0) on {key:?}"
+                    );
+                    assert!(
+                        !style.add_modifier.contains(Modifier::BOLD),
+                        "cell ({column}, 0) on {key:?}"
+                    );
+                }
             }
         }
     }
