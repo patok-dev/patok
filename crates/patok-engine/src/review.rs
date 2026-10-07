@@ -1,15 +1,17 @@
 //! The review stage's pure logic:
 //! the claims trimming rule, the review report's verdict and findings parsing,
 //! the verdict computation, the skip decision in precedence order, the
-//! five-position progress indicator and the persistent learned-confidence
-//! history. Everything here is deterministic and unit-tested; the engine
-//! wiring in `engine.rs` calls into it.
+//! five-position progress indicator, the persistent learned-confidence
+//! history and the persistent open-group record with its resume decision.
+//! Everything here is deterministic and unit-tested; the engine wiring in
+//! `engine.rs` calls into it.
 
 use std::collections::HashSet;
 use std::path::Path;
 
 use patok_core::complexity::Complexity;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Findings above this many lines in the verification-results section of the
 /// claims trigger the trim.
@@ -640,6 +642,109 @@ impl ReviewHistory {
     }
 }
 
+/// The batch-review group currently open across restarts: the shared leading
+/// task-ID number, the group's base and last full commit SHAs, and the
+/// (task ID, description hash) of every task committed into the group.
+/// Stored as `open-group.json` in the data dir; a missing or corrupt file
+/// means no open group.
+// The engine wiring adopts the record in a later task; each allowance is
+// removed when the engine starts using the item.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OpenGroup {
+    /// The group's leading task-ID number (`"1"` for `T1.2`).
+    pub number: String,
+    /// The full SHA of the commit the group started at.
+    pub base: String,
+    /// The full SHA of the group's last commit.
+    pub last: String,
+    /// `(task_id, description_hash)` per task committed into the group.
+    pub members: Vec<(String, String)>,
+}
+
+#[allow(dead_code)]
+impl OpenGroup {
+    /// Loads the open group from `path`; a missing or corrupt file is no
+    /// open group.
+    pub fn load(path: &Path) -> Option<Self> {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+    }
+
+    /// Saves the open group to `path`, best-effort: the error is returned
+    /// for the caller to log.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string(self).unwrap_or_default())
+    }
+
+    /// Clears the open-group record by deleting its file; a missing file is
+    /// already clear.
+    pub fn clear(path: &Path) -> std::io::Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// The SHA-256 hex digest of a task description: the description's identity
+/// for group membership, stable across restarts.
+#[allow(dead_code)]
+pub fn description_hash(description: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(description.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Whether an interrupted batch-review group resumes or starts fresh.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResumeDecision {
+    /// Reuse the open group's base so the review still diffs every commit
+    /// of the group.
+    Resume,
+    /// Start a fresh group at the current HEAD.
+    Fresh,
+}
+
+/// Decides whether the open group resumes: the task's leading number matches
+/// the record, `head` equals the record's `last`, the record's `base` is an
+/// ancestor of HEAD, and the task is a member (its (id, description hash) is
+/// in `members`) or a not-yet-run task of the same number (its ID is absent
+/// from `members`). Anything else -- a moved HEAD, a non-ancestor base, a
+/// different number, or a reused ID whose description hash differs -- starts
+/// a fresh group.
+#[allow(dead_code)]
+pub fn resume_decision(
+    record: &OpenGroup,
+    head: &str,
+    base_is_ancestor: bool,
+    task_id: &str,
+    description: &str,
+) -> ResumeDecision {
+    let number_matches = leading_number(task_id).is_some_and(|number| number == record.number);
+    let hash = description_hash(description);
+    let is_member = record
+        .members
+        .iter()
+        .any(|(id, member_hash)| id == task_id && member_hash == &hash);
+    let is_unrun = !record.members.iter().any(|(id, _)| id == task_id);
+    if number_matches && head == record.last && base_is_ancestor && (is_member || is_unrun) {
+        ResumeDecision::Resume
+    } else {
+        ResumeDecision::Fresh
+    }
+}
+
 /// The stored spelling of a tier; `None` for Complex (never clustered).
 fn tier_name(tier: Complexity) -> Option<&'static str> {
     match tier {
@@ -1048,6 +1153,128 @@ mod tests {
         assert_eq!(
             ReviewHistory::load(&dir.path().join("missing.json")),
             ReviewHistory::default()
+        );
+    }
+
+    #[test]
+    fn the_open_group_round_trips_through_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("open-group.json");
+        let group = OpenGroup {
+            number: "1".into(),
+            base: "b1a20c1d0e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b".into(),
+            last: "7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e".into(),
+            members: vec![
+                ("T1.1".into(), description_hash("first task description")),
+                ("T1.2".into(), "0123456789abcdef0123456789abcdef".into()),
+            ],
+        };
+        group.save(&path).unwrap();
+        assert_eq!(OpenGroup::load(&path), Some(group));
+        // A missing file (a closed group, a fresh install) is no open group.
+        assert_eq!(OpenGroup::load(&dir.path().join("missing.json")), None);
+        // A corrupt file is no open group either.
+        std::fs::write(dir.path().join("corrupt.json"), "not json").unwrap();
+        assert_eq!(OpenGroup::load(&dir.path().join("corrupt.json")), None);
+        // Clearing deletes the record; clearing again is already clear.
+        OpenGroup::clear(&path).unwrap();
+        assert_eq!(OpenGroup::load(&path), None);
+        assert!(OpenGroup::clear(&path).is_ok());
+        // The description hash is deterministic and distinguishes descriptions.
+        assert_eq!(description_hash("a task"), description_hash("a task"));
+        assert_ne!(description_hash("a"), description_hash("b"));
+    }
+
+    #[test]
+    fn an_interrupted_group_resumes_for_a_member_task() {
+        let description = "resume the interrupted group";
+        let record = OpenGroup {
+            number: "1".into(),
+            base: "base".into(),
+            last: "c0ffee".into(),
+            members: vec![("T1.2".into(), description_hash(description))],
+        };
+        assert_eq!(
+            resume_decision(&record, "c0ffee", true, "T1.2", description),
+            ResumeDecision::Resume
+        );
+    }
+
+    #[test]
+    fn a_moved_head_starts_a_fresh_group() {
+        let description = "resume the interrupted group";
+        let record = OpenGroup {
+            number: "1".into(),
+            base: "base".into(),
+            last: "c0ffee".into(),
+            members: vec![("T1.2".into(), description_hash(description))],
+        };
+        assert_eq!(
+            resume_decision(&record, "head moved on", true, "T1.2", description),
+            ResumeDecision::Fresh
+        );
+    }
+
+    #[test]
+    fn a_base_that_is_not_an_ancestor_starts_a_fresh_group() {
+        let description = "resume the interrupted group";
+        let record = OpenGroup {
+            number: "1".into(),
+            base: "abandoned".into(),
+            last: "c0ffee".into(),
+            members: vec![("T1.2".into(), description_hash(description))],
+        };
+        assert_eq!(
+            resume_decision(&record, "c0ffee", false, "T1.2", description),
+            ResumeDecision::Fresh
+        );
+    }
+
+    #[test]
+    fn a_different_leading_number_starts_a_fresh_group() {
+        let description = "a task of another number";
+        let record = OpenGroup {
+            number: "2".into(),
+            base: "base".into(),
+            last: "c0ffee".into(),
+            members: vec![("T1.2".into(), description_hash(description))],
+        };
+        assert_eq!(
+            resume_decision(&record, "c0ffee", true, "T1.2", description),
+            ResumeDecision::Fresh
+        );
+        // A malformed task ID has no leading number, so it starts fresh too.
+        assert_eq!(
+            resume_decision(&record, "c0ffee", true, "no-dot", description),
+            ResumeDecision::Fresh
+        );
+    }
+
+    #[test]
+    fn a_reused_task_id_with_a_new_description_starts_a_fresh_group() {
+        let record = OpenGroup {
+            number: "1".into(),
+            base: "base".into(),
+            last: "c0ffee".into(),
+            members: vec![("T1.2".into(), description_hash("old description"))],
+        };
+        assert_eq!(
+            resume_decision(&record, "c0ffee", true, "T1.2", "a reworded description"),
+            ResumeDecision::Fresh
+        );
+    }
+
+    #[test]
+    fn a_not_yet_run_task_of_the_same_number_resumes() {
+        let record = OpenGroup {
+            number: "1".into(),
+            base: "base".into(),
+            last: "c0ffee".into(),
+            members: vec![("T1.1".into(), "0123456789abcdef0123456789abcdef".into())],
+        };
+        assert_eq!(
+            resume_decision(&record, "c0ffee", true, "T1.2", "the next task"),
+            ResumeDecision::Resume
         );
     }
 
