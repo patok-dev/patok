@@ -1124,6 +1124,9 @@ async fn the_plan_stage_shows_the_planner_then_the_builder_for_one_task() {
     assert!(planner.contains(" RUNNING  sprint"), "{planner}");
     assert!(planner.contains(" Planner "), "{planner}");
     assert!(planner.contains("File Operations"), "{planner}");
+    // The timer runs from the agent's announce: the frame the planner's output
+    // first appears on already carries the mm:ss readout (T131.1).
+    assert!(planner.contains("00:0"), "{planner}");
 
     // The builder phase follows for the same task, with its own output.
     let builder = builder_screen.expect("the builder phase was on screen");

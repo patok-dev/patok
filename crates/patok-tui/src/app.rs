@@ -414,9 +414,11 @@ pub struct App {
     pub discovering: bool,
     /// The active session's start: `Some` from the moment the engine leaves
     /// idle until it returns, `None` while idle. A session is a build, planner
-    /// or discovery run (the same classification `is_idle` makes). Re-anchored
-    /// by `AgentChanged.started_ms`, so the timer and the finished line derive
-    /// from the engine-recorded session timing (T42.1).
+    /// or discovery run (the same classification `is_idle` makes).
+    /// `AgentChanged.started_ms` is authoritative and re-anchors the timer on
+    /// every stage announcement mid-build (T42.1), so the timer and the
+    /// finished line derive from the engine-recorded session timing; flag
+    /// flips only fill a missing anchor or clear it (T131.1).
     pub session_start: Option<Instant>,
     /// One epoch anchor captured at construction, mapping the engine's epoch
     /// milliseconds onto the shell's `Instant` clock (T42.1).
@@ -565,9 +567,13 @@ impl App {
         app.discovering = snapshot.discovering;
         // A replayed `AgentChanged` already anchored the timer to the engine's
         // session start, so a shell attaching mid-run shows the true elapsed
-        // time; only an unanchored busy attach counts from here (T42.1).
-        if app.session_start.is_none() {
-            app.session_start = (!app.is_idle()).then(|| app.now.get());
+        // time; only an unanchored busy attach counts from here (T42.1). An
+        // idle snapshot clears any anchor a replayed `AgentChanged` from a
+        // finished session left behind, so the next run starts fresh (T131.1).
+        if app.is_idle() {
+            app.session_start = None;
+        } else if app.session_start.is_none() {
+            app.session_start = Some(app.now.get());
         }
         app.focus = app.state_focus();
         app
@@ -601,11 +607,17 @@ impl App {
             }
             EngineEvent::Agent { event } => self.apply_agent(event),
             // Replayed with the recent events, so a reattaching shell shows the right one.
-            // The engine-recorded start re-anchors the running timer, so it and the
-            // finished line derive from the same session timing (T42.1).
+            // The engine-recorded start anchors the running timer, so it and the
+            // finished line derive from the same session timing (T42.1). The
+            // engine announces the run's agent before the run's flag flips
+            // (T24.1), so the anchor must not be gated on the busy
+            // classification: `AgentChanged` lands while the shell still
+            // classifies itself as idle, and the timer's visibility stays
+            // handled by `session_elapsed`'s `is_idle` gate (T131.1). A
+            // `started_ms` of 0 means unknown and is skipped.
             EngineEvent::AgentChanged { agent, started_ms } => {
                 self.agent = agent;
-                if started_ms > 0 && !self.is_idle() {
+                if started_ms > 0 {
                     self.session_start = Some(self.anchored(started_ms));
                 }
             }
@@ -821,9 +833,16 @@ impl App {
     /// Starts or stops the session timer when the idle/busy classification flips:
     /// the session runs from the idle→busy transition to the busy→idle one, so
     /// the timer hides while the engine is idle and restarts for the next session.
+    /// The idle→busy flip fills a missing anchor only (a build start before the
+    /// first announce, or a run whose `AgentChanged` carried `started_ms == 0`);
+    /// an engine-recorded anchor always wins (T131.1, T42.1).
     fn sync_session(&mut self, was_idle: bool) {
         if was_idle != self.is_idle() {
-            self.session_start = if was_idle { Some(self.now.get()) } else { None };
+            if was_idle {
+                self.session_start.get_or_insert_with(|| self.now.get());
+            } else {
+                self.session_start = None;
+            }
         }
     }
 
@@ -2080,5 +2099,131 @@ mod tests {
             assert!(app.theme_modal.selected <= 1);
         }
         assert_eq!(app.theme_modal.selected, 0);
+    }
+
+    /// The current epoch in milliseconds, the unit `AgentChanged.started_ms`
+    /// carries.
+    fn epoch_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    /// A `started_ms` this many milliseconds before now.
+    fn started_ms_ago(ms: u64) -> u64 {
+        epoch_ms().saturating_sub(ms)
+    }
+
+    /// The engine announces the run's agent before the run's flag flips
+    /// (T24.1), so `AgentChanged` lands while the shell still classifies
+    /// itself as idle. The engine-recorded start anchors the timer anyway,
+    /// and the flag flip that follows must not overwrite it with the local
+    /// clock (T131.1).
+    #[test]
+    fn the_timer_anchors_at_the_engine_recorded_agent_start() {
+        let mut app = app();
+        app.apply(EngineEvent::AgentChanged {
+            agent: "planner".into(),
+            started_ms: started_ms_ago(10_000),
+        });
+        app.apply(EngineEvent::PlanningChanged { planning: true });
+        let elapsed = app.session_elapsed().expect("the timer runs");
+        assert!(
+            elapsed >= Duration::from_secs(9) && elapsed <= Duration::from_secs(11),
+            "elapsed {elapsed:?}"
+        );
+
+        // The run's end still hides the timer (T42.1's idle contract).
+        app.apply(EngineEvent::PlanningChanged { planning: false });
+        assert_eq!(app.session_elapsed(), None);
+    }
+
+    /// A build's flag flip with no prior `AgentChanged` still anchors the
+    /// timer at the local clock: the anchor is only filled when missing.
+    #[test]
+    fn the_flag_flip_fills_only_a_missing_anchor() {
+        let mut app = app();
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        let elapsed = app.session_elapsed().expect("the timer runs");
+        assert!(elapsed < Duration::from_secs(1), "elapsed {elapsed:?}");
+    }
+
+    /// A shell attaching mid-run replays the `AgentChanged` that names the
+    /// running agent; with the guard gone the replayed engine start anchors
+    /// the timer, so the timer counts from the run's true start, not from the
+    /// attach (T131.1).
+    #[test]
+    fn an_attach_mid_run_counts_from_the_engine_start() {
+        let app = App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: vec![],
+                current_task: None,
+                planning: true,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: BTreeMap::new(),
+                pipeline: PipelineState::today(),
+                recent: vec![
+                    EngineEvent::AgentChanged {
+                        agent: "planner".into(),
+                        started_ms: started_ms_ago(10_000),
+                    },
+                    EngineEvent::PlanningChanged { planning: true },
+                ],
+            },
+            "0.1.0".into(),
+        );
+        let elapsed = app.session_elapsed().expect("the timer runs");
+        assert!(
+            elapsed >= Duration::from_secs(9) && elapsed <= Duration::from_secs(11),
+            "elapsed {elapsed:?}"
+        );
+    }
+
+    /// A snapshot that says the engine is idle clears any anchor a replayed
+    /// `AgentChanged` from a finished session left behind, so the timer never
+    /// shows a stale run's time and the next run starts fresh (T131.1).
+    #[test]
+    fn an_idle_attach_clears_a_stale_replayed_anchor() {
+        let app = App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: vec![],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: BTreeMap::new(),
+                pipeline: PipelineState::today(),
+                recent: vec![EngineEvent::AgentChanged {
+                    agent: "planner".into(),
+                    started_ms: started_ms_ago(10_000),
+                }],
+            },
+            "0.1.0".into(),
+        );
+        assert_eq!(app.session_elapsed(), None);
+    }
+
+    /// A `started_ms` of 0 means the engine could not record the start; the
+    /// run's flag flip then fills the missing anchor at the local clock.
+    #[test]
+    fn an_unknown_start_relies_on_the_flag_flip() {
+        let mut app = app();
+        app.apply(EngineEvent::AgentChanged {
+            agent: "planner".into(),
+            started_ms: 0,
+        });
+        app.apply(EngineEvent::PlanningChanged { planning: true });
+        let elapsed = app.session_elapsed().expect("the timer runs");
+        assert!(elapsed < Duration::from_secs(1), "elapsed {elapsed:?}");
     }
 }
