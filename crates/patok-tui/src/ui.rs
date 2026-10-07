@@ -39,6 +39,15 @@ fn base_style(theme: Theme) -> Style {
     Style::new().fg(theme.foreground).bg(theme.background)
 }
 
+/// The selected row's style shared by every selection-bearing modal (T118.1):
+/// the highlighted-text foreground on the normal modal background, bold --
+/// only the foreground switches, the background never does.
+fn selected_row_style(theme: Theme) -> Style {
+    base_style(theme)
+        .fg(theme.highlighted_text)
+        .add_modifier(Modifier::BOLD)
+}
+
 pub fn render(frame: &mut Frame, app: &App) {
     // The theme's base style first: it paints the shell's background and
     // foreground over the whole frame, so a light theme recolours everything
@@ -475,9 +484,10 @@ pub fn settings_confirm_area(screen: Rect) -> Rect {
 }
 
 /// The unsaved-changes dialog (Esc or q on a dirty overlay): a centered
-/// " Unsaved changes " modal with the three choices as a vertical list and a
-/// two-zone bottom line of hints left, buttons right (T59.1), styled like the
-/// stop dialog. Rendered on top of everything else.
+/// " Unsaved changes " modal with the three choices as a vertical list --
+/// the selected choice in the shared selected-row style (T118.1) -- and a
+/// two-zone bottom line of hints left, buttons right (T59.1), styled like
+/// the stop dialog. Rendered on top of everything else.
 fn render_settings_confirm(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = settings_confirm_area(frame.area());
@@ -502,11 +512,15 @@ fn render_settings_confirm(frame: &mut Frame, app: &App) {
                 Span::raw(choice.label()),
                 Span::styled(
                     format!(" -- {}", choice.detail()),
-                    Style::new().fg(theme.muted_text),
+                    Style::new().fg(if focused {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
                 ),
             ]);
             if focused {
-                line = line.style(Style::new().add_modifier(Modifier::BOLD));
+                line = line.style(selected_row_style(theme));
             }
             line
         })
@@ -540,7 +554,9 @@ fn group_header_line(marker: &str, expanded: bool, title: &str) -> Line<'static>
 /// their value (or the live editor buffer while it is open), read-only rows a muted
 /// report. Entry rows render indented past the focus marker so they nest under their
 /// section header; headers keep the bare marker margin. The
-/// focused row carries a cursor marker and renders bold.
+/// focused row carries a cursor marker and renders in the shared selected-row
+/// style (T118.1): the highlighted-text foreground on the normal modal
+/// background, bold.
 fn settings_row_line(
     app: &App,
     index: usize,
@@ -575,7 +591,11 @@ fn settings_row_line(
                     };
                     Line::styled(
                         format!("{row_marker}{}: {value}", row.label),
-                        Style::new().fg(theme.muted_text),
+                        Style::new().fg(if focused {
+                            theme.highlighted_text
+                        } else {
+                            theme.muted_text
+                        }),
                     )
                 }
                 FieldKind::Bool => {
@@ -628,7 +648,7 @@ fn settings_row_line(
         }
     };
     if focused {
-        line = line.style(Style::new().add_modifier(Modifier::BOLD));
+        line = line.style(selected_row_style(theme));
     }
     line
 }
@@ -799,7 +819,8 @@ pub fn stop_area(screen: Rect) -> Rect {
 }
 
 /// The stop dialog (Esc while a build runs, T46.1): a centered " Stop build " modal
-/// with the three choices as a vertical list and a two-zone bottom line of hints
+/// with the three choices as a vertical list -- the selected choice in the shared
+/// selected-row style (T118.1) -- and a two-zone bottom line of hints
 /// left, buttons right (T59.1). Rendered on top of everything else.
 fn render_stop_dialog(frame: &mut Frame, app: &App) {
     let theme = app.theme();
@@ -825,11 +846,15 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
                 Span::raw(choice.label()),
                 Span::styled(
                     format!(" -- {}", choice.detail()),
-                    Style::new().fg(theme.muted_text),
+                    Style::new().fg(if focused {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
                 ),
             ]);
             if focused {
-                line = line.style(Style::new().add_modifier(Modifier::BOLD));
+                line = line.style(selected_row_style(theme));
             }
             line
         })
@@ -930,7 +955,7 @@ fn render_theme_modal(frame: &mut Frame, app: &App) {
 /// longest name, rendered as a normal list row in the currently active
 /// theme's classes instead of previewing the entry's own palette. The
 /// selected entry carries the marker and renders in `highlighted_text`,
-/// bold.
+/// bold, through the shared selected-row style (T118.1).
 fn theme_row_line(
     app: &App,
     index: usize,
@@ -956,13 +981,14 @@ fn theme_row_line(
                     )
                 })
                 .unwrap_or(("", false));
-            let fg = if selected {
-                theme.highlighted_text
+            let style = if selected {
+                selected_row_style(theme)
             } else {
-                theme.foreground
+                base_style(theme)
+                    .fg(theme.foreground)
+                    .add_modifier(Modifier::BOLD)
             };
-            group_header_line(marker, expanded, title)
-                .style(base_style(theme).fg(fg).add_modifier(Modifier::BOLD))
+            group_header_line(marker, expanded, title).style(style)
         }
         Entry::Row(name) => {
             let fg = if selected {
@@ -977,7 +1003,7 @@ fn theme_row_line(
             ];
             let mut line = Line::from(spans).style(base_style(theme));
             if selected {
-                line = line.style(base_style(theme).add_modifier(Modifier::BOLD));
+                line = line.style(selected_row_style(theme));
             }
             line
         }
@@ -1680,6 +1706,23 @@ mod tests {
                     x + i as u16
                 );
             }
+        }
+    }
+
+    /// The shared selected-row style (T118.1) on every built-in theme: the
+    /// highlighted-text foreground on the normal background, bold -- only the
+    /// foreground switches, the background never does.
+    #[test]
+    fn selected_row_style_wears_highlighted_text_on_the_normal_background() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let style = selected_row_style(theme);
+            assert_eq!(style.fg, Some(theme.highlighted_text), "{key:?}");
+            assert_eq!(style.bg, Some(theme.background), "{key:?}");
+            assert!(
+                style.add_modifier.contains(Modifier::BOLD),
+                "the selected row stays bold on {key:?}"
+            );
         }
     }
 }

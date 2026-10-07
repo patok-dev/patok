@@ -918,6 +918,47 @@ fn previewing_recolours_the_rows_too() {
     );
 }
 
+/// The focused group header wears the highlight too (T118.1): the shared
+/// selected-row style covers the picker's headers as well as its entries, so
+/// the header under the selection renders in `highlighted_text` on the normal
+/// background, bold, while an unfocused header keeps the theme's foreground.
+#[test]
+fn the_focused_group_header_wears_the_highlighted_text_colour() {
+    use ratatui::style::Modifier;
+
+    let mut app = open();
+    let light_header = 1 + theme_modal_groups()[0].1.len();
+    while app.theme_modal.selected < light_header {
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    }
+    let buffer = draw_buffer(&app);
+    let body = app.theme_modal.area.get();
+    // Moving the selection previews each entry on the way, so the rows wear
+    // whatever theme is active here, not the opening Dark one.
+    let active = app.theme();
+    // The Light header under the selection: every cell highlighted on the
+    // normal background, bold.
+    for i in 0..8u16 {
+        let cell = &buffer[(body.x + i, body.y + light_header as u16)];
+        assert_eq!(cell.style().fg, Some(active.highlighted_text), "cell {i}");
+        assert_eq!(cell.bg, active.background, "cell {i}");
+        assert!(
+            cell.style().add_modifier.contains(Modifier::BOLD),
+            "cell {i} stays bold"
+        );
+    }
+    // The unfocused Dark header keeps the active theme's foreground, still
+    // bold.
+    for i in 0..8u16 {
+        let cell = &buffer[(body.x + i, body.y)];
+        assert_eq!(cell.style().fg, Some(active.foreground), "cell {i}");
+        assert!(
+            cell.style().add_modifier.contains(Modifier::BOLD),
+            "cell {i} stays bold"
+        );
+    }
+}
+
 /// The style dump of a rendered row: every cell as `symbol|fg|bg`, so a
 /// snapshot captures the colours, not just the layout.
 fn styled_rows(buffer: &ratatui::buffer::Buffer, rows: &[u16]) -> String {

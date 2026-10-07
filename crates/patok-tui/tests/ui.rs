@@ -4598,6 +4598,84 @@ mod stop_dialog {
         press(&mut app, KeyCode::Down);
         insta::assert_snapshot!(draw(&app, 60, 16));
     }
+
+    /// Renders into an 80x24 TestBackend and returns the buffer, for
+    /// cell-level style assertions.
+    fn buffer(app: &App) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The selected choice's colours (T118.1): the row under the selection --
+    /// its marker, label and detail cells alike -- wears the highlighted-text
+    /// foreground on the normal modal background, bold, while the other rows
+    /// keep the label on the theme's foreground and the detail in the muted
+    /// colour. Re-asserted one Down later, so two selection positions pass.
+    #[test]
+    fn the_selected_choice_wears_the_highlighted_text_colour() {
+        use ratatui::layout::{Constraint, Layout, Rect};
+        use ratatui::style::Modifier;
+
+        let area = patok_tui::stop_area(Rect::new(0, 0, 80, 24));
+        let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+        let [body, _footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+        let mut app = open();
+        for round in 0..2 {
+            let buffer = buffer(&app);
+            let theme = app.theme();
+            for index in 0..3u16 {
+                let y = body.y + index;
+                let row: String = (body.x..body.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
+                let selected = usize::from(index) == app.stop_selected;
+                let text = row.trim_end();
+                let chars: Vec<char> = text.chars().collect();
+                // The label ends where the muted " -- detail" span begins;
+                // none of the labels or details contains a dash.
+                let label_end = chars
+                    .iter()
+                    .position(|&c| c == '-')
+                    .expect("the detail follows the label");
+                for (i, _) in chars.iter().enumerate() {
+                    let cell = &buffer[(body.x + i as u16, y)];
+                    if cell.symbol() == " " {
+                        continue;
+                    }
+                    if selected {
+                        assert_eq!(
+                            cell.style().fg,
+                            Some(theme.highlighted_text),
+                            "round {round}: selected row {index}'s cell {i} wears the highlight"
+                        );
+                        assert_eq!(
+                            cell.bg, theme.background,
+                            "round {round}: selected row {index}'s cell {i} keeps the background"
+                        );
+                        assert!(
+                            cell.style().add_modifier.contains(Modifier::BOLD),
+                            "round {round}: selected row {index}'s cell {i} stays bold"
+                        );
+                    } else {
+                        let expected = if i < label_end {
+                            theme.foreground
+                        } else {
+                            theme.muted_text
+                        };
+                        assert_eq!(
+                            cell.style().fg,
+                            Some(expected),
+                            "round {round}: row {index}'s cell {i} keeps its colour"
+                        );
+                    }
+                }
+            }
+            assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        }
+        assert_eq!(app.stop_selected, 2);
+    }
 }
 
 /// The modal bottom lines' two-zone layout (T59.1, T64.1): the add-task dialog

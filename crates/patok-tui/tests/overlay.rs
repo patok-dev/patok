@@ -1942,3 +1942,188 @@ mod close_button {
         assert!(app.settings_open());
     }
 }
+
+/// The selection-bearing modals' selected row (T118.1): the focused row wears
+/// the highlighted-text foreground on the normal modal background, bold, in
+/// the settings overlay's list and the unsaved-changes dialog alike; every
+/// unselected row keeps its current colours.
+mod selected_row_colours {
+    use super::*;
+    use patok_tui::{SETTINGS_CHOICES, settings_confirm_area};
+    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::style::Modifier;
+
+    fn press(app: &mut App, code: KeyCode) -> Action {
+        app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn buffer(app: &App) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(W, H)).unwrap();
+        terminal
+            .draw(|frame| patok_tui::render(frame, app))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The settings list's rect: the overlay's inner area minus the status
+    /// line and the footer, with the help box under the list at this width
+    /// (T85.1) -- the same math `render_settings_overlay` runs.
+    fn list_rect() -> Rect {
+        let area = settings_area(Rect::new(0, 0, W, H));
+        let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+        let [body, _status, _footer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
+        settings_body_areas(body).0
+    }
+
+    /// Asserts every rendered settings row's colours (T118.1): the focused
+    /// row's text cells wear the highlighted-text foreground on the normal
+    /// background, bold; no other row's cell does; an unfocused section
+    /// header keeps its bold. The list's last column holds the scrollbar, so
+    /// the sweep stops short of it.
+    fn assert_list_colours(buffer: &ratatui::buffer::Buffer, app: &App) {
+        let theme = app.theme();
+        let list = list_rect();
+        let start = app.overlay.scroll.get();
+        for (index, entry) in app.overlay.visible().iter().enumerate() {
+            let row = index.saturating_sub(start);
+            if row >= usize::from(list.height) {
+                break;
+            }
+            let y = list.y + row as u16;
+            for x in list.x..list.right() - 1 {
+                let cell = &buffer[(x, y)];
+                if cell.symbol() == " " {
+                    continue;
+                }
+                if index == app.overlay.focus {
+                    assert_eq!(
+                        cell.style().fg,
+                        Some(theme.highlighted_text),
+                        "focused row {index}'s cell ({x}, {y}) wears the highlight"
+                    );
+                    assert_eq!(
+                        cell.bg, theme.background,
+                        "focused row {index}'s cell ({x}, {y}) keeps the modal background"
+                    );
+                    assert!(
+                        cell.style().add_modifier.contains(Modifier::BOLD),
+                        "focused row {index}'s cell ({x}, {y}) stays bold"
+                    );
+                } else {
+                    assert_ne!(
+                        cell.style().fg,
+                        Some(theme.highlighted_text),
+                        "row {index}'s cell ({x}, {y}) is not highlighted"
+                    );
+                    if matches!(entry, Entry::Header(_)) {
+                        assert!(
+                            cell.style().add_modifier.contains(Modifier::BOLD),
+                            "unfocused header {index}'s cell ({x}, {y}) stays bold"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_focused_settings_row_wears_the_highlighted_text_colour() {
+        // The focus starts on the first section header.
+        let mut app = open();
+        assert!(matches!(app.overlay.focused(), Entry::Header(_)));
+        assert_list_colours(&buffer(&app), &app);
+        // One Down moves the selection onto the first entry row, a read-only
+        // report whose muted colour switches to the highlight too.
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        assert!(matches!(app.overlay.focused(), Entry::Row(_)));
+        assert_list_colours(&buffer(&app), &app);
+    }
+
+    /// A dirty overlay with the unsaved-changes dialog open.
+    fn dirty_confirm() -> App {
+        let mut app = open();
+        focus_field(&mut app, "plan_enabled");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.overlay.dirty());
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(app.overlay.confirm_open);
+        app
+    }
+
+    /// The confirm dialog's body rect: the modal's inner area minus the
+    /// footer -- the same math `render_settings_confirm` runs.
+    fn confirm_body() -> Rect {
+        let area = settings_confirm_area(Rect::new(0, 0, W, H));
+        let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+        let [body, _footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+        body
+    }
+
+    /// Asserts the confirm dialog's three rows (T118.1): the selected row's
+    /// marker, label and detail cells wear the highlight on the normal
+    /// background, bold; the unselected rows keep the label on the theme's
+    /// foreground and the detail in the muted colour.
+    fn assert_confirm_colours(buffer: &ratatui::buffer::Buffer, app: &App) {
+        let theme = app.theme();
+        let body = confirm_body();
+        for (index, choice) in SETTINGS_CHOICES.iter().enumerate() {
+            let y = body.y + index as u16;
+            let selected = index == app.overlay.confirm_selected;
+            let text = format!(
+                "{}{} -- {}",
+                if selected { "▶ " } else { "  " },
+                choice.label(),
+                choice.detail()
+            );
+            let label_end = 2 + choice.label().chars().count();
+            for (i, _) in text.chars().enumerate() {
+                let cell = &buffer[(body.x + i as u16, y)];
+                if cell.symbol() == " " {
+                    continue;
+                }
+                if selected {
+                    assert_eq!(
+                        cell.style().fg,
+                        Some(theme.highlighted_text),
+                        "selected choice {index}'s cell {i} wears the highlight"
+                    );
+                    assert_eq!(
+                        cell.bg, theme.background,
+                        "selected choice {index}'s cell {i} keeps the modal background"
+                    );
+                    assert!(
+                        cell.style().add_modifier.contains(Modifier::BOLD),
+                        "selected choice {index}'s cell {i} stays bold"
+                    );
+                } else {
+                    let expected = if i < label_end {
+                        theme.foreground
+                    } else {
+                        theme.muted_text
+                    };
+                    assert_eq!(
+                        cell.style().fg,
+                        Some(expected),
+                        "unselected choice {index}'s cell {i} keeps its colour"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_confirm_dialogs_selected_choice_wears_the_highlighted_text_colour() {
+        let mut app = dirty_confirm();
+        assert_eq!(app.overlay.confirm_selected, 0);
+        assert_confirm_colours(&buffer(&app), &app);
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        assert_eq!(app.overlay.confirm_selected, 1);
+        assert_confirm_colours(&buffer(&app), &app);
+    }
+}
