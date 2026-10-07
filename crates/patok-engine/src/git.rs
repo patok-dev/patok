@@ -60,8 +60,8 @@ impl Git {
     }
 
     /// The current HEAD's short SHA, or `None` outside a repository.
-    // The open-group record replaced the engine's last use in T123.3; T123.4
-    // removes this and its tests.
+    // The open-group record replaced the engine's last use (T123.3); only tests
+    // call it now.
     #[allow(dead_code)]
     pub async fn head_sha(&self) -> Option<String> {
         let out = self.run(&["rev-parse", "--short", "HEAD"]).await?;
@@ -86,38 +86,6 @@ impl Git {
     pub async fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
         self.succeeds(&["merge-base", "--is-ancestor", ancestor, descendant])
             .await
-    }
-
-    /// The commit log's subjects, newest first: `(short sha, subject)` pairs,
-    /// split at the first tab. Empty outside a repository.
-    // The open-group record replaced this in T123.3; T123.4 removes it and
-    /// its tests.
-    #[allow(dead_code)]
-    pub async fn log_subjects(&self) -> Vec<(String, String)> {
-        match self.run(&["log", "--format=%h%x09%s"]).await {
-            Some(out) => String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .filter_map(|line| {
-                    let (sha, subject) = line.split_once('\t')?;
-                    (!sha.is_empty() && !subject.is_empty())
-                        .then(|| (sha.to_string(), subject.to_string()))
-                })
-                .collect(),
-            None => Vec::new(),
-        }
-    }
-
-    /// The short SHA of `sha`'s parent, or `None` for a root commit or a failure.
-    // The open-group record replaced this in T123.3; T123.4 removes it and
-    // its tests.
-    #[allow(dead_code)]
-    pub async fn parent_sha(&self, sha: &str) -> Option<String> {
-        let parent = format!("{sha}^");
-        let out = self.run(&["rev-parse", "--short", &parent]).await?;
-        out.status
-            .success()
-            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-            .filter(|parent| !parent.is_empty())
     }
 
     /// The changed files of the working tree: the `git status --porcelain` names, plus, when `base` is
@@ -164,12 +132,7 @@ impl Git {
     /// (for display) and full SHA (for the open-group record), or `None` when
     /// nothing was committed: not a repository, nothing staged, or the commit
     /// failed. All three are normal outcomes, not errors (Part I, 9.1).
-    pub async fn commit_all(
-        &self,
-        kind: CommitKind,
-        task_id: &str,
-        description: &str,
-    ) -> Option<Commit> {
+    pub async fn commit_all(&self, kind: CommitKind, description: &str) -> Option<Commit> {
         if !self.is_repo().await {
             return None;
         }
@@ -207,7 +170,7 @@ impl Git {
             ),
         };
         let description: String = description.chars().take(SUBJECT_LIMIT).collect();
-        let subject = format!("{label}({task_id}): {description}");
+        let subject = format!("{label}: {description}");
         if !self
             .succeeds(&["commit", "-m", &subject, "-m", body, "-m", FOOTER])
             .await
@@ -257,7 +220,7 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         let git = Git::new(dir.path());
         let commit = git
-            .commit_all(CommitKind::Feat, "T1.1", "do the thing")
+            .commit_all(CommitKind::Feat, "do the thing")
             .await
             .unwrap();
         assert!(!commit.short.is_empty());
@@ -265,7 +228,7 @@ mod tests {
         assert_eq!(Some(commit.full.clone()), git.head_full_sha().await);
         let log = git.run(&["log", "--format=%s%n%b---", "-2"]).await.unwrap();
         let log = String::from_utf8_lossy(&log.stdout).to_string();
-        assert!(log.contains("feat(T1.1): do the thing"), "{log}");
+        assert!(log.contains("feat: do the thing"), "{log}");
         assert!(log.contains("Implemented and validated by autonomous build loop."));
         assert!(log.contains("Automated by: patok"));
         assert!(log.contains("chore: initial commit"));
@@ -278,10 +241,10 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         let git = Git::new(dir.path());
         assert!(git.head_full_sha().await.is_none(), "no commit yet");
-        git.commit_all(CommitKind::Feat, "T1.1", "first").await;
+        git.commit_all(CommitKind::Feat, "first").await;
         let base = git.head_full_sha().await.unwrap();
         std::fs::write(dir.path().join("b.txt"), "b").unwrap();
-        git.commit_all(CommitKind::Wip, "T1.2", "second").await;
+        git.commit_all(CommitKind::Wip, "second").await;
         let head = git.head_full_sha().await.unwrap();
         for sha in [&base, &head] {
             assert_eq!(sha.len(), 40, "a full SHA is 40 hex chars: {sha}");
@@ -307,7 +270,7 @@ mod tests {
         init_repo(dir.path()).await;
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         let git = Git::new(dir.path());
-        git.commit_all(CommitKind::Feat, "T1.1", "first").await;
+        git.commit_all(CommitKind::Feat, "first").await;
         let missing = "0".repeat(40);
         assert!(!git.is_ancestor(&missing, "HEAD").await);
         assert!(!git.is_ancestor("HEAD", &missing).await);
@@ -325,16 +288,12 @@ mod tests {
         let git = Git::new(dir.path());
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         let long = "x".repeat(100);
-        assert!(
-            git.commit_all(CommitKind::Wip, "T1.2", &long)
-                .await
-                .is_some()
-        );
+        assert!(git.commit_all(CommitKind::Wip, &long).await.is_some());
         let subject = git.run(&["log", "-1", "--format=%s"]).await.unwrap();
         let subject = String::from_utf8_lossy(&subject.stdout).trim().to_string();
-        assert_eq!(subject, format!("WIP(T1.2): {}", "x".repeat(72)));
+        assert_eq!(subject, format!("WIP: {}", "x".repeat(72)));
         assert!(
-            git.commit_all(CommitKind::Feat, "T1.3", "nothing changed")
+            git.commit_all(CommitKind::Feat, "nothing changed")
                 .await
                 .is_none()
         );
@@ -347,39 +306,9 @@ mod tests {
         let git = Git::new(dir.path());
         assert!(git.head_sha().await.is_none(), "no commit yet");
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
-        git.commit_all(CommitKind::Feat, "T1.1", "first").await;
+        git.commit_all(CommitKind::Feat, "first").await;
         let sha = git.head_sha().await.unwrap();
         assert!(!sha.is_empty());
-    }
-
-    #[tokio::test]
-    async fn log_subjects_and_parent_sha_walk_the_history() {
-        let dir = tempfile::tempdir().unwrap();
-        init_repo(dir.path()).await;
-        let git = Git::new(dir.path());
-        assert!(git.log_subjects().await.is_empty(), "no commit yet");
-        assert!(git.parent_sha("HEAD").await.is_none(), "no commit yet");
-        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
-        git.commit_all(CommitKind::Feat, "T1.1", "first").await;
-        std::fs::write(dir.path().join("b.txt"), "b").unwrap();
-        git.commit_all(CommitKind::Wip, "T1.2", "second").await;
-        // Newest first, the short sha joined to the subject at a tab.
-        let log = git.log_subjects().await;
-        assert_eq!(log.len(), 3, "{log:?}");
-        assert_eq!(log[0].1, "WIP(T1.2): second");
-        assert_eq!(log[1].1, "feat(T1.1): first");
-        assert_eq!(log[2].1, "chore: initial commit");
-        // The parent of the newest commit is the one before it; the initial
-        // commit is the root and has none.
-        assert_eq!(
-            git.parent_sha(&log[0].0).await.as_deref(),
-            Some(log[1].0.as_str())
-        );
-        assert_eq!(
-            git.parent_sha(&log[2].0).await,
-            None,
-            "the root commit has no parent"
-        );
     }
 
     #[tokio::test]
@@ -388,7 +317,7 @@ mod tests {
         init_repo(dir.path()).await;
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         let git = Git::new(dir.path());
-        git.commit_all(CommitKind::Feat, "T1.1", "initial").await;
+        git.commit_all(CommitKind::Feat, "initial").await;
         // Uncommitted changes: a modified tracked file and a new untracked one.
         std::fs::write(dir.path().join("a.txt"), "changed").unwrap();
         std::fs::write(dir.path().join("b.txt"), "b").unwrap();
@@ -399,15 +328,15 @@ mod tests {
         // A base spanning several commits: the diff names join the set.
         let base = git.head_sha().await.unwrap();
         std::fs::write(dir.path().join("c.txt"), "c").unwrap();
-        git.commit_all(CommitKind::Feat, "T1.2", "second").await;
+        git.commit_all(CommitKind::Feat, "second").await;
         std::fs::write(dir.path().join("d.txt"), "d").unwrap();
-        git.commit_all(CommitKind::Feat, "T1.3", "third").await;
+        git.commit_all(CommitKind::Feat, "third").await;
         let files = git.changed_files(Some(&base)).await;
         assert!(files.contains(&"c.txt".to_string()), "{files:?}");
         assert!(files.contains(&"d.txt".to_string()), "{files:?}");
         assert!(files.contains(&"a.txt".to_string()), "{files:?}");
         // A clean tree against HEAD is empty.
-        git.commit_all(CommitKind::Feat, "T1.4", "fourth").await;
+        git.commit_all(CommitKind::Feat, "fourth").await;
         assert!(git.changed_files(None).await.is_empty());
     }
 
@@ -417,11 +346,11 @@ mod tests {
         init_repo(dir.path()).await;
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         let git = Git::new(dir.path());
-        git.commit_all(CommitKind::Feat, "T1.1", "initial").await;
+        git.commit_all(CommitKind::Feat, "initial").await;
         let base = git.head_sha().await.unwrap();
         // A committed change since the base appears in the base diff.
         std::fs::write(dir.path().join("b.txt"), "committed later").unwrap();
-        git.commit_all(CommitKind::Feat, "T1.2", "second").await;
+        git.commit_all(CommitKind::Feat, "second").await;
         // An uncommitted change appears against both bases.
         std::fs::write(dir.path().join("c.txt"), "working tree").unwrap();
         let diff = git.diff(Some(&base)).await;
@@ -460,7 +389,7 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         assert!(
             Git::new(dir.path())
-                .commit_all(CommitKind::Feat, "T1.1", "x")
+                .commit_all(CommitKind::Feat, "x")
                 .await
                 .is_none()
         );

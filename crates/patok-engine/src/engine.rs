@@ -2739,10 +2739,7 @@ impl Engine {
         } else {
             CommitKind::Wip
         };
-        let commit = self
-            .git()
-            .commit_all(kind, &task.id, &task.description)
-            .await;
+        let commit = self.git().commit_all(kind, &task.description).await;
         let full = commit.as_ref().map(|commit| commit.full.clone());
         let commit = commit.map(|commit| commit.short);
         if let Some(full) = full {

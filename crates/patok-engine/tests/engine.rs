@@ -89,8 +89,8 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
     assert!(file.contains("- [x] T1.1: [--.B-] add the greeting file"));
     assert!(file.contains("- [x] T1.2: [--.B-] fix the second task"));
     let log = fixture.git(&["log", "--format=%s"]);
-    assert_eq!(log.lines().next(), Some("feat(T1.2): fix the second task"));
-    assert!(log.contains("feat(T1.1): add the greeting file"));
+    assert_eq!(log.lines().next(), Some("feat: fix the second task"));
+    assert!(log.contains("feat: add the greeting file"));
     let files = fixture.git(&["show", "--name-only", "--format=", "HEAD~1"]);
     assert!(
         files.contains("greeting.txt") && files.contains("TASKS.md"),
@@ -184,7 +184,7 @@ async fn a_failed_agent_commits_wip_and_leaves_the_task_pending() {
     assert!(fixture.tasks_file().contains("- [ ] T1.1"));
     assert_eq!(
         fixture.git(&["log", "--format=%s", "-1"]).trim(),
-        "WIP(T1.1): add the greeting file"
+        "WIP: add the greeting file"
     );
 }
 
@@ -1422,7 +1422,7 @@ async fn a_soft_stop_finishes_the_task_stops_the_loop_and_keeps_the_engine_servi
     );
     assert_eq!(
         fixture.git(&["log", "--format=%s", "-1"]).trim(),
-        "feat(T1.1): add the greeting file"
+        "feat: add the greeting file"
     );
     // No second task and no discovery round: the loop stopped.
     assert_eq!(provider.sessions().len(), 1);
@@ -2508,7 +2508,7 @@ async fn a_discovery_round_that_appends_tasks_continues_the_session() {
     assert!(
         fixture
             .git(&["log", "--format=%s"])
-            .contains("feat(D1.1): fix the follow-up")
+            .contains("feat: fix the follow-up")
     );
     // The round that found work postponed the next one, so the session ended there.
     assert_eq!(provider.sessions().len(), 3);
@@ -3353,7 +3353,7 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
             .contains("- [x] T1.1: [--.BR] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1): add the greeting file"), "{log}");
+    assert!(log.contains("feat: add the greeting file"), "{log}");
     // The builder and reviewer raw streams are in the history log.
     assert_eq!(fixture.data_path("history").read_dir().unwrap().count(), 2);
 }
@@ -3617,7 +3617,7 @@ async fn a_fail_verdict_produces_a_wip_commit_with_the_task_not_validated() {
             .contains("- [ ] T1.1: [--.BR!] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.1): add the greeting file"), "{log}");
+    assert!(log.contains("WIP: add the greeting file"), "{log}");
 }
 
 #[tokio::test]
@@ -3650,7 +3650,7 @@ async fn an_invalid_findings_block_fails_the_review() {
             .contains("- [ ] T1.1: [--.BR!] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.1)"), "{log}");
+    assert!(log.contains("WIP: add the greeting file"), "{log}");
 }
 
 #[tokio::test]
@@ -3693,7 +3693,10 @@ async fn no_changed_files_fails_the_review() {
             .contains("- [ ] T1.1: [R-.BR!] introduce the greeting file for the review stage")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.1)"), "{log}");
+    assert!(
+        log.contains("WIP: introduce the greeting file for the review stage"),
+        "{log}"
+    );
 }
 
 #[tokio::test]
@@ -3719,7 +3722,7 @@ async fn review_in_loop_off_skips_the_review_with_its_reason() {
             .contains("- [x] T1.1: [--.B-] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
+    assert!(log.contains("feat: add the greeting file"), "{log}");
 }
 
 #[tokio::test]
@@ -3877,9 +3880,9 @@ async fn batch_review_defers_every_task_but_the_last_and_the_last_diff_spans_the
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
-    assert!(log.contains("feat(T1.2)"), "{log}");
-    assert!(log.contains("feat(T1.3)"), "{log}");
+    assert!(log.contains("feat: add the first file"), "{log}");
+    assert!(log.contains("feat: add the second file"), "{log}");
+    assert!(log.contains("feat: add the third file"), "{log}");
 
     // One builder per task, then one reviewer session for the group's last
     // task, whose diff spans every commit of the group.
@@ -3945,9 +3948,9 @@ async fn batch_review_passes_the_groups_last_task_and_advances_to_the_next_group
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
-    assert!(log.contains("feat(T1.2)"), "{log}");
-    assert!(log.contains("feat(T2.1)"), "{log}");
+    assert!(log.contains("feat: add the first file"), "{log}");
+    assert!(log.contains("feat: add the second file"), "{log}");
+    assert!(log.contains("feat: add the third file"), "{log}");
     // T2.1's group base is fresh: its review sees only its own file.
     let second_reviewer_prompt = &sessions[4].prompt;
     assert!(
@@ -4003,8 +4006,8 @@ async fn a_restart_after_a_failed_review_of_a_groups_last_task_passes_the_rerun_
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.2)"), "{log}");
-    assert!(!log.contains("feat(T2.1)"), "{log}");
+    assert!(log.contains("WIP: add the second file"), "{log}");
+    assert!(!log.contains("feat: add the third file"), "{log}");
 
     // The restart (what the TUI's Enter and a fresh headless run do).
     engine.start_build().unwrap();
@@ -4047,8 +4050,8 @@ async fn a_restart_after_a_failed_review_of_a_groups_last_task_passes_the_rerun_
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.2)"), "{log}");
-    assert!(log.contains("feat(T2.1)"), "{log}");
+    assert!(log.contains("feat: add the second file"), "{log}");
+    assert!(log.contains("feat: add the third file"), "{log}");
 }
 
 /// T107.1: the same restart recovery for a single-task group, whose failed
@@ -4105,7 +4108,7 @@ async fn a_restart_after_a_failed_review_of_a_single_task_group_passes_the_rerun
             .contains("- [x] T1.1: [--.BR] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
+    assert!(log.contains("feat: add the greeting file"), "{log}");
 }
 
 /// The parsed open-group record, failing the test when it is missing.

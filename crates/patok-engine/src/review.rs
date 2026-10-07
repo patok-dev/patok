@@ -455,20 +455,6 @@ pub fn leading_number(task_id: &str) -> Option<String> {
         .then(|| stripped.to_string())
 }
 
-/// The task ID a commit subject names (`feat(T1.2): …` -> `Some("T1.2")`): the
-/// text between the first `(` and the following `)`. `None` for subjects
-/// without them, so non-patok commits never belong to a batch-review group.
-// The open-group record replaced this in T123.3; T123.4 removes it and its
-// tests.
-#[allow(dead_code)]
-pub fn subject_task_id(subject: &str) -> Option<&str> {
-    let start = subject.find('(')? + 1;
-    let rest = &subject[start..];
-    let end = rest.find(')')?;
-    let id = &rest[..end];
-    (!id.is_empty()).then_some(id)
-}
-
 /// Whether a pending task after the current one shares its leading number, so
 /// batch review defers the current task's review to the group's last task. The
 /// current task's own ID never counts.
@@ -1025,30 +1011,6 @@ mod tests {
         assert!(!batch_deferred("T1.1", &["T1.1".into()]));
         // A single-task group is never deferred.
         assert!(!batch_deferred("T1.1", &["T2.1".into(), "T3.1".into()]));
-    }
-
-    #[test]
-    fn subject_task_ids_of_commit_subjects() {
-        assert_eq!(
-            subject_task_id("feat(T1.2): add the second file"),
-            Some("T1.2")
-        );
-        assert_eq!(
-            subject_task_id("WIP(T1.2): add the second file"),
-            Some("T1.2")
-        );
-        // Only the first parenthesized pair counts, so a description holding
-        // parens never changes the extracted ID.
-        assert_eq!(
-            subject_task_id("feat(T1.2): do it (properly)"),
-            Some("T1.2")
-        );
-        assert_eq!(subject_task_id("(T1.1) no label"), Some("T1.1"));
-        // Subjects without a parenthesized ID belong to no group.
-        assert_eq!(subject_task_id("chore: initial commit"), None);
-        assert_eq!(subject_task_id("plain subject"), None);
-        assert_eq!(subject_task_id("feat(T1.2 unclosed"), None);
-        assert_eq!(subject_task_id("feat(): empty"), None);
     }
 
     #[test]
