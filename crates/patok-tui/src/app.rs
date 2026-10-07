@@ -454,6 +454,12 @@ pub struct App {
     /// The m menu's close button rect at the last render (T66.1); a click on
     /// it runs the menu's Esc key.
     pub menu_close: Cell<Rect>,
+    /// The status bar's m menu chip rect at the last render (T133.1); a left
+    /// click on it opens the m menu (the m key's action) and a click while
+    /// the menu is open closes it. The zero rect a chip-less render records
+    /// -- a showing status message, a pair dropped for width -- contains no
+    /// real position, so a click misses naturally.
+    pub menu_chip: Cell<Rect>,
     /// Text typed into the add-task dialog; kept when the dialog is closed.
     pub dialog_text: String,
     /// Cursor in `dialog_text` as a character index; read it through [`App::cursor`].
@@ -542,6 +548,7 @@ impl App {
             menu_selected: 0,
             menu_footer: Cell::new(Rect::default()),
             menu_close: Cell::new(Rect::default()),
+            menu_chip: Cell::new(Rect::default()),
             dialog_text: String::new(),
             dialog_cursor: 0,
             dialog_goal_col: None,
@@ -1374,8 +1381,14 @@ impl App {
     /// line's buttons runs exactly that button's key through the menu's key
     /// path -- Enter runs the selected entry and Esc closes with no effect.
     /// A click on the title row's close button runs the menu's Esc key the
-    /// same way (T66.1). Everything else is swallowed, as before.
+    /// same way (T66.1). A click on the status bar's m menu chip closes the
+    /// menu, the second half of the chip's toggle (T133.1). Everything else
+    /// is swallowed, as before.
     fn on_menu_mouse(&mut self, mouse: MouseEvent) -> Action {
+        if chip_clicked(&mouse, self.menu_chip.get()) {
+            self.menu_open = false;
+            return Action::None;
+        }
         if close_clicked(&mouse, self.menu_close.get()) {
             return self.on_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
@@ -1863,13 +1876,15 @@ impl App {
     }
 
     /// Mouse events on the merged view: a click inside one of the two frames
-    /// focuses it; a wheel step scrolls the frame the pointer is over, one line
-    /// per step, without moving the focus. Events outside both frames and open
-    /// modals change nothing. Every open modal handles its own mouse events and
-    /// swallows the rest, so nothing underneath reacts while it is open: the
-    /// theme picker keeps its row hover and click behaviour (T43.1) and every
-    /// modal's bottom-line buttons respond to a click on their rectangle with
-    /// exactly the action their key triggers (T59.1).
+    /// focuses it; a click on the status bar's m menu chip opens the m menu,
+    /// the m key's action (T133.1); a wheel step scrolls the frame the
+    /// pointer is over, one line per step, without moving the focus. Events
+    /// outside both frames and open modals change nothing. Every open modal
+    /// handles its own mouse events and swallows the rest, so nothing
+    /// underneath reacts while it is open: the theme picker keeps its row
+    /// hover and click behaviour (T43.1) and every modal's bottom-line
+    /// buttons respond to a click on their rectangle with exactly the action
+    /// their key triggers (T59.1).
     pub fn on_mouse(&mut self, mouse: MouseEvent) -> Action {
         if self.theme_modal.open {
             return self.on_theme_mouse(mouse);
@@ -1893,7 +1908,13 @@ impl App {
         let frame = frame_at(position, self.output_area.get(), self.tasks_area.get());
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(frame) = frame {
+                if chip_clicked(&mouse, self.menu_chip.get()) {
+                    // The m key's open path, verbatim: the chip is its
+                    // mouse alias (T133.1).
+                    self.status = None;
+                    self.menu_open = true;
+                    self.menu_selected = 0;
+                } else if let Some(frame) = frame {
                     self.focus = frame;
                 }
             }
@@ -1925,6 +1946,20 @@ fn close_clicked(mouse: &MouseEvent, close: Rect) -> bool {
     }
     let position = ratatui::layout::Position::new(mouse.column, mouse.row);
     close.contains(position)
+}
+
+/// Whether a left click lands on the status bar's m menu chip (T133.1): the
+/// click must be a press inside the chip's rectangle, which the renderer
+/// recorded at the last render through [`crate::ui::status_widget`]. The
+/// zero rect a chip-less render records contains no real position, so the
+/// click misses there naturally, like [`close_clicked`] for close buttons.
+/// Every other mouse event misses too.
+fn chip_clicked(mouse: &MouseEvent, chip: Rect) -> bool {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return false;
+    }
+    let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+    chip.contains(position)
 }
 
 /// The key a left click on a modal's bottom-line button stands for (T59.1):

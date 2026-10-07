@@ -445,3 +445,101 @@ fn the_menu_handles_its_own_mouse_events() {
     assert!(!app.menu_open);
     assert!(app.settings_open());
 }
+
+/// The status bar's m menu chip is a real button (T133.1): a left click
+/// inside its rect opens the menu with the m key's open path, the same click
+/// while the menu is open closes it, Esc still closes it, and clicks outside
+/// the rect -- the status row left of the strip and the first ` menu ` label
+/// column -- leave the menu closed.
+#[test]
+fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
+    // Idle with one pending task, so the strip is
+    // " STOPPED  sprint  Enter  start  m  menu" on the 80-column row: the
+    // m key chip is the three columns at x = 71.
+    let mut app = app();
+    draw(&app, 80, 14);
+    let chip = app.menu_chip.get();
+    assert_eq!(chip, ratatui::layout::Rect::new(71, 13, 3, 1));
+
+    // A click inside the chip opens the menu, the m key's action verbatim.
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            chip.x + 1,
+            chip.y
+        )),
+        Action::None
+    );
+    assert!(app.menu_open);
+    assert_eq!(app.menu_selected, 0);
+
+    // The status bar renders behind the modal and re-records the chip, so
+    // the same click closes it: the toggle.
+    draw(&app, 80, 14);
+    assert_eq!(app.menu_chip.get(), chip);
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            chip.x + 1,
+            chip.y
+        )),
+        Action::None
+    );
+    assert!(!app.menu_open);
+
+    // Reopened by a click, the menu still closes with Esc.
+    draw(&app, 80, 14);
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            chip.x + 1,
+            chip.y
+        )),
+        Action::None
+    );
+    assert!(app.menu_open);
+    assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+    assert!(!app.menu_open);
+
+    // Clicks outside the chip rect do not open the menu: the status row left
+    // of the strip, and the first ` menu ` label column -- the rect's right
+    // boundary, so the exact chip width is pinned.
+    draw(&app, 80, 14);
+    for (column, row) in [(0, 13), (chip.x + chip.width, chip.y)] {
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), column, row)),
+            Action::None
+        );
+        assert!(
+            !app.menu_open,
+            "a click at ({column}, {row}) must not open the menu"
+        );
+    }
+}
+
+/// The chip's rect is zero whenever the chip does not render -- a status
+/// message replaces the whole hint zone, and a narrow strip drops the hint
+/// pairs -- so clicks at the chip's usual place leave the menu closed.
+#[test]
+fn the_menu_chip_is_inert_while_a_status_message_shows() {
+    let mut app = app();
+    app.status = Some("Planner running...".into());
+    draw(&app, 80, 14);
+    assert_eq!(app.menu_chip.get(), ratatui::layout::Rect::default());
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 72, 13)),
+        Action::None
+    );
+    assert!(!app.menu_open);
+
+    // A narrow terminal fits no hint pair (" STOPPED  sprint" only), so the
+    // dropped chip leaves the zero rect too.
+    app.status = None;
+    draw(&app, 18, 10);
+    assert_eq!(app.menu_chip.get(), ratatui::layout::Rect::default());
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 17, 9)),
+        Action::None
+    );
+    assert!(!app.menu_open);
+}

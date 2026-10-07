@@ -1675,8 +1675,10 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     assert!(narrow.ends_with("menu"), "{narrow}");
     assert!(!narrow.contains(" s "), "{narrow}");
 
-    // The menu chip wears the same status-bar colours as the Enter hint
-    // beside it, so it recolours with the active theme (T34.1).
+    // The menu chip is the strip's one interactive element (T133.1): it wears
+    // the modal buttons' accent so it reads as a button and recolours with
+    // the active theme, while the Enter hint keeps the plain chip colours
+    // and the label stays muted detail.
     let theme = patok_tui::Theme::DARK;
     let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
     terminal.draw(|frame| render(frame, &idle)).unwrap();
@@ -1692,17 +1694,25 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     };
     let enter = column(&[" ", "E", "n", "t", "e", "r", " "]);
     let menu_key = column(&[" ", "m", " "]);
-    for offset in 0..3u16 {
-        assert_eq!(
-            buffer[(menu_key as u16 + offset, row)].style(),
-            buffer[(enter as u16 + offset, row)].style(),
-            "the menu chip must wear the Enter chip's colours"
-        );
-    }
     let chip = buffer[(menu_key as u16, row)].style();
-    assert_eq!(chip.fg, Some(theme.contrast_text));
-    assert_eq!(chip.bg, Some(theme.chip_neutral));
-    assert!(chip.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(chip.fg, Some(theme.highlighted_text));
+    assert_eq!(chip.bg, Some(theme.background));
+    assert!(!chip.add_modifier.contains(Modifier::BOLD));
+    assert_ne!(
+        buffer[(menu_key as u16, row)].style(),
+        buffer[(enter as u16, row)].style(),
+        "the menu chip must read as a button, not a plain chip"
+    );
+    assert_eq!(
+        buffer[(enter as u16, row)].style().fg,
+        Some(theme.contrast_text),
+        "the Enter chip keeps the chip colours"
+    );
+    assert_eq!(
+        buffer[(enter as u16, row)].style().bg,
+        Some(theme.chip_neutral),
+        "the Enter chip keeps the chip background"
+    );
     for offset in 0..6u16 {
         assert_eq!(
             buffer[(menu_key as u16 + 3 + offset, row)].style(),
@@ -1719,11 +1729,12 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
 }
 
 /// The status bar's key hints are chips, not modal buttons (T46.1): in both
-/// the default and a palette theme every chip wears the chip colours and
-/// every label the muted status colour -- no status-bar cell ever carries the
-/// modal button accent (T64.1).
+/// the default and a palette theme the Enter chip wears the chip colours and
+/// every label the muted status colour. The one exception is the interactive
+/// m menu chip (T133.1): it is a button, so its three cells carry the modal
+/// button accent -- and no other status-bar cell does.
 #[test]
-fn the_status_bar_hints_never_wear_the_button_accent() {
+fn only_the_menu_chip_wears_the_button_accent() {
     use patok_core::config::Theme as ThemeKey;
 
     for theme_key in [ThemeKey::Dark, ThemeKey::TokyoNightDark] {
@@ -1742,11 +1753,21 @@ fn the_status_bar_hints_never_wear_the_button_accent() {
                 .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
                 .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
         };
+        let enter = column(&[" ", "E", "n", "t", "e", "r", " "]);
         let menu_key = column(&[" ", "m", " "]);
+        // The Enter chip keeps the plain chip look: contrast text on the
+        // neutral chip background.
         for offset in 0..3u16 {
-            let style = buffer[(menu_key as u16 + offset, row)].style();
+            let style = buffer[(enter as u16 + offset, row)].style();
             assert_eq!(style.fg, Some(theme.contrast_text), "the chip text colour");
             assert_eq!(style.bg, Some(theme.chip_neutral), "the chip background");
+        }
+        // The m menu chip is the strip's one button: the accent foreground,
+        // no chip background.
+        for offset in 0..3u16 {
+            let style = buffer[(menu_key as u16 + offset, row)].style();
+            assert_eq!(style.fg, Some(theme.highlighted_text), "the button accent");
+            assert_eq!(style.bg, Some(theme.background), "no chip background");
         }
         for offset in 0..6u16 {
             assert_eq!(
@@ -1756,11 +1777,16 @@ fn the_status_bar_hints_never_wear_the_button_accent() {
             );
         }
         assert_eq!(symbols[menu_key + 3..menu_key + 9].concat(), " menu ");
+        // No status-bar cell outside the m chip's three columns carries the
+        // button accent.
         for x in 0..130u16 {
+            if (menu_key as u16..menu_key as u16 + 3).contains(&x) {
+                continue;
+            }
             assert_ne!(
                 buffer[(x, row)].style().fg,
                 Some(theme.highlighted_text),
-                "no status-bar cell wears the button accent at x={x}"
+                "no status-bar cell but the m chip wears the button accent at x={x}"
             );
         }
     }
