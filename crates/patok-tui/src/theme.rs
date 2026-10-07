@@ -16,7 +16,7 @@
 //! a light variant). Every non-default variant is defined once as a
 //! [`Palette`] of signature roles and carries its own [`Classes`] table that
 //! maps those roles onto the classes (T111.1), so each theme tunes its
-//! classes — chips, cursor, muted text — without touching the others, and every
+//! classes — chips, cursors, muted text — without touching the others, and every
 //! renderer works unchanged with any variant. Since T112.1 the tables are
 //! genuinely per-theme: no two themes share a single class value, and every
 //! palette's text classes clear the readability threshold on its own
@@ -56,13 +56,13 @@
 //! | `foreground` | `render` | the frame's base foreground, inherited by unstyled text |
 //! | `normal_text` | `button_line`, `theme_row_line` | the modal buttons' labels (T64.1), the theme picker's unselected entry names (T115.1) |
 //! | `muted_text` | `render_modal_footer`, `render_hints_strip`, `status_widget`, `render_output`, `render_pane`, `render_tasks`, `render_dialog`, `render_stop_dialog`, `render_settings_confirm`, `render_settings_overlay`, `settings_row_line`, `render_settings_help`, `pipeline::tile_style`, `pipeline::render_rail` | every low-emphasis text: modal footers and the focused frame's hints strip (T59.1, T71.1), the status bar's key-chip labels, the output frame title's separator, provider, model and timer and everything after the word `Tasks` in the tasks frame title (T37.1, T67.1), the "no output yet" and "no tasks in TASKS.md" placeholders, done task rows, the empty-input watermark (T41.1), "-- detail" choice text on unselected rows, the settings overlay's info, unselected read-only and help text (T85.1), the rail's muted and pending tiles, the provider/model detail and the down-arrow connectors |
-//! | `highlighted_text` | `status_widget`, `render_tasks`, `render_dialog`, `button_line`, `render_settings_overlay`, `settings_row_line`, `render_settings_confirm`, `render_stop_dialog`, `theme_row_line`, `render_scrollbar` | the status bar's message, the STOPPING chip and the interactive m menu chip (T133.1), new tasks, the add-task dialog's status line, every modal's " [ Key ] " markers, the settings overlay's error line, and the selected row of every selection-bearing modal (T118.1): the theme picker's selected entry (T115.1), the settings overlay's focused row, the unsaved-changes and stop dialogs' selected choices, and the overlay scrollbar thumb (T121.1) |
+//! | `highlighted_text` | `status_widget`, `render_tasks`, `render_dialog`, `button_line`, `render_settings_overlay`, `settings_row_line`, `render_settings_confirm`, `render_stop_dialog`, `theme_row_line`, `render_scrollbar` | the status bar's message, the STOPPING chip and the interactive m menu chip (T133.1), new tasks, the add-task dialog's status line, every modal's " [ Key ] " markers, the settings overlay's error line, and the selected row of every selection-bearing modal (T118.1): the theme picker's selected entry (T115.1), the settings overlay's focused row, the unsaved-changes and stop dialogs' selected choices, and the overlay scrollbar thumb (T121.1), and the two input block cursors: the add-task dialog input's and the settings overlay's open inline editor (T138.1) |
 //! | `chip_neutral` | `status_widget` | STOPPED, run-mode and the non-interactive key-chip backgrounds |
-//! | `contrast_text` | `status_widget`, `render_dialog` | foreground on the non-interactive status chips and the dialog input's block cursor |
+//! | `contrast_text` | `status_widget` | foreground on the non-interactive status chips |
 //! | `success` | `status_widget`, `render_tasks`, `pipeline::tile_style` | the RUNNING chip, running task rows, done rail tiles (T50.1) |
 //! | `chip_planning` | `status_widget` | PLANNING status chip background |
 //! | `chip_discovering` | `status_widget` | DISCOVERING status chip background |
-//! | `accent` | `render_dialog`, `pipeline::tile_style` | the dialog input's block cursor background, the active rail tile and DISCOVER while a round runs |
+//! | `accent` | `pipeline::tile_style` | the active rail tile and DISCOVER while a round runs |
 //! | `scrollbar_rail` | `render_scrollbar` | the overlay scrollbar's rail |
 //! | `agent_text.thinking` | `style_of`, headless `--color` | agent thinking; also the markdown base style |
 //! | `agent_text.tool` | `style_of`, headless `--color` | tool-call lines |
@@ -376,7 +376,7 @@ pub struct Theme {
     /// wherever that holds (typically the foreground role).
     pub chip_neutral: Color,
     /// The contrast-text special class: the foreground on the saturated chip
-    /// and cursor backgrounds. Special because the default theme's value is
+    /// backgrounds. Special because the default theme's value is
     /// `Black` while its background is `Reset`.
     pub contrast_text: Color,
     /// The success special class: the RUNNING chip, running task rows and
@@ -388,8 +388,8 @@ pub struct Theme {
     /// The DISCOVERING status chip background: a saturated blue no basic class
     /// expresses (and distinct from `accent` in every theme).
     pub chip_discovering: Color,
-    /// The accent special class: the active rail tile and the dialog cursor
-    /// background. A saturated cyan/blue no basic class expresses.
+    /// The accent special class: the active rail tile and DISCOVER while a
+    /// round runs. A saturated cyan/blue no basic class expresses.
     pub accent: Color,
     /// The scrollbar-rail special class: the overlay scrollbar's rail,
     /// deliberately dimmer than `muted_text` on some themes.
@@ -524,7 +524,7 @@ struct Classes {
     /// backgrounds.
     chip_neutral: (u8, u8, u8),
     /// The contrast-text special class: the foreground on the saturated chip
-    /// and cursor backgrounds.
+    /// backgrounds.
     contrast_text: (u8, u8, u8),
     /// The success special class: RUNNING chip, running tasks, done rail
     /// tiles.
@@ -533,7 +533,8 @@ struct Classes {
     chip_planning: (u8, u8, u8),
     /// The DISCOVERING status chip background.
     chip_discovering: (u8, u8, u8),
-    /// The accent special class: active rail tile, cursor background.
+    /// The accent special class: active rail tile, DISCOVER while a round
+    /// runs.
     accent: (u8, u8, u8),
     /// The scrollbar-rail special class: the overlay scrollbar's rail.
     scrollbar_rail: (u8, u8, u8),
@@ -1496,8 +1497,8 @@ mod tests {
     /// instead of re-hueing one shared mapping. Dark's named ANSI colours
     /// can never equal a palette's `Color::Rgb`, so it takes part in the
     /// comparison. `accent` additionally stays distinct from
-    /// `chip_discovering` in every theme, so the active rail tile and
-    /// cursor never wear the DISCOVERING chip's colour.
+    /// `chip_discovering` in every theme, so the active rail tile
+    /// never wears the DISCOVERING chip's colour.
     #[test]
     fn class_values_genuinely_differ_across_themes() {
         const CLASS_NAMES: [&str; 12] = [
@@ -1592,7 +1593,7 @@ mod tests {
     }
 
     /// The shared contrast text reads on every coloured background of every
-    /// theme: after the class collapse (T111.1) each chip and cursor
+    /// theme: after the class collapse (T111.1) each chip and tile
     /// background reaches [`READABLE_CONTRAST`] under `contrast_text` —
     /// including Tokyo Night Dark, whose `chip_neutral` moved off the
     /// palette's dim `surface` role in T112.1. The default theme is excluded

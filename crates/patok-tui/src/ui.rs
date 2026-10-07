@@ -638,10 +638,14 @@ fn settings_row_line(
                     let shown: String = value.chars().skip(skip).collect();
                     let mut spans = vec![Span::raw(prefix), Span::raw(shown)];
                     if editor.is_some() {
-                        // The block cursor at the end of the buffer.
+                        // The block cursor at the end of the buffer, wearing
+                        // the highlighted-text foreground (T138.1), the colour
+                        // selected rows and the scrollbar thumb already share.
                         spans.push(Span::styled(
                             " ",
-                            Style::new().add_modifier(Modifier::REVERSED),
+                            Style::new()
+                                .fg(theme.highlighted_text)
+                                .add_modifier(Modifier::REVERSED),
                         ));
                     }
                     Line::from(spans)
@@ -759,8 +763,14 @@ fn render_dialog(frame: &mut Frame, app: &App) {
     // The block cursor covers the cell at the cursor: the character under it
     // on the cursor style, or a styled space at the end of a logical line or
     // on an empty one. No cell is added, so the letters around the cursor
-    // stay in place while it moves.
-    let cursor_style = Style::new().fg(theme.contrast_text).bg(theme.accent);
+    // stay in place while it moves. The cursor cell wears the highlighted-text
+    // foreground (T138.1), the colour selected rows and the scrollbar thumb
+    // already share.
+    // REVERSED keeps the cell a visible block: a bare foreground on a space
+    // would draw nothing.
+    let cursor_style = Style::new()
+        .fg(theme.highlighted_text)
+        .add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line> = if app.dialog_text.is_empty() {
         // The empty-input watermark (T41.1): a dim hint followed by the block
         // cursor, which keeps the focus indicator visible.
@@ -1703,6 +1713,7 @@ fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlay::Editor;
     use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
     use patok_core::event::{Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
@@ -1973,6 +1984,102 @@ mod tests {
                     "two built-in themes share a scrollbar thumb colour"
                 );
             }
+        }
+    }
+
+    /// The dialog input's cells on an 80x24 screen, rendered through
+    /// `render_dialog` with the app's input state as the caller set it.
+    fn dialog_buffer(app: &App) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render_dialog(frame, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The add-task dialog input's block cursor wears the `highlighted_text`
+    /// class on every built-in theme (T138.1) — the colour selected rows and
+    /// the scrollbar thumb already share — both over a typed character and as
+    /// the styled space in the empty-input watermark row, with no accent
+    /// background left behind.
+    #[test]
+    fn dialog_input_cursor_wears_highlighted_text_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let area = dialog_area(Rect::new(0, 0, 80, 24));
+            let (x0, y0) = (area.x + 1, area.y + 1);
+            // With text: the cursor cell covers the character under it.
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.dialog_open = true;
+            app.dialog_text = "hello".into();
+            app.dialog_cursor = 3;
+            let buffer = dialog_buffer(&app);
+            let under = &buffer[(x0 + 3, y0)];
+            assert_eq!(under.symbol(), "l", "{key:?}");
+            assert_eq!(under.style().fg, Some(theme.highlighted_text), "{key:?}");
+            assert_ne!(under.style().bg, Some(theme.accent), "{key:?}");
+            let neighbour = &buffer[(x0 + 1, y0)];
+            assert_eq!(neighbour.symbol(), "e", "{key:?}");
+            // The neighbour is typed text, not the cursor: it never wears the
+            // highlighted-text foreground or an accent background.
+            assert_ne!(
+                neighbour.style().fg,
+                Some(theme.highlighted_text),
+                "the neighbour stays plain text: {:?} on {key:?}",
+                neighbour.style().fg
+            );
+            assert_ne!(neighbour.style().bg, Some(theme.accent), "{key:?}");
+            // Empty input: the watermark in the muted colour (T41.1), then
+            // the block cursor's styled space.
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.dialog_open = true;
+            let buffer = dialog_buffer(&app);
+            for (i, ch) in DIALOG_WATERMARK.chars().enumerate() {
+                let cell = &buffer[(x0 + i as u16, y0)];
+                assert_eq!(cell.symbol(), ch.to_string(), "{key:?}");
+                assert_eq!(cell.style().fg, Some(theme.muted_text), "{key:?}");
+            }
+            let width = DIALOG_WATERMARK.chars().count() as u16;
+            let cursor = &buffer[(x0 + width, y0)];
+            assert_eq!(cursor.symbol(), " ", "{key:?}");
+            assert_eq!(cursor.style().fg, Some(theme.highlighted_text), "{key:?}");
+            assert_ne!(cursor.style().bg, Some(theme.accent), "{key:?}");
+        }
+    }
+
+    /// The settings overlay inline editor's end-of-buffer block cursor wears
+    /// the `highlighted_text` class on every built-in theme (T138.1) instead
+    /// of the REVERSED modifier, mirroring the selected-row and scrollbar
+    /// style tests.
+    #[test]
+    fn inline_editor_cursor_wears_highlighted_text_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.overlay.editor = Some(Editor {
+                field: "model",
+                kind: FieldKind::Text,
+                buffer: "abc".into(),
+            });
+            let row = SECTIONS
+                .iter()
+                .flat_map(|section| section.rows.iter())
+                .find(|row| row.key == "model")
+                .expect("model is a settings row");
+            // Index 0 matches the overlay's default focus, so the row renders
+            // focused like the real open-editor render does.
+            let line = settings_row_line(&app, 0, &Entry::Row(row), 40);
+            let cursor = line.spans.last().expect("the editor cursor span");
+            assert_eq!(cursor.content, " ", "{key:?}");
+            assert_eq!(cursor.style.fg, Some(theme.highlighted_text), "{key:?}");
+            assert!(
+                cursor.style.add_modifier.contains(Modifier::REVERSED),
+                "the cursor stays a visible block on {key:?}"
+            );
         }
     }
 }

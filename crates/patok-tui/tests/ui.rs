@@ -2918,12 +2918,13 @@ mod dialog {
         use patok_tui::Theme;
         use ratatui::style::Color;
         let (x0, y0) = input_origin();
-        // The block cursor's fg/bg pair (the cell may carry an underline colour
-        // reset the Paragraph renderer adds). The colours come from the theme, so
-        // this test follows any future cursor restyling.
+        // The block cursor's style (the cell may carry an underline colour
+        // reset the Paragraph renderer adds): the highlighted-text foreground
+        // with no accent background (T138.1). The colours come from the theme,
+        // so this test follows any future cursor restyling.
         let is_block = |cell: &ratatui::buffer::Cell| {
-            cell.style().fg == Some(Theme::DARK.contrast_text)
-                && cell.style().bg == Some(Theme::DARK.accent)
+            cell.style().fg == Some(Theme::DARK.highlighted_text)
+                && cell.style().bg != Some(Theme::DARK.accent)
         };
         let is_plain = |cell: &ratatui::buffer::Cell| {
             matches!(cell.style().fg, None | Some(Color::Reset))
