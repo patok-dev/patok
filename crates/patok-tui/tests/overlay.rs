@@ -1871,6 +1871,143 @@ mod modal_footer {
     }
 }
 
+/// The settings overlay's status row (T147.1): the inline editor's Editing
+/// hint wears the highlighted-text colour on every built-in theme -- the same
+/// colour the validation error already wears, so the hint reads as the open
+/// editor's active prompt rather than a muted footnote -- an invalid Enter
+/// still swaps in the Error status with the editor kept open, and a
+/// status-free overlay leaves the row blank.
+mod status_line {
+    use super::*;
+    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+    use patok_tui::{StatusLevel, Theme};
+    use ratatui::layout::{Constraint, Layout, Rect};
+
+    fn buffer(app: &App) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(W, H)).unwrap();
+        terminal
+            .draw(|frame| patok_tui::render(frame, app))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn themed_open(theme: ThemeKey) -> App {
+        let mut app = app();
+        app.tui.theme = theme;
+        app.tui.truecolor = Some(true);
+        assert_eq!(press(&mut app, KeyCode::Char('?')), Action::None);
+        app
+    }
+
+    /// Opens the agent timeout's number editor and returns the Info hint.
+    fn open_editor(app: &mut App) -> String {
+        focus_field(app, "agent_timeout_secs");
+        assert_eq!(press(app, KeyCode::Enter), Action::None);
+        assert!(app.overlay.editor.is_some(), "Enter opens the editor");
+        let (text, level) = app
+            .overlay
+            .status
+            .clone()
+            .expect("opening the editor sets the hint");
+        assert_eq!(level, StatusLevel::Info);
+        text
+    }
+
+    /// The status row's rect: the second row of the overlay's inner layout,
+    /// one above the footer -- the same math `render_settings_overlay` runs.
+    fn status_rect() -> Rect {
+        let area = settings_area(Rect::new(0, 0, W, H));
+        let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+        let [_body, status, _footer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
+        status
+    }
+
+    /// Asserts every cell of `text` on the status row wears `colour`.
+    fn assert_status_colour(
+        buffer: &ratatui::buffer::Buffer,
+        text: &str,
+        colour: ratatui::style::Color,
+    ) {
+        let status = status_rect();
+        let line: String = (status.x..status.right())
+            .map(|x| buffer[(x, status.y)].symbol())
+            .collect();
+        // A byte index would mis-column on multibyte symbols, so the match's
+        // column is the character count before it.
+        let at = line
+            .find(text)
+            .map(|at| line[..at].chars().count())
+            .unwrap_or_else(|| panic!("{text:?} is not on the status row: {line:?}"));
+        for (i, _) in text.chars().enumerate() {
+            assert_eq!(
+                buffer[(status.x + (at + i) as u16, status.y)].style().fg,
+                Some(colour),
+                "cell {} of {text:?}",
+                at + i
+            );
+        }
+    }
+
+    /// The Editing hint renders in the highlighted-text colour on every
+    /// built-in theme, still set as the Info status when the editor opens.
+    #[test]
+    fn the_editing_hint_wears_highlighted_text_on_every_theme() {
+        for name in THEME_KEYS {
+            let key = ThemeKey::parse(name).expect("THEME_KEYS holds valid names");
+            let mut app = themed_open(key);
+            let hint = open_editor(&mut app);
+            let buffer = buffer(&app);
+            let theme = Theme::resolve(key, Some(true));
+            assert_status_colour(&buffer, &hint, theme.highlighted_text);
+        }
+    }
+
+    /// An invalid Enter keeps the editor open and swaps in the Error status,
+    /// which renders in the same highlighted-text colour.
+    #[test]
+    fn a_validation_error_keeps_the_editor_open_in_highlighted_text() {
+        let mut app = open();
+        open_editor(&mut app);
+        ctrl(&mut app, 'u');
+        press(&mut app, KeyCode::Char('0'));
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert!(
+            app.overlay.editor.is_some(),
+            "an invalid buffer keeps the editor open"
+        );
+        let (text, level) = app.overlay.status.clone().expect("the Error status is set");
+        assert_eq!(level, StatusLevel::Error);
+        assert!(
+            text.contains("greater than zero"),
+            "the error text: {text:?}"
+        );
+        let buffer = buffer(&app);
+        assert_status_colour(&buffer, &text, app.theme().highlighted_text);
+    }
+
+    /// A status-free overlay renders nothing on its status row.
+    #[test]
+    fn a_status_free_overlay_leaves_the_status_row_empty() {
+        let app = open();
+        assert!(app.overlay.status.is_none());
+        let buffer = buffer(&app);
+        let status = status_rect();
+        for x in status.x..status.right() {
+            assert_eq!(
+                buffer[(x, status.y)].symbol(),
+                " ",
+                "cell ({x}, {}) is blank",
+                status.y
+            );
+        }
+    }
+}
+
 /// The overlay's and its unsaved-changes dialog's close buttons (T66.1): the
 /// shared ` [ x ] ` in the theme's button accent on each title row, inside
 /// the modal and clear of its title, and a click on its rectangle runs

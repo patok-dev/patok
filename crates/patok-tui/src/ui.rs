@@ -434,7 +434,7 @@ fn render_settings_overlay(frame: &mut Frame, app: &App) {
         Some((text, StatusLevel::Info)) => frame.render_widget(
             Paragraph::new(Line::styled(
                 text.clone(),
-                Style::new().fg(theme.muted_text),
+                Style::new().fg(theme.highlighted_text),
             )),
             status_line,
         ),
