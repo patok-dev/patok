@@ -1676,14 +1676,14 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     assert_eq!(planning.status, None);
     assert_eq!(
         strip(&planning),
-        merged(" PLANNING  sprint ", " [ m ] menu")
+        merged(" PLANNING  sprint ", " [ Esc ] stop  [ m ] menu")
     );
 
     let mut discovering = app();
     discovering.apply(EngineEvent::DiscoveryChanged { discovering: true });
     assert_eq!(
         strip(&discovering),
-        merged(" DISCOVERING  sprint ", " [ m ] menu")
+        merged(" DISCOVERING  sprint ", " [ Esc ] stop  [ m ] menu")
     );
 
     // The add-tasks, Tab and scroll chips are gone from the status line

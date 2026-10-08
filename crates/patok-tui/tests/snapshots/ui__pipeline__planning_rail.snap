@@ -25,4 +25,4 @@ expression: "draw(&app, 80, 24)"
             │                                                                  │
             │                                                                  │
             └──────────────────────────────────────────────────────────────────┘
- PLANNING  sprint                                                    [ m ] menu
+ PLANNING  sprint                                      [ Esc ] stop  [ m ] menu

@@ -258,8 +258,9 @@ impl MenuChoice {
 
 /// The m menu's rows while a build runs (`running`), top to bottom;
 /// `menu_selected` indexes this list. The stop entry joins only while a
-/// build runs, matching the Esc binding's scope (planner and discovery runs
-/// get none), so the key handler's clamp and the renderer read one list.
+/// build runs -- it keeps its build-only scope even though the Esc binding
+/// covers planner and discovery runs too (T142.1) -- so the key handler's
+/// clamp and the renderer read one list.
 pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
     let mut entries = vec![
         MenuChoice::Settings,
@@ -1026,11 +1027,12 @@ impl App {
                 );
                 Action::Restart
             }
-            // Esc while a build runs opens the stop dialog (T46.1, the key
-            // the `s` of T20.1 used to be); during a planner or discovery
-            // run it does nothing. The stopping guard above keeps a pending
-            // soft stop's Esc.
-            KeyCode::Esc if self.phase == Phase::Running => {
+            // Esc while a build, planner or discovery run is active opens
+            // the stop dialog (T46.1, the key the `s` of T20.1 used to be,
+            // extended to these runs in T142.1); the m menu's stop entry
+            // keeps its build-only scope. The stopping guard above keeps a
+            // pending soft stop's Esc.
+            KeyCode::Esc if self.phase == Phase::Running || self.planning || self.discovering => {
                 self.status = None;
                 self.stop_open = true;
                 self.stop_selected = 0;
@@ -2015,13 +2017,15 @@ impl App {
                     // round, exactly the key's action -- `enter_key` carries
                     // the key's busy guard too.
                     self.enter_key()
-                } else if chip_clicked(&mouse, self.stop_chip.get()) && self.phase == Phase::Running
+                } else if chip_clicked(&mouse, self.stop_chip.get())
+                    && (self.phase == Phase::Running || self.planning || self.discovering)
                 {
                     // The Esc chip is the Esc key's mouse alias (T134.1):
                     // it opens the stop dialog, the key's action while a
-                    // build runs. The chip renders only in that state, so
-                    // the guard mirrors the key arm and the zero rect makes
-                    // any other state miss naturally.
+                    // build, planner or discovery run is active. The guard
+                    // mirrors the key arm, which covers these runs too
+                    // (T142.1), so the chip stays inert in any other state
+                    // -- the zero rect makes those miss naturally.
                     self.status = None;
                     self.stop_open = true;
                     self.stop_selected = 0;

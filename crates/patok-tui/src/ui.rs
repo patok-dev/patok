@@ -1636,12 +1636,13 @@ fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
                     },
                 ));
             }
-            // The Esc stop chip (T134.1): the Esc binding's scope while a
-            // build runs -- a pending soft stop's Esc cancels the stop
-            // instead, so the chip hides while one is pending. A click on it
-            // opens the stop dialog, exactly like the key; the m menu keeps
-            // its stop entry too.
-            if app.phase == Phase::Running && !app.stopping {
+            // The Esc stop chip (T134.1): the Esc binding's scope while a run
+            // is active -- a build, a planner run or a discovery run -- a
+            // pending soft stop's Esc cancels the stop instead, so the chip
+            // hides while one is pending. A click on it opens the stop
+            // dialog, exactly like the key; the m menu's stop entry keeps
+            // its build-only scope.
+            if (app.phase == Phase::Running || app.planning || app.discovering) && !app.stopping {
                 keys.push(("Esc", "stop"));
             }
             // The m menu button: the settings, theme, detach and quit hints

@@ -4,9 +4,9 @@
 //! covering their full button text -- key, brackets and label together --
 //! and a left click anywhere inside it runs exactly the action its key
 //! triggers -- clicking Enter starts the build loop or runs a discovery
-//! round, clicking Esc opens the stop dialog while a build runs. Each chip
-//! only appears (and only clicks) in the engine state where its key is
-//! active.
+//! round, clicking Esc opens the stop dialog while a build, planner or
+//! discovery run is active (T142.1). Each chip only appears (and only
+//! clicks) in the engine state where its key is active.
 
 use std::collections::BTreeMap;
 
@@ -14,7 +14,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
-use patok_tui::{Action, App, button_text, render};
+use patok_tui::{Action, App, SOFT_STOP_PENDING, button_text, render};
 
 const TASKS: &str = "## Phase 1\n- [ ] T1.1: scaffold the workspace\n";
 const COMPLETE_TASKS: &str = "## Phase 1\n- [x] T1.1: scaffold the workspace\n";
@@ -52,6 +52,22 @@ fn running_app() -> App {
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
     });
+    app
+}
+
+/// An idle engine mid planner run, so the Esc stop chip joins the strip
+/// (T142.1).
+fn planning_app() -> App {
+    let mut app = app();
+    app.apply(EngineEvent::PlanningChanged { planning: true });
+    app
+}
+
+/// An idle engine mid discovery run, so the Esc stop chip joins the strip
+/// (T142.1).
+fn discovering_app() -> App {
+    let mut app = app();
+    app.apply(EngineEvent::DiscoveryChanged { discovering: true });
     app
 }
 
@@ -385,4 +401,122 @@ fn the_button_boundary_click_fires_the_neighbour() {
     click(&mut running, stop.x + stop.width, stop.y);
     assert!(running.menu_open, "the boundary column opens the menu");
     assert!(!running.stop_open);
+}
+
+/// The Esc stop chip shows and clicks during planner and discovery runs too
+/// (T142.1): the chip renders at the same right-aligned place it occupies
+/// while a build runs, `stop_chip` carries its rect, a click inside it
+/// opens the stop dialog exactly like the Esc press, and both leave the
+/// same state.
+#[test]
+fn the_esc_stop_chip_shows_and_clicks_during_planner_and_discovery_runs() {
+    for make in [planning_app as fn() -> App, discovering_app as fn() -> App] {
+        let mut app = make();
+        assert!(app.planning || app.discovering);
+        draw(&app, 80, 14);
+        let chip = app.stop_chip.get();
+        assert_eq!(chip, ratatui::layout::Rect::new(54, 13, 14, 1));
+        assert_eq!(
+            chip.width as usize,
+            button_text("Esc", "stop").chars().count()
+        );
+
+        assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::None);
+        assert!(app.stop_open);
+        assert_eq!(app.stop_selected, 0);
+        assert_eq!(app.status, None);
+        assert!(!app.menu_open);
+
+        // The click aliases the key exactly: the Esc press on an
+        // identically prepared app leaves the same state.
+        let mut key_app = make();
+        assert_eq!(press(&mut key_app, KeyCode::Esc), Action::None);
+        assert_eq!(key_app.stop_open, app.stop_open);
+        assert_eq!(key_app.stop_selected, app.stop_selected);
+        assert_eq!(key_app.status, app.status);
+    }
+}
+
+/// The stop dialog's choices act on a planner or discovery run the same way
+/// they act on a build (T142.1): SoftStop soft-stops, Interrupt interrupts,
+/// Cancel and the dialog's own Esc leave the run running.
+#[test]
+fn the_stop_dialog_choices_act_on_planner_and_discovery_runs() {
+    for make in [planning_app as fn() -> App, discovering_app as fn() -> App] {
+        // SoftStop (the first choice) soft-stops the run.
+        let mut app = make();
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::Quit);
+        assert!(app.stopping);
+        assert_eq!(app.status, Some(SOFT_STOP_PENDING.into()));
+        assert!(!app.stop_open);
+
+        // Interrupt (the second choice) interrupts the run.
+        let mut app = make();
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::Interrupt);
+        assert!(app.stopping);
+        assert!(!app.stop_open);
+
+        // Cancel (the third choice) closes the dialog with the run
+        // untouched.
+        let mut app = make();
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert!(!app.stop_open);
+        assert!(!app.stopping);
+        assert_eq!(app.status, None);
+        assert!(app.planning || app.discovering, "the run keeps running");
+
+        // The dialog's own Esc closes it with the run untouched too.
+        let mut app = make();
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(!app.stop_open);
+        assert!(!app.stopping);
+        assert!(app.planning || app.discovering);
+    }
+}
+
+/// Esc while a soft stop is pending during a planner or discovery run still
+/// cancels the stop instead of opening the dialog (T142.1): the stopping
+/// guard sits above the Esc arm.
+#[test]
+fn esc_cancels_a_pending_soft_stop_during_planner_and_discovery_runs() {
+    for make in [planning_app as fn() -> App, discovering_app as fn() -> App] {
+        let mut app = make();
+        assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
+        assert!(app.stopping);
+
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::CancelSoftStop);
+        assert!(!app.stopping);
+        assert!(!app.stop_open);
+    }
+}
+
+/// The Esc chip stays hidden while the engine is idle with no run and while
+/// a soft stop is pending during a planner or discovery run (T142.1).
+#[test]
+fn the_esc_chip_stays_hidden_while_idle_or_while_a_stop_is_pending() {
+    // Idle with no run: the chip is the zero rect.
+    let idle = app();
+    assert!(!idle.planning && !idle.discovering);
+    draw(&idle, 80, 14);
+    assert_eq!(idle.stop_chip.get(), ratatui::layout::Rect::default());
+
+    // A pending soft stop during a planner or discovery run hides the chip,
+    // and a click at its usual place changes nothing.
+    for make in [planning_app as fn() -> App, discovering_app as fn() -> App] {
+        let mut app = make();
+        assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
+        assert!(app.stopping);
+        draw(&app, 80, 14);
+        assert_eq!(app.stop_chip.get(), ratatui::layout::Rect::default());
+        assert_eq!(click(&mut app, 60, 13), Action::None);
+        assert!(!app.stop_open);
+        assert!(app.stopping, "the pending stop survives the click");
+    }
 }

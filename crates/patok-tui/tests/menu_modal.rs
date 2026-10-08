@@ -327,8 +327,9 @@ fn the_stop_build_entry_is_running_only() {
     assert_eq!(running.menu_selected, 4);
     let screen = draw(&running, 80, 14);
     assert!(screen.contains("Stop -- open the stop dialog"), "{screen}");
-    // The planning and discovery runs get no stop row either, matching the
-    // Esc binding's scope.
+    // The planning and discovery runs get no stop row either: the stop
+    // entry keeps its build-only scope even though the Esc binding covers
+    // these runs too (T142.1).
     let mut app = app();
     app.apply(EngineEvent::PlanningChanged { planning: true });
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
