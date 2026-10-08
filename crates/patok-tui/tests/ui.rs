@@ -3287,12 +3287,14 @@ mod dialog {
 ///.
 mod explore {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use patok_core::config::SettingValue;
     use patok_core::event::Snapshot;
     use patok_core::scenario::{ProjectScan, Scenario, SpecState, TaskFileState};
     use patok_core::task;
-    use patok_tui::{Action, FrameFocus, QueueRun};
+    use patok_tui::{Action, FrameFocus, QueueRun, footer_button_rects};
 
     /// An app whose task queue is `tasks`.
     fn app_with(tasks: &str) -> App {
@@ -3697,6 +3699,184 @@ mod explore {
         // "Submit".
         assert_eq!(app.primary_label(), "Submit");
         assert_eq!(submit(&mut app), Action::ResearchQueue(QueueRun::Bootstrap));
+    }
+
+    /// Draws (recording the footer rect), then clicks inside the primary
+    /// button's rect -- the same hit-test `on_dialog_mouse` performs.
+    fn primary_click(app: &mut App) -> Action {
+        draw(app, 80, 24);
+        let rects = footer_button_rects(
+            app.dialog_footer.get(),
+            &[("Enter", app.primary_label()), ("Esc", "Close")],
+        );
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rects[0].x + 2,
+            row: rects[0].y,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// A click on the dialog's primary footer button runs exactly the Enter
+    /// key in every dialog kind and scenario (T144.1): the actions and the
+    /// app states match, because the driver routes both through the one
+    /// shared submit dispatch.
+    #[test]
+    fn a_primary_button_click_runs_exactly_the_enter_key_in_every_scenario() {
+        // The add dialog with typed text (queue-ready facts): the Submit
+        // button's click is the Enter key's submit, and the driver's
+        // accepted-submit cleanup closes both identically.
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut clicked);
+        type_text(&mut clicked, "add a login page");
+        assert_eq!(clicked.primary_label(), "Submit");
+        assert_eq!(
+            primary_click(&mut clicked),
+            Action::SubmitTasks("add a login page".into())
+        );
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut keyed);
+        type_text(&mut keyed, "add a login page");
+        assert_eq!(
+            keyed.on_key(key(KeyCode::Enter)),
+            Action::SubmitTasks("add a login page".into())
+        );
+        clicked.on_tasks_submitted();
+        keyed.on_tasks_submitted();
+        for app in [&mut clicked, &mut keyed] {
+            assert!(!app.dialog_open);
+            assert_eq!(app.focus, FrameFocus::Output);
+            assert_eq!(app.dialog_text, "");
+        }
+
+        // The add dialog with an empty input, queue ready (the label renders
+        // "Start"): the Enter key refuses an empty input before the scenario
+        // dispatch, so the click does too -- the queue-ready StartBuild run
+        // stays on the Ctrl+S path, and this parity is the controlling
+        // requirement ("exactly like pressing Enter").
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut clicked);
+        assert_eq!(clicked.primary_label(), "Start");
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut keyed);
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to submit -- type a request first.")
+            );
+        }
+
+        // The inject modal with typed text: the Inject button's click is the
+        // Enter key's inject, and the driver's injected cleanup closes both
+        // identically with the task list focused.
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        clicked.on_key(key(KeyCode::Char('i')));
+        assert!(clicked.dialog_open);
+        type_text(&mut clicked, "- [ ] T78.1: Polish the README");
+        assert_eq!(clicked.primary_label(), "Inject");
+        assert_eq!(
+            primary_click(&mut clicked),
+            Action::InjectTask("- [ ] T78.1: Polish the README".into())
+        );
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        keyed.on_key(key(KeyCode::Char('i')));
+        type_text(&mut keyed, "- [ ] T78.1: Polish the README");
+        assert_eq!(
+            keyed.on_key(key(KeyCode::Enter)),
+            Action::InjectTask("- [ ] T78.1: Polish the README".into())
+        );
+        clicked.on_task_injected();
+        keyed.on_task_injected();
+        for app in [&mut clicked, &mut keyed] {
+            assert!(!app.dialog_open);
+            assert_eq!(app.focus, FrameFocus::Tasks);
+            assert_eq!(app.dialog_text, "");
+        }
+
+        // The inject modal with an empty input: the same inline refusal.
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        clicked.on_key(key(KeyCode::Char('i')));
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        keyed.on_key(key(KeyCode::Char('i')));
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to inject -- type a task line first.")
+            );
+        }
+
+        // EmptyProject with typed text: the brief submit, identical on both
+        // paths (the driver's brief write keeps the dialog open).
+        let mut clicked = app_with("");
+        clicked.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
+        open_dialog(&mut clicked);
+        type_text(&mut clicked, "A web service for recipes.");
+        assert_eq!(
+            primary_click(&mut clicked),
+            Action::SaveBrief("A web service for recipes.".into())
+        );
+        let mut keyed = app_with("");
+        keyed.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
+        open_dialog(&mut keyed);
+        type_text(&mut keyed, "A web service for recipes.");
+        assert_eq!(
+            keyed.on_key(key(KeyCode::Enter)),
+            Action::SaveBrief("A web service for recipes.".into())
+        );
+        assert!(clicked.dialog_open);
+        assert!(keyed.dialog_open);
+
+        // NeedsQueue with an empty input: the [Enter] click cannot bootstrap
+        // -- the plain Enter refuses an empty input first; the driver-side
+        // ResearchQueue mapping is pinned by the run.rs dispatch tests.
+        let mut clicked = app_with("");
+        clicked.project_status = status(true, TaskFileState::Missing, SpecState::Content);
+        open_dialog(&mut clicked);
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with("");
+        keyed.project_status = status(true, TaskFileState::Missing, SpecState::Content);
+        open_dialog(&mut keyed);
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to submit -- type a request first.")
+            );
+        }
+
+        // QueueComplete with an empty input (the label renders "Scan"): the
+        // same inline refusal, click and key alike.
+        let mut clicked = app_with("- [x] T1.1: done\n");
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut clicked);
+        assert_eq!(clicked.primary_label(), "Scan");
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with("- [x] T1.1: done\n");
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut keyed);
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to submit -- type a request first.")
+            );
+        }
     }
 
     #[test]
