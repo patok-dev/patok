@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use patok_core::config::{
-    ConfigFiles, EnumSpelling, ProviderName, RunMode as CoreRunMode, SettingValue, TuiSettings,
-    load_tui, project_file, set_tui_field,
+    AcceptPolicy as CoreAcceptPolicy, ConfigFiles, EnumSpelling, ProviderName,
+    RunMode as CoreRunMode, SettingValue, TuiSettings, load_tui, project_file, set_tui_field,
 };
 use patok_proto::settings_change::Change;
-use patok_proto::{Provider, Role, RunMode};
+use patok_proto::{AcceptPolicy, Provider, Role, RunMode};
 
 /// The shell's own central in-memory configuration: the merged,
 /// normalized tui settings plus the state needed to detect a hand-edited config file.
@@ -153,13 +153,23 @@ pub fn to_proto(field: &str, value: SettingValue) -> Result<Change, String> {
     Ok(match field {
         "provider" => Change::Provider(provider_of(&string()?)? as i32),
         "model" => Change::ModelOverride(string()?),
-        "research_provider" | "planner_provider" | "builder_provider" | "reviewer_provider"
-        | "discovery_provider" => Change::RoleProvider(patok_proto::RoleProvider {
+        "local_model" => Change::LocalModel(string()?),
+        "model_catalog_refresh_secs" => Change::ModelCatalogRefreshSecs(uint()?),
+        "research_provider"
+        | "planner_provider"
+        | "builder_provider"
+        | "reviewer_provider"
+        | "discovery_provider"
+        | "learning_extraction_provider" => Change::RoleProvider(patok_proto::RoleProvider {
             role: role_of(&field[..field.len() - 9])? as i32,
             provider: provider_of(&string()?)? as i32,
         }),
-        "research_model" | "planner_model" | "builder_model" | "reviewer_model"
-        | "discovery_model" => Change::RoleModel(patok_proto::RoleModel {
+        "research_model"
+        | "planner_model"
+        | "builder_model"
+        | "reviewer_model"
+        | "discovery_model"
+        | "learning_extraction_model" => Change::RoleModel(patok_proto::RoleModel {
             role: role_of(&field[..field.len() - 6])? as i32,
             model: string()?,
         }),
@@ -172,6 +182,17 @@ pub fn to_proto(field: &str, value: SettingValue) -> Result<Change, String> {
             })?;
             Change::RunMode(proto_run_mode(mode) as i32)
         }
+        "plan_revision_accept_policy" => {
+            let policy = CoreAcceptPolicy::parse(&string()?).ok_or_else(|| {
+                format!(
+                    "`plan_revision_accept_policy` must be one of {}",
+                    CoreAcceptPolicy::accepted_spellings()
+                )
+            })?;
+            Change::PlanRevisionAcceptPolicy(proto_accept_policy(policy) as i32)
+        }
+        "plan_revision_cycles" => Change::PlanRevisionCycles(uint()?),
+        "planning_iterations" => Change::PlanningIterations(uint()?),
         "plan_enabled" => Change::PlanEnabled(boolean()?),
         "skip_planner_for_simple" => Change::SkipPlannerForSimple(boolean()?),
         "skip_research_for_simple" => Change::SkipResearchForSimple(boolean()?),
@@ -181,10 +202,27 @@ pub fn to_proto(field: &str, value: SettingValue) -> Result<Change, String> {
         "batch_review" => Change::BatchReview(boolean()?),
         "planner_lookahead" => Change::PlannerLookahead(boolean()?),
         "review_in_loop" => Change::ReviewInLoop(boolean()?),
+        "semgrep_enabled" => Change::SemgrepEnabled(boolean()?),
+        "require_human_approval" => Change::RequireHumanApproval(boolean()?),
+        "build_command" => Change::BuildCommand(string()?),
+        "on_task_complete_hook" => Change::OnTaskCompleteHook(string()?),
         "confidence_threshold" => Change::ConfidenceThreshold(match value {
             SettingValue::Float(f) => f,
             _ => return wrong("a number"),
         }),
+        "phase_isolation" => Change::PhaseIsolation(boolean()?),
+        "enforce_phase_rbac" => Change::EnforcePhaseRbac(boolean()?),
+        "history_dir" => Change::HistoryDir(string()?),
+        "max_learning_injection" => Change::MaxLearningInjection(uint()?),
+        "min_learning_injection" => Change::MinLearningInjection(uint()?),
+        "history_search_results" => Change::HistorySearchResults(uint()?),
+        "history_retention_tasks" => Change::HistoryRetentionTasks(uint()?),
+        "observatory_retention_days" => Change::ObservatoryRetentionDays(uint()?),
+        "semantic_match_enabled" => Change::SemanticMatchEnabled(boolean()?),
+        "embedding_model" => Change::EmbeddingModel(string()?),
+        "embedding_port" => Change::EmbeddingPort(uint()?),
+        "embedding_timeout_ms" => Change::EmbeddingTimeoutMs(uint()?),
+        "show_retrieval_panel" => Change::ShowRetrievalPanel(boolean()?),
         "agent_timeout_secs" => Change::AgentTimeoutSecs(uint()?),
         "pause_between_tasks_secs" => Change::PauseBetweenTasksSecs(uint()?),
         "pause_between_agents_secs" => Change::PauseBetweenAgentsSecs(uint()?),
@@ -206,6 +244,15 @@ fn proto_run_mode(mode: CoreRunMode) -> RunMode {
     }
 }
 
+/// The wire enum of a core accept policy.
+fn proto_accept_policy(policy: CoreAcceptPolicy) -> AcceptPolicy {
+    match policy {
+        CoreAcceptPolicy::NoHigh => AcceptPolicy::NoHigh,
+        CoreAcceptPolicy::NoHighMedium => AcceptPolicy::NoHighMedium,
+        CoreAcceptPolicy::NoFindings => AcceptPolicy::NoFindings,
+    }
+}
+
 fn role_of(name: &str) -> Result<Role, String> {
     match name {
         "research" => Ok(Role::Research),
@@ -213,6 +260,7 @@ fn role_of(name: &str) -> Result<Role, String> {
         "builder" => Ok(Role::Builder),
         "reviewer" => Ok(Role::Reviewer),
         "discovery" => Ok(Role::Discovery),
+        "learning_extraction" => Ok(Role::LearningExtraction),
         _ => Err(format!("unknown agent role `{name}`")),
     }
 }
@@ -399,6 +447,84 @@ mod tests {
         assert!(error.contains("provider name"), "{error}");
         let error = to_proto("research_model", SettingValue::Bool(true)).unwrap_err();
         assert!(error.contains("must be a string"), "{error}");
+    }
+
+    /// The overlay editor kind the core registry kind calls for, so the drift test
+    /// below can assert the row model agrees with the field table.
+    fn overlay_kind_of(kind: &patok_core::config::FieldKind) -> crate::overlay::FieldKind {
+        use patok_core::config::FieldKind as CoreFieldKind;
+        match kind {
+            CoreFieldKind::Bool => crate::overlay::FieldKind::Bool,
+            CoreFieldKind::Uint | CoreFieldKind::Port | CoreFieldKind::Range(..) => {
+                crate::overlay::FieldKind::Number(crate::overlay::Number::Uint)
+            }
+            CoreFieldKind::PositiveUint => {
+                crate::overlay::FieldKind::Number(crate::overlay::Number::PositiveUint)
+            }
+            CoreFieldKind::FloatRange(..) => {
+                crate::overlay::FieldKind::Number(crate::overlay::Number::Float)
+            }
+            CoreFieldKind::Str | CoreFieldKind::OptStr => crate::overlay::FieldKind::Text,
+            CoreFieldKind::Enum(accepted) => crate::overlay::FieldKind::Enum(accepted),
+            CoreFieldKind::Provider => crate::overlay::FieldKind::Enum(ProviderName::SPELLINGS),
+            CoreFieldKind::Composite => panic!("composite keys are not registry fields"),
+        }
+    }
+
+    /// A value valid for the core registry kind, the sample the drift test sends
+    /// through the wire and reads back.
+    fn sample_value(kind: &patok_core::config::FieldKind) -> SettingValue {
+        use patok_core::config::FieldKind as CoreFieldKind;
+        match kind {
+            CoreFieldKind::Bool => SettingValue::Bool(true),
+            CoreFieldKind::Uint
+            | CoreFieldKind::PositiveUint
+            | CoreFieldKind::Port
+            | CoreFieldKind::Range(..) => SettingValue::Uint(7),
+            CoreFieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) / 2.0),
+            CoreFieldKind::Str | CoreFieldKind::OptStr => SettingValue::Str("sample".into()),
+            CoreFieldKind::Enum(accepted) => SettingValue::Str(accepted[0].into()),
+            CoreFieldKind::Provider => SettingValue::Str("claude".into()),
+            CoreFieldKind::Composite => panic!("composite keys are not registry fields"),
+        }
+    }
+
+    /// Finding 10's cross-crate drift test: every core daemon field has an overlay
+    /// row whose editor matches the registry kind, maps through `to_proto` onto a
+    /// wire case, and the engine's `from_proto` maps that case back onto the same
+    /// key and value; and every daemon row of the overlay names a registry key (or
+    /// one of the two read-only report rows). A setting missing from any of the
+    /// three fails here instead of drifting silently.
+    #[test]
+    fn every_daemon_field_has_an_overlay_row_and_round_trips_the_wire() {
+        use patok_core::config::{DAEMON_FIELDS, daemon_field};
+        use patok_engine::from_proto;
+
+        let rows: std::collections::BTreeMap<&str, &crate::overlay::Row> = crate::overlay::SECTIONS
+            .iter()
+            .flat_map(|section| section.rows.iter())
+            .filter(|row| row.schema == crate::overlay::Schema::Daemon)
+            .map(|row| (row.key, row))
+            .collect();
+        for &key in DAEMON_FIELDS {
+            let row = *rows
+                .get(key)
+                .unwrap_or_else(|| panic!("`{key}` has no overlay row"));
+            let kind = daemon_field(key).expect("every registry key has a kind");
+            assert_eq!(row.kind, overlay_kind_of(&kind), "`{key}`");
+            let sample = sample_value(&kind);
+            let change = to_proto(key, sample.clone())
+                .unwrap_or_else(|error| panic!("`{key}` has no to_proto case: {error}"));
+            let (back, value) = from_proto(&change);
+            assert_eq!(back, key, "`{key}` maps back onto the wrong key");
+            assert_eq!(value, sample, "`{key}` does not round-trip the value");
+        }
+        for key in rows.keys() {
+            assert!(
+                DAEMON_FIELDS.contains(key) || *key == "engine_version" || *key == "shell_version",
+                "`{key}` is not a daemon registry key"
+            );
+        }
     }
 
     /// Finding 11: every provider spelling traces back to the core enums. Each

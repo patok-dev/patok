@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use patok_core::config::{
-    EnumSpelling, ProviderName, RailMode, RunMode, SettingValue, Theme, UpdateChannel, daemon_help,
-    tui_help,
+    AcceptPolicy, EnumSpelling, ProviderName, RailMode, RunMode, SettingValue, Theme,
+    UpdateChannel, daemon_help, tui_help,
 };
 use ratatui::layout::Rect;
 
@@ -75,11 +75,17 @@ pub struct Section {
     pub rows: &'static [Row],
 }
 
-// Deliberate exclusions from the row model: per-stage model pickers (no model catalog
-// exists yet, so there is nothing to pick from), list- and map-valued fields (`stages`,
-// `stage_overrides`, `catalog_url_overrides`, `semgrep_rulesets`, `plugins` -- composite,
-// no single-value editor) and `agent_pane_split` (the TUI has a fixed split and no
-// dragging). Everything else the registries accept appears below.
+// The row model mirrors the core field table (`DAEMON_FIELDS` in `patok-core`, the
+// single source of truth for the daemon settings): every single-value daemon key has
+// a row below, and the drift test in `crate::settings`
+// (`every_daemon_field_has_an_overlay_row_and_round_trips_the_wire`) fails the build
+// if a row, a mapper arm or an editor kind disagrees with the registry. Deliberate
+// exclusions: the composite keys (`stages`, `stage_overrides`,
+// `catalog_url_overrides`, `semgrep_rulesets`, `plugins` -- no single-value editor),
+// the per-stage model pickers (no model catalog exists yet, so there is nothing to
+// pick from) and `agent_pane_split` (the TUI has a fixed split and no dragging). The
+// two read-only report rows (`engine_version`, `shell_version`) report engine and
+// shell state instead of a setting.
 
 static PROVIDER_SECTION: &[Row] = &[
     Row {
@@ -166,6 +172,30 @@ static PROVIDER_SECTION: &[Row] = &[
         schema: Schema::Daemon,
         kind: FieldKind::Text,
     },
+    Row {
+        key: "learning_extraction_model",
+        label: "learning extraction model",
+        schema: Schema::Daemon,
+        kind: FieldKind::Text,
+    },
+    Row {
+        key: "learning_extraction_provider",
+        label: "learning extraction provider",
+        schema: Schema::Daemon,
+        kind: FieldKind::Enum(ProviderName::SPELLINGS),
+    },
+    Row {
+        key: "local_model",
+        label: "local model",
+        schema: Schema::Daemon,
+        kind: FieldKind::Text,
+    },
+    Row {
+        key: "model_catalog_refresh_secs",
+        label: "model catalog refresh",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
 ];
 
 static PIPELINE_SECTION: &[Row] = &[
@@ -235,6 +265,48 @@ static PIPELINE_SECTION: &[Row] = &[
         schema: Schema::Daemon,
         kind: FieldKind::Number(Number::Float),
     },
+    Row {
+        key: "plan_revision_cycles",
+        label: "plan revision cycles",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "plan_revision_accept_policy",
+        label: "plan revision accept policy",
+        schema: Schema::Daemon,
+        kind: FieldKind::Enum(AcceptPolicy::SPELLINGS),
+    },
+    Row {
+        key: "semgrep_enabled",
+        label: "semgrep enabled",
+        schema: Schema::Daemon,
+        kind: FieldKind::Bool,
+    },
+    Row {
+        key: "build_command",
+        label: "build command",
+        schema: Schema::Daemon,
+        kind: FieldKind::Text,
+    },
+    Row {
+        key: "planning_iterations",
+        label: "planning iterations",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "require_human_approval",
+        label: "require human approval",
+        schema: Schema::Daemon,
+        kind: FieldKind::Bool,
+    },
+    Row {
+        key: "on_task_complete_hook",
+        label: "on task complete hook",
+        schema: Schema::Daemon,
+        kind: FieldKind::Text,
+    },
 ];
 
 static TIMEOUTS_SECTION: &[Row] = &[
@@ -295,6 +367,90 @@ static GIT_SECTION: &[Row] = &[Row {
     kind: FieldKind::Text,
 }];
 
+static ISOLATION_SECTION: &[Row] = &[
+    Row {
+        key: "phase_isolation",
+        label: "phase isolation",
+        schema: Schema::Daemon,
+        kind: FieldKind::Bool,
+    },
+    Row {
+        key: "enforce_phase_rbac",
+        label: "enforce phase rbac",
+        schema: Schema::Daemon,
+        kind: FieldKind::Bool,
+    },
+];
+
+static LEARNINGS_SECTION: &[Row] = &[
+    Row {
+        key: "history_dir",
+        label: "history dir",
+        schema: Schema::Daemon,
+        kind: FieldKind::Text,
+    },
+    Row {
+        key: "max_learning_injection",
+        label: "max learning injection",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "min_learning_injection",
+        label: "min learning injection",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "history_search_results",
+        label: "history search results",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "history_retention_tasks",
+        label: "history retention tasks",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "observatory_retention_days",
+        label: "observatory retention days",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "semantic_match_enabled",
+        label: "semantic match enabled",
+        schema: Schema::Daemon,
+        kind: FieldKind::Bool,
+    },
+    Row {
+        key: "embedding_model",
+        label: "embedding model",
+        schema: Schema::Daemon,
+        kind: FieldKind::Text,
+    },
+    Row {
+        key: "embedding_port",
+        label: "embedding port",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "embedding_timeout_ms",
+        label: "embedding timeout",
+        schema: Schema::Daemon,
+        kind: FieldKind::Number(Number::Uint),
+    },
+    Row {
+        key: "show_retrieval_panel",
+        label: "show retrieval panel",
+        schema: Schema::Daemon,
+        kind: FieldKind::Bool,
+    },
+];
+
 static DISPLAY_SECTION: &[Row] = &[
     Row {
         key: "theme",
@@ -353,6 +509,18 @@ pub(crate) static SECTIONS: &[Section] = &[
         expanded: true,
         group: "git",
         rows: GIT_SECTION,
+    },
+    Section {
+        title: "Isolation and security",
+        expanded: true,
+        group: "isolation",
+        rows: ISOLATION_SECTION,
+    },
+    Section {
+        title: "Learnings, history and embeddings",
+        expanded: true,
+        group: "learnings_history",
+        rows: LEARNINGS_SECTION,
     },
     Section {
         title: "Display and theme",
@@ -419,11 +587,13 @@ pub fn clamp_focus(focus: usize, len: usize) -> usize {
 
 /// The sections' row groups in display order, the input of the shared fold
 /// mechanism ([`group_entries`]); parallel to [`SECTIONS`].
-static SECTION_ROWS: [&[Row]; 5] = [
+static SECTION_ROWS: [&[Row]; 7] = [
     PROVIDER_SECTION,
     PIPELINE_SECTION,
     TIMEOUTS_SECTION,
     GIT_SECTION,
+    ISOLATION_SECTION,
+    LEARNINGS_SECTION,
     DISPLAY_SECTION,
 ];
 
@@ -1043,13 +1213,16 @@ mod tests {
     fn the_row_model_covers_the_documented_sections() {
         let subject = overlay();
         let entries = subject.visible();
-        // Every section opens expanded: 5 headers plus all of their rows.
+        // Every section opens expanded: one header per section plus all of their rows.
         assert_eq!(
             entries.len(),
-            5 + PROVIDER_SECTION.len()
+            SECTIONS.len()
+                + PROVIDER_SECTION.len()
                 + PIPELINE_SECTION.len()
                 + TIMEOUTS_SECTION.len()
                 + GIT_SECTION.len()
+                + ISOLATION_SECTION.len()
+                + LEARNINGS_SECTION.len()
                 + DISPLAY_SECTION.len()
         );
         assert_eq!(entries[0], Entry::Header(0));
@@ -1060,7 +1233,7 @@ mod tests {
         assert!(entries.contains(&Entry::Row(&DISPLAY_SECTION[0])));
         // A folded section contributes only its header.
         let mut overlay = overlay();
-        overlay.toggle_section(4);
+        overlay.toggle_section(6);
         assert!(
             overlay
                 .visible()
@@ -1574,7 +1747,7 @@ mod tests {
     }
 
     /// A viewport the renderer recorded; the wiring tests hit-test and scroll
-    /// against it. Height 10 with the full 48-entry list leaves 38 rows to
+    /// against it. Height 10 with the full 70-entry list leaves 60 rows to
     /// scroll through.
     fn viewport(height: u16) -> Rect {
         Rect::new(0, 0, 60, height)

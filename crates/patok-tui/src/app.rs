@@ -2589,7 +2589,7 @@ mod tests {
         // A Bool row's click drafts the toggle Enter drafts. The wheel
         // scrolled it into view first, so the click also proves the
         // hit-test sees the scrolled rows.
-        for _ in 0..10 {
+        for _ in 0..12 {
             app.on_mouse(mouse(MouseEventKind::ScrollDown, list.x + 2, list.y + 2));
         }
         let plan = visible_index(&app, "plan_enabled");
@@ -2608,8 +2608,8 @@ mod tests {
     fn a_click_outside_the_list_rows_does_nothing() {
         let (mut app, list) = settings_app();
         // Fold every section by clicking its header: the list holds only
-        // its five headers, leaving blank viewport rows below them.
-        for index in 0..5 {
+        // its headers, leaving blank viewport rows below them.
+        for index in 0..crate::overlay::SECTIONS.len() {
             let header = app
                 .overlay
                 .visible()
@@ -2618,7 +2618,7 @@ mod tests {
                 .unwrap();
             assert_eq!(click_row(&mut app, list, header), Action::None);
         }
-        assert_eq!(app.overlay.visible().len(), 5);
+        assert_eq!(app.overlay.visible().len(), crate::overlay::SECTIONS.len());
 
         let before = (app.overlay.focus, app.overlay.scroll.get());
         assert_eq!(click_row(&mut app, list, 7), Action::None, "a blank row");
@@ -2748,9 +2748,9 @@ mod tests {
     fn hovering_between_the_rows_or_outside_the_list_changes_nothing() {
         let (mut app, list) = settings_app();
         // Fold every section by clicking its header, exactly the T136.1
-        // path: the list holds only its five headers, leaving blank
+        // path: the list holds only its headers, leaving blank
         // viewport rows below them.
-        for index in 0..5 {
+        for index in 0..crate::overlay::SECTIONS.len() {
             let header = app
                 .overlay
                 .visible()
@@ -2759,7 +2759,7 @@ mod tests {
                 .unwrap();
             assert_eq!(click_row(&mut app, list, header), Action::None);
         }
-        assert_eq!(app.overlay.visible().len(), 5);
+        assert_eq!(app.overlay.visible().len(), crate::overlay::SECTIONS.len());
 
         // An observable focus the misses must leave alone.
         assert_eq!(

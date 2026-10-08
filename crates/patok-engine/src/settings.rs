@@ -18,7 +18,11 @@ where
 /// The on-disk `[daemon]` key and the submitted value of one settings change. Every case
 /// maps to its registry name; names absent from the registry (the orchestrator seats)
 /// flow on uniformly so the persist layer rejects them with the same "unknown daemon
-/// setting" error as any other unrecognized field.
+/// setting" error as any other unrecognized field. The match is exhaustive over the
+/// proto oneof, and the cross-crate drift test in `patok-tui`
+/// (`every_daemon_field_has_an_overlay_row_and_round_trips_the_wire`) asserts every
+/// core registry field round-trips its key and value through the shell's `to_proto`
+/// and this function, so the two mappers cannot drift apart silently.
 pub fn from_proto(change: &Change) -> (String, SettingValue) {
     let str = |value: &str| SettingValue::Str(value.to_string());
     match change {

@@ -7,20 +7,20 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      [ ] planner lookahead                                                            ││    │
-     │      [ ] review in loop                                                               ││────┘
-[  Re│      confidence threshold  0.5                                                        ││────┐
-     │  ▾ Timeouts and pauses                                                                ││    │
-[ Dis│      agent timeout  600                                                               ││    │
-     │      pause between tasks  10                                                          ││    │
-     │      pause between agents  3                                                          ││    │
-     │      pause between cycles  30                                                         ││    │
-     │      engine idle timeout  1800                                                        ││    │
-     │      [x] adaptive pauses                                                              ││    │
-     │      discovery cooldown  300                                                          █│    │
-     │      discovery cooldown cap  1800                                                     █│    │
-     │  ▾ Git                                                                                █│    │
-     │      auto-push remote  (not set)                                                      █│    │
+[  Bu│      [ ] phase isolation                                                              ││    │
+     │      [ ] enforce phase rbac                                                           ││────┘
+[  Re│  ▾ Learnings, history and embeddings                                                  ││────┐
+     │      history dir  (not set)                                                           ││    │
+[ Dis│      max learning injection  (not set)                                                ││    │
+     │      min learning injection  (not set)                                                ││    │
+     │      history search results  (not set)                                                ││    │
+     │      history retention tasks  (not set)                                               ││    │
+     │      observatory retention days  (not set)                                            ││    │
+     │      [ ] semantic match enabled                                                       ││    │
+     │      embedding model  (not set)                                                       ││    │
+     │      embedding port  (not set)                                                        ││    │
+     │      embedding timeout  (not set)                                                     ││    │
+     │      [ ] show retrieval panel                                                         ││    │
      │  ▾ Display and theme                                                                  █│    │
      │      theme  ‹ dark ›                                                                  █│    │
      │      truecolor  ‹ auto ›                                                              █│    │

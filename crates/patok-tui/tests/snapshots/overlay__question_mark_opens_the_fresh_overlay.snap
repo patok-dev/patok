@@ -9,9 +9,12 @@ expression: screen
       ↓     │                                                                                      │
 [  Build   ]│                                                                                      │
       ↓     └──────────────────────────────────────────────────────────────────────────────────────┘
-[  Re┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐────┐
+[  Review  ]┌ Tasks | 0/1 - 1 left ────────────────────────────────────────────────────────────────┐
+            │○ T1.1  scaffold the workspace                                                        │
+[ Discover ]│                                                                                      │
+     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
      │▶ ▾ Provider and model                                                                  │    │
-[ Dis│      engine version: 0.1.0                                                             │    │
+     │      engine version: 0.1.0                                                             │    │
      │      shell version: 0.0.0                                                              │    │
      │      provider  ‹ claude ›                                                              │    │
      │      model  (not set)                                                                  │    │
@@ -25,6 +28,10 @@ expression: screen
      │      reviewer model  sonnet                                                            │    │
      │      discovery provider  ‹ claude ›                                                    │    │
      │      discovery model  opus                                                             │    │
+     │      learning extraction model  (not set)                                              │    │
+     │      learning extraction provider  ‹ claude ›                                          │    │
+     │      local model  (not set)                                                            │    │
+     │      model catalog refresh  (not set)                                                  │    │
      │  ▾ Pipeline                                                                            │    │
      │      run mode  ‹ sprint ›                                                              │    │
      │      [ ] plan enabled                                                                  │    │
@@ -37,6 +44,13 @@ expression: screen
      │      [ ] planner lookahead                                                             │    │
      │      [ ] review in loop                                                                │    │
      │      confidence threshold  0.5                                                         │    │
+     │      plan revision cycles  (not set)                                                   │    │
+     │      plan revision accept policy  ‹ no-high ›                                          │    │
+     │      [ ] semgrep enabled                                                               │    │
+     │      build command  (not set)                                                          │    │
+     │      planning iterations  (not set)                                                    │    │
+     │      [ ] require human approval                                                        │    │
+     │      on task complete hook  (not set)                                                  │    │
      │  ▾ Timeouts and pauses                                                                 │    │
      │      agent timeout  600                                                                │    │
      │      pause between tasks  10                                                           │    │
@@ -48,14 +62,27 @@ expression: screen
      │      discovery cooldown cap  1800                                                      │    │
      │  ▾ Git                                                                                 │    │
      │      auto-push remote  (not set)                                                       │    │
+     │  ▾ Isolation and security                                                              │    │
+     │      [ ] phase isolation                                                               │    │
+     │      [ ] enforce phase rbac                                                            │    │
+     │  ▾ Learnings, history and embeddings                                                   │    │
+     │      history dir  (not set)                                                            │    │
+     │      max learning injection  (not set)                                                 │    │
+     │      min learning injection  (not set)                                                 │    │
+     │      history search results  (not set)                                                 │    │
+     │      history retention tasks  (not set)                                                │    │
+     │      observatory retention days  (not set)                                             │    │
+     │      [ ] semantic match enabled                                                        │    │
+     │      embedding model  (not set)                                                        │    │
+     │      embedding port  (not set)                                                         │    │
+     │      embedding timeout  (not set)                                                      │    │
+     │      [ ] show retrieval panel                                                          │    │
      │  ▾ Display and theme                                                                   │    │
      │      theme  ‹ dark ›                                                                   │    │
      │      truecolor  ‹ auto ›                                                               │    │
      │      [x] preview wrap                                                                  │    │
      │      update channel  ‹ stable ›                                                        │    │
      │      rail mode  ‹ normal ›                                                             │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
      │                                                                                        │    │
      │                                                                                        │    │
      │┌───────────────────────────────── Provider and model ─────────────────────────────────┐│    │
@@ -69,6 +96,9 @@ expression: screen
      │                                                                                        │    │
      │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
      └────────────────────────────────────────────────────────────────────────────────────────┘    │
+            │                                                                                      │
+            │                                                                                      │
+            │                                                                                      │
             │                                                                                      │
             │                                                                                      │
             │                                                                                      │

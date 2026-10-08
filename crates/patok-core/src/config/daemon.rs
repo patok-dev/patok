@@ -185,7 +185,12 @@ pub(crate) struct RawStage {
 /// field's expected type through it. Lives beside the field table, whose entries pick
 /// each field's kind -- including the `FloatRange` bounds, read by both the on-disk
 /// parser and the write-path validator so the two cannot drift apart again.
-pub(crate) enum FieldKind {
+///
+/// The cross-crate drift surface of finding 10: the settings overlay's row model and
+/// both proto mappers (`patok-tui`'s `to_proto`, `patok-engine`'s `from_proto`) read
+/// the kind through [`daemon_field`], and the drift test in `patok-tui` fails the
+/// build when a row's editor disagrees with the registry.
+pub enum FieldKind {
     Bool,
     Uint,
     /// An unsigned integer that must be greater than zero, validated exactly like the
@@ -960,7 +965,12 @@ macro_rules! daemon_table {
         /// settings-change flow can carry as a single value. Composite keys (`stages`,
         /// `catalog_url_overrides`, `stage_overrides`, `semgrep_rulesets`, `plugins`)
         /// have no single-value shape, so the diff skips them.
-        pub(crate) const DAEMON_FIELDS: &[&str] = daemon_names! {
+        ///
+        /// Part of the cross-crate drift surface of finding 10: iterating this list,
+        /// `patok-tui`'s drift test asserts every registry key has an overlay row and
+        /// a `to_proto` case, so a field missing anywhere fails that test instead of
+        /// drifting silently.
+        pub const DAEMON_FIELDS: &[&str] = daemon_names! {
             keys []
             $( $entry )*
         };
@@ -975,7 +985,12 @@ macro_rules! daemon_table {
         };
 
         /// The daemon field registry: every `[daemon]` key and what it accepts.
-        pub(crate) fn daemon_field(name: &str) -> Option<FieldKind> {
+        ///
+        /// Part of the cross-crate drift surface of finding 10: the settings overlay
+        /// and both proto mappers read a key's kind through this lookup, and the
+        /// drift test in `patok-tui` asserts their coverage of every
+        /// [`DAEMON_FIELDS`] key.
+        pub fn daemon_field(name: &str) -> Option<FieldKind> {
             $(
                 daemon_entry! { kind, name, $entry }
             )*
@@ -1021,15 +1036,15 @@ daemon_table! {
         [str builder_model "builder_model" help "The model the builder role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
         [str reviewer_model "reviewer_model" help "The model the reviewer role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
         [str discovery_model "discovery_model" help "The model the discovery role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
-        [str learning_extraction_model "learning_extraction_model" default "sonnet".into()],
+        [str learning_extraction_model "learning_extraction_model" help "The model the learning extraction role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
         [provider research_provider "research_provider" help "The provider the research role runs on. Applies at the next research session start."],
         [provider planner_provider "planner_provider" help "The provider the planner role runs on. Applies at the next planner session start."],
         [provider builder_provider "builder_provider" help "The provider the builder role runs on. Applies at the next builder session start."],
         [provider reviewer_provider "reviewer_provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
         [provider discovery_provider "discovery_provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
-        [provider learning_extraction_provider "learning_extraction_provider"],
-        [opt_str local_model "local_model"],
-        [uint model_catalog_refresh_secs "model_catalog_refresh_secs" expect "a whole number of seconds" default 86400],
+        [provider learning_extraction_provider "learning_extraction_provider" help "The provider the learning extraction role runs on. Applies at the next learning extraction session start."],
+        [opt_str local_model "local_model" help "The model used for local runs; empty uses the provider's default."],
+        [uint model_catalog_refresh_secs "model_catalog_refresh_secs" help "How often the model catalog refreshes from the provider, in seconds. Default 86400 (24 hours)." expect "a whole number of seconds" default 86400],
         [string_map catalog_url_overrides "catalog_url_overrides"],
         [strings stage_overrides "stage_overrides"],
         // Pipeline flow (section 5).
@@ -1042,18 +1057,18 @@ daemon_table! {
         [uint review_confidence_threshold "review_confidence_threshold" help "Consecutive review passes needed before learned confidence may skip the review for matching task shapes (simple and medium tasks only); 0 disables. Default 5." expect "a whole number" default 5],
         [bool batch_review "batch_review" help "Skip the review for all but the last task in each contiguous run of same-numbered task IDs; that task's review covers every commit in the run (default on)." default true],
         [bool planner_lookahead "planner_lookahead" help "Plan task N+1 while task N builds; the plan is reused when that task comes up (default on)." default true],
-        [uint plan_revision_cycles "plan_revision_cycles" expect "a whole number" default 0],
-        [enum plan_revision_accept_policy "plan_revision_accept_policy" AcceptPolicy],
+        [uint plan_revision_cycles "plan_revision_cycles" help "How many times the planner revises its own plan before accepting it; 0 disables plan self-review." expect "a whole number" default 0],
+        [enum plan_revision_accept_policy "plan_revision_accept_policy" AcceptPolicy help "Which findings the plan self-review must clear before the plan is accepted: no-high (default), no-high-medium or no-findings."],
         [bool review_in_loop "review_in_loop" help "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)." default true],
         [uint review_multipass_threshold "review_multipass_threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 8." expect "a whole number" default 8],
         [float_range confidence_threshold "confidence_threshold" help "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5." range 0.0..=1.0 default 0.5],
-        [bool semgrep_enabled "semgrep_enabled" default false],
+        [bool semgrep_enabled "semgrep_enabled" help "Run semgrep static analysis as part of the review stage (default off)." default false],
         [strings semgrep_rulesets "semgrep_rulesets"],
-        [opt_str build_command "build_command"],
-        [uint planning_iterations "planning_iterations" expect "a whole number" default 0],
-        [bool require_human_approval "require_human_approval" default false],
+        [opt_str build_command "build_command" help "The command the builder runs to verify its work; empty uses the provider's default."],
+        [uint planning_iterations "planning_iterations" help "How many planning passes the planner runs before handing the plan over; 0 means a single pass." expect "a whole number" default 0],
+        [bool require_human_approval "require_human_approval" help "Wait for human approval before each task's work continues (default off)." default false],
         [opt_str auto_push_remote "auto_push_remote" help "Push to this remote after each successful commit; empty means local commits only." immediate],
-        [opt_str on_task_complete_hook "on_task_complete_hook" immediate],
+        [opt_str on_task_complete_hook "on_task_complete_hook" help "A command run after each completed task; empty means none." immediate],
         [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
         [positive_uint discovery_cooldown_cap_secs "discovery_cooldown_cap_secs" help "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS],
         [/// Whether a plan session runs before each builder session (T10.1).
@@ -1066,21 +1081,21 @@ daemon_table! {
         [bool adaptive_pauses "adaptive_pauses" help "Shorten the pauses to about 500 ms when the last agent was not rate limited (default on)." default true],
         [uint engine_idle_timeout_secs "engine_idle_timeout_secs" help "When no shell is attached and the engine has been idle this long, it shuts itself down. Default 1800 (30 minutes)." expect "a whole number of seconds" default 1800],
         // Isolation and security (section 7).
-        [bool phase_isolation "phase_isolation" default true],
-        [bool enforce_phase_rbac "enforce_phase_rbac" default true],
+        [bool phase_isolation "phase_isolation" help "Run each pipeline phase in its own isolated session (default on)." default true],
+        [bool enforce_phase_rbac "enforce_phase_rbac" help "Enforce role-based access control between the pipeline phases (default on)." default true],
         // Learnings, history and embeddings (section 8).
-        [opt_str history_dir "history_dir"],
-        [uint max_learning_injection "max_learning_injection" expect "a whole number" default 10],
-        [uint min_learning_injection "min_learning_injection" expect "a whole number" default 2],
-        [uint history_search_results "history_search_results" expect "a whole number" default 5],
-        [uint history_retention_tasks "history_retention_tasks" expect "a whole number" default 50],
-        [uint observatory_retention_days "observatory_retention_days" immediate expect "a whole number" default 30],
-        [bool semantic_match_enabled "semantic_match_enabled" default true],
-        [str embedding_model "embedding_model" default "nomic-embed-text".into()],
-        [port embedding_port "embedding_port" default 11434],
-        [uint embedding_timeout_ms "embedding_timeout_ms" expect "a whole number of milliseconds" default 2000],
+        [opt_str history_dir "history_dir" help "Directory the session history lives in; empty uses the default location."],
+        [uint max_learning_injection "max_learning_injection" help "The most learned items injected into one prompt. Default 10." expect "a whole number" default 10],
+        [uint min_learning_injection "min_learning_injection" help "The fewest learned items injected into one prompt. Default 2." expect "a whole number" default 2],
+        [uint history_search_results "history_search_results" help "How many matches a history search returns. Default 5." expect "a whole number" default 5],
+        [uint history_retention_tasks "history_retention_tasks" help "How many tasks the history keeps. Default 50." expect "a whole number" default 50],
+        [uint observatory_retention_days "observatory_retention_days" help "How many days the observatory keeps its findings. Default 30." immediate expect "a whole number" default 30],
+        [bool semantic_match_enabled "semantic_match_enabled" help "Match learnings by semantic similarity as well as text (default on)." default true],
+        [str embedding_model "embedding_model" help "The embedding model used for semantic matching. Default nomic-embed-text." default "nomic-embed-text".into()],
+        [port embedding_port "embedding_port" help "The port of the local embedding server. Default 11434." default 11434],
+        [uint embedding_timeout_ms "embedding_timeout_ms" help "How long the embedding request may take, in milliseconds. Default 2000." expect "a whole number of milliseconds" default 2000],
         [strings plugins "plugins"],
-        [bool show_retrieval_panel "show_retrieval_panel" immediate default false],
+        [bool show_retrieval_panel "show_retrieval_panel" help "Show the retrieval panel in the shell (default off)." immediate default false],
     }
     normalize settings {
         // Normalization: a non-empty single-model override replaces the models of
@@ -1289,10 +1304,11 @@ pub fn load_daemon(
 /// The help text for one settings-overlay key of the daemon schema (T85.1):
 /// the description of a setting row, or of a whole overlay section when the
 /// key is a section's group id (`provider_and_model`, `pipeline`,
-/// `timeouts_and_pauses`, `git`). The per-field texts come from the field table's
-/// `help` entries, the group and read-only ones are hardcoded here, on the side that
-/// owns the settings it describes; the shell routes to it by the row's declared
-/// schema. `None` for a key that is not one of the overlay's daemon rows or groups.
+/// `timeouts_and_pauses`, `git`, `isolation`, `learnings_history`). The per-field
+/// texts come from the field table's `help` entries, the group and read-only
+/// ones are hardcoded here, on the side that owns the settings it describes;
+/// the shell routes to it by the row's declared schema. `None` for a key that
+/// is not one of the overlay's daemon rows or groups.
 pub fn daemon_help(key: &str) -> Option<&'static str> {
     if let Some(help) = field_help(key) {
         return Some(help);
@@ -1308,6 +1324,12 @@ pub fn daemon_help(key: &str) -> Option<&'static str> {
             "Timing: how long an agent may idle, the pauses between tasks, agents and cycles, and how long an engine with no shell attached waits before shutting down."
         }
         "git" => "How finished work reaches git.",
+        "isolation" => {
+            "Whether each pipeline phase runs in its own isolated session, and whether role-based access between the phases is enforced."
+        }
+        "learnings_history" => {
+            "Learnings, history and embeddings: how much is kept and injected, where history lives, and the semantic-matching setup."
+        }
         "engine_version" => "The engine's version, as reported by the daemon. Read-only.",
         "shell_version" => "The shell's own version. Read-only.",
         _ => return None,
@@ -1482,9 +1504,9 @@ mod tests {
             let help = daemon_help(key).unwrap_or_else(|| panic!("`{key}` has no help text"));
             assert!(!help.is_empty());
         }
-        // A field the overlay deliberately excludes stays out, as do groups of
-        // the other schema.
-        assert_eq!(daemon_help("plan_revision_cycles"), None);
+        // A composite key the overlay deliberately excludes stays out, as do
+        // groups of the other schema.
+        assert_eq!(daemon_help("stages"), None);
         assert_eq!(daemon_help("theme"), None);
     }
 

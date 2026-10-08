@@ -1816,12 +1816,14 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
         app.overlay.focus = index;
     };
     let draw = |app: &App| {
-        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        // A 60-row screen: the drift-driven row model pushed the pipeline rows
+        // past a 40-row screen's 20-row list, and the focused row must render.
+        let mut terminal = Terminal::new(TestBackend::new(100, 60)).unwrap();
         terminal
             .draw(|frame| patok_tui::render(frame, app))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
-        (0..40)
+        (0..60)
             .map(|y| {
                 (0..100)
                     .map(|x| buffer[(x, y)].symbol())

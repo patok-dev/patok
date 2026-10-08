@@ -7,19 +7,19 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      shell version: 0.0.0                                                             █│    │
-     │      provider  ‹ claude ›                                                             █│────┘
-[  Re│      model  (not set)                                                                 █│────┐
-     │      research provider  ‹ claude ›                                                    █│    │
-[ Dis│      research model  sonnet                                                           █│    │
-     │      planner provider  ‹ claude ›                                                     █│    │
-     │      planner model  opus                                                              █│    │
+[  Bu│      research model  sonnet                                                           ││    │
+     │      planner provider  ‹ claude ›                                                     █│────┘
+[  Re│      planner model  opus                                                              █│────┐
      │      builder provider  ‹ claude ›                                                     █│    │
-     │      builder model  opus                                                              █│    │
-     │      reviewer provider  ‹ claude ›                                                    ││    │
+[ Dis│      builder model  opus                                                              █│    │
+     │      reviewer provider  ‹ claude ›                                                    █│    │
      │      reviewer model  sonnet                                                           ││    │
      │      discovery provider  ‹ claude ›                                                   ││    │
      │      discovery model  opus                                                            ││    │
+     │      learning extraction model  (not set)                                             ││    │
+     │      learning extraction provider  ‹ claude ›                                         ││    │
+     │      local model  (not set)                                                           ││    │
+     │      model catalog refresh  (not set)                                                 ││    │
      │  ▾ Pipeline                                                                           ││    │
      │      run mode  ‹ sprint ›                                                             ││    │
      │▶     [x] plan enabled                                                                 ││    │
