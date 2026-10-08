@@ -1465,8 +1465,11 @@ impl App {
     /// step without moving the selection, clamped at the list's ends, and a
     /// left click inside a rendered list row runs that row's Enter key
     /// verbatim -- it selects the row first, so a click and Enter on the
-    /// same row are indistinguishable. The inline editor is modal like its
-    /// keys: while it is open, row clicks and wheel steps are swallowed.
+    /// same row are indistinguishable. A pointer move inside a rendered
+    /// list row moves the selection highlight to that row with the same
+    /// viewport follow the Up and Down keys run, without running it
+    /// (T145.1). The inline editor is modal like its keys: while it is
+    /// open, row clicks, wheel steps and pointer moves are swallowed.
     /// Everything else is swallowed, as before.
     fn on_overlay_mouse(&mut self, mouse: MouseEvent) -> Action {
         if close_clicked(&mouse, self.overlay.close.get()) {
@@ -1477,12 +1480,31 @@ impl App {
         {
             return self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
-        // The inline editor is modal: while it is open, row clicks and wheel
-        // steps are swallowed, like every key that is not the editor's.
+        // The inline editor is modal: while it is open, row clicks, wheel
+        // steps and pointer moves are swallowed, like every key that is
+        // not the editor's.
         if self.overlay.editor.is_some() {
             return Action::None;
         }
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        let row = settings_row_at(
+            position,
+            self.overlay.list.get(),
+            self.overlay.scroll.get(),
+            self.overlay.visible().len(),
+        );
         match mouse.kind {
+            // The pointer move moves only the selection highlight and the
+            // viewport's follow (T145.1): it never runs the row's Enter
+            // key, and a move that misses every row -- the blank viewport
+            // rows past the last entry, the help box, the border, the
+            // footer, the shell outside -- leaves the focus and the
+            // offset alone.
+            MouseEventKind::Moved => {
+                if let Some(index) = row {
+                    self.overlay.hover_focus(index);
+                }
+            }
             MouseEventKind::ScrollUp => {
                 self.overlay.scroll_by(-1);
             }
@@ -1490,13 +1512,6 @@ impl App {
                 self.overlay.scroll_by(1);
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-                let row = settings_row_at(
-                    position,
-                    self.overlay.list.get(),
-                    self.overlay.scroll.get(),
-                    self.overlay.visible().len(),
-                );
                 if let Some(index) = row {
                     // The click is the row's Enter key verbatim: it moves
                     // the focus to the row, then runs the Enter dispatch,
@@ -2553,5 +2568,255 @@ mod tests {
             app.on_mouse(mouse(MouseEventKind::ScrollDown, list.x + 2, list.y + 2));
         }
         assert_eq!(app.overlay.scroll.get(), 0, "the editor swallows the wheel");
+    }
+
+    /// A pointer move inside a visible list row moves the selection highlight
+    /// to that row without running it -- no editor, no drafts, no folds --
+    /// and Enter on a hovered row opens the same inline editor the click and
+    /// the keyboard paths open (T145.1).
+    #[test]
+    fn hovering_a_row_moves_the_selection_without_running_it() {
+        let (mut app, list) = settings_app();
+        let len = app.overlay.visible().len();
+        for row in 0..10 {
+            // The pointer rides viewport row `row`; the hit-test resolves it
+            // against the current offset, so the highlight lands on the row
+            // under the pointer and the follow keeps that row on screen.
+            let hovered = app.overlay.scroll.get() + row;
+            assert_eq!(
+                app.on_mouse(mouse(
+                    MouseEventKind::Moved,
+                    list.x + 2,
+                    list.y + row as u16
+                )),
+                Action::None
+            );
+            assert_eq!(app.overlay.focus, hovered);
+            assert!(app.overlay.focus >= app.overlay.scroll.get());
+            assert!(app.overlay.focus - app.overlay.scroll.get() < 10);
+            assert!(app.overlay.open);
+            assert!(app.overlay.editor.is_none());
+            assert!(app.overlay.drafts.is_empty());
+            assert!(!app.overlay.confirm_open);
+            assert_eq!(
+                app.overlay.visible().len(),
+                len,
+                "a hover never folds a header"
+            );
+        }
+
+        // Enter on a hovered row runs exactly the keyboard path: the same
+        // inline editor the click opens, prefilled with the row's current
+        // value (no readout yet: empty).
+        let (mut app, list) = settings_app();
+        let model = visible_index(&app, "model");
+        assert_eq!(
+            app.on_mouse(mouse(
+                MouseEventKind::Moved,
+                list.x + 2,
+                list.y + model as u16
+            )),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, model);
+        assert!(
+            app.overlay.editor.is_none(),
+            "the hover never activates the row"
+        );
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        let editor = app
+            .overlay
+            .editor
+            .take()
+            .expect("Enter on the hovered row opens the editor");
+        assert_eq!(editor.field, "model");
+        assert_eq!(editor.buffer, "");
+
+        // The click path is untouched by the hover (T136.1): a click on a
+        // different row still selects and activates the clicked row, not
+        // the hovered one.
+        let (mut app, list) = settings_app();
+        let provider = visible_index(&app, "provider");
+        let model = visible_index(&app, "model");
+        assert_eq!(
+            app.on_mouse(mouse(
+                MouseEventKind::Moved,
+                list.x + 2,
+                list.y + provider as u16
+            )),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, provider);
+        assert!(
+            app.overlay.editor.is_none(),
+            "the hover never activates the row"
+        );
+        assert_eq!(click_row(&mut app, list, model), Action::None);
+        assert_eq!(app.overlay.focus, model);
+        let editor = app
+            .overlay
+            .editor
+            .take()
+            .expect("the click still opens the editor");
+        assert_eq!(editor.field, "model");
+        assert_eq!(editor.buffer, "");
+    }
+
+    /// A pointer move over the blank viewport rows past the last entry, over
+    /// the modal above the list rect, or outside the overlay entirely leaves
+    /// the selection and the offset alone (T145.1).
+    #[test]
+    fn hovering_between_the_rows_or_outside_the_list_changes_nothing() {
+        let (mut app, list) = settings_app();
+        // Fold every section by clicking its header, exactly the T136.1
+        // path: the list holds only its five headers, leaving blank
+        // viewport rows below them.
+        for index in 0..5 {
+            let header = app
+                .overlay
+                .visible()
+                .iter()
+                .position(|entry| *entry == Entry::Header(index))
+                .unwrap();
+            assert_eq!(click_row(&mut app, list, header), Action::None);
+        }
+        assert_eq!(app.overlay.visible().len(), 5);
+
+        // An observable focus the misses must leave alone.
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, list.x + 2, list.y + 1)),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, 1);
+        let before = (app.overlay.focus, app.overlay.scroll.get());
+
+        // A blank viewport row below the last header, the border row above
+        // the recorded list rect, and a point outside the overlay entirely.
+        for (column, row) in [(list.x + 2, list.y + 7), (list.x + 2, list.y - 1), (0, 1)] {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
+                Action::None
+            );
+            assert_eq!((app.overlay.focus, app.overlay.scroll.get()), before);
+        }
+        assert!(app.overlay.drafts.is_empty());
+        assert!(app.overlay.editor.is_none());
+    }
+
+    /// Hovering the viewport's edge rows scrolls the list exactly the way
+    /// the navigation keys do: the offset follows with the margin band and
+    /// clamps at the first and the last row, and the walk never activates
+    /// anything (T145.1).
+    #[test]
+    fn hovering_the_edges_of_a_long_list_scrolls_it_like_the_keys() {
+        let (mut app, list) = settings_app();
+        let len = app.overlay.visible().len();
+
+        // Hovering the bottom viewport row from the top of the list lands
+        // exactly where nine Down presses land: focus 9 with the offset 4.
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, list.x + 2, list.y + 9)),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, 9);
+        assert_eq!(app.overlay.scroll.get(), 4);
+
+        // Keeping the pointer on the bottom row walks the list down: each
+        // move lands on the row the follow brought under the pointer, the
+        // viewport keeps the hovered row visible, and the walk ends on the
+        // last row at the last offset that still fills the viewport.
+        while app.overlay.focus < len - 1 {
+            assert!(app.overlay.editor.is_none());
+            assert!(app.overlay.drafts.is_empty());
+            let hovered = app.overlay.scroll.get() + 9;
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, list.x + 2, list.y + 9)),
+                Action::None
+            );
+            assert_eq!(app.overlay.focus, hovered);
+            assert!(app.overlay.focus >= app.overlay.scroll.get());
+            assert!(app.overlay.focus - app.overlay.scroll.get() < 10);
+        }
+        assert_eq!(app.overlay.focus, len - 1);
+        assert_eq!(
+            app.overlay.scroll.get(),
+            len - 10,
+            "never overshooting the clamp at the last full screen"
+        );
+
+        // Walking back up on the top viewport row ends at the first row
+        // with the offset clamped at 0.
+        while app.overlay.focus > 0 {
+            let hovered = app.overlay.scroll.get();
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, list.x + 2, list.y)),
+                Action::None
+            );
+            assert_eq!(app.overlay.focus, hovered);
+            assert!(app.overlay.focus >= app.overlay.scroll.get());
+            assert!(app.overlay.focus - app.overlay.scroll.get() < 10);
+        }
+        assert_eq!(app.overlay.focus, 0);
+        assert_eq!(
+            app.overlay.scroll.get(),
+            0,
+            "never overshooting the clamp at the first row"
+        );
+    }
+
+    /// The inline editor and the unsaved-changes dialog are modal for the
+    /// pointer moves too: a hover is swallowed while either is open, and the
+    /// dialog keeps its own selection (T145.1).
+    #[test]
+    fn hovering_is_swallowed_while_the_editor_or_the_confirm_dialog_is_open() {
+        let (mut app, list) = settings_app();
+        let model = visible_index(&app, "model");
+        click_row(&mut app, list, model);
+        assert!(app.overlay.editor.is_some());
+        for row in 0..10 {
+            assert_eq!(
+                app.on_mouse(mouse(
+                    MouseEventKind::Moved,
+                    list.x + 2,
+                    list.y + row as u16
+                )),
+                Action::None
+            );
+            assert_eq!(app.overlay.focus, model);
+            assert!(app.overlay.editor.is_some());
+        }
+
+        // A drafted change opens the unsaved-changes dialog on Esc; moves
+        // over the dialog and over where the list rect is leave the
+        // dialog's selection and the overlay's focus alone.
+        for c in "opus".chars() {
+            assert_eq!(press(&mut app, KeyCode::Char(c)), Action::None);
+        }
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert!(app.overlay.editor.is_none());
+        assert_eq!(
+            app.overlay.drafts.get("model"),
+            Some(&SettingValue::Str("opus".into()))
+        );
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(app.overlay.confirm_open);
+        assert_eq!(app.overlay.confirm_selected, 0);
+        for (column, row) in [(list.x + 2, list.y), (list.x + 2, list.y + 3), (0, 0)] {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
+                Action::None
+            );
+            assert_eq!(app.overlay.confirm_selected, 0);
+            assert_eq!(app.overlay.focus, model);
+            assert!(app.overlay.confirm_open);
+        }
+
+        // Esc returns to the overlay with the drafts intact.
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(!app.overlay.confirm_open);
+        assert_eq!(
+            app.overlay.drafts.get("model"),
+            Some(&SettingValue::Str("opus".into()))
+        );
     }
 }

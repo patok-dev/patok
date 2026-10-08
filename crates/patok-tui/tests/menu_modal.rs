@@ -950,8 +950,9 @@ fn hovering_the_stop_build_row_selects_it_without_running_it() {
 
 /// Pointer moves never open the closed menu or disturb any other
 /// selection (T140.1): the merged view's move handling stays inert, and
-/// the settings overlay keeps its own focus through moves sent while it
-/// is open.
+/// while the settings overlay is open a move outside its list rows keeps
+/// the overlay's focus, while a move onto a row moves only the overlay's
+/// own highlight (T145.1).
 #[test]
 fn pointer_moves_while_the_menu_is_closed_change_nothing() {
     // While the menu is closed a move over where the body would be and
@@ -968,15 +969,16 @@ fn pointer_moves_while_the_menu_is_closed_change_nothing() {
         assert!(!app.menu_open);
     }
 
-    // The same moves while the settings overlay is open leave its focus
-    // alone: the overlay's mouse path has no row hover, so nothing
-    // underneath moves either.
+    // The same moves while the settings overlay is open land outside its
+    // list rows -- the help box under the two-row list at this size and
+    // the bottom line -- so the overlay's focus keeps its key-moved spot.
     assert_eq!(press(&mut app, KeyCode::Char('?')), Action::None);
     assert!(app.settings_open());
     assert_eq!(app.overlay.focus, 0);
     assert_eq!(press(&mut app, KeyCode::Down), Action::None);
     assert_eq!(app.overlay.focus, 1);
     draw(&app, 80, 14);
+    let list = app.overlay.list.get();
     for (column, row) in [(17, 5), (chip.x + 1, chip.y)] {
         assert_eq!(
             app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
@@ -985,4 +987,14 @@ fn pointer_moves_while_the_menu_is_closed_change_nothing() {
         assert_eq!(app.overlay.focus, 1);
         assert!(!app.menu_open);
     }
+
+    // A move onto the list's first row moves the overlay's own highlight
+    // only: the closed menu and its selection stay untouched.
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Moved, list.x + 3, list.y)),
+        Action::None
+    );
+    assert_eq!(app.overlay.focus, 0);
+    assert!(!app.menu_open);
+    assert_eq!(app.menu_selected, 0);
 }

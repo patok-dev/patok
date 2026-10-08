@@ -524,9 +524,10 @@ pub struct SettingsOverlay {
     pub confirm_selected: usize,
     pub status: Option<(String, StatusLevel)>,
     /// The body's scroll offset: `move_focus` follows the cursor through
-    /// [`scroll_offset`] after every navigation key, the wheel moves it freely
-    /// through [`Self::scroll_by`], and the renderer clamps it into the
-    /// scrollable range at each render.
+    /// [`scroll_offset`] after every navigation key, the pointer's row hover
+    /// follows the same way (T145.1), the wheel moves it freely through
+    /// [`Self::scroll_by`], and the renderer clamps it into the scrollable
+    /// range at each render.
     pub scroll: Cell<usize>,
     /// The list area's rect at the last render; the row hit-test and the
     /// viewport height (its height) read it.
@@ -647,6 +648,17 @@ impl SettingsOverlay {
     fn move_focus(&mut self, delta: isize) {
         let len = self.visible().len();
         self.focus = (self.focus.saturating_add_signed(delta)).min(len - 1);
+        self.follow_focus(len);
+    }
+
+    /// Moves the focus to `index` -- an absolute visible-row index, as the
+    /// mouse hit-test returns -- and scrolls the viewport to keep it
+    /// visible, the same follow the navigation keys run. The pointer's row
+    /// hover (T145.1) is the only caller: it never activates the row, and
+    /// a move that misses every row never reaches this.
+    pub fn hover_focus(&mut self, index: usize) {
+        let len = self.visible().len();
+        self.focus = index.min(len.saturating_sub(1));
         self.follow_focus(len);
     }
 

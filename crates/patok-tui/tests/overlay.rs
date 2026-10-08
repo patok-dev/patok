@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use patok_core::config::{ApplyTiming, SettingValue};
 use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
@@ -99,6 +99,15 @@ fn ctrl(app: &mut App, c: char) -> Action {
     app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
 }
 
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
 fn open() -> App {
     let mut app = app();
     assert_eq!(press(&mut app, KeyCode::Char('?')), Action::None);
@@ -129,9 +138,10 @@ fn focus_header(app: &mut App, index: usize) {
 }
 
 /// Walks the focus to `index` with the navigation keys, one row per press,
-/// the only way the focus moves for a user -- so the scroll offset follows
-/// the selection like it does in the shell (T136.1). The draw first records
-/// the list viewport the follow reads.
+/// so the scroll offset follows the selection like it does in the shell
+/// (T136.1) -- the pointer's row hover moves the focus too (T145.1), but
+/// the keys stay the baseline. The draw first records the list viewport
+/// the follow reads.
 fn move_focus_to(app: &mut App, index: usize) {
     let _ = draw(app, W, H);
     while app.overlay.focus < index {
@@ -1071,6 +1081,63 @@ fn up_scrolls_only_once_the_cursor_is_four_rows_below_the_top() {
         assert_cursor_visible(&app, &screen, 20);
     }
     assert!(draw(&app, W, H).contains("▾ Provider and model"));
+}
+
+/// Hovering the bottom viewport row scrolls the list exactly like the Down
+/// key: the first hover reaches the state nineteen Down presses reach, and
+/// keeping the pointer there walks down to the clamp at the last full
+/// screen (T145.1).
+#[test]
+fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
+    let mut app = open();
+    draw(&app, W, H);
+    // At W = 100, H = 40 the help box under the list (T85.1) leaves the list
+    // 20 rows over the 44-row expanded model -- the same geometry the Down
+    // key test pins.
+    let list = app.overlay.list.get();
+    assert_eq!(list.height, 20);
+    let len = app.overlay.visible().len();
+    assert_eq!(app.overlay.scroll.get(), 0);
+
+    // The pointer lands on the bottom viewport row: the highlight moves
+    // there without activating anything, and the follow scrolls exactly
+    // like nineteen Down presses.
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Moved,
+            list.x + 3,
+            list.y + list.height - 1
+        )),
+        Action::None
+    );
+    assert_eq!(app.overlay.focus, 19);
+    assert_eq!(app.overlay.scroll.get(), 4);
+    assert!(app.overlay.editor.is_none());
+    assert!(app.overlay.drafts.is_empty());
+
+    // Keeping the pointer on the bottom row walks the list down like the
+    // Down key does, the hovered row always on screen, to the clamp at the
+    // last full screen.
+    while app.overlay.focus < len - 1 {
+        let hovered = app.overlay.scroll.get() + usize::from(list.height - 1);
+        assert_eq!(
+            app.on_mouse(mouse(
+                MouseEventKind::Moved,
+                list.x + 3,
+                list.y + list.height - 1
+            )),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, hovered);
+        assert!(app.overlay.focus >= app.overlay.scroll.get());
+        assert!(app.overlay.focus - app.overlay.scroll.get() < usize::from(list.height));
+    }
+    assert_eq!(app.overlay.focus, len - 1);
+    assert_eq!(app.overlay.scroll.get(), 24);
+
+    // The hovered row's selection marker is on screen at the walk's end.
+    let screen = draw(&app, W, H);
+    assert_cursor_visible(&app, &screen, 20);
 }
 
 #[test]
