@@ -19,11 +19,11 @@ mod tui;
 
 pub use daemon::{
     AcceptPolicy, DaemonConfig, DaemonEnv, DaemonSettings, ProviderKind, ProviderName, RunMode,
-    Stage, daemon_help, load_daemon,
+    Stage, daemon_field_value, daemon_help, load_daemon,
 };
 pub use persist::{
     ApplyTiming, PersistError, SettingValue, daemon_apply_timing, daemon_changed_fields,
-    daemon_field_value, daemon_readout, set_daemon_field, set_tui_field,
+    daemon_readout, set_daemon_field, set_tui_field,
 };
 pub use schema::{daemon_json_schema, tui_json_schema};
 pub use spelling::EnumSpelling;

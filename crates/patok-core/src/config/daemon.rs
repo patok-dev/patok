@@ -1,17 +1,24 @@
 //! The daemon schema: everything that parameterizes the
 //! build loop, owned by the engine. The shell never reads this schema; it parses only the
 //! `[daemon]` table of each config file.
+//!
+//! Every setting is declared once, in the `daemon_table!` invocation below: one entry
+//! carries the key, type, default, help text and validation, and the macro derives every
+//! table that used to be hand-listed beside it -- the settings struct with its defaults,
+//! the raw option layer, the per-key parser, the layer merge, the materialization, the
+//! persistence registry (field kind, key list, apply timing, effective values) and the
+//! settings-overlay help. Adding a setting is one entry.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+use schemars::JsonSchema;
+
+use super::persist::SettingValue;
 use super::spelling::config_enum;
 use super::{
     ConfigFiles, EnumSpelling, Fields, migrate_project_file, project_file, read_layer_table,
 };
-
-use schemars::JsonSchema;
 
 config_enum! {
     /// The providers the engine can run today.
@@ -174,385 +181,919 @@ pub(crate) struct RawStage {
     pub prompt: Option<String>,
 }
 
-/// The merged, normalized daemon settings.
-///
-/// Fields beyond `provider`, `model`, `plan_enabled` and the discovery cooldowns are
-/// parsed, merged and normalized here but not yet consumed by engine behaviour; the
-/// pipeline, routing and learnings tasks pick them up.
-#[derive(Clone, Debug, PartialEq, JsonSchema)]
-pub struct DaemonSettings {
-    // Routing (section 4).
-    pub provider: ProviderName,
-    /// The single-model override; empty means none (normalization applies it per role).
-    pub model: Option<String>,
-    pub research_model: String,
-    pub planner_model: String,
-    pub builder_model: String,
-    pub reviewer_model: String,
-    pub discovery_model: String,
-    pub learning_extraction_model: String,
-    pub research_provider: ProviderName,
-    pub planner_provider: ProviderName,
-    pub builder_provider: ProviderName,
-    pub reviewer_provider: ProviderName,
-    pub discovery_provider: ProviderName,
-    pub learning_extraction_provider: ProviderName,
-    pub local_model: Option<String>,
-    pub model_catalog_refresh_secs: u64,
-    pub catalog_url_overrides: BTreeMap<String, String>,
-    pub stage_overrides: Vec<String>,
-    // Pipeline flow (section 5).
-    pub run_mode: RunMode,
-    pub stages: Vec<Stage>,
-    pub skip_planner_for_simple: bool,
-    /// Whether a Simple-classified task skips the research stage (T68.1).
-    pub skip_research_for_simple: bool,
-    pub skip_review_for_simple: bool,
-    pub review_confidence_threshold: u64,
-    pub batch_review: bool,
-    pub planner_lookahead: bool,
-    pub plan_revision_cycles: u64,
-    pub plan_revision_accept_policy: AcceptPolicy,
-    pub review_in_loop: bool,
-    pub review_multipass_threshold: u64,
-    pub confidence_threshold: f64,
-    pub semgrep_enabled: bool,
-    pub semgrep_rulesets: Vec<String>,
-    pub build_command: Option<String>,
-    pub planning_iterations: u64,
-    pub require_human_approval: bool,
-    pub auto_push_remote: Option<String>,
-    pub on_task_complete_hook: Option<String>,
-    pub discovery_cooldown_secs: u64,
-    pub discovery_cooldown_cap_secs: u64,
-    /// Whether a plan session runs before each builder session (T10.1).
-    pub plan_enabled: bool,
-    // Timing (section 6).
-    pub agent_timeout_secs: u64,
-    pub pause_between_tasks_secs: u64,
-    pub pause_between_agents_secs: u64,
-    pub pause_between_cycles_secs: u64,
-    pub adaptive_pauses: bool,
-    pub engine_idle_timeout_secs: u64,
-    // Isolation and security (section 7).
-    pub phase_isolation: bool,
-    pub enforce_phase_rbac: bool,
-    // Learnings, history and embeddings (section 8).
-    pub history_dir: Option<String>,
-    pub max_learning_injection: u64,
-    pub min_learning_injection: u64,
-    pub history_search_results: u64,
-    pub history_retention_tasks: u64,
-    pub observatory_retention_days: u64,
-    pub semantic_match_enabled: bool,
-    pub embedding_model: String,
-    pub embedding_port: u16,
-    pub embedding_timeout_ms: u64,
-    pub plugins: Vec<String>,
-    pub show_retrieval_panel: bool,
+/// What a field accepts; the persistence validator maps a submitted value onto the
+/// field's expected type through it. Lives beside the field table, whose entries pick
+/// each field's kind -- including the `FloatRange` bounds, read by both the on-disk
+/// parser and the write-path validator so the two cannot drift apart again.
+pub(crate) enum FieldKind {
+    Bool,
+    Uint,
+    /// An unsigned integer that must be greater than zero, validated exactly like the
+    /// on-disk parser of the same field ("a whole number of seconds greater than zero").
+    PositiveUint,
+    Port,
+    /// A float field with an inclusive range.
+    FloatRange(f64, f64),
+    /// A non-optional string; an empty string is rejected.
+    Str,
+    /// An optional string; the empty string removes the key so the default applies.
+    OptStr,
+    /// An enumerated field and its accepted spellings (trimmed, lowercased).
+    Enum(&'static [&'static str]),
+    /// A provider field, accepted by `ProviderName::parse` (trimmed,
+    /// lowercased, aliases accepted).
+    Provider,
+    /// An unsigned integer with an inclusive range.
+    Range(u64, u64),
+    /// A known key of the other (composite) shape that the settings-change flow cannot
+    /// write as a single value.
+    Composite,
 }
 
-impl Default for DaemonSettings {
-    fn default() -> Self {
-        materialize(DaemonLayer::default())
-    }
+// The one place a daemon setting is declared (finding 10 of the structure review): the
+// `daemon_table!` invocation below lists every `[daemon]` field once, and the macros
+// here derive from it every table that used to be hand-maintained beside it -- the
+// settings struct with its `Default`, the raw `DaemonLayer`, the per-key parser
+// `parse_layer`, the layer `merge`, the `materialize`d defaults plus the trailing
+// normalization block, and the persistence registry -- `daemon_field` (what a key
+// accepts), `DAEMON_FIELDS` (the single-value keys, in table order),
+// `IMMEDIATE_DAEMON_FIELDS` (the `immediate`-marked keys), `daemon_field_value` (the
+// effective value of each key) and `field_help` (the per-key overlay help). Every
+// consumer reads the same entry, so the tables cannot disagree.
+//
+// Entry grammar, one bracketed item per field:
+// `[kind field "key" (help "text")? (immediate)? <kind tail>]` with `bool`, `port` and
+// `str` tail `default <expr>`, `uint` and `positive_uint` tail
+// `expect "<warning noun>" default <expr>`, `float_range` tail
+// `range <min> ..= <max> default <expr>`, `enum` its enum type right after the key,
+// and no tail for
+// `opt_str`, `provider`, `strings`, `string_map` and `stages`. A leading `//` documents
+// the settings-struct field (and so the JSON schema); `help` adds the settings-overlay
+// help text (absent means the overlay shows none for the key); `immediate` marks a
+// field read at the point of use.
+//
+// The derivation is split by expansion position (macro_rules cannot expand into struct
+// fields or match arms): the two structs, the merged layer literal, the materialized
+// settings literal and the two key lists are built by the recursive `daemon_settings!`,
+// `daemon_layer!`, `daemon_merge!`, `daemon_materialize!`, `daemon_names!` and
+// `daemon_immediate!` munchers, which accumulate one entry's fragment per step and
+// emit the whole item at the end; the per-key runtime behaviour (parse, registry
+// lookup, effective value, overlay help) comes from `daemon_entry!`, invoked once per
+// entry at statement position.
+
+/// The settings-struct field type of one table entry: the single per-kind type both
+/// struct munchers read.
+macro_rules! daemon_ty {
+    (bool $($rest:tt)*) => (bool);
+    (uint $($rest:tt)*) => (u64);
+    (positive_uint $($rest:tt)*) => (u64);
+    (port $($rest:tt)*) => (u16);
+    (float_range $($rest:tt)*) => (f64);
+    (str $($rest:tt)*) => (String);
+    (opt_str $($rest:tt)*) => (Option<String>);
+    (enum $ty:ident $($rest:tt)*) => ($ty);
+    (provider $($rest:tt)*) => (ProviderName);
+    (strings $($rest:tt)*) => (Vec<String>);
+    (string_map $($rest:tt)*) => (std::collections::BTreeMap<String, String>);
+    (stages $($rest:tt)*) => (Vec<Stage>);
 }
 
-/// One layer's `[daemon]` table; unset keys fall through to the layer below.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct DaemonLayer {
-    pub provider: Option<ProviderName>,
-    pub model: Option<String>,
-    pub research_model: Option<String>,
-    pub planner_model: Option<String>,
-    pub builder_model: Option<String>,
-    pub reviewer_model: Option<String>,
-    pub discovery_model: Option<String>,
-    pub learning_extraction_model: Option<String>,
-    pub research_provider: Option<ProviderName>,
-    pub planner_provider: Option<ProviderName>,
-    pub builder_provider: Option<ProviderName>,
-    pub reviewer_provider: Option<ProviderName>,
-    pub discovery_provider: Option<ProviderName>,
-    pub learning_extraction_provider: Option<ProviderName>,
-    pub local_model: Option<String>,
-    pub model_catalog_refresh_secs: Option<u64>,
-    pub catalog_url_overrides: Option<BTreeMap<String, String>>,
-    pub stage_overrides: Option<Vec<String>>,
-    pub run_mode: Option<RunMode>,
-    pub stages: Option<Vec<RawStage>>,
-    pub skip_planner_for_simple: Option<bool>,
-    pub skip_research_for_simple: Option<bool>,
-    pub skip_review_for_simple: Option<bool>,
-    pub review_confidence_threshold: Option<u64>,
-    pub batch_review: Option<bool>,
-    pub planner_lookahead: Option<bool>,
-    pub plan_revision_cycles: Option<u64>,
-    pub plan_revision_accept_policy: Option<AcceptPolicy>,
-    pub review_in_loop: Option<bool>,
-    pub review_multipass_threshold: Option<u64>,
-    pub confidence_threshold: Option<f64>,
-    pub semgrep_enabled: Option<bool>,
-    pub semgrep_rulesets: Option<Vec<String>>,
-    pub build_command: Option<String>,
-    pub planning_iterations: Option<u64>,
-    pub require_human_approval: Option<bool>,
-    pub auto_push_remote: Option<String>,
-    pub on_task_complete_hook: Option<String>,
-    pub discovery_cooldown_secs: Option<u64>,
-    pub discovery_cooldown_cap_secs: Option<u64>,
-    pub plan_enabled: Option<bool>,
-    pub agent_timeout_secs: Option<u64>,
-    pub pause_between_tasks_secs: Option<u64>,
-    pub pause_between_agents_secs: Option<u64>,
-    pub pause_between_cycles_secs: Option<u64>,
-    pub adaptive_pauses: Option<bool>,
-    pub engine_idle_timeout_secs: Option<u64>,
-    pub phase_isolation: Option<bool>,
-    pub enforce_phase_rbac: Option<bool>,
-    pub history_dir: Option<String>,
-    pub max_learning_injection: Option<u64>,
-    pub min_learning_injection: Option<u64>,
-    pub history_search_results: Option<u64>,
-    pub history_retention_tasks: Option<u64>,
-    pub observatory_retention_days: Option<u64>,
-    pub semantic_match_enabled: Option<bool>,
-    pub embedding_model: Option<String>,
-    pub embedding_port: Option<u16>,
-    pub embedding_timeout_ms: Option<u64>,
-    pub plugins: Option<Vec<String>>,
-    pub show_retrieval_panel: Option<bool>,
-}
-
-/// The daemon-schema environment overrides: the agent
-/// timeout, under two variable names (the first valid one wins).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DaemonEnv {
-    /// [`PATOK_AGENT_TIMEOUT_SECS`] and its alias [`PATOK_AGENT_TIMEOUT`].
-    pub agent_timeout_secs: [Option<String>; 2],
-}
-
-impl DaemonEnv {
-    pub const AGENT_TIMEOUT_VARS: [&'static str; 2] =
-        ["PATOK_AGENT_TIMEOUT_SECS", "PATOK_AGENT_TIMEOUT"];
-
-    pub fn from_process_env() -> Self {
-        let var = |k: &str| std::env::var(k).ok();
-        Self {
-            agent_timeout_secs: [
-                var(Self::AGENT_TIMEOUT_VARS[0]),
-                var(Self::AGENT_TIMEOUT_VARS[1]),
-            ],
+/// The settings struct, accumulated one table entry at a time: each step appends the
+/// entry's documented field (its type through [`daemon_ty!`]) and recurses; the base
+/// arm emits the whole struct.
+macro_rules! daemon_settings {
+    (docs [$($sdoc:tt)*] fields [$($acc:tt)*]) => {
+        $($sdoc)*
+        #[derive(Clone, Debug, PartialEq, JsonSchema)]
+        pub struct DaemonSettings {
+            $($acc)*
         }
-    }
-}
-
-/// The result of loading the daemon schema.
-#[derive(Clone, Debug, Default)]
-pub struct DaemonConfig {
-    pub settings: DaemonSettings,
-    /// Skip-and-fallback warnings; the caller logs them.
-    pub warnings: Vec<String>,
-    /// Hard errors that must refuse runs: unrecognized provider values.
-    pub errors: Vec<String>,
-}
-
-/// Loads and merges the daemon schema across the four file layers and the environment.
-/// The project layer lives in `data_dir` (the project's slot of the projects dir); a
-/// legacy project-root config is migrated there first.
-pub fn load_daemon(
-    files: &ConfigFiles,
-    project_dir: &Path,
-    data_dir: &Path,
-    env: &DaemonEnv,
-) -> DaemonConfig {
-    let mut warnings = Vec::new();
-    let mut errors = Vec::new();
-    let mut merged = DaemonLayer::default();
-    migrate_project_file(project_dir, data_dir, &mut warnings);
-    for path in [
-        files.user_global.as_deref(),
-        files.user_local.as_deref(),
-        Some(project_file(data_dir).as_path()),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let Some(table) = read_layer_table(path, "daemon", "tui", &mut warnings) else {
-            continue;
-        };
-        let layer = parse_layer(&table, path, &mut warnings, &mut errors);
-        merged = super::merge::daemon(merged, layer);
-    }
-    let mut settings = materialize(merged);
-    apply_env(&mut settings, env, &mut warnings);
-    DaemonConfig {
-        settings,
-        warnings,
-        errors,
-    }
-}
-
-/// Parses one file's `[daemon]` table into a raw layer. Wrong types fall back to the
-/// field's default with a warning; unknown keys warn; unrecognized provider values push
-/// a hard error onto `errors` (the field still falls back to its default).
-pub(crate) fn parse_layer(
-    table: &toml::Table,
-    path: &Path,
-    warnings: &mut Vec<String>,
-    errors: &mut Vec<String>,
-) -> DaemonLayer {
-    let mut layer = DaemonLayer::default();
-    let mut f = Fields {
-        path,
-        schema: "daemon",
-        warnings,
     };
-    for (key, value) in table {
-        match key.as_str() {
-            // Routing (section 4).
-            "provider" => layer.provider = f.provider(key, value, errors),
-            "model" => layer.model = f.string(key, value),
-            "research_model" => layer.research_model = f.string(key, value),
-            "planner_model" => layer.planner_model = f.string(key, value),
-            "builder_model" => layer.builder_model = f.string(key, value),
-            "reviewer_model" => layer.reviewer_model = f.string(key, value),
-            "discovery_model" => layer.discovery_model = f.string(key, value),
-            "learning_extraction_model" => layer.learning_extraction_model = f.string(key, value),
-            "research_provider" => layer.research_provider = f.provider(key, value, errors),
-            "planner_provider" => layer.planner_provider = f.provider(key, value, errors),
-            "builder_provider" => layer.builder_provider = f.provider(key, value, errors),
-            "reviewer_provider" => layer.reviewer_provider = f.provider(key, value, errors),
-            "discovery_provider" => layer.discovery_provider = f.provider(key, value, errors),
-            "learning_extraction_provider" => {
-                layer.learning_extraction_provider = f.provider(key, value, errors);
+    (
+        docs [$($sdoc:tt)*] fields [$($acc:tt)*]
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_settings! {
+            docs [$($sdoc)*]
+            fields [$($acc)* $(#[$doc])* pub $f: daemon_ty!($kind $($rest)*),]
+            $($tail)*
+        }
+    };
+}
+
+/// The raw-layer field type of one table entry: every kind is the settings type
+/// wrapped in `Option`, except `stages` (its layer holds [`RawStage`]) and `opt_str`
+/// (its layer holds the same `Option<String>` -- an empty string already parses to
+/// `None`).
+macro_rules! daemon_layer_ty {
+    (stages $($rest:tt)*) => (Option<Vec<RawStage>>);
+    (opt_str $($rest:tt)*) => (Option<String>);
+    ($($rest:tt)*) => (Option<daemon_ty!($($rest)*)>);
+}
+
+/// The raw option layer, accumulated one table entry at a time: each step appends the
+/// entry's `Option` field and recurses; the base arm emits the whole struct.
+macro_rules! daemon_layer {
+    (fields [$($acc:tt)*]) => {
+        /// One layer's `[daemon]` table; unset keys fall through to the layer below.
+        #[derive(Clone, Debug, Default, PartialEq)]
+        pub(crate) struct DaemonLayer {
+            $($acc)*
+        }
+    };
+    (
+        fields [$($acc:tt)*]
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_layer! {
+            fields [$($acc)* pub $f: daemon_layer_ty!($kind $($rest)*),]
+            $($tail)*
+        }
+    };
+}
+
+/// The merged layer literal: each step appends one entry's merge rule (plain values
+/// higher-wins; the structured kinds merge deeper) and recurses; the base arm emits the
+/// whole literal.
+macro_rules! daemon_merge {
+    (merged [$($acc:tt)*] $lower:ident, $higher:ident,) => {
+        DaemonLayer {
+            $($acc)*
+        }
+    };
+    (
+        merged [$($acc:tt)*] $lower:ident, $higher:ident,
+        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_merge! {
+            merged [$($acc)* $f: merge_maps($lower.$f, $higher.$f),]
+            $lower, $higher, $($tail)*
+        }
+    };
+    (
+        merged [$($acc:tt)*] $lower:ident, $higher:ident,
+        [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_merge! {
+            merged [$($acc)* $f: merge_stages($lower.$f, $higher.$f),]
+            $lower, $higher, $($tail)*
+        }
+    };
+    (
+        merged [$($acc:tt)*] $lower:ident, $higher:ident,
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_merge! {
+            merged [$($acc)* $f: $higher.$f.or($lower.$f),]
+            $lower, $higher, $($tail)*
+        }
+    };
+}
+
+/// The materialized settings literal: each step appends one entry's
+/// default-or-override rule and recurses; the base arm emits the whole literal.
+macro_rules! daemon_materialize {
+    (settings [$($acc:tt)*] $layer:ident,) => {
+        DaemonSettings {
+            $($acc)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* bool $f:ident $k:literal $(help $h:literal)? $(immediate)? default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* port $f:ident $k:literal $(help $h:literal)? $(immediate)? default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* float_range $f:ident $k:literal $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* str $f:ident $k:literal $(help $h:literal)? $(immediate)? default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or_else(|| $d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* opt_str $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f,]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? $(immediate)?]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* provider $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* strings $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* string_map $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* stages $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)*
+                $f: $layer
+                    .$f
+                    .map(|stages| {
+                        stages
+                            .into_iter()
+                            .map(|stage| Stage {
+                                label: stage.label.unwrap_or_else(|| stage.id.clone()),
+                                enabled: stage.enabled.unwrap_or(true),
+                                prompt: stage.prompt,
+                                id: stage.id,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_else(default_stages),
+            ]
+            $layer, $($tail)*
+        }
+    };
+}
+
+/// The single-value key list: each step appends one entry's key (composite entries
+/// contribute none) and recurses; the base arm emits the whole slice literal.
+macro_rules! daemon_names {
+    (keys [$($acc:tt)*]) => {
+        &[
+            $($acc)*
+        ]
+    };
+    (
+        keys [$($acc:tt)*]
+        [$(#[$doc:meta])* strings $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_names! {
+            keys [$($acc)*]
+            $($tail)*
+        }
+    };
+    (
+        keys [$($acc:tt)*]
+        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_names! {
+            keys [$($acc)*]
+            $($tail)*
+        }
+    };
+    (
+        keys [$($acc:tt)*]
+        [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_names! {
+            keys [$($acc)*]
+            $($tail)*
+        }
+    };
+    (
+        keys [$($acc:tt)*]
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_names! {
+            keys [$($acc)* $k,]
+            $($tail)*
+        }
+    };
+}
+
+/// The immediate-key list: each step appends the key of one `immediate`-marked entry
+/// (everything else contributes nothing) and recurses; the base arm emits the whole
+/// slice literal.
+macro_rules! daemon_immediate {
+    (keys [$($acc:tt)*]) => {
+        &[
+            $($acc)*
+        ]
+    };
+    (
+        keys [$($acc:tt)*]
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? immediate $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_immediate! {
+            keys [$($acc)* $k,]
+            $($tail)*
+        }
+    };
+    (
+        keys [$($acc:tt)*]
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $(help $h:literal)? immediate $($rest:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_immediate! {
+            keys [$($acc)* $k,]
+            $($tail)*
+        }
+    };
+    (
+        keys [$($acc:tt)*]
+        [$($skip:tt)*]
+        $($tail:tt)*
+    ) => {
+        daemon_immediate! {
+            keys [$($acc)*]
+            $($tail)*
+        }
+    };
+}
+
+/// One table entry's per-key runtime behaviour, named by the first argument: the parse
+/// statement (`parse`: one known-key check, ending the loop iteration so unknown keys
+/// fall through to the warning), the registry lookup (`kind`), the effective value
+/// (`value`) and the overlay help (`help`), each expanding to one early-return
+/// statement. The ident arguments name the runtime binding the expansion lands on
+/// (`layer`, `f`, `key`, `value`, `errors`, `name`, `settings`, `field`), so hygiene
+/// puts each inside the function that owns it.
+macro_rules! daemon_entry {
+    // The parse statement.
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* bool $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.boolean($key, $value);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.uint($key, $value, $e, false);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.uint($key, $value, $e, true);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* port $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.port($key, $value);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* float_range $f:ident $k:literal $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.float($key, $value, Some(($min, $max)));
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* str $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.string($key, $value);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* opt_str $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.string($key, $value);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? $(immediate)?]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.enumerated($key, $value, &$ty::accepted_spellings(), $ty::parse);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* provider $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.provider($key, $value, $errors);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* strings $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.strings($key, $value);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.string_map($key, $value);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.stages($value);
+            continue;
+        }
+    };
+    // The registry lookup.
+    (
+        kind, $name:ident,
+        [$(#[$doc:meta])* bool $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $name == $k {
+            return Some(FieldKind::Bool);
+        }
+    };
+    (kind, $name:ident, [$(#[$doc:meta])* uint $f:ident $k:literal $($rest:tt)*]) => {
+        if $name == $k {
+            return Some(FieldKind::Uint);
+        }
+    };
+    (
+        kind, $name:ident,
+        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $name == $k {
+            return Some(FieldKind::PositiveUint);
+        }
+    };
+    (kind, $name:ident, [$(#[$doc:meta])* port $f:ident $k:literal $($rest:tt)*]) => {
+        if $name == $k {
+            return Some(FieldKind::Port);
+        }
+    };
+    (
+        kind, $name:ident,
+        [$(#[$doc:meta])* float_range $f:ident $k:literal $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal $($rest:tt)*]
+    ) => {
+        if $name == $k {
+            return Some(FieldKind::FloatRange($min, $max));
+        }
+    };
+    (kind, $name:ident, [$(#[$doc:meta])* str $f:ident $k:literal $($rest:tt)*]) => {
+        if $name == $k {
+            return Some(FieldKind::Str);
+        }
+    };
+    (kind, $name:ident, [$(#[$doc:meta])* opt_str $f:ident $k:literal $($rest:tt)*]) => {
+        if $name == $k {
+            return Some(FieldKind::OptStr);
+        }
+    };
+    (
+        kind, $name:ident,
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? $(immediate)?]
+    ) => {
+        if $name == $k {
+            return Some(FieldKind::Enum($ty::SPELLINGS));
+        }
+    };
+    (
+        kind, $name:ident,
+        [$(#[$doc:meta])* provider $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $name == $k {
+            return Some(FieldKind::Provider);
+        }
+    };
+    (kind, $name:ident, [$(#[$doc:meta])* strings $f:ident $k:literal $($rest:tt)*]) => {
+        if $name == $k {
+            return Some(FieldKind::Composite);
+        }
+    };
+    (
+        kind, $name:ident,
+        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $name == $k {
+            return Some(FieldKind::Composite);
+        }
+    };
+    (kind, $name:ident, [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]) => {
+        if $name == $k {
+            return Some(FieldKind::Composite);
+        }
+    };
+    // The effective value.
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* bool $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Bool($settings.$f));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* uint $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Uint($settings.$f));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Uint($settings.$f));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* port $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Uint(u64::from($settings.$f)));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* float_range $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Float($settings.$f));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* str $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Str($settings.$f.clone()));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* opt_str $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Str($settings.$f.clone().unwrap_or_default()));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* enum $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Str($settings.$f.as_str().into()));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* provider $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Str($settings.$f.as_str().into()));
+        }
+    };
+    // The effective value of a composite key cannot be a single value: skip.
+    (value, $settings:ident, $field:ident, [$($rest:tt)*]) => {};
+    // The overlay help.
+    (
+        help, $key:ident,
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident help $h:literal $($rest:tt)*]
+    ) => {
+        if $key == $k {
+            return Some($h);
+        }
+    };
+    (
+        help, $key:ident,
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal help $h:literal $($rest:tt)*]
+    ) => {
+        if $key == $k {
+            return Some($h);
+        }
+    };
+    // A key with no help entry contributes nothing.
+    (help, $key:ident, [$($rest:tt)*]) => {};
+}
+
+/// The table driver: takes the struct-level docs, the entries and the normalization
+/// block, and emits every derived item.
+macro_rules! daemon_table {
+    (
+        $(#[$sdoc:meta])*
+        entries { $( $entry:tt ),* $(,)? }
+        normalize $settings:ident { $($norm:tt)* }
+    ) => {
+        daemon_settings! {
+            docs [ $(#[$sdoc])* ]
+            fields []
+            $( $entry )*
+        }
+
+        impl Default for DaemonSettings {
+            fn default() -> Self {
+                materialize(DaemonLayer::default())
             }
-            "local_model" => layer.local_model = f.string(key, value),
-            "model_catalog_refresh_secs" => {
-                layer.model_catalog_refresh_secs =
-                    f.uint(key, value, "a whole number of seconds", false);
+        }
+
+        daemon_layer! {
+            fields []
+            $( $entry )*
+        }
+
+        /// Merges two daemon layers, `higher` winning per key: structured fields merge
+        /// deeper (the stage list by stage id, the catalog URL override map per key),
+        /// plain values and lists are replaced wholesale.
+        fn merge(lower: DaemonLayer, higher: DaemonLayer) -> DaemonLayer {
+            daemon_merge! {
+                merged []
+                lower, higher,
+                $( $entry )*
             }
-            "catalog_url_overrides" => layer.catalog_url_overrides = f.string_map(key, value),
-            "stage_overrides" => layer.stage_overrides = f.strings(key, value),
-            // Pipeline flow (section 5).
-            "run_mode" => {
-                layer.run_mode =
-                    f.enumerated(key, value, &RunMode::accepted_spellings(), RunMode::parse);
+        }
+
+        /// Parses one file's `[daemon]` table into a raw layer. Wrong types fall back
+        /// to the field's default with a warning; unknown keys warn; unrecognized
+        /// provider values push a hard error onto `errors` (the field still falls
+        /// back to its default).
+        pub(crate) fn parse_layer(
+            table: &toml::Table,
+            path: &Path,
+            warnings: &mut Vec<String>,
+            errors: &mut Vec<String>,
+        ) -> DaemonLayer {
+            let mut layer = DaemonLayer::default();
+            let mut f = Fields {
+                path,
+                schema: "daemon",
+                warnings,
+            };
+            for (key, value) in table {
+                $(
+                    daemon_entry! { parse, layer, f, key, value, errors, $entry }
+                )*
+                f.unknown(key);
             }
-            "stages" => layer.stages = f.stages(value),
-            "skip_planner_for_simple" => layer.skip_planner_for_simple = f.boolean(key, value),
-            "skip_research_for_simple" => {
-                layer.skip_research_for_simple = f.boolean(key, value);
-            }
-            "skip_review_for_simple" => layer.skip_review_for_simple = f.boolean(key, value),
-            "review_confidence_threshold" => {
-                layer.review_confidence_threshold = f.uint(key, value, "a whole number", false);
-            }
-            "batch_review" => layer.batch_review = f.boolean(key, value),
-            "planner_lookahead" => layer.planner_lookahead = f.boolean(key, value),
-            "plan_revision_cycles" => {
-                layer.plan_revision_cycles = f.uint(key, value, "a whole number", false);
-            }
-            "plan_revision_accept_policy" => {
-                layer.plan_revision_accept_policy = f.enumerated(
-                    key,
-                    value,
-                    &AcceptPolicy::accepted_spellings(),
-                    AcceptPolicy::parse,
-                );
-            }
-            "review_in_loop" => layer.review_in_loop = f.boolean(key, value),
-            "review_multipass_threshold" => {
-                layer.review_multipass_threshold = f.uint(key, value, "a whole number", false);
-            }
-            "confidence_threshold" => {
-                layer.confidence_threshold = f.float(key, value, Some((0.0, 1.0)));
-            }
-            "semgrep_enabled" => layer.semgrep_enabled = f.boolean(key, value),
-            "semgrep_rulesets" => layer.semgrep_rulesets = f.strings(key, value),
-            "build_command" => layer.build_command = f.string(key, value),
-            "planning_iterations" => {
-                layer.planning_iterations = f.uint(key, value, "a whole number", false);
-            }
-            "require_human_approval" => layer.require_human_approval = f.boolean(key, value),
-            "auto_push_remote" => layer.auto_push_remote = f.string(key, value),
-            "on_task_complete_hook" => layer.on_task_complete_hook = f.string(key, value),
-            "discovery_cooldown_secs" => {
-                layer.discovery_cooldown_secs = f.uint(
-                    key,
-                    value,
-                    "a whole number of seconds greater than zero",
-                    true,
-                );
-            }
-            "discovery_cooldown_cap_secs" => {
-                layer.discovery_cooldown_cap_secs = f.uint(
-                    key,
-                    value,
-                    "a whole number of seconds greater than zero",
-                    true,
-                );
-            }
-            "plan_enabled" => layer.plan_enabled = f.boolean(key, value),
-            // Timing (section 6).
-            "agent_timeout_secs" => {
-                layer.agent_timeout_secs = f.uint(
-                    key,
-                    value,
-                    "a whole number of seconds greater than zero",
-                    true,
-                );
-            }
-            "pause_between_tasks_secs" => {
-                layer.pause_between_tasks_secs =
-                    f.uint(key, value, "a whole number of seconds", false);
-            }
-            "pause_between_agents_secs" => {
-                layer.pause_between_agents_secs =
-                    f.uint(key, value, "a whole number of seconds", false);
-            }
-            "pause_between_cycles_secs" => {
-                layer.pause_between_cycles_secs =
-                    f.uint(key, value, "a whole number of seconds", false);
-            }
-            "adaptive_pauses" => layer.adaptive_pauses = f.boolean(key, value),
-            "engine_idle_timeout_secs" => {
-                layer.engine_idle_timeout_secs =
-                    f.uint(key, value, "a whole number of seconds", false);
-            }
-            // Isolation and security (section 7).
-            "phase_isolation" => layer.phase_isolation = f.boolean(key, value),
-            "enforce_phase_rbac" => layer.enforce_phase_rbac = f.boolean(key, value),
-            // Learnings, history and embeddings (section 8).
-            "history_dir" => layer.history_dir = f.string(key, value),
-            "max_learning_injection" => {
-                layer.max_learning_injection = f.uint(key, value, "a whole number", false);
-            }
-            "min_learning_injection" => {
-                layer.min_learning_injection = f.uint(key, value, "a whole number", false);
-            }
-            "history_search_results" => {
-                layer.history_search_results = f.uint(key, value, "a whole number", false);
-            }
-            "history_retention_tasks" => {
-                layer.history_retention_tasks = f.uint(key, value, "a whole number", false);
-            }
-            "observatory_retention_days" => {
-                layer.observatory_retention_days = f.uint(key, value, "a whole number", false);
-            }
-            "semantic_match_enabled" => layer.semantic_match_enabled = f.boolean(key, value),
-            "embedding_model" => layer.embedding_model = f.string(key, value),
-            "embedding_port" => layer.embedding_port = f.port(key, value),
-            "embedding_timeout_ms" => {
-                layer.embedding_timeout_ms =
-                    f.uint(key, value, "a whole number of milliseconds", false);
-            }
-            "plugins" => layer.plugins = f.strings(key, value),
-            "show_retrieval_panel" => layer.show_retrieval_panel = f.boolean(key, value),
-            other => f.unknown(other),
+            layer
+        }
+
+        /// Turns the merged raw layer into the final settings: hardcoded defaults for
+        /// unset fields, then the table's normalization.
+        pub(crate) fn materialize(layer: DaemonLayer) -> DaemonSettings {
+            let mut $settings = daemon_materialize! {
+                settings []
+                layer,
+                $( $entry )*
+            };
+            $($norm)*
+            $settings
+        }
+
+        /// Every non-composite `[daemon]` key, in table order: exactly the fields the
+        /// settings-change flow can carry as a single value. Composite keys (`stages`,
+        /// `catalog_url_overrides`, `stage_overrides`, `semgrep_rulesets`, `plugins`)
+        /// have no single-value shape, so the diff skips them.
+        pub(crate) const DAEMON_FIELDS: &[&str] = daemon_names! {
+            keys []
+            $( $entry )*
+        };
+
+        /// Daemon fields read at the point of use, so a change applies immediately:
+        /// everything else parameterizes a unit of work and takes effect at the next
+        /// such start. A new field joins whichever list matches how it is actually
+        /// consumed (the `immediate` marker of its table entry).
+        pub(crate) const IMMEDIATE_DAEMON_FIELDS: &[&str] = daemon_immediate! {
+            keys []
+            $( $entry )*
+        };
+
+        /// The daemon field registry: every `[daemon]` key and what it accepts.
+        pub(crate) fn daemon_field(name: &str) -> Option<FieldKind> {
+            $(
+                daemon_entry! { kind, name, $entry }
+            )*
+            None
+        }
+
+        /// The field's effective (post-merge, post-normalization) value, as reported
+        /// back with a [`crate::config::ApplyTiming`] broadcast; `None` for a name
+        /// outside the registry or a composite key.
+        pub fn daemon_field_value(
+            settings: &DaemonSettings,
+            field: &str,
+        ) -> Option<SettingValue> {
+            $(
+                daemon_entry! { value, settings, field, $entry }
+            )*
+            None
+        }
+
+        /// The help text of one settings-overlay field key, from its table entry;
+        /// `None` for a key with no help text (or a composite key).
+        fn field_help(key: &str) -> Option<&'static str> {
+            $(
+                daemon_entry! { help, key, $entry }
+            )*
+            None
+        }
+    };
+}
+daemon_table! {
+    /// The merged, normalized daemon settings.
+    ///
+    /// Fields beyond `provider`, `model`, `plan_enabled` and the discovery cooldowns are
+    /// parsed, merged and normalized here but not yet consumed by engine behaviour; the
+    /// pipeline, routing and learnings tasks pick them up.
+    entries {
+        // Routing (section 4).
+        [provider provider "provider" help "The provider every agent role runs on: claude, codex, opencode, ghcopilot or mistral. Any unrecognized value behaves as claude."],
+        [/// The single-model override; empty means none (normalization applies it per role).
+         opt_str model "model" help "Single-model override: when set, it replaces the model of every agent role (research, planner, builder, reviewer, discovery, learning extraction). Meant for subscriptions locked to one model; empty means each role keeps its own model."],
+        [str research_model "research_model" help "The model the research role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
+        [str planner_model "planner_model" help "The model the planner role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
+        [str builder_model "builder_model" help "The model the builder role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
+        [str reviewer_model "reviewer_model" help "The model the reviewer role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
+        [str discovery_model "discovery_model" help "The model the discovery role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
+        [str learning_extraction_model "learning_extraction_model" default "sonnet".into()],
+        [provider research_provider "research_provider" help "The provider the research role runs on. Applies at the next research session start."],
+        [provider planner_provider "planner_provider" help "The provider the planner role runs on. Applies at the next planner session start."],
+        [provider builder_provider "builder_provider" help "The provider the builder role runs on. Applies at the next builder session start."],
+        [provider reviewer_provider "reviewer_provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
+        [provider discovery_provider "discovery_provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
+        [provider learning_extraction_provider "learning_extraction_provider"],
+        [opt_str local_model "local_model"],
+        [uint model_catalog_refresh_secs "model_catalog_refresh_secs" expect "a whole number of seconds" default 86400],
+        [string_map catalog_url_overrides "catalog_url_overrides"],
+        [strings stage_overrides "stage_overrides"],
+        // Pipeline flow (section 5).
+        [enum run_mode "run_mode" RunMode help "sprint (default) or continuous. The running loop keeps the mode it started with; a change applies at the next run."],
+        [stages stages "stages"],
+        [bool skip_planner_for_simple "skip_planner_for_simple" help "Simple tasks go straight to the builder (default on)." default true],
+        [/// Whether a Simple-classified task skips the research stage (T68.1).
+         bool skip_research_for_simple "skip_research_for_simple" help "Simple tasks skip the research stage (default on)." default true],
+        [bool skip_review_for_simple "skip_review_for_simple" help "Simple tasks skip the review stage, only when the builder's verification exited cleanly (default on)." default true],
+        [uint review_confidence_threshold "review_confidence_threshold" help "Consecutive review passes needed before learned confidence may skip the review for matching task shapes (simple and medium tasks only); 0 disables. Default 5." expect "a whole number" default 5],
+        [bool batch_review "batch_review" help "Skip the review for all but the last task in each contiguous run of same-numbered task IDs; that task's review covers every commit in the run (default on)." default true],
+        [bool planner_lookahead "planner_lookahead" help "Plan task N+1 while task N builds; the plan is reused when that task comes up (default on)." default true],
+        [uint plan_revision_cycles "plan_revision_cycles" expect "a whole number" default 0],
+        [enum plan_revision_accept_policy "plan_revision_accept_policy" AcceptPolicy],
+        [bool review_in_loop "review_in_loop" help "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)." default true],
+        [uint review_multipass_threshold "review_multipass_threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 8." expect "a whole number" default 8],
+        [float_range confidence_threshold "confidence_threshold" help "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5." range 0.0..=1.0 default 0.5],
+        [bool semgrep_enabled "semgrep_enabled" default false],
+        [strings semgrep_rulesets "semgrep_rulesets"],
+        [opt_str build_command "build_command"],
+        [uint planning_iterations "planning_iterations" expect "a whole number" default 0],
+        [bool require_human_approval "require_human_approval" default false],
+        [opt_str auto_push_remote "auto_push_remote" help "Push to this remote after each successful commit; empty means local commits only." immediate],
+        [opt_str on_task_complete_hook "on_task_complete_hook" immediate],
+        [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
+        [positive_uint discovery_cooldown_cap_secs "discovery_cooldown_cap_secs" help "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS],
+        [/// Whether a plan session runs before each builder session (T10.1).
+         bool plan_enabled "plan_enabled" help "Whether a plan session runs before each builder session." default true],
+        // Timing (section 6).
+        [positive_uint agent_timeout_secs "agent_timeout_secs" help "How long one agent invocation may idle, in seconds, before it is stopped; the hard timeout is four times this. Default 600." expect "a whole number of seconds greater than zero" default 600],
+        [uint pause_between_tasks_secs "pause_between_tasks_secs" help "Pause between two tasks, in seconds. Default 10." expect "a whole number of seconds" default 10],
+        [uint pause_between_agents_secs "pause_between_agents_secs" help "Pause between two agent invocations, in seconds. Default 3." expect "a whole number of seconds" default 3],
+        [uint pause_between_cycles_secs "pause_between_cycles_secs" help "Pause between build cycles, in seconds. Default 30." expect "a whole number of seconds" default 30],
+        [bool adaptive_pauses "adaptive_pauses" help "Shorten the pauses to about 500 ms when the last agent was not rate limited (default on)." default true],
+        [uint engine_idle_timeout_secs "engine_idle_timeout_secs" help "When no shell is attached and the engine has been idle this long, it shuts itself down. Default 1800 (30 minutes)." expect "a whole number of seconds" default 1800],
+        // Isolation and security (section 7).
+        [bool phase_isolation "phase_isolation" default true],
+        [bool enforce_phase_rbac "enforce_phase_rbac" default true],
+        // Learnings, history and embeddings (section 8).
+        [opt_str history_dir "history_dir"],
+        [uint max_learning_injection "max_learning_injection" expect "a whole number" default 10],
+        [uint min_learning_injection "min_learning_injection" expect "a whole number" default 2],
+        [uint history_search_results "history_search_results" expect "a whole number" default 5],
+        [uint history_retention_tasks "history_retention_tasks" expect "a whole number" default 50],
+        [uint observatory_retention_days "observatory_retention_days" immediate expect "a whole number" default 30],
+        [bool semantic_match_enabled "semantic_match_enabled" default true],
+        [str embedding_model "embedding_model" default "nomic-embed-text".into()],
+        [port embedding_port "embedding_port" default 11434],
+        [uint embedding_timeout_ms "embedding_timeout_ms" expect "a whole number of milliseconds" default 2000],
+        [strings plugins "plugins"],
+        [bool show_retrieval_panel "show_retrieval_panel" immediate default false],
+    }
+    normalize settings {
+        // Normalization: a non-empty single-model override replaces the models of
+        // research, planner, builder, reviewer, discovery and learning extraction.
+        if let Some(model) = settings.model.clone() {
+            settings.research_model = model.clone();
+            settings.planner_model = model.clone();
+            settings.builder_model = model.clone();
+            settings.reviewer_model = model.clone();
+            settings.discovery_model = model.clone();
+            settings.learning_extraction_model = model;
         }
     }
-    layer
 }
 
 impl Fields<'_> {
@@ -634,115 +1175,128 @@ fn default_stages() -> Vec<Stage> {
     .collect()
 }
 
-/// Turns the merged raw layer into the final settings: hardcoded defaults for unset
-/// fields, then the single-model override
-///.
-pub(crate) fn materialize(layer: DaemonLayer) -> DaemonSettings {
-    let reviewer_provider = layer.reviewer_provider;
-    let mut settings = DaemonSettings {
-        provider: layer.provider.unwrap_or_default(),
-        model: layer.model,
-        research_model: layer.research_model.unwrap_or_else(|| "sonnet".into()),
-        planner_model: layer.planner_model.unwrap_or_else(|| "opus".into()),
-        builder_model: layer.builder_model.unwrap_or_else(|| "opus".into()),
-        reviewer_model: layer.reviewer_model.unwrap_or_else(|| "sonnet".into()),
-        discovery_model: layer.discovery_model.unwrap_or_else(|| "opus".into()),
-        learning_extraction_model: layer
-            .learning_extraction_model
-            .unwrap_or_else(|| "sonnet".into()),
-        research_provider: layer.research_provider.unwrap_or_default(),
-        planner_provider: layer.planner_provider.unwrap_or_default(),
-        builder_provider: layer.builder_provider.unwrap_or_default(),
-        reviewer_provider: reviewer_provider.unwrap_or_default(),
-        discovery_provider: layer.discovery_provider.unwrap_or_default(),
-        learning_extraction_provider: layer.learning_extraction_provider.unwrap_or_default(),
-        local_model: layer.local_model,
-        model_catalog_refresh_secs: layer.model_catalog_refresh_secs.unwrap_or(86400),
-        catalog_url_overrides: layer.catalog_url_overrides.unwrap_or_default(),
-        stage_overrides: layer.stage_overrides.unwrap_or_default(),
-        run_mode: layer.run_mode.unwrap_or_default(),
-        stages: layer
-            .stages
-            .map(|stages| {
-                stages
-                    .into_iter()
-                    .map(|stage| Stage {
-                        label: stage.label.unwrap_or_else(|| stage.id.clone()),
-                        enabled: stage.enabled.unwrap_or(true),
-                        prompt: stage.prompt,
-                        id: stage.id,
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(default_stages),
-        skip_planner_for_simple: layer.skip_planner_for_simple.unwrap_or(true),
-        skip_research_for_simple: layer.skip_research_for_simple.unwrap_or(true),
-        skip_review_for_simple: layer.skip_review_for_simple.unwrap_or(true),
-        review_confidence_threshold: layer.review_confidence_threshold.unwrap_or(5),
-        batch_review: layer.batch_review.unwrap_or(true),
-        planner_lookahead: layer.planner_lookahead.unwrap_or(true),
-        plan_revision_cycles: layer.plan_revision_cycles.unwrap_or(0),
-        plan_revision_accept_policy: layer.plan_revision_accept_policy.unwrap_or_default(),
-        review_in_loop: layer.review_in_loop.unwrap_or(true),
-        review_multipass_threshold: layer.review_multipass_threshold.unwrap_or(8),
-        confidence_threshold: layer.confidence_threshold.unwrap_or(0.5),
-        semgrep_enabled: layer.semgrep_enabled.unwrap_or(false),
-        semgrep_rulesets: layer.semgrep_rulesets.unwrap_or_default(),
-        build_command: layer.build_command,
-        planning_iterations: layer.planning_iterations.unwrap_or(0),
-        require_human_approval: layer.require_human_approval.unwrap_or(false),
-        auto_push_remote: layer.auto_push_remote,
-        on_task_complete_hook: layer.on_task_complete_hook,
-        discovery_cooldown_secs: layer
-            .discovery_cooldown_secs
-            .unwrap_or(super::DEFAULT_DISCOVERY_COOLDOWN_SECS),
-        discovery_cooldown_cap_secs: layer
-            .discovery_cooldown_cap_secs
-            .unwrap_or(super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS),
-        plan_enabled: layer.plan_enabled.unwrap_or(true),
-        agent_timeout_secs: layer.agent_timeout_secs.unwrap_or(600),
-        pause_between_tasks_secs: layer.pause_between_tasks_secs.unwrap_or(10),
-        pause_between_agents_secs: layer.pause_between_agents_secs.unwrap_or(3),
-        pause_between_cycles_secs: layer.pause_between_cycles_secs.unwrap_or(30),
-        adaptive_pauses: layer.adaptive_pauses.unwrap_or(true),
-        engine_idle_timeout_secs: layer.engine_idle_timeout_secs.unwrap_or(1800),
-        phase_isolation: layer.phase_isolation.unwrap_or(true),
-        enforce_phase_rbac: layer.enforce_phase_rbac.unwrap_or(true),
-        history_dir: layer.history_dir,
-        max_learning_injection: layer.max_learning_injection.unwrap_or(10),
-        min_learning_injection: layer.min_learning_injection.unwrap_or(2),
-        history_search_results: layer.history_search_results.unwrap_or(5),
-        history_retention_tasks: layer.history_retention_tasks.unwrap_or(50),
-        observatory_retention_days: layer.observatory_retention_days.unwrap_or(30),
-        semantic_match_enabled: layer.semantic_match_enabled.unwrap_or(true),
-        embedding_model: layer
-            .embedding_model
-            .unwrap_or_else(|| "nomic-embed-text".into()),
-        embedding_port: layer.embedding_port.unwrap_or(11434),
-        embedding_timeout_ms: layer.embedding_timeout_ms.unwrap_or(2000),
-        plugins: layer.plugins.unwrap_or_default(),
-        show_retrieval_panel: layer.show_retrieval_panel.unwrap_or(false),
-    };
-    // Normalization: a non-empty single-model override replaces the models of
-    // research, planner, builder, reviewer, discovery and learning extraction.
-    if let Some(model) = settings.model.clone() {
-        settings.research_model = model.clone();
-        settings.planner_model = model.clone();
-        settings.builder_model = model.clone();
-        settings.reviewer_model = model.clone();
-        settings.discovery_model = model.clone();
-        settings.learning_extraction_model = model;
+/// The stage list merges by stage id: a higher entry
+/// overrides only that stage's fields, a stage a file omits keeps the lower definition,
+/// and a stage id a higher layer introduces is appended after the lower list.
+fn merge_stages(
+    lower: Option<Vec<RawStage>>,
+    higher: Option<Vec<RawStage>>,
+) -> Option<Vec<RawStage>> {
+    match (lower, higher) {
+        (None, None) => None,
+        (Some(lower), None) => Some(lower),
+        (lower, Some(higher)) => {
+            let mut merged = lower.unwrap_or_default();
+            for stage in higher {
+                if let Some(existing) = merged.iter_mut().find(|s| s.id == stage.id) {
+                    existing.label = stage.label.or(existing.label.take());
+                    existing.enabled = stage.enabled.or(existing.enabled.take());
+                    existing.prompt = stage.prompt.or(existing.prompt.take());
+                } else {
+                    merged.push(stage);
+                }
+            }
+            Some(merged)
+        }
     }
-    settings
+}
+
+/// A string map merges per key: keys a higher layer omits keep the lower value.
+fn merge_maps(
+    lower: Option<std::collections::BTreeMap<String, String>>,
+    higher: Option<std::collections::BTreeMap<String, String>>,
+) -> Option<std::collections::BTreeMap<String, String>> {
+    match (lower, higher) {
+        (None, None) => None,
+        (Some(lower), None) => Some(lower),
+        (lower, Some(higher)) => {
+            let mut merged = lower.unwrap_or_default();
+            merged.extend(higher);
+            Some(merged)
+        }
+    }
+}
+
+/// The daemon-schema environment overrides: the agent
+/// timeout, under two variable names (the first valid one wins).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DaemonEnv {
+    /// [`PATOK_AGENT_TIMEOUT_SECS`] and its alias [`PATOK_AGENT_TIMEOUT`].
+    pub agent_timeout_secs: [Option<String>; 2],
+}
+
+impl DaemonEnv {
+    pub const AGENT_TIMEOUT_VARS: [&'static str; 2] =
+        ["PATOK_AGENT_TIMEOUT_SECS", "PATOK_AGENT_TIMEOUT"];
+
+    pub fn from_process_env() -> Self {
+        let var = |k: &str| std::env::var(k).ok();
+        Self {
+            agent_timeout_secs: [
+                var(Self::AGENT_TIMEOUT_VARS[0]),
+                var(Self::AGENT_TIMEOUT_VARS[1]),
+            ],
+        }
+    }
+}
+
+/// The result of loading the daemon schema.
+#[derive(Clone, Debug, Default)]
+pub struct DaemonConfig {
+    pub settings: DaemonSettings,
+    /// Skip-and-fallback warnings; the caller logs them.
+    pub warnings: Vec<String>,
+    /// Hard errors that must refuse runs: unrecognized provider values.
+    pub errors: Vec<String>,
+}
+
+/// Loads and merges the daemon schema across the four file layers and the environment.
+/// The project layer lives in `data_dir` (the project's slot of the projects dir); a
+/// legacy project-root config is migrated there first.
+pub fn load_daemon(
+    files: &ConfigFiles,
+    project_dir: &Path,
+    data_dir: &Path,
+    env: &DaemonEnv,
+) -> DaemonConfig {
+    let mut warnings = Vec::new();
+    let mut errors = Vec::new();
+    let mut merged = DaemonLayer::default();
+    migrate_project_file(project_dir, data_dir, &mut warnings);
+    for path in [
+        files.user_global.as_deref(),
+        files.user_local.as_deref(),
+        Some(project_file(data_dir).as_path()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let Some(table) = read_layer_table(path, "daemon", "tui", &mut warnings) else {
+            continue;
+        };
+        let layer = parse_layer(&table, path, &mut warnings, &mut errors);
+        merged = merge(merged, layer);
+    }
+    let mut settings = materialize(merged);
+    apply_env(&mut settings, env, &mut warnings);
+    DaemonConfig {
+        settings,
+        warnings,
+        errors,
+    }
 }
 
 /// The help text for one settings-overlay key of the daemon schema (T85.1):
 /// the description of a setting row, or of a whole overlay section when the
 /// key is a section's group id (`provider_and_model`, `pipeline`,
-/// `timeouts_and_pauses`, `git`). Hardcoded here, on the side that owns the settings it describes;
-/// the shell routes to it by the row's declared schema. `None` for a key that
-/// is not one of the overlay's daemon rows or groups.
+/// `timeouts_and_pauses`, `git`). The per-field texts come from the field table's
+/// `help` entries, the group and read-only ones are hardcoded here, on the side that
+/// owns the settings it describes; the shell routes to it by the row's declared
+/// schema. `None` for a key that is not one of the overlay's daemon rows or groups.
 pub fn daemon_help(key: &str) -> Option<&'static str> {
+    if let Some(help) = field_help(key) {
+        return Some(help);
+    }
     Some(match key {
         "provider_and_model" => {
             "Which CLI provider and model the agent roles run on. A change applies at the next task or agent start; whatever is already running keeps the value it started with."
@@ -756,92 +1310,6 @@ pub fn daemon_help(key: &str) -> Option<&'static str> {
         "git" => "How finished work reaches git.",
         "engine_version" => "The engine's version, as reported by the daemon. Read-only.",
         "shell_version" => "The shell's own version. Read-only.",
-        "provider" => {
-            "The provider every agent role runs on: claude, codex, opencode, ghcopilot or mistral. Any unrecognized value behaves as claude."
-        }
-        "model" => {
-            "Single-model override: when set, it replaces the model of every agent role (research, planner, builder, reviewer, discovery, learning extraction). Meant for subscriptions locked to one model; empty means each role keeps its own model."
-        }
-        "research_provider" => {
-            "The provider the research role runs on. Applies at the next research session start."
-        }
-        "research_model" => {
-            "The model the research role runs on; empty uses the provider's default. Ignored while the single-model override is set."
-        }
-        "planner_provider" => {
-            "The provider the planner role runs on. Applies at the next planner session start."
-        }
-        "planner_model" => {
-            "The model the planner role runs on; empty uses the provider's default. Ignored while the single-model override is set."
-        }
-        "builder_provider" => {
-            "The provider the builder role runs on. Applies at the next builder session start."
-        }
-        "builder_model" => {
-            "The model the builder role runs on; empty uses the provider's default. Ignored while the single-model override is set."
-        }
-        "reviewer_provider" => {
-            "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."
-        }
-        "reviewer_model" => {
-            "The model the reviewer role runs on; empty uses the provider's default. Ignored while the single-model override is set."
-        }
-        "discovery_provider" => {
-            "The provider the discovery role runs on. Applies at the next discovery session start."
-        }
-        "discovery_model" => {
-            "The model the discovery role runs on; empty uses the provider's default. Ignored while the single-model override is set."
-        }
-        "run_mode" => {
-            "sprint (default) or continuous. The running loop keeps the mode it started with; a change applies at the next run."
-        }
-        "plan_enabled" => "Whether a plan session runs before each builder session.",
-        "skip_planner_for_simple" => "Simple tasks go straight to the builder (default on).",
-        "skip_research_for_simple" => "Simple tasks skip the research stage (default on).",
-        "skip_review_for_simple" => {
-            "Simple tasks skip the review stage, only when the builder's verification exited cleanly (default on)."
-        }
-        "review_confidence_threshold" => {
-            "Consecutive review passes needed before learned confidence may skip the review for matching task shapes (simple and medium tasks only); 0 disables. Default 5."
-        }
-        "review_multipass_threshold" => {
-            "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 8."
-        }
-        "batch_review" => {
-            "Skip the review for all but the last task in each contiguous run of same-numbered task IDs; that task's review covers every commit in the run (default on)."
-        }
-        "planner_lookahead" => {
-            "Plan task N+1 while task N builds; the plan is reused when that task comes up (default on)."
-        }
-        "review_in_loop" => {
-            "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)."
-        }
-        "confidence_threshold" => {
-            "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5."
-        }
-        "agent_timeout_secs" => {
-            "How long one agent invocation may idle, in seconds, before it is stopped; the hard timeout is four times this. Default 600."
-        }
-        "pause_between_tasks_secs" => "Pause between two tasks, in seconds. Default 10.",
-        "pause_between_agents_secs" => {
-            "Pause between two agent invocations, in seconds. Default 3."
-        }
-        "pause_between_cycles_secs" => "Pause between build cycles, in seconds. Default 30.",
-        "engine_idle_timeout_secs" => {
-            "When no shell is attached and the engine has been idle this long, it shuts itself down. Default 1800 (30 minutes)."
-        }
-        "adaptive_pauses" => {
-            "Shorten the pauses to about 500 ms when the last agent was not rate limited (default on)."
-        }
-        "discovery_cooldown_secs" => {
-            "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)."
-        }
-        "discovery_cooldown_cap_secs" => {
-            "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)."
-        }
-        "auto_push_remote" => {
-            "Push to this remote after each successful commit; empty means local commits only."
-        }
         _ => return None,
     })
 }
@@ -875,6 +1343,7 @@ pub(crate) fn apply_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{SettingValue, set_daemon_field};
 
     /// The daemon schema loaded from a project-local config file holding `text`,
     /// written into the project's slot of the projects dir.
@@ -1017,5 +1486,190 @@ mod tests {
         // the other schema.
         assert_eq!(daemon_help("plan_revision_cycles"), None);
         assert_eq!(daemon_help("theme"), None);
+    }
+
+    /// The per-field sample a round trip writes and reads back: valid for the field's
+    /// kind, and different from both the field's default readout and the lower
+    /// layer's value.
+    fn sample_value(kind: &FieldKind, default: &SettingValue) -> SettingValue {
+        match kind {
+            FieldKind::Bool => SettingValue::Bool(!default.as_bool().expect("a boolean default")),
+            FieldKind::Uint | FieldKind::PositiveUint | FieldKind::Port | FieldKind::Range(..) => {
+                SettingValue::Uint(default.as_uint().expect("a whole-number default") + 1)
+            }
+            FieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) * 3.0 / 4.0),
+            FieldKind::Str | FieldKind::OptStr => SettingValue::Str("round-trip-sample".into()),
+            FieldKind::Enum(accepted) => SettingValue::Str(accepted[accepted.len() - 1].into()),
+            FieldKind::Provider => SettingValue::Str("codex".into()),
+            FieldKind::Composite => unreachable!("composite keys are not registry fields"),
+        }
+    }
+
+    /// The lower layer's value for the same field: valid for the kind, different from
+    /// the sample.
+    fn lower_value(kind: &FieldKind, default: &SettingValue) -> SettingValue {
+        match kind {
+            FieldKind::Bool
+            | FieldKind::Uint
+            | FieldKind::PositiveUint
+            | FieldKind::Port
+            | FieldKind::Range(..) => default.clone(),
+            FieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) / 4.0),
+            FieldKind::Str | FieldKind::OptStr => SettingValue::Str("round-trip-lower".into()),
+            FieldKind::Enum(accepted) => SettingValue::Str(accepted[0].into()),
+            FieldKind::Provider => SettingValue::Str("claude".into()),
+            FieldKind::Composite => unreachable!("composite keys are not registry fields"),
+        }
+    }
+
+    /// The TOML spelling of a submitted value, as the right-hand side of a config line.
+    fn toml_value(value: &SettingValue) -> String {
+        match value {
+            SettingValue::Bool(b) => format!("{b}"),
+            SettingValue::Uint(u) => format!("{u}"),
+            SettingValue::Float(f) => format!("{f}"),
+            SettingValue::Str(s) => format!("{s:?}"),
+            SettingValue::Unset => String::new(),
+        }
+    }
+
+    #[test]
+    fn every_daemon_field_parses_merges_and_persists_round_trip() {
+        let defaults = DaemonSettings::default();
+        for field in DAEMON_FIELDS {
+            let kind = daemon_field(field).expect("every registry key has a kind");
+            let default =
+                daemon_field_value(&defaults, field).expect("every registry key has a value");
+            let sample = sample_value(&kind, &default);
+            assert_ne!(
+                sample, default,
+                "{field}: the sample must differ from the default"
+            );
+
+            // Persist: writing the sample through the settings-change flow and
+            // reloading the file reports the sample back.
+            let project = tempfile::tempdir().unwrap();
+            let data = tempfile::tempdir().unwrap();
+            let mut warnings = Vec::new();
+            set_daemon_field(data.path(), field, sample.clone(), &mut warnings).unwrap();
+            assert!(warnings.is_empty(), "{field}: {warnings:?}");
+            let loaded = load_daemon(
+                &ConfigFiles {
+                    user_global: None,
+                    user_local: None,
+                },
+                project.path(),
+                data.path(),
+                &DaemonEnv::default(),
+            );
+            assert!(loaded.warnings.is_empty(), "{field}: {:?}", loaded.warnings);
+            assert!(loaded.errors.is_empty(), "{field}: {:?}", loaded.errors);
+            assert_eq!(
+                daemon_field_value(&loaded.settings, field),
+                Some(sample.clone()),
+                "{field}: the persisted sample round-trips"
+            );
+
+            // Merge: the user-local layer wins over the user-global one, and the
+            // lower layer alone still carries its value.
+            let user = tempfile::tempdir().unwrap();
+            let lower = lower_value(&kind, &default);
+            std::fs::write(
+                user.path().join("config.toml"),
+                format!("[daemon]\n{field} = {}\n", toml_value(&lower)),
+            )
+            .unwrap();
+            std::fs::write(
+                user.path().join("config.local.toml"),
+                format!("[daemon]\n{field} = {}\n", toml_value(&sample)),
+            )
+            .unwrap();
+            let files = ConfigFiles {
+                user_global: Some(user.path().join("config.toml")),
+                user_local: Some(user.path().join("config.local.toml")),
+            };
+            let loaded = load_daemon(
+                &files,
+                project.path(),
+                tempfile::tempdir().unwrap().path(),
+                &DaemonEnv::default(),
+            );
+            assert!(loaded.warnings.is_empty(), "{field}: {:?}", loaded.warnings);
+            assert!(loaded.errors.is_empty(), "{field}: {:?}", loaded.errors);
+            assert_eq!(
+                daemon_field_value(&loaded.settings, field),
+                Some(sample),
+                "{field}: the higher layer wins"
+            );
+            let files = ConfigFiles {
+                user_local: None,
+                ..files
+            };
+            let loaded = load_daemon(
+                &files,
+                project.path(),
+                tempfile::tempdir().unwrap().path(),
+                &DaemonEnv::default(),
+            );
+            assert_eq!(
+                daemon_field_value(&loaded.settings, field),
+                Some(lower),
+                "{field}: the lower layer survives alone"
+            );
+        }
+    }
+
+    /// The confidence-threshold range is enforced on the write path exactly like on
+    /// the parse path, both reading the same bounds from the field table: the two
+    /// messages name the same constraint.
+    #[test]
+    fn the_confidence_threshold_range_is_enforced_identically_on_both_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut warnings = Vec::new();
+        for rejected in [1.5, -0.5] {
+            let error = set_daemon_field(
+                dir.path(),
+                "confidence_threshold",
+                SettingValue::Float(rejected),
+                &mut warnings,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.message,
+                format!(
+                    "daemon.confidence_threshold must be a number between 0 and 1, got {rejected}"
+                )
+            );
+            assert!(
+                !dir.path().join("patok.config.toml").exists(),
+                "the rejected value must not be written"
+            );
+        }
+        // The inclusive bounds stay writable on the write path.
+        for accepted in [0.0, 1.0] {
+            set_daemon_field(
+                dir.path(),
+                "confidence_threshold",
+                SettingValue::Float(accepted),
+                &mut warnings,
+            )
+            .unwrap();
+        }
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // The parse path warns with the same constraint wording and falls back to
+        // the default.
+        let loaded = load_project("[daemon]\nconfidence_threshold = 1.5\n");
+        let shared = "daemon.confidence_threshold must be a number between 0 and 1";
+        let warning = loaded
+            .warnings
+            .iter()
+            .find(|w| w.contains(shared))
+            .expect("a range warning on the parse path");
+        assert!(
+            warning.contains(&format!("{shared}, got 1.5; using the default")),
+            "{warning}"
+        );
+        assert_eq!(loaded.settings.confidence_threshold, 0.5);
     }
 }
