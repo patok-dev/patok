@@ -25,4 +25,4 @@ expression: "draw(&app, 80, 24)"
       │                                                                        │
       │                                                                        │
       └────────────────────────────────────────────────────────────────────────┘
- DISCOVERING  sprint                                                    m  menu
+ DISCOVERING  sprint                                                 [ m ] menu

@@ -25,4 +25,4 @@ expression: screen
             │                                                                  │
             │ a add tasks · i inject task · Enter start · ↑↓ scroll            │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                          Enter  start  m  menu
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu

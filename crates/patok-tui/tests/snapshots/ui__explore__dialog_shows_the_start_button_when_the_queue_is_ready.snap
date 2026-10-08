@@ -25,4 +25,4 @@ expression: screen
     │ ↑↓←→ move · Shift-Enter new line ·    [ Enter ] Start  [ Esc ] Close │   │
     └──────────────────────────────────────────────────────────────────────┘   │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                          Enter  start  m  menu
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu

@@ -17,4 +17,4 @@ expression: "draw(&app, 60, 16)"
             │                                              │
             │                                              │
             └──────────────────────────────────────────────┘
- RUNNING  sprint                         Esc  stop  m  menu
+ RUNNING  sprint                   [ Esc ] stop  [ m ] menu

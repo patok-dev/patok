@@ -1558,16 +1558,16 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
 /// The merged status line (T86.1): one bottom row holding the old header's
 /// chips on the left -- the status chip, then the run-mode chip when the two
 /// fit -- and the status content on the right: a transient message, else the
-/// key-hint chips, right-aligned. Hint chips drop as whole chip+label pairs
-/// from the tail when they do not fit; a message is never dropped -- it
-/// truncates at the line's right edge like a bare status bar message. The
-/// secondary hints (settings, theme, detach, quit) live behind the m menu,
-/// so the zone carries the idle Enter hint, the running Esc stop hint
-/// (T134.1) and the m menu chip. All three are interactive (T133.1,
-/// T134.1): each wears the modal buttons' accent colour so it reads as a
-/// button, and each records its rect on [`App::menu_chip`],
-/// [`App::enter_chip`] or [`App::stop_chip`] for the mouse hit-test -- a
-/// left click on one runs its key's action.
+/// key-hint buttons, right-aligned. Hint buttons drop as whole buttons from
+/// the tail when they do not fit; a message is never dropped -- it truncates
+/// at the line's right edge like a bare status bar message. The secondary
+/// hints (settings, theme, detach, quit) live behind the m menu, so the zone
+/// carries the idle Enter button, the running Esc stop button (T134.1) and
+/// the m menu button. All three are interactive (T133.1, T134.1): each renders
+/// through the shared [`button_line`] so it reads as a modal button, and each
+/// records a rect covering its full [`button_text`] width on
+/// [`App::menu_chip`], [`App::enter_chip`] or [`App::stop_chip`] for the mouse
+/// hit-test -- a left click anywhere on the button runs its key's action.
 fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     let width = usize::from(area.width);
     let theme = app.theme();
@@ -1644,19 +1644,20 @@ fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
             if app.phase == Phase::Running && !app.stopping {
                 keys.push(("Esc", "stop"));
             }
-            // The m menu chip: the settings, theme, detach and quit hints
-            // live behind the menu modal, so the bar keeps one chip for all
-            // of them.
+            // The m menu button: the settings, theme, detach and quit hints
+            // live behind the menu modal, so the bar keeps one button for
+            // all of them.
             keys.push(("m", "menu"));
-            // A pair drops as a whole from the tail when it does not fit the
-            // zone left of the chips, so no half-cut chip ever shows; the kept
-            // prefix is right-aligned. The chips' own padding separates them
-            // from the mode chip, so no extra gap column is added.
+            // A button drops as a whole from the tail when it does not fit
+            // the zone left of the chips, so no half-cut button ever shows;
+            // the kept prefix is right-aligned. The buttons' own padding
+            // separates them from the mode chip, so no extra gap column is
+            // added.
             let zone = width.saturating_sub(left_width);
             let mut kept: Vec<(&str, &str)> = Vec::new();
             let mut used = 0;
             for (key, label) in keys {
-                let pair = key.chars().count() + label.chars().count() + 4;
+                let pair = button_text(key, label).chars().count();
                 if used + pair > zone {
                     break;
                 }
@@ -1664,44 +1665,34 @@ fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
                 kept.push((key, label));
             }
             let mut right = vec![Span::raw(" ".repeat(zone.saturating_sub(used)))];
-            // The running column of the hint zone: the pad ends where the
-            // first kept pair starts, and each span advances it by its own
-            // character count, so every interactive chip's rect is the
-            // exact columns its key span occupies.
+            // The hint zone's running column: the pad ends where the first
+            // kept button starts, and each button advances it by its own
+            // character count, so every interactive chip's rect is the exact
+            // columns its full button text occupies.
             let mut column = left_width + zone.saturating_sub(used);
             for (key, label) in kept {
-                let key_span = format!(" {key} ");
-                // The interactive chips (T133.1, T134.1) -- the m menu chip,
-                // the idle Enter chip and the running Esc stop chip --
-                // record their rect for the mouse hit-test and wear the
-                // modal buttons' accent, so each reads as a button; any other
-                // key chip keeps the plain chip look.
-                let key_style = match key {
-                    "m" | "Enter" | "Esc" => {
-                        let key_width = key_span.chars().count();
-                        let rect = Rect::new(
-                            area.x + u16::try_from(column).unwrap_or(0),
-                            area.y,
-                            u16::try_from(key_width).unwrap_or(0),
-                            1,
-                        );
-                        match key {
-                            "m" => app.menu_chip.set(rect),
-                            "Enter" => app.enter_chip.set(rect),
-                            _ => app.stop_chip.set(rect),
-                        }
-                        Style::new().fg(theme.highlighted_text)
-                    }
-                    _ => Style::new()
-                        .bold()
-                        .fg(theme.contrast_text)
-                        .bg(theme.chip_neutral),
-                };
-                right.push(Span::styled(key_span, key_style));
-                column += key.chars().count() + 2;
-                let label_span = format!(" {label} ");
-                right.push(Span::styled(label_span, Style::new().fg(theme.muted_text)));
-                column += label.chars().count() + 2;
+                // The interactive chips (T133.1, T134.1, T141.1) -- the m menu
+                // button, the idle Enter button and the running Esc stop
+                // button -- render through the shared [`button_line`] so each
+                // reads as the modal button it is, and record a rect covering
+                // the full [`button_text`] width -- key, brackets and label
+                // together, the same width [`footer_button_rects`] uses --
+                // so a left click anywhere on the button runs its key's
+                // action.
+                let width = u16::try_from(button_text(key, label).chars().count()).unwrap_or(0);
+                let rect = Rect::new(
+                    area.x + u16::try_from(column).unwrap_or(0),
+                    area.y,
+                    width,
+                    1,
+                );
+                match key {
+                    "m" => app.menu_chip.set(rect),
+                    "Enter" => app.enter_chip.set(rect),
+                    _ => app.stop_chip.set(rect),
+                }
+                right.extend(button_line(key, label, theme).spans);
+                column += usize::from(width);
             }
             right
         }
@@ -1715,7 +1706,7 @@ mod tests {
     use super::*;
     use crate::overlay::Editor;
     use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
-    use patok_core::event::{Phase, Snapshot};
+    use patok_core::event::{EngineEvent, Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
     use patok_core::task::Task;
     use ratatui::Terminal;
@@ -1870,37 +1861,45 @@ mod tests {
         }
     }
 
-    /// The status bar's interactive chips wear the button accent on every
-    /// built-in theme (T133.1, T134.1): the m menu chip and the idle Enter
-    /// chip both carry the highlighted-text foreground, no background, no
-    /// bold -- the same key-marker style as the modal buttons -- so each
-    /// reads as the button it is.
+    /// The status bar's interactive chips render exactly as modal buttons on
+    /// every built-in theme (T133.1, T134.1, T141.1): the idle Enter button
+    /// and the m menu button -- and the running Esc stop button -- spell the
+    /// shared [`button_text`] form, with the brackets and the key in the
+    /// button accent and the label in the regular foreground, no background,
+    /// no bold -- the shared [`button_line`] look.
     #[test]
-    fn the_interactive_chips_wear_the_button_accent_on_every_theme() {
-        for key in every_key() {
-            let theme = Theme::resolve(key, Some(true));
-            let mut app = app_with_one_task();
-            app.tui.theme = key;
-            app.tui.truecolor = Some(true);
+    fn the_interactive_chips_render_as_modal_buttons_on_every_theme() {
+        // Draws the app's status row and checks one button: the row carries
+        // its exact [`button_text`], every cell of the bracketed key span
+        // wears the button accent, every cell of the label span the regular
+        // foreground, none with a chip background or bold.
+        fn assert_button(theme: Theme, key: ThemeKey, app: &App, key_name: &str, label: &str) {
+            let button = button_text(key_name, label);
             let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
-            status_widget(&app, buffer.area).render(buffer.area, &mut buffer);
+            status_widget(app, buffer.area).render(buffer.area, &mut buffer);
             let row: String = (0..100).map(|x| buffer[(x, 0)].symbol()).collect();
+            assert!(row.contains(&button), "the {button:?} button on {key:?}");
             // A byte index would mis-column on multibyte symbols, so the
             // match's column is the character count before it.
-            for chip in [" Enter ", " m "] {
+            let key_span = format!(" [ {key_name} ] ");
+            let label_span = format!("{label} ");
+            for (name, span, expected) in [
+                ("key", key_span, theme.highlighted_text),
+                ("label", label_span, theme.normal_text),
+            ] {
                 let x = row
-                    .find(chip)
+                    .find(&span)
                     .map(|at| row[..at].chars().count())
-                    .unwrap_or_else(|| panic!("the {chip:?} chip on {key:?}"))
+                    .unwrap_or_else(|| panic!("the {span:?} {name} on {key:?}"))
                     as u16;
-                for column in x..x + chip.chars().count() as u16 {
+                for column in x..x + span.chars().count() as u16 {
                     let style = buffer[(column, 0)].style();
                     assert_eq!(
                         style.fg,
-                        Some(theme.highlighted_text),
-                        "cell ({column}, 0) on {key:?}"
+                        Some(expected),
+                        "the {span:?} {name} cell ({column}, 0) on {key:?}"
                     );
-                    // The chip look is gone: no chip background, no bold -- the
+                    // The button look: no chip background, no bold -- the
                     // bare buffer's cells carry Reset backgrounds.
                     assert_ne!(
                         style.bg,
@@ -1913,6 +1912,22 @@ mod tests {
                     );
                 }
             }
+        }
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            // Idle: the Enter `start` button and the m `menu` button.
+            assert_eq!(app.phase, Phase::Startup);
+            assert_button(theme, key, &app, "Enter", "start");
+            assert_button(theme, key, &app, "m", "menu");
+            // Running: the Esc `stop` button joins them.
+            app.apply(EngineEvent::PhaseChanged {
+                phase: Phase::Running,
+            });
+            assert_button(theme, key, &app, "Esc", "stop");
+            assert_button(theme, key, &app, "m", "menu");
         }
     }
 

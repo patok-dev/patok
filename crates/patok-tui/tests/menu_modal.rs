@@ -345,15 +345,14 @@ fn the_stop_build_entry_is_running_only() {
 /// unchanged.
 #[test]
 fn the_status_bar_keeps_the_enter_and_menu_hints() {
-    // Idle: the Enter hint and the menu chip, none of the chips the menu
+    // Idle: the Enter button and the menu button, none of the chips the menu
     // replaced.
     let idle = app();
     let screen = draw(&idle, 80, 14);
     let strip = screen.lines().last().unwrap();
-    assert!(strip.contains(" Enter "), "{strip}");
-    assert!(strip.contains(" start "), "{strip}");
-    assert!(strip.contains(" m "), "{strip}");
-    assert!(strip.trim_end().ends_with(" menu"), "{strip}");
+    assert!(strip.contains(" [ Enter ] start "), "{strip}");
+    assert!(strip.contains(" [ m ] menu"), "{strip}");
+    assert!(strip.trim_end().ends_with(" [ m ] menu"), "{strip}");
     for gone in [
         " settings ",
         " theme ",
@@ -365,17 +364,16 @@ fn the_status_bar_keeps_the_enter_and_menu_hints() {
         assert!(!strip.contains(gone), "{strip}");
     }
 
-    // Running: the Enter hint leaves, the Esc stop chip (T134.1) joins and
-    // the menu chip stays.
+    // Running: the Enter button leaves, the Esc stop button (T134.1) joins
+    // and the menu button stays.
     let running = running_app();
     let screen = draw(&running, 80, 14);
     let strip = screen.lines().last().unwrap();
-    assert!(!strip.contains(" Enter "), "{strip}");
+    assert!(!strip.contains("Enter"), "{strip}");
     assert!(!strip.contains(" stop build "), "{strip}");
-    assert!(strip.contains(" Esc "), "{strip}");
-    assert!(strip.contains(" stop "), "{strip}");
-    assert!(strip.contains(" m "), "{strip}");
-    assert!(strip.trim_end().ends_with(" menu"), "{strip}");
+    assert!(strip.contains(" [ Esc ] stop "), "{strip}");
+    assert!(strip.contains(" [ m ] menu"), "{strip}");
+    assert!(strip.trim_end().ends_with(" [ m ] menu"), "{strip}");
 
     // The direct bindings still work: `?` opens the overlay, `t` the theme
     // picker, `d` detaches and `q` soft-stops a running build.
@@ -454,20 +452,21 @@ fn the_menu_handles_its_own_mouse_events() {
     assert!(app.settings_open());
 }
 
-/// The status bar's m menu chip is a real button (T133.1): a left click
-/// inside its rect opens the menu with the m key's open path, the same click
+/// The status bar's m menu chip is a real button (T133.1, T141.1): a left
+/// click anywhere inside its rect -- which covers the full ` [ m ] menu `
+/// button text -- opens the menu with the m key's open path, the same click
 /// while the menu is open closes it, Esc still closes it, and clicks outside
-/// the rect -- the status row left of the strip and the first ` menu ` label
-/// column -- leave the menu closed.
+/// the rect -- the status row left of the strip and the column past the
+/// strip's right edge -- leave the menu closed.
 #[test]
 fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
     // Idle with one pending task, so the strip is
-    // " STOPPED  sprint  Enter  start  m  menu" on the 80-column row: the
-    // m key chip is the three columns at x = 71.
+    // " STOPPED  sprint  [ Enter ] start  [ m ] menu" on the 80-column row:
+    // the m button is the twelve columns at x = 68.
     let mut app = app();
     draw(&app, 80, 14);
     let chip = app.menu_chip.get();
-    assert_eq!(chip, ratatui::layout::Rect::new(71, 13, 3, 1));
+    assert_eq!(chip, ratatui::layout::Rect::new(68, 13, 12, 1));
 
     // A click inside the chip opens the menu, the m key's action verbatim.
     assert_eq!(
@@ -510,8 +509,8 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
     assert!(!app.menu_open);
 
     // Clicks outside the chip rect do not open the menu: the status row left
-    // of the strip, and the first ` menu ` label column -- the rect's right
-    // boundary, so the exact chip width is pinned.
+    // of the strip, and the column past the rect's right edge -- the strip's
+    // last column, so the exact chip width is pinned.
     draw(&app, 80, 14);
     for (column, row) in [(0, 13), (chip.x + chip.width, chip.y)] {
         assert_eq!(

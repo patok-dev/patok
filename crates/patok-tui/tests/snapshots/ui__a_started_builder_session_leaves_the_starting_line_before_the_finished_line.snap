@@ -25,4 +25,4 @@ expression: screen
             │                                                                  │
             │                                                                  │
             └──────────────────────────────────────────────────────────────────┘
- RUNNING  sprint                                             Esc  stop  m  menu
+ RUNNING  sprint                                       [ Esc ] stop  [ m ] menu

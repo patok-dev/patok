@@ -246,12 +246,17 @@ fn narrow_terminal_wraps_output() {
 fn header_shows_only_the_status_chip_and_run_mode() {
     let mut app = app();
     let idle = draw(&app, 80, 14);
-    // The merged status line (T86.1): the chips on the left, the key hints
-    // right-aligned behind them. At 80 columns the idle line fits whole; the
-    // shorter strip the m menu leaves (T128.1) right-aligns its two pairs.
+    // The merged status line (T86.1): the chips on the left, the hint
+    // buttons right-aligned behind them. At 80 columns the idle line fits
+    // whole; the shorter strip the m menu leaves (T128.1) right-aligns its
+    // two buttons, rendered through the shared modal button formatting
+    // (T141.1).
     assert_eq!(
         idle.lines().last().unwrap(),
-        format!(" STOPPED  sprint {}Enter  start  m  menu", " ".repeat(41))
+        format!(
+            " STOPPED  sprint {} [ Enter ] start  [ m ] menu",
+            " ".repeat(34)
+        )
     );
     assert!(!idle.contains("Waiting..."));
     // The body starts on the frame's first row (the header row is gone,
@@ -514,23 +519,47 @@ fn narrow_header_drops_the_run_mode_chip() {
     let screen = draw(&app(), 12, 10);
     assert_eq!(screen.lines().last().unwrap(), " STOPPED");
     insta::assert_snapshot!(screen);
-    // 60 columns keep both chips and every hint pair: the secondary hints
-    // moved behind the m menu (T128.1), so the two pairs that remain -- the
-    // idle Enter hint and the menu chip -- fit whole, right-aligned.
+    // 60 columns keep both chips and every hint button: the secondary hints
+    // moved behind the m menu (T128.1), so the two buttons that remain -- the
+    // idle Enter button and the menu button -- fit whole, right-aligned.
     let screen = draw(&app(), 60, 12);
     let status = screen.lines().last().unwrap();
     assert_eq!(
         status,
-        format!(" STOPPED  sprint {}Enter  start  m  menu", " ".repeat(21))
+        format!(
+            " STOPPED  sprint {} [ Enter ] start  [ m ] menu",
+            " ".repeat(14)
+        )
     );
     assert!(!status.contains(" detach"), "{status}");
     assert!(!status.contains(" quit"), "{status}");
-    // 40 columns fit both remaining pairs whole: the shorter Enter hint
-    // (T129.1) lets the menu pair join the line, right-aligned.
+    // 45 columns fit only the Enter button whole: the m button drops whole
+    // from the tail (T141.1), no half-cut ` [ m` fragment stays behind and
+    // the menu chip's rect goes zero.
+    let narrow_app = app();
+    let mut terminal = Terminal::new(TestBackend::new(45, 12)).unwrap();
+    terminal.draw(|frame| render(frame, &narrow_app)).unwrap();
+    let status: String = (0..45)
+        .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    assert_eq!(
+        status,
+        format!(" STOPPED  sprint {} [ Enter ] start", " ".repeat(11))
+    );
+    assert!(!status.contains(" [ m"), "{status}");
+    assert_eq!(narrow_app.menu_chip.get(), ratatui::layout::Rect::default());
+    // 46 columns fit both buttons whole -- exactly, with no pad between the
+    // mode chip and the Enter button.
+    let screen = draw(&app(), 46, 12);
+    let status = screen.lines().last().unwrap();
+    assert_eq!(status, " STOPPED  sprint  [ Enter ] start  [ m ] menu");
+    // 40 columns still fit only the Enter button (the labels are never cut).
     let screen = draw(&app(), 40, 12);
     assert_eq!(
         screen.lines().last().unwrap(),
-        " STOPPED  sprint  Enter  start  m  menu"
+        format!(" STOPPED  sprint {} [ Enter ] start", " ".repeat(6))
     );
 }
 
@@ -1626,7 +1655,7 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     let idle = app();
     assert_eq!(
         strip(&idle),
-        merged(" STOPPED  sprint ", " Enter  start  m  menu")
+        merged(" STOPPED  sprint ", " [ Enter ] start  [ m ] menu")
     );
 
     let mut running = app();
@@ -1635,7 +1664,7 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     });
     assert_eq!(
         strip(&running),
-        merged(" RUNNING  sprint ", " Esc  stop  m  menu")
+        merged(" RUNNING  sprint ", " [ Esc ] stop  [ m ] menu")
     );
 
     let mut planning = app();
@@ -1645,13 +1674,16 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     });
     planning.apply(EngineEvent::PlanningChanged { planning: true });
     assert_eq!(planning.status, None);
-    assert_eq!(strip(&planning), merged(" PLANNING  sprint ", " m  menu"));
+    assert_eq!(
+        strip(&planning),
+        merged(" PLANNING  sprint ", " [ m ] menu")
+    );
 
     let mut discovering = app();
     discovering.apply(EngineEvent::DiscoveryChanged { discovering: true });
     assert_eq!(
         strip(&discovering),
-        merged(" DISCOVERING  sprint ", " m  menu")
+        merged(" DISCOVERING  sprint ", " [ m ] menu")
     );
 
     // The add-tasks, Tab and scroll chips are gone from the status line
@@ -1676,9 +1708,10 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     assert!(narrow.ends_with("menu"), "{narrow}");
     assert!(!narrow.contains(" s "), "{narrow}");
 
-    // The interactive chips (T133.1, T134.1): the Enter and m key spans both
-    // wear the modal buttons' accent so they read as buttons and recolour
-    // with the active theme, while the labels stay muted detail.
+    // The interactive chips (T133.1, T134.1, T141.1) render through the
+    // shared modal button formatting: the brackets and the key of each
+    // button wear the modal buttons' accent so they recolour with the active
+    // theme, while each label wears the buttons' regular foreground.
     let theme = patok_tui::Theme::DARK;
     let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
     terminal.draw(|frame| render(frame, &idle)).unwrap();
@@ -1692,37 +1725,41 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
             .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
             .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
     };
-    let enter = column(&[" ", "E", "n", "t", "e", "r", " "]);
-    let menu_key = column(&[" ", "m", " "]);
-    for (name, x) in [("Enter", enter), ("m", menu_key)] {
-        let style = buffer[(x as u16, row)].style();
-        assert_eq!(style.fg, Some(theme.highlighted_text), "the {name} accent");
-        assert_eq!(style.bg, Some(theme.background), "the {name} background");
-        assert!(
-            !style.add_modifier.contains(Modifier::BOLD),
-            "the {name} key stays unbold"
-        );
+    let enter = column(&[" ", "[", " ", "E", "n", "t", "e", "r", " ", "]", " "]);
+    let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+    for (name, x, width) in [("Enter", enter as u16, 11u16), ("m", menu_key as u16, 7)] {
+        for offset in 0..width {
+            let style = buffer[(x + offset, row)].style();
+            assert_eq!(style.fg, Some(theme.highlighted_text), "the {name} accent");
+            assert_eq!(style.bg, Some(theme.background), "the {name} background");
+            assert!(
+                !style.add_modifier.contains(Modifier::BOLD),
+                "the {name} key stays unbold"
+            );
+        }
     }
-    for offset in 0..6u16 {
-        assert_eq!(
-            buffer[(menu_key as u16 + 3 + offset, row)].style(),
-            buffer[(enter as u16 + 7 + offset, row)].style(),
-            "the menu label must wear the Enter label's colours"
-        );
+    for (name, x, width) in [
+        ("start label", enter as u16 + 11, 6u16),
+        ("menu label", menu_key as u16 + 7, 5),
+    ] {
+        for offset in 0..width {
+            assert_eq!(
+                buffer[(x + offset, row)].style().fg,
+                Some(theme.normal_text),
+                "the {name} colour"
+            );
+        }
     }
-    assert_eq!(
-        buffer[(menu_key as u16 + 3, row)].style().fg,
-        Some(theme.muted_text)
-    );
     // The menu label is the strip's last content.
-    assert_eq!(symbols[menu_key + 3..menu_key + 9].concat(), " menu ");
+    assert_eq!(symbols[menu_key + 7..menu_key + 12].concat(), "menu ");
 }
 
-/// The status bar's interactive chips are buttons (T133.1, T134.1): in both
-/// the default and a palette theme the idle Enter chip and the running Esc
-/// stop chip join the m menu chip in wearing the modal button accent --
-/// the accent foreground, no chip background, no bold -- while every label
-/// keeps the muted status colour. No other status-bar cell does.
+/// The status bar's interactive chips are modal buttons (T133.1, T134.1,
+/// T141.1): in both the default and a palette theme the idle Enter chip and
+/// the running Esc stop chip join the m menu chip in rendering through the
+/// shared button formatting -- the brackets and the key in the button
+/// accent, the label after them in the buttons' regular foreground, no chip
+/// background, no bold. No other status-bar cell does.
 #[test]
 fn only_the_interactive_chips_wear_the_button_accent() {
     use patok_core::config::Theme as ThemeKey;
@@ -1733,7 +1770,7 @@ fn only_the_interactive_chips_wear_the_button_accent() {
         let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
         let row: u16 = 13;
 
-        // The idle strip: the Enter and m key spans are the buttons.
+        // The idle strip: the Enter and m buttons are the buttons.
         let mut idle = app();
         idle.tui.theme = theme_key;
         idle.tui.truecolor = Some(true);
@@ -1746,48 +1783,43 @@ fn only_the_interactive_chips_wear_the_button_accent() {
                 .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
                 .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
         };
-        let enter = column(&[" ", "E", "n", "t", "e", "r", " "]);
-        let menu_key = column(&[" ", "m", " "]);
-        for (name, x, width) in [
-            ("Enter chip", enter as u16, 7u16),
-            ("m chip", menu_key as u16, 3),
+        let enter = column(&[" ", "[", " ", "E", "n", "t", "e", "r", " ", "]", " "]);
+        let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+        // Each button's own width: 11 key-span columns in the accent, the
+        // label columns in the regular foreground.
+        for (name, x, key_width, width) in [
+            ("Enter button", enter as u16, 11u16, 17u16),
+            ("m button", menu_key as u16, 7, 12),
         ] {
             for offset in 0..width {
                 let style = buffer[(x + offset, row)].style();
-                assert_eq!(style.fg, Some(theme.highlighted_text), "{name} accent");
+                let expected = if offset < key_width {
+                    theme.highlighted_text
+                } else {
+                    theme.normal_text
+                };
+                assert_eq!(style.fg, Some(expected), "{name} cell {offset}");
                 assert_eq!(style.bg, Some(theme.background), "{name} background");
                 assert!(!style.add_modifier.contains(Modifier::BOLD), "{name} bold");
             }
         }
-        for (name, x) in [
-            ("start label", enter as u16 + 7),
-            ("menu label", menu_key as u16 + 3),
-        ] {
-            for offset in 0..6u16 {
-                assert_eq!(
-                    buffer[(x + offset, row)].style().fg,
-                    Some(theme.muted_text),
-                    "the {name} colour"
-                );
-            }
-        }
-        assert_eq!(symbols[menu_key + 3..menu_key + 9].concat(), " menu ");
-        // No status-bar cell outside the two key spans carries the button
+        assert_eq!(symbols[menu_key + 7..menu_key + 12].concat(), "menu ");
+        // No status-bar cell outside the two buttons carries the button
         // accent.
         for x in 0..130u16 {
-            if (enter as u16..enter as u16 + 7).contains(&x)
-                || (menu_key as u16..menu_key as u16 + 3).contains(&x)
+            if (enter as u16..enter as u16 + 17).contains(&x)
+                || (menu_key as u16..menu_key as u16 + 12).contains(&x)
             {
                 continue;
             }
             assert_ne!(
                 buffer[(x, row)].style().fg,
                 Some(theme.highlighted_text),
-                "no status-bar cell but the Enter and m chips wears the button accent at x={x}"
+                "no status-bar cell but the Enter and m buttons wears the button accent at x={x}"
             );
         }
 
-        // The running strip: the Esc stop chip joins the buttons the same
+        // The running strip: the Esc stop button joins the buttons the same
         // way.
         let mut running = app();
         running.apply(EngineEvent::PhaseChanged {
@@ -1803,29 +1835,32 @@ fn only_the_interactive_chips_wear_the_button_accent() {
                 .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
                 .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
         };
-        let esc = column(&[" ", "E", "s", "c", " "]);
-        let menu_key = column(&[" ", "m", " "]);
-        for (name, x, width) in [
-            ("Esc chip", esc as u16, 5u16),
-            ("m chip", menu_key as u16, 3),
+        let esc = column(&[" ", "[", " ", "E", "s", "c", " ", "]", " "]);
+        let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+        for (name, x, key_width, width) in [
+            ("Esc button", esc as u16, 9u16, 14u16),
+            ("m button", menu_key as u16, 7, 12),
         ] {
             for offset in 0..width {
                 let style = buffer[(x + offset, row)].style();
-                assert_eq!(style.fg, Some(theme.highlighted_text), "{name} accent");
-                assert_eq!(style.bg, Some(theme.background), "{name} background");
-                assert!(!style.add_modifier.contains(Modifier::BOLD), "{name} bold");
+                let expected = if offset < key_width {
+                    theme.highlighted_text
+                } else {
+                    theme.normal_text
+                };
+                assert_eq!(style.fg, Some(expected), "{name} cell {offset}");
             }
         }
         for x in 0..130u16 {
-            if (esc as u16..esc as u16 + 5).contains(&x)
-                || (menu_key as u16..menu_key as u16 + 3).contains(&x)
+            if (esc as u16..esc as u16 + 14).contains(&x)
+                || (menu_key as u16..menu_key as u16 + 12).contains(&x)
             {
                 continue;
             }
             assert_ne!(
                 buffer[(x, row)].style().fg,
                 Some(theme.highlighted_text),
-                "no running status-bar cell but the Esc and m chips wears the button accent at x={x}"
+                "no running status-bar cell but the Esc and m buttons wears the button accent at x={x}"
             );
         }
     }
@@ -2652,7 +2687,7 @@ mod dialog {
         // The run's own notice no longer appears in the status bar; the
         // strip keeps the planning chips and the menu hint (T139.1).
         let bottom = screen.lines().last().unwrap();
-        assert!(bottom.contains(" m  menu"), "{screen}");
+        assert!(bottom.contains(" [ m ] menu"), "{screen}");
         assert!(!bottom.contains("running..."), "{screen}");
         insta::assert_snapshot!(screen);
     }

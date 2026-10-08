@@ -25,4 +25,4 @@ expression: "draw(&app, 80, 24)"
       │                                                                        │
       │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output     │
       └────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                          Enter  start  m  menu
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu

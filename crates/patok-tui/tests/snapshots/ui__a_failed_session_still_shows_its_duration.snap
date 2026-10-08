@@ -15,4 +15,4 @@ expression: screen
             │○ T1.3  wire the engine to the shell                              │
             │ a add tasks · i inject task · Enter start · ↑↓ scroll            │
             └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                          Enter  start  m  menu
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu
