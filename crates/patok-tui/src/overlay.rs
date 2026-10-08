@@ -538,6 +538,9 @@ pub struct SettingsOverlay {
     /// The unsaved-changes dialog's bottom line rect at the last render; its
     /// buttons' mouse hit-testing reads it (T59.1).
     pub confirm_footer: Cell<Rect>,
+    /// The unsaved-changes dialog's choice rows' area rect at the last render
+    /// (T146.1); the row hit-test splits it by row.
+    pub confirm_body: Cell<Rect>,
     /// The overlay's close button rect at the last render (T66.1); a click on
     /// it runs the overlay's Esc key.
     pub close: Cell<Rect>,

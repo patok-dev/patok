@@ -21,8 +21,8 @@ use crate::overlay::{
 };
 use crate::theme::{Theme, theme_modal_groups};
 use crate::ui::{
-    finished_line, footer_button_rects, frame_at, menu_row_at, settings_row_at, started_line,
-    theme_row_at,
+    confirm_row_at, finished_line, footer_button_rects, frame_at, menu_row_at, settings_row_at,
+    started_line, theme_row_at,
 };
 
 /// Output lines kept; older ones scroll off for good.
@@ -1531,20 +1531,47 @@ impl App {
     /// overlay's key path, which routes it to the dialog while it is open --
     /// Enter confirms the selected choice (save, discard or cancel) and Esc
     /// returns to the overlay with the drafts intact. A click on the title
-    /// row's close button returns to the overlay the same way (T66.1).
-    /// Everything else is swallowed, as before.
+    /// row's close button returns to the overlay the same way (T66.1). A
+    /// pointer move over one of the dialog's three choice rows moves the
+    /// selection highlight there without confirming it, and a left click
+    /// inside a choice row runs that row's Enter key verbatim, so a click
+    /// and Enter on a row are indistinguishable (T146.1). A move or click
+    /// inside the dialog that misses every row -- the blank body padding
+    /// below the choices, the border, the title -- or lands outside it does
+    /// nothing. Everything else is swallowed, as before.
     fn on_confirm_mouse(&mut self, mouse: MouseEvent) -> Action {
         if close_clicked(&mouse, self.overlay.confirm_close.get()) {
             return self.on_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
-        match footer_button_code(
+        if let Some(code) = footer_button_code(
             &mouse,
             self.overlay.confirm_footer.get(),
             &[("Enter", "Confirm"), ("Esc", "Cancel")],
         ) {
-            Some(code) => self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE)),
-            None => Action::None,
+            return self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        let row = confirm_row_at(position, self.overlay.confirm_body.get());
+        match mouse.kind {
+            MouseEventKind::Moved => {
+                // The move moves only the highlight, never the dispatch:
+                // a move that misses every row leaves the selection alone.
+                if let Some(index) = row {
+                    self.overlay.confirm_selected = index;
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                // The click is the row's Enter key verbatim: it moves the
+                // selection to the row, then runs the Enter dispatch, so a
+                // click and Enter on the same row are indistinguishable.
+                if let Some(index) = row {
+                    self.overlay.confirm_selected = index;
+                    return self.on_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+            }
+            _ => {}
+        }
+        Action::None
     }
 
     /// The short inline refusal for a busy engine, shared by every key that
@@ -2423,6 +2450,24 @@ mod tests {
         (app, list)
     }
 
+    /// A dirty settings overlay with its unsaved-changes dialog open (T146.1):
+    /// the app, the recorded list viewport and the recorded choice-rows area.
+    /// The body rect lies deliberately outside the list rect so list
+    /// hit-testing never interferes; its rows 0-2 are the three choices and
+    /// rows 3-5 the blank padding below them.
+    fn confirm_app() -> (App, Rect, Rect) {
+        let (mut app, list) = settings_app();
+        app.overlay
+            .drafts
+            .insert("model".into(), SettingValue::Str("opus".into()));
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(app.overlay.confirm_open);
+        assert_eq!(app.overlay.confirm_selected, 0);
+        let body = Rect::new(0, 20, 50, 6);
+        app.overlay.confirm_body.set(body);
+        (app, list, body)
+    }
+
     /// A left click on the list's `index`-th visible row.
     fn click_row(app: &mut App, list: Rect, index: usize) -> Action {
         app.on_mouse(mouse(
@@ -2764,11 +2809,10 @@ mod tests {
         );
     }
 
-    /// The inline editor and the unsaved-changes dialog are modal for the
-    /// pointer moves too: a hover is swallowed while either is open, and the
-    /// dialog keeps its own selection (T145.1).
+    /// The inline editor is modal for the pointer moves too: a hover is
+    /// swallowed while it is open.
     #[test]
-    fn hovering_is_swallowed_while_the_editor_or_the_confirm_dialog_is_open() {
+    fn hovering_is_swallowed_while_the_editor_is_open() {
         let (mut app, list) = settings_app();
         let model = visible_index(&app, "model");
         click_row(&mut app, list, model);
@@ -2786,9 +2830,8 @@ mod tests {
             assert!(app.overlay.editor.is_some());
         }
 
-        // A drafted change opens the unsaved-changes dialog on Esc; moves
-        // over the dialog and over where the list rect is leave the
-        // dialog's selection and the overlay's focus alone.
+        // The draft stays drafted; the dialog's own hover behaviour is
+        // covered by the T146.1 tests below.
         for c in "opus".chars() {
             assert_eq!(press(&mut app, KeyCode::Char(c)), Action::None);
         }
@@ -2798,25 +2841,197 @@ mod tests {
             app.overlay.drafts.get("model"),
             Some(&SettingValue::Str("opus".into()))
         );
-        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(app.overlay.confirm_open);
-        assert_eq!(app.overlay.confirm_selected, 0);
-        for (column, row) in [(list.x + 2, list.y), (list.x + 2, list.y + 3), (0, 0)] {
+    }
+
+    /// The unsaved-changes dialog follows the pointer (T146.1): a move onto
+    /// one of the three choice rows moves the selection highlight there
+    /// without confirming it, and a move inside the dialog that misses every
+    /// row -- the blank padding below the choices -- or over the list rect
+    /// behind it, or outside the dialog, leaves the selection alone.
+    #[test]
+    fn hovering_the_confirm_dialog_follows_the_pointer() {
+        let (mut app, list, body) = confirm_app();
+        for row in 0..3 {
+            assert_eq!(
+                app.on_mouse(mouse(
+                    MouseEventKind::Moved,
+                    body.x + 2,
+                    body.y + row as u16
+                )),
+                Action::None
+            );
+            assert_eq!(app.overlay.confirm_selected, row);
+            assert!(app.overlay.confirm_open);
+            assert_eq!(
+                app.overlay.drafts.get("model"),
+                Some(&SettingValue::Str("opus".into()))
+            );
+        }
+
+        // The misses leave the selection on the last hovered row: the blank
+        // body padding below the choices, the list rect behind the dialog and
+        // the shell outside.
+        for (column, row) in [
+            (body.x + 2, body.y + 3),
+            (body.x + 2, body.y + 5),
+            (body.x + body.width, body.y),
+            (list.x + 2, list.y + 3),
+            (0, 0),
+        ] {
             assert_eq!(
                 app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
                 Action::None
             );
-            assert_eq!(app.overlay.confirm_selected, 0);
-            assert_eq!(app.overlay.focus, model);
+            assert_eq!(app.overlay.confirm_selected, 2);
             assert!(app.overlay.confirm_open);
         }
+    }
 
-        // Esc returns to the overlay with the drafts intact.
-        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+    /// A hover picks the row the Enter key then confirms (T146.1): the dialog
+    /// runs its Enter dispatch on the hovered row, exactly the key path.
+    #[test]
+    fn enter_after_a_hover_confirms_the_hovered_choice() {
+        // Hovering Discard (row 1) and pressing Enter discards and closes.
+        let (mut app, _list, body) = confirm_app();
+        app.on_mouse(mouse(MouseEventKind::Moved, body.x + 2, body.y + 1));
+        assert_eq!(app.overlay.confirm_selected, 1);
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::CloseSettings);
         assert!(!app.overlay.confirm_open);
+        assert!(!app.overlay.open);
+        assert!(app.overlay.drafts.is_empty());
+
+        // Hovering Cancel (row 2) and pressing Enter returns to the overlay
+        // with the dialog closed and the drafts intact.
+        let (mut app, _list, body) = confirm_app();
+        app.on_mouse(mouse(MouseEventKind::Moved, body.x + 2, body.y + 2));
+        assert_eq!(app.overlay.confirm_selected, 2);
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert!(!app.overlay.confirm_open);
+        assert!(app.overlay.open);
         assert_eq!(
             app.overlay.drafts.get("model"),
             Some(&SettingValue::Str("opus".into()))
         );
+    }
+
+    /// A left click inside a choice row's rect runs exactly that row's Enter
+    /// key (T146.1): Save asks the driver to apply the drafts, Discard throws
+    /// them away and closes, Cancel returns to the overlay -- and a click in
+    /// the padding between the rows or outside the dialog does nothing.
+    #[test]
+    fn a_click_on_a_confirm_choice_row_runs_its_enter() {
+        // Save (row 0): the overlay stays open for the driver's
+        // apply-and-persist flow, with the drafts still pending.
+        let (mut app, _list, body) = confirm_app();
+        assert_eq!(
+            app.on_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                body.x + 2,
+                body.y
+            )),
+            Action::SaveSettings
+        );
+        assert!(!app.overlay.confirm_open);
+        assert!(app.overlay.open);
+        assert_eq!(
+            app.overlay.drafts.get("model"),
+            Some(&SettingValue::Str("opus".into()))
+        );
+        assert_eq!(
+            app.overlay.pending(),
+            vec![(
+                Schema::Daemon,
+                "model".to_string(),
+                SettingValue::Str("opus".into())
+            )]
+        );
+
+        // Discard (row 1): the drafts are thrown away and the overlay closes.
+        let (mut app, _list, body) = confirm_app();
+        assert_eq!(
+            app.on_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                body.x + 2,
+                body.y + 1
+            )),
+            Action::CloseSettings
+        );
+        assert!(!app.overlay.confirm_open);
+        assert!(!app.overlay.open);
+        assert!(app.overlay.drafts.is_empty());
+
+        // Cancel (row 2): only the dialog closes; the overlay and the drafts
+        // stay as they were.
+        let (mut app, _list, body) = confirm_app();
+        assert_eq!(
+            app.on_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                body.x + 2,
+                body.y + 2
+            )),
+            Action::None
+        );
+        assert!(!app.overlay.confirm_open);
+        assert!(app.overlay.open);
+        assert_eq!(
+            app.overlay.drafts.get("model"),
+            Some(&SettingValue::Str("opus".into()))
+        );
+
+        // The misses do nothing: the padding below the choices and the shell
+        // outside the dialog leave the dialog open with the drafts intact.
+        // The outside point sits off row 0, where the zero footer rect's
+        // phantom button rects would otherwise catch the click.
+        let (mut app, _list, body) = confirm_app();
+        for (column, row) in [(body.x + 2, body.y + 3), (body.x + 2, body.y + 5), (0, 10)] {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), column, row)),
+                Action::None
+            );
+            assert!(app.overlay.confirm_open);
+            assert_eq!(app.overlay.confirm_selected, 0);
+            assert_eq!(
+                app.overlay.drafts.get("model"),
+                Some(&SettingValue::Str("opus".into()))
+            );
+        }
+    }
+
+    /// The dialog's keys are unchanged (T146.1): j, k and the arrows move the
+    /// selection while it is open, Esc closes only the dialog with the drafts
+    /// intact -- and with the dialog closed, a move over the recorded choice
+    /// rows' coordinates goes through the overlay's mouse path, misses the
+    /// list rect and touches neither the list selection nor the dialog's.
+    #[test]
+    fn the_confirm_dialog_keys_stay_unchanged() {
+        let (mut app, _list, body) = confirm_app();
+        assert_eq!(app.overlay.confirm_selected, 0);
+        assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
+        assert_eq!(app.overlay.confirm_selected, 0);
+        assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        assert_eq!(app.overlay.confirm_selected, 1);
+        assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
+        assert_eq!(app.overlay.confirm_selected, 2);
+        assert_eq!(press(&mut app, KeyCode::Up), Action::None);
+        assert_eq!(app.overlay.confirm_selected, 1);
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(!app.overlay.confirm_open);
+        assert!(app.overlay.open);
+        assert_eq!(
+            app.overlay.drafts.get("model"),
+            Some(&SettingValue::Str("opus".into()))
+        );
+
+        // With the dialog closed, the same coordinates go through the
+        // overlay's list hover and miss: the recorded choice-rows area lies
+        // outside the list rect, so the focus and the dialog's selection
+        // stay put.
+        let focus = app.overlay.focus;
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, body.x + 2, body.y + 1)),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, focus);
+        assert_eq!(app.overlay.confirm_selected, 1);
     }
 }

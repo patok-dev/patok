@@ -503,6 +503,7 @@ fn render_settings_confirm(frame: &mut Frame, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.overlay.confirm_body.set(body);
     let lines: Vec<Line> = SETTINGS_CHOICES
         .iter()
         .enumerate()
@@ -1000,6 +1001,18 @@ pub fn menu_row_at(position: Position, body: Rect, visible_len: usize) -> Option
     }
     let row = usize::from(position.y - body.y);
     (row < visible_len).then_some(row)
+}
+
+/// The unsaved-changes dialog's choice the pointer sits on (T146.1): the row
+/// index when the position is on one of the dialog's three choice rows, `None`
+/// on the dialog's blank body padding below them, the border, the title, the
+/// footer or the shell outside. A pure hit-test like [`menu_row_at`].
+pub fn confirm_row_at(position: Position, body: Rect) -> Option<usize> {
+    if !body.contains(position) {
+        return None;
+    }
+    let row = usize::from(position.y - body.y);
+    (row < SETTINGS_CHOICES.len()).then_some(row)
 }
 
 /// The settings list's entry the pointer sits on: the visible entry index
@@ -2063,6 +2076,45 @@ mod tests {
             assert_eq!(cursor.style().fg, Some(theme.highlighted_text), "{key:?}");
             assert_ne!(cursor.style().bg, Some(theme.accent), "{key:?}");
         }
+    }
+
+    /// The unsaved-changes dialog's row hit-test (T146.1): the first three
+    /// body rows are the three choices, the padding below them and every
+    /// position outside the body miss.
+    #[test]
+    fn confirm_row_at_hits_only_the_three_choice_rows() {
+        let body = Rect::new(20, 5, 40, 6);
+        for row in 0..3u16 {
+            assert_eq!(
+                confirm_row_at(Position::new(20, body.y + row), body),
+                Some(row as usize)
+            );
+        }
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y + 3), body),
+            None,
+            "the blank padding below the choices misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y + 5), body),
+            None,
+            "the body's last padding row misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y - 1), body),
+            None,
+            "above the body misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(19, body.y), body),
+            None,
+            "left of the body misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y), Rect::default()),
+            None,
+            "a zero rect contains no position"
+        );
     }
 
     /// The settings overlay inline editor's end-of-buffer block cursor wears
