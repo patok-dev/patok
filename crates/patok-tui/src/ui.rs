@@ -850,6 +850,7 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.stop_body.set(body);
     let lines: Vec<Line> = STOP_CHOICES
         .iter()
         .enumerate()
@@ -1013,6 +1014,18 @@ pub fn confirm_row_at(position: Position, body: Rect) -> Option<usize> {
     }
     let row = usize::from(position.y - body.y);
     (row < SETTINGS_CHOICES.len()).then_some(row)
+}
+
+/// The stop dialog's choice the pointer sits on (T148.1): the row index
+/// when the position is on one of the dialog's three choice rows, `None`
+/// on the dialog's blank body padding below them, the border, the title,
+/// the footer or the shell outside. A pure hit-test like [`menu_row_at`].
+pub fn stop_row_at(position: Position, body: Rect) -> Option<usize> {
+    if !body.contains(position) {
+        return None;
+    }
+    let row = usize::from(position.y - body.y);
+    (row < STOP_CHOICES.len()).then_some(row)
 }
 
 /// The settings list's entry the pointer sits on: the visible entry index
@@ -2112,6 +2125,45 @@ mod tests {
         );
         assert_eq!(
             confirm_row_at(Position::new(20, body.y), Rect::default()),
+            None,
+            "a zero rect contains no position"
+        );
+    }
+
+    /// The stop dialog's row hit-test (T148.1): the first three body rows
+    /// are the three choices, the padding below them and every position
+    /// outside the body miss.
+    #[test]
+    fn stop_row_at_hits_only_the_three_choice_rows() {
+        let body = Rect::new(20, 5, 40, 6);
+        for row in 0..3u16 {
+            assert_eq!(
+                stop_row_at(Position::new(20, body.y + row), body),
+                Some(row as usize)
+            );
+        }
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y + 3), body),
+            None,
+            "the blank padding below the choices misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y + 5), body),
+            None,
+            "the body's last padding row misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y - 1), body),
+            None,
+            "above the body misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(19, body.y), body),
+            None,
+            "left of the body misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y), Rect::default()),
             None,
             "a zero rect contains no position"
         );

@@ -4695,7 +4695,9 @@ mod hints {
 /// and its three choices map to the soft stop, the interrupt and a plain close.
 mod stop_dialog {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use patok_tui::Action;
 
     fn press(app: &mut App, code: KeyCode) -> Action {
@@ -4957,6 +4959,194 @@ mod stop_dialog {
             assert_eq!(press(&mut app, KeyCode::Down), Action::None);
         }
         assert_eq!(app.stop_selected, 2);
+    }
+
+    /// A mouse event of the given kind at a screen position, for the
+    /// dialog's hover and click handling (T148.1).
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// A pointer move over a choice row moves only the selection highlight
+    /// there, without running it (T148.1): the dialog stays open, the
+    /// build keeps running, and a later Enter confirms the hovered row --
+    /// the full Enter path per row.
+    #[test]
+    fn pointer_moves_follow_the_choice_rows() {
+        let mut app = open();
+        draw(&app, 80, 24);
+        let body = app.stop_body.get();
+        assert_eq!(body, ratatui::layout::Rect::new(14, 8, 52, 6));
+        for index in 0..3u16 {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
+                Action::None
+            );
+            assert_eq!(app.stop_selected, index as usize);
+            assert!(app.stop_open);
+            assert!(!app.stopping);
+            assert_eq!(app.phase, Phase::Running);
+            assert_eq!(app.current_task.as_deref(), Some("T1.2"));
+        }
+        // Enter on the hovered row confirms it: each row from a fresh open.
+        let expected = [
+            (Action::Quit, true, "stops after the current task"),
+            (Action::Interrupt, true, "cancelled"),
+            (Action::None, false, ""),
+        ];
+        for (index, (action, stopping, status_part)) in expected.iter().enumerate() {
+            let mut app = open();
+            draw(&app, 80, 24);
+            let body = app.stop_body.get();
+            assert_eq!(
+                app.on_mouse(mouse(
+                    MouseEventKind::Moved,
+                    body.x + 3,
+                    body.y + index as u16
+                )),
+                Action::None
+            );
+            assert_eq!(app.stop_selected, index);
+            assert_eq!(press(&mut app, KeyCode::Enter), *action);
+            assert!(!app.stop_open);
+            assert_eq!(app.stopping, *stopping);
+            if status_part.is_empty() {
+                // Cancel leaves the soft-stop and interrupt statuses unset.
+                assert!(app.status.is_none());
+            } else {
+                let status = app.status.as_deref().unwrap();
+                assert!(status.contains(status_part), "status: {status}");
+            }
+        }
+    }
+
+    /// A left click inside a choice row is that row's Enter key verbatim
+    /// (T148.1): each row's click returns exactly the action and reaches
+    /// exactly the state Enter on the hovered row produces.
+    #[test]
+    fn clicks_run_the_hovered_row_like_enter() {
+        let expected = [
+            (Action::Quit, true, "stops after the current task"),
+            (Action::Interrupt, true, "cancelled"),
+            (Action::None, false, ""),
+        ];
+        for (index, (action, stopping, status_part)) in expected.iter().enumerate() {
+            let mut app = open();
+            draw(&app, 80, 24);
+            let body = app.stop_body.get();
+            assert_eq!(
+                app.on_mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    body.x + 3,
+                    body.y + index as u16
+                )),
+                *action
+            );
+            assert!(!app.stop_open);
+            assert_eq!(app.stopping, *stopping);
+            assert_eq!(app.stop_selected, index);
+            assert_eq!(app.phase, Phase::Running);
+            assert_eq!(app.current_task.as_deref(), Some("T1.2"));
+            if status_part.is_empty() {
+                assert!(app.status.is_none());
+            } else {
+                let status = app.status.as_deref().unwrap();
+                assert!(status.contains(status_part), "status: {status}");
+            }
+        }
+    }
+
+    /// Moves and clicks that miss every choice row -- the border above the
+    /// body, the title row, the footer's hint zone, the blank body padding
+    /// below the choices, the shell outside -- leave the selection and the
+    /// build untouched (T148.1).
+    #[test]
+    fn moves_and_clicks_that_miss_the_rows_change_nothing() {
+        let mut app = open();
+        draw(&app, 80, 24);
+        let body = app.stop_body.get();
+        let footer = app.stop_footer.get();
+        // Hover the middle row first, so the misses below are observable.
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 1)),
+            Action::None
+        );
+        assert_eq!(app.stop_selected, 1);
+        let misses = [
+            (body.x + 3, body.y - 1, "the border above the body"),
+            (body.x + 3, body.y - 2, "the title row"),
+            (footer.x + 1, footer.y, "the footer's hint zone"),
+            (
+                body.x + 3,
+                body.y + 3,
+                "the blank padding below the choices",
+            ),
+            (0, 0, "the shell outside"),
+        ];
+        for (column, row, where_) in misses {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
+                Action::None,
+                "{where_}"
+            );
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), column, row)),
+                Action::None,
+                "{where_}"
+            );
+            assert!(app.stop_open, "{where_}");
+            assert_eq!(app.stop_selected, 1, "{where_}");
+            assert!(!app.stopping, "{where_}");
+            assert_eq!(app.phase, Phase::Running, "{where_}");
+            assert_eq!(app.current_task.as_deref(), Some("T1.2"), "{where_}");
+        }
+    }
+
+    /// Pointer moves while the dialog is closed are inert (T148.1): the
+    /// recorded row rects are stale but nothing reads them, and no other
+    /// modal's selection moves.
+    #[test]
+    fn pointer_moves_while_the_dialog_is_closed_change_nothing() {
+        // Opened, drawn, closed with Esc: the recorded body rect stays set,
+        // but moves over its rows leave every modal alone.
+        let mut app = open();
+        draw(&app, 80, 24);
+        let body = app.stop_body.get();
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(!app.stop_open);
+        for index in 0..3u16 {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
+                Action::None
+            );
+            assert!(!app.stop_open);
+            assert!(!app.stopping);
+            assert!(!app.menu_open);
+            assert_eq!(app.menu_selected, 0);
+            assert!(!app.theme_modal.open);
+            assert_eq!(app.theme_modal.selected, 0);
+            assert!(!app.settings_open());
+            assert_eq!(app.overlay.focus, 0);
+        }
+        // A never-opened dialog's zero rect contains no position at all:
+        // moves over the same screen rows stay inert there too.
+        let mut app = running();
+        draw(&app, 80, 24);
+        assert_eq!(app.stop_body.get(), ratatui::layout::Rect::default());
+        for index in 0..3u16 {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
+                Action::None
+            );
+            assert!(!app.stop_open);
+            assert!(!app.stopping);
+            assert!(!app.menu_open);
+        }
     }
 }
 
@@ -5344,14 +5534,16 @@ mod modal_footer {
         assert_eq!(app.phase, Phase::Running);
         assert_eq!(app.current_task.as_deref(), Some("T1.2"));
 
-        // Clicks on the hint zone and on the choice rows change nothing.
+        // Clicks on the hint zone and on the blank body padding below the
+        // choice rows change nothing (the rows themselves answer clicks
+        // since T148.1).
         let mut app = open_stop();
         buffer(&app);
         let footer = app.stop_footer.get();
         assert_eq!(app.on_mouse(click(footer.x + 1, footer.y)), Action::None);
         assert!(app.stop_open);
         assert_eq!(
-            app.on_mouse(click(footer.x + 2, footer.y - 4)),
+            app.on_mouse(click(footer.x + 2, footer.y - 1)),
             Action::None
         );
         assert!(app.stop_open);

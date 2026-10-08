@@ -22,7 +22,7 @@ use crate::overlay::{
 use crate::theme::{Theme, theme_modal_groups};
 use crate::ui::{
     confirm_row_at, finished_line, footer_button_rects, frame_at, menu_row_at, settings_row_at,
-    started_line, theme_row_at,
+    started_line, stop_row_at, theme_row_at,
 };
 
 /// Output lines kept; older ones scroll off for good.
@@ -446,6 +446,11 @@ pub struct App {
     /// The stop dialog's close button rect at the last render (T66.1); a click
     /// on it runs the dialog's Esc key.
     pub stop_close: Cell<Rect>,
+    /// The stop dialog's body rect at the last render (T148.1); its rows'
+    /// mouse hit-testing reads it -- a pointer move over a choice row moves
+    /// the selection there, and a left click selects and runs that row's
+    /// Enter.
+    pub stop_body: Cell<Rect>,
     /// The m menu is open (the `m` key, from any engine state).
     pub menu_open: bool,
     /// The m menu's selected row; indexes [`menu_entries`].
@@ -565,6 +570,7 @@ impl App {
             stop_selected: 0,
             stop_footer: Cell::new(Rect::default()),
             stop_close: Cell::new(Rect::default()),
+            stop_body: Cell::new(Rect::default()),
             menu_open: false,
             menu_selected: 0,
             menu_footer: Cell::new(Rect::default()),
@@ -1381,20 +1387,48 @@ impl App {
     /// line's buttons runs exactly that button's key through the dialog's key
     /// path -- Enter confirms the selected choice and Esc closes with no
     /// effect. A click on the title row's close button runs the dialog's Esc
-    /// key the same way, leaving the build unchanged (T66.1). Everything else
-    /// is swallowed, as before.
+    /// key the same way, leaving the build unchanged (T66.1). A pointer move
+    /// over one of the dialog's three choice rows moves the selection
+    /// highlight there without confirming it, and a left click inside a
+    /// choice row runs that row's Enter key verbatim, so a click and Enter
+    /// on a row are indistinguishable (T148.1). A move or click inside the
+    /// dialog that misses every row -- the blank body padding below the
+    /// choices, the border, the title, the footer's non-button columns --
+    /// or lands outside it does nothing. Everything else is swallowed,
+    /// as before.
     fn on_stop_mouse(&mut self, mouse: MouseEvent) -> Action {
         if close_clicked(&mouse, self.stop_close.get()) {
             return self.on_stop_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
-        match footer_button_code(
+        if let Some(code) = footer_button_code(
             &mouse,
             self.stop_footer.get(),
             &[("Enter", "Confirm"), ("Esc", "Close")],
         ) {
-            Some(code) => self.on_stop_key(KeyEvent::new(code, KeyModifiers::NONE)),
-            None => Action::None,
+            return self.on_stop_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        let row = stop_row_at(position, self.stop_body.get());
+        match mouse.kind {
+            MouseEventKind::Moved => {
+                // The move moves only the highlight, never the dispatch:
+                // a move that misses every row leaves the selection alone.
+                if let Some(index) = row {
+                    self.stop_selected = index;
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                // The click is the row's Enter key verbatim: it moves the
+                // selection to the row, then runs the Enter dispatch, so a
+                // click and Enter on the same row are indistinguishable.
+                if let Some(index) = row {
+                    self.stop_selected = index;
+                    return self.on_stop_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+            }
+            _ => {}
+        }
+        Action::None
     }
 
     /// The m menu's mouse handling (T59.1): a click on one of the bottom
