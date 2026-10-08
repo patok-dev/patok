@@ -9,7 +9,7 @@ use crossterm::event::{
 };
 use patok_core::config::{ApplyTiming, SettingValue, Theme as ThemeKey, TuiSettings};
 use patok_core::event::{
-    AgentEvent, EngineEvent, NoticeLevel, Phase, Snapshot, TaskOutcome, Usage,
+    AgentEvent, AgentRole, EngineEvent, NoticeLevel, Phase, Snapshot, TaskOutcome, Usage,
 };
 use patok_core::pipeline::PipelineState;
 use patok_core::scenario::{ProjectScan, Scenario, SpecState};
@@ -543,7 +543,7 @@ impl App {
             model: snapshot.model.clone(),
             config_provider: snapshot.provider,
             config_model: snapshot.model,
-            agent: "builder".into(),
+            agent: AgentRole::Builder.as_str().into(),
             version_mismatch: false,
             phase: snapshot.phase,
             tasks: snapshot.tasks,

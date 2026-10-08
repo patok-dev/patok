@@ -5,9 +5,30 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
 
+use crate::config::config_enum;
 use crate::config::{ApplyTiming, SettingValue};
 use crate::pipeline::PipelineState;
 use crate::task::Task;
+
+config_enum! {
+    /// The engine's agent roles: the agents the engine announces as its active
+    /// agent, the spellings the `agent` fields of
+    /// [`EngineEvent::AgentStarted`], [`EngineEvent::AgentChanged`] and
+    /// [`EngineEvent::AgentFinished`] carry across the wire (`planner`,
+    /// `research`, `discovery`, `builder`, `reviewer`). The engine converts to
+    /// the spelling only at that boundary; `orchestrator` is themed today
+    /// although no engine code announces it yet. This is a different family
+    /// from the settings `Role` of the engine/TUI agent mappers.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum AgentRole {
+        Planner => "planner",
+        Research => "research",
+        Discovery => "discovery",
+        Builder => "builder",
+        Reviewer => "reviewer",
+        Orchestrator => "orchestrator",
+    }
+}
 
 /// Token accounting of one agent session.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

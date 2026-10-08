@@ -27,6 +27,9 @@ pub use persist::{
 };
 pub use schema::{daemon_json_schema, tui_json_schema};
 pub use spelling::EnumSpelling;
+// Reachable crate-wide, so the enums outside the config tree (the agent role,
+// the review severity and the pipeline stage) share the same spelling macro.
+pub(crate) use spelling::config_enum;
 pub use tui::{RailMode, THEME_KEYS, Theme, TuiSettings, UpdateChannel, load_tui, tui_help};
 
 use std::path::{Path, PathBuf};

@@ -75,6 +75,7 @@
 
 use crate::app::LineKind;
 use patok_core::config::Theme as ThemeKey;
+use patok_core::event::AgentRole;
 use ratatui::style::Color;
 
 /// The agent output line colours (T108.1): structurally separate from the
@@ -470,15 +471,17 @@ impl Theme {
     /// every built-in theme, only adjusted for readability on the theme's
     /// background. Unknown agents fall back to the neutral `other` colour.
     /// Used only by the output frame title's agent type name (T117.1).
+    /// The wire still carries the agent name as a string, so the spelling is
+    /// parsed here.
     pub fn agent_name_color(theme: Theme, agent: &str) -> Color {
-        match agent {
-            "planner" => theme.agent_names.planner,
-            "builder" => theme.agent_names.builder,
-            "reviewer" => theme.agent_names.reviewer,
-            "research" => theme.agent_names.research,
-            "discovery" => theme.agent_names.discovery,
-            "orchestrator" => theme.agent_names.orchestrator,
-            _ => theme.agent_names.other,
+        match AgentRole::parse(agent) {
+            Some(AgentRole::Planner) => theme.agent_names.planner,
+            Some(AgentRole::Builder) => theme.agent_names.builder,
+            Some(AgentRole::Reviewer) => theme.agent_names.reviewer,
+            Some(AgentRole::Research) => theme.agent_names.research,
+            Some(AgentRole::Discovery) => theme.agent_names.discovery,
+            Some(AgentRole::Orchestrator) => theme.agent_names.orchestrator,
+            None => theme.agent_names.other,
         }
     }
 }

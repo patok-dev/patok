@@ -4,15 +4,19 @@
 
 use serde::{Deserialize, Serialize};
 
-/// One pipeline stage with a rail tile: the four
-/// stages the engine runs, research, plan, build and review.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Stage {
-    Research,
-    Plan,
-    Build,
-    Review,
+use crate::config::config_enum;
+
+config_enum! {
+    /// One pipeline stage with a rail tile: the four
+    /// stages the engine runs, research, plan, build and review.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Stage {
+        Research => "research",
+        Plan => "plan",
+        Build => "build",
+        Review => "review",
+    }
 }
 
 impl Stage {

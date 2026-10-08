@@ -10,6 +10,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use patok_core::complexity::Complexity;
+use patok_core::config::EnumSpelling;
+use patok_core::review::Severity;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -21,8 +23,6 @@ const TRIM_HEAD: usize = 20;
 const TRIM_TAIL: usize = 10;
 /// Substrings that keep a trimmed middle line in the section.
 const TRIM_KEEP: [&str; 4] = ["failed", "error", "panic", "assert"];
-/// The keywords of the findings buckets.
-const SEVERITIES: [&str; 3] = ["high", "medium", "low"];
 
 /// The claims file's build-claims section, from its heading to the end of the
 /// text (`None` when the builder's final message has no such heading). The
@@ -146,12 +146,12 @@ pub struct Findings {
 }
 
 impl Findings {
-    /// The findings of `severity` ("high", "medium" or "low").
-    pub fn bucket(&self, severity: &str) -> &[Finding] {
+    /// The findings of `severity`.
+    pub fn bucket(&self, severity: Severity) -> &[Finding] {
         match severity {
-            "high" => &self.high,
-            "medium" => &self.medium,
-            _ => &self.low,
+            Severity::High => &self.high,
+            Severity::Medium => &self.medium,
+            Severity::Low => &self.low,
         }
     }
 }
@@ -199,7 +199,7 @@ fn extract_findings(text: &str) -> Option<Findings> {
         .iter()
         .rev()
         .filter(|candidate| {
-            SEVERITIES
+            Severity::SPELLINGS
                 .iter()
                 .any(|severity| candidate.contains(&format!("\"{severity}\"")))
         })
@@ -256,7 +256,7 @@ fn balanced_objects(text: &str) -> Vec<&str> {
 /// One finding counted against the verdict, with the bucket it came from.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QualifyingFinding {
-    pub severity: &'static str,
+    pub severity: Severity,
     pub finding: Finding,
 }
 
@@ -308,7 +308,7 @@ pub fn compute_verdict(report: Option<&str>, threshold: f64) -> Verdict {
         high: 0,
         medium: 0,
     };
-    for severity in ["high", "medium"] {
+    for severity in [Severity::High, Severity::Medium] {
         for finding in findings.bucket(severity) {
             let counted = QualifyingFinding {
                 severity,
@@ -316,7 +316,7 @@ pub fn compute_verdict(report: Option<&str>, threshold: f64) -> Verdict {
             };
             if finding.confidence >= threshold {
                 verdict.qualifying.push(counted);
-                if severity == "high" {
+                if severity == Severity::High {
                     verdict.high += 1;
                 } else {
                     verdict.medium += 1;
@@ -326,9 +326,9 @@ pub fn compute_verdict(report: Option<&str>, threshold: f64) -> Verdict {
             }
         }
     }
-    for finding in findings.bucket("low") {
+    for finding in findings.bucket(Severity::Low) {
         verdict.below_threshold.push(QualifyingFinding {
-            severity: "low",
+            severity: Severity::Low,
             finding: finding.clone(),
         });
     }
@@ -351,7 +351,7 @@ pub fn is_generated(file: &str) -> bool {
 /// The single HIGH finding an absent or invalid findings block counts as.
 fn missing_report() -> QualifyingFinding {
     QualifyingFinding {
-        severity: "high",
+        severity: Severity::High,
         finding: Finding {
             issue: "the review report has no valid findings JSON block".into(),
             category: "report".into(),
@@ -932,8 +932,23 @@ mod tests {
         assert!(verdict.passed);
         assert_eq!(verdict.high, 0);
         assert_eq!(verdict.below_threshold.len(), 2);
-        assert_eq!(verdict.below_threshold[0].severity, "high");
-        assert_eq!(verdict.below_threshold[1].severity, "low");
+        assert_eq!(verdict.below_threshold[0].severity, Severity::High);
+        assert_eq!(verdict.below_threshold[1].severity, Severity::Low);
+    }
+
+    #[test]
+    fn an_unknown_severity_key_is_dropped_as_before() {
+        // A findings block naming a known bucket parses; the findings under
+        // an unknown severity key are silently dropped by serde, exactly as
+        // before the typed severity.
+        let report = "Verdict: FAIL\n{\"high\": [], \"critical\": [{\"issue\": \"x\", \"confidence\": 1.0}]}";
+        let parsed = parse_report(report);
+        let findings = parsed.findings.expect("the high key makes it a block");
+        assert!(findings.high.is_empty());
+        assert!(findings.medium.is_empty());
+        assert!(findings.low.is_empty());
+        // With no qualifying finding, the verdict passes.
+        assert!(compute_verdict(Some(report), 0.5).passed);
     }
 
     #[test]

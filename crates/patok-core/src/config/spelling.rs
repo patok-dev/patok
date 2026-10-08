@@ -98,6 +98,9 @@ mod tests {
     use crate::config::{
         AcceptPolicy, ProviderKind, ProviderName, RailMode, RunMode, Theme, UpdateChannel,
     };
+    use crate::event::AgentRole;
+    use crate::pipeline::Stage;
+    use crate::review::Severity;
     use std::collections::HashSet;
     use std::fmt;
 
@@ -188,5 +191,24 @@ mod tests {
             RailMode::accepted_spellings(),
             "`compact`, `normal`, `detailed`"
         );
+    }
+
+    #[test]
+    fn agent_role_round_trips_every_variant() {
+        check::<AgentRole>();
+        // The settings' agent roles are a different family: their spellings
+        // never parse as engine agent roles.
+        assert!(AgentRole::parse("learning_extraction").is_none());
+        assert!(AgentRole::parse("orchestrator_proposer").is_none());
+    }
+
+    #[test]
+    fn severity_round_trips_every_variant() {
+        check::<Severity>();
+    }
+
+    #[test]
+    fn stage_round_trips_every_variant() {
+        check::<Stage>();
     }
 }

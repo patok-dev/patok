@@ -12,9 +12,10 @@ use patok_core::config::{
     set_daemon_field,
 };
 use patok_core::event::{
-    AgentEvent, EngineEvent, NoticeLevel, Phase, SessionOutcome, Snapshot, TaskOutcome,
+    AgentEvent, AgentRole, EngineEvent, NoticeLevel, Phase, SessionOutcome, Snapshot, TaskOutcome,
 };
 use patok_core::pipeline::{PipelineState, Stage, Tile, TileStatus};
+use patok_core::review::Severity;
 use patok_core::task::{self, Task};
 use patok_providers::{
     BUILDER_TOOLS, DISCOVERY_TOOLS, ExitKind, PLAN_TOOLS, PLANNER_TOOLS, Provider, ProviderError,
@@ -394,11 +395,11 @@ enum ReviewRun {
 
 /// Merges `findings` into `merged`, de-duplicated by file and issue.
 fn merge_findings(merged: &mut review::Findings, findings: review::Findings) {
-    for severity in ["high", "medium", "low"] {
+    for severity in [Severity::High, Severity::Medium, Severity::Low] {
         let bucket = match severity {
-            "high" => &mut merged.high,
-            "medium" => &mut merged.medium,
-            _ => &mut merged.low,
+            Severity::High => &mut merged.high,
+            Severity::Medium => &mut merged.medium,
+            Severity::Low => &mut merged.low,
         };
         for finding in findings.bucket(severity) {
             if !bucket
@@ -604,30 +605,31 @@ impl Engine {
         });
     }
 
-    /// Announces `agent` as the engine's active agent, carrying the session's
+    /// Announces `role`'s agent as the engine's active agent, carrying the session's
     /// engine-recorded start (T42.1), and returns the instant the session's
     /// duration is measured from.
-    fn announce_session(&self, agent: &str, provider: &str, model: Option<&str>) -> Instant {
+    fn announce_session(&self, role: AgentRole, provider: &str, model: Option<&str>) -> Instant {
         let mut state = self.state();
-        self.announce_session_locked(&mut state, agent, provider, model)
+        self.announce_session_locked(&mut state, role, provider, model)
     }
 
     /// [`Engine::announce_session`] under an already-held state lock: announces
-    /// `agent` as the active agent before a run's state flag flips, so the
+    /// `role`'s agent as the active agent before a run's state flag flips, so the
     /// shell can label the run from the moment it starts. The starting line
     /// (T78.1) names the provider and model the run itself uses, so a settings
-    /// change mid-run cannot mislabel a later run.
+    /// change mid-run cannot mislabel a later run. The wire boundary: the
+    /// event's `agent` field carries the role's spelling.
     fn announce_session_locked(
         &self,
         state: &mut State,
-        agent: &str,
+        role: AgentRole,
         provider: &str,
         model: Option<&str>,
     ) -> Instant {
         self.emit_locked(
             state,
             EngineEvent::AgentStarted {
-                agent: agent.to_string(),
+                agent: role.as_str().to_string(),
                 provider: provider.to_string(),
                 model: model.map(str::to_string),
             },
@@ -638,7 +640,7 @@ impl Engine {
         self.emit_locked(
             state,
             EngineEvent::AgentChanged {
-                agent: agent.to_string(),
+                agent: role.as_str().to_string(),
                 started_ms,
             },
         );
@@ -648,9 +650,9 @@ impl Engine {
     /// Pushes one agent session's end to the attached shells and the replayed
     /// recent events: the agent type name, how it ended and the total duration
     /// measured from `start` (T42.1).
-    fn finish_session(&self, agent: &str, start: Instant, outcome: SessionOutcome) {
+    fn finish_session(&self, role: AgentRole, start: Instant, outcome: SessionOutcome) {
         self.emit(EngineEvent::AgentFinished {
-            agent: agent.to_string(),
+            agent: role.as_str().to_string(),
             outcome,
             duration_ms: start.elapsed().as_millis() as u64,
         });
@@ -865,7 +867,7 @@ impl Engine {
                 .settings
                 .stages
                 .iter()
-                .find(|stage| stage.id == "review")
+                .find(|stage| stage.id == Stage::Review.as_str())
                 .is_some_and(|stage| stage.enabled),
         })
     }
@@ -1237,7 +1239,7 @@ impl Engine {
         // the moment the run starts.
         let start = self.announce_session_locked(
             &mut state,
-            "planner",
+            AgentRole::Planner,
             unit.provider.slug(),
             unit.model.as_deref(),
         );
@@ -1303,7 +1305,7 @@ impl Engine {
         // moment the run starts (T24.1).
         let start = self.announce_session_locked(
             &mut state,
-            "research",
+            AgentRole::Research,
             unit.provider.slug(),
             unit.model.as_deref(),
         );
@@ -1671,7 +1673,7 @@ impl Engine {
                 &unit,
             )
             .await;
-        self.finish_session("planner", start, Self::session_outcome(&session));
+        self.finish_session(AgentRole::Planner, start, Self::session_outcome(&session));
 
         match session {
             Err(error) => {
@@ -1731,7 +1733,7 @@ impl Engine {
                 &unit,
             )
             .await;
-        self.finish_session("research", start, Self::session_outcome(&session));
+        self.finish_session(AgentRole::Research, start, Self::session_outcome(&session));
 
         match session {
             Err(error) => {
@@ -1746,7 +1748,7 @@ impl Engine {
                 if self
                     .check_appended(
                         &before,
-                        "research",
+                        AgentRole::Research,
                         taskfile::validate_append_ignoring,
                         true,
                     )
@@ -1795,7 +1797,11 @@ impl Engine {
     ) -> Option<usize> {
         // The discovery agent is the active agent for the whole round (T11.1), so the
         // shell's output frame shows its title while it streams.
-        let start = self.announce_session("discovery", unit.provider.slug(), unit.model.as_deref());
+        let start = self.announce_session(
+            AgentRole::Discovery,
+            unit.provider.slug(),
+            unit.model.as_deref(),
+        );
         let (session, _) = self
             .run_agent_session(
                 AgentPrompt {
@@ -1809,7 +1815,7 @@ impl Engine {
                 unit,
             )
             .await;
-        self.finish_session("discovery", start, Self::session_outcome(&session));
+        self.finish_session(AgentRole::Discovery, start, Self::session_outcome(&session));
 
         let added = match session {
             Err(error) => {
@@ -1853,7 +1859,12 @@ impl Engine {
     /// remembers the appended IDs as this session's UI-added task IDs.
     async fn check_planner_result(&self, before: &str) {
         let _ = self
-            .check_appended(before, "planner", taskfile::validate_append_ignoring, true)
+            .check_appended(
+                before,
+                AgentRole::Planner,
+                taskfile::validate_append_ignoring,
+                true,
+            )
             .await;
     }
 
@@ -1863,7 +1874,7 @@ impl Engine {
     async fn check_discovery_result(&self, before: &str) -> Vec<String> {
         self.check_appended(
             before,
-            "discovery",
+            AgentRole::Discovery,
             taskfile::validate_discovery_append_ignoring,
             false,
         )
@@ -1884,7 +1895,7 @@ impl Engine {
     async fn check_appended(
         &self,
         before: &str,
-        role: &str,
+        role: AgentRole,
         validate: AppendValidator,
         record_ui_added: bool,
     ) -> Result<Vec<String>, String> {
@@ -1998,8 +2009,11 @@ impl Engine {
             state.build = TileStatus::Active;
             self.refresh_pipeline_locked(&mut state);
         }
-        let session_start =
-            self.announce_session("builder", unit.provider.slug(), unit.model.as_deref());
+        let session_start = self.announce_session(
+            AgentRole::Builder,
+            unit.provider.slug(),
+            unit.model.as_deref(),
+        );
 
         let inner = &self.inner;
         let (events, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -2038,7 +2052,11 @@ impl Engine {
             recorded.lock().expect("capture lock").drain(..).collect();
         // One finished line lands after the agent output and before the task's own
         // outcome line (T42.1).
-        self.finish_session("builder", session_start, Self::session_outcome(&session));
+        self.finish_session(
+            AgentRole::Builder,
+            session_start,
+            Self::session_outcome(&session),
+        );
 
         let (outcome, commit) = match session {
             Err(error) => {
@@ -2395,8 +2413,7 @@ impl Engine {
         } else {
             let prompt =
                 prompt::reviewer(task, claims.as_deref(), plan, &changed, diff.as_deref(), 1);
-            self.one_review(task, unit, cancel, &prompt, "reviewer")
-                .await
+            self.one_review(task, unit, cancel, &prompt).await
         };
         let after = self.file_hashes(&changed);
         let applied: Vec<String> = changed
@@ -2530,14 +2547,13 @@ impl Engine {
         unit: &Unit,
         cancel: &CancellationToken,
         prompt: &str,
-        agent: &str,
     ) -> ReviewRun {
         // The starting line names the provider the review actually runs on
         // (mistral when the reviewer provider is mistral), so the unit resolves first
         // (T78.1).
         let reviewer_unit = self.reviewer_unit(unit);
         let start = self.announce_session(
-            agent,
+            AgentRole::Reviewer,
             reviewer_unit.provider.slug(),
             reviewer_unit.model.as_deref(),
         );
@@ -2554,7 +2570,7 @@ impl Engine {
                 &reviewer_unit,
             )
             .await;
-        self.finish_session(agent, start, Self::session_outcome(&session));
+        self.finish_session(AgentRole::Reviewer, start, Self::session_outcome(&session));
         match session {
             Err(error) => {
                 tracing::error!("reviewer could not start for {}: {error}", task.id);
@@ -2591,9 +2607,7 @@ impl Engine {
         let mut merged = review::Findings::default();
         for file in reviewable {
             let prompt = prompt::reviewer_file(task, file, 1);
-            let run = self
-                .one_review(task, unit, cancel, &prompt, "reviewer")
-                .await;
+            let run = self.one_review(task, unit, cancel, &prompt).await;
             match run {
                 ReviewRun::Cancelled => return ReviewRun::Cancelled,
                 ReviewRun::Failed => {
@@ -2609,8 +2623,7 @@ impl Engine {
         }
         let findings_json = serde_json::to_string_pretty(&merged).unwrap_or_default();
         let prompt = prompt::reviewer_integration(task, &findings_json, changed, 2);
-        self.one_review(task, unit, cancel, &prompt, "reviewer")
-            .await
+        self.one_review(task, unit, cancel, &prompt).await
     }
 
     /// The SHA-256 content hashes of `files` (missing files hash to none):
@@ -2784,7 +2797,11 @@ impl Engine {
             state.research = TileStatus::Active;
             self.refresh_pipeline_locked(&mut state);
         }
-        let start = self.announce_session("research", unit.provider.slug(), unit.model.as_deref());
+        let start = self.announce_session(
+            AgentRole::Research,
+            unit.provider.slug(),
+            unit.model.as_deref(),
+        );
         let (session, events) = self
             .run_agent_session(
                 AgentPrompt {
@@ -2798,7 +2815,7 @@ impl Engine {
                 unit,
             )
             .await;
-        self.finish_session("research", start, Self::session_outcome(&session));
+        self.finish_session(AgentRole::Research, start, Self::session_outcome(&session));
         let result = match session {
             Err(error) => {
                 tracing::error!("research agent could not start for {}: {error}", task.id);
@@ -2914,8 +2931,11 @@ impl Engine {
         for attempt in 1..=2 {
             // Every attempt is one planner session with its own timing, so a retried
             // plan leaves its own finished line (T42.1) and starting line (T78.1).
-            let start =
-                self.announce_session("planner", unit.provider.slug(), unit.model.as_deref());
+            let start = self.announce_session(
+                AgentRole::Planner,
+                unit.provider.slug(),
+                unit.model.as_deref(),
+            );
             let (session, events) = self
                 .run_agent_session(
                     AgentPrompt {
@@ -2929,7 +2949,7 @@ impl Engine {
                     unit,
                 )
                 .await;
-            self.finish_session("planner", start, Self::session_outcome(&session));
+            self.finish_session(AgentRole::Planner, start, Self::session_outcome(&session));
             let result = match session {
                 Err(error) => {
                     tracing::error!("plan agent could not start for {}: {error}", task.id);
