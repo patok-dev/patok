@@ -14,6 +14,7 @@ mod daemon;
 mod merge;
 mod persist;
 mod schema;
+mod spelling;
 mod tui;
 
 pub use daemon::{
@@ -25,6 +26,7 @@ pub use persist::{
     daemon_field_value, daemon_readout, set_daemon_field, set_tui_field,
 };
 pub use schema::{daemon_json_schema, tui_json_schema};
+pub use spelling::EnumSpelling;
 pub use tui::{RailMode, THEME_KEYS, Theme, TuiSettings, UpdateChannel, load_tui, tui_help};
 
 use std::path::{Path, PathBuf};

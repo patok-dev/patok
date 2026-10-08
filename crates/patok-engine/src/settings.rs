@@ -1,6 +1,6 @@
 //! The wire `SettingsChange` mapped onto the daemon registry's key names and values.
 
-use patok_core::config::SettingValue;
+use patok_core::config::{AcceptPolicy as CoreAcceptPolicy, RunMode as CoreRunMode, SettingValue};
 use patok_proto::settings_change::Change;
 use patok_proto::{AcceptPolicy, Provider, Role, RunMode};
 
@@ -183,19 +183,30 @@ fn provider_name(provider: Provider) -> &'static str {
     }
 }
 
-fn run_mode_name(mode: RunMode) -> &'static str {
+/// The core config enum of a wire run mode, whose `as_str` supplies the spelling.
+fn core_run_mode(mode: RunMode) -> CoreRunMode {
     match mode {
-        RunMode::Sprint => "sprint",
-        RunMode::Continuous => "continuous",
+        RunMode::Sprint => CoreRunMode::Sprint,
+        RunMode::Continuous => CoreRunMode::Continuous,
+    }
+}
+
+fn run_mode_name(mode: RunMode) -> &'static str {
+    core_run_mode(mode).as_str()
+}
+
+/// The core config enum of a wire accept policy, whose `as_str` supplies the
+/// spelling.
+fn core_accept_policy(policy: AcceptPolicy) -> CoreAcceptPolicy {
+    match policy {
+        AcceptPolicy::NoHigh => CoreAcceptPolicy::NoHigh,
+        AcceptPolicy::NoHighMedium => CoreAcceptPolicy::NoHighMedium,
+        AcceptPolicy::NoFindings => CoreAcceptPolicy::NoFindings,
     }
 }
 
 fn accept_policy_name(policy: AcceptPolicy) -> &'static str {
-    match policy {
-        AcceptPolicy::NoHigh => "no-high",
-        AcceptPolicy::NoHighMedium => "no-high-medium",
-        AcceptPolicy::NoFindings => "no-findings",
-    }
+    core_accept_policy(policy).as_str()
 }
 
 #[cfg(test)]

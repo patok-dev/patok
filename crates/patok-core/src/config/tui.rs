@@ -2,83 +2,42 @@
 //! by the shell. The engine never reads this schema; it parses only the `[tui]` table of
 //! each config file. There are no environment overrides.
 
-use std::fmt;
 use std::path::Path;
 
 use schemars::JsonSchema;
 
-use super::{ConfigFiles, Fields, migrate_project_file, project_file, read_layer_table};
+use super::spelling::config_enum;
+use super::{
+    ConfigFiles, EnumSpelling, Fields, migrate_project_file, project_file, read_layer_table,
+};
 
-/// The shell theme.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(rename_all = "snake_case")]
-pub enum Theme {
-    #[default]
-    Dark,
-    AtomOneDark,
-    AtomOneLight,
-    TokyoNightDark,
-    TokyoNightDay,
-    CatppuccinMocha,
-    CatppuccinLatte,
-    SolarizedDark,
-    SolarizedLight,
-    GruvboxDark,
-    GruvboxLight,
+config_enum! {
+    /// The shell theme.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "snake_case")]
+    pub enum Theme {
+        #[default]
+        Dark => "dark",
+        AtomOneDark => "atom_one_dark",
+        AtomOneLight => "atom_one_light",
+        TokyoNightDark => "tokyo_night_dark",
+        TokyoNightDay => "tokyo_night_day",
+        CatppuccinMocha => "catppuccin_mocha",
+        CatppuccinLatte => "catppuccin_latte",
+        SolarizedDark => "solarized_dark",
+        SolarizedLight => "solarized_light",
+        GruvboxDark => "gruvbox_dark",
+        GruvboxLight => "gruvbox_light",
+    }
 }
 
 /// Every theme name the `tui.theme` key accepts, in the settings overlay's cycle
-/// order: the default first, then dark/light pairs per family. The config parser,
-/// the persistence validator and the overlay row all derive from this list, so
-/// they cannot drift apart.
-pub const THEME_KEYS: &[&str] = &[
-    "dark",
-    "atom_one_dark",
-    "atom_one_light",
-    "tokyo_night_dark",
-    "tokyo_night_day",
-    "catppuccin_mocha",
-    "catppuccin_latte",
-    "solarized_dark",
-    "solarized_light",
-    "gruvbox_dark",
-    "gruvbox_light",
-];
+/// order: the default first, then dark/light pairs per family. Emitted from the
+/// same spelling list as [`EnumSpelling::VARIANTS`], so the config parser, the
+/// persistence validator and the overlay row cannot drift apart.
+pub const THEME_KEYS: &[&str] = Theme::SPELLINGS;
 
 impl Theme {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_lowercase().as_str() {
-            "dark" => Some(Self::Dark),
-            "atom_one_dark" => Some(Self::AtomOneDark),
-            "atom_one_light" => Some(Self::AtomOneLight),
-            "tokyo_night_dark" => Some(Self::TokyoNightDark),
-            "tokyo_night_day" => Some(Self::TokyoNightDay),
-            "catppuccin_mocha" => Some(Self::CatppuccinMocha),
-            "catppuccin_latte" => Some(Self::CatppuccinLatte),
-            "solarized_dark" => Some(Self::SolarizedDark),
-            "solarized_light" => Some(Self::SolarizedLight),
-            "gruvbox_dark" => Some(Self::GruvboxDark),
-            "gruvbox_light" => Some(Self::GruvboxLight),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Dark => "dark",
-            Self::AtomOneDark => "atom_one_dark",
-            Self::AtomOneLight => "atom_one_light",
-            Self::TokyoNightDark => "tokyo_night_dark",
-            Self::TokyoNightDay => "tokyo_night_day",
-            Self::CatppuccinMocha => "catppuccin_mocha",
-            Self::CatppuccinLatte => "catppuccin_latte",
-            Self::SolarizedDark => "solarized_dark",
-            Self::SolarizedLight => "solarized_light",
-            Self::GruvboxDark => "gruvbox_dark",
-            Self::GruvboxLight => "gruvbox_light",
-        }
-    }
-
     /// Whether the theme is a dark variant: the default `dark` built-in and the
     /// five dark palettes. The theme picker's modal groups on this (T114.1).
     pub fn is_dark(self) -> bool {
@@ -94,76 +53,26 @@ impl Theme {
     }
 }
 
-impl fmt::Display for Theme {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+config_enum! {
+    /// Which releases self-update considers.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "lowercase")]
+    pub enum UpdateChannel {
+        #[default]
+        Stable => "stable",
+        Dev => "dev",
     }
 }
 
-/// Which releases self-update considers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(rename_all = "lowercase")]
-pub enum UpdateChannel {
-    #[default]
-    Stable,
-    Dev,
-}
-
-impl UpdateChannel {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_lowercase().as_str() {
-            "stable" => Some(Self::Stable),
-            "dev" => Some(Self::Dev),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Stable => "stable",
-            Self::Dev => "dev",
-        }
-    }
-}
-
-impl fmt::Display for UpdateChannel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// The pipeline rail's visual mode (T57.1): `normal` full-name boxes (the default since T58.1) or `compact` letter tiles, the opt-in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(rename_all = "lowercase")]
-pub enum RailMode {
-    Compact,
-    #[default]
-    Normal,
-    Detailed,
-}
-
-impl RailMode {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_lowercase().as_str() {
-            "compact" => Some(Self::Compact),
-            "normal" => Some(Self::Normal),
-            "detailed" => Some(Self::Detailed),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Compact => "compact",
-            Self::Normal => "normal",
-            Self::Detailed => "detailed",
-        }
-    }
-}
-
-impl fmt::Display for RailMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+config_enum! {
+    /// The pipeline rail's visual mode (T57.1): `normal` full-name boxes (the default since T58.1) or `compact` letter tiles, the opt-in.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "lowercase")]
+    pub enum RailMode {
+        Compact => "compact",
+        #[default]
+        Normal => "normal",
+        Detailed => "detailed",
     }
 }
 
@@ -283,27 +192,22 @@ pub(crate) fn parse_layer(
     for (key, value) in table {
         match key.as_str() {
             "theme" => {
-                layer.theme = f.enumerated(
-                    key,
-                    value,
-                    &format!("`{}`", THEME_KEYS.join("`, `")),
-                    Theme::parse,
-                );
+                layer.theme = f.enumerated(key, value, &Theme::accepted_spellings(), Theme::parse);
             }
             "truecolor" => layer.truecolor = f.boolean(key, value),
             "preview_wrap" => layer.preview_wrap = f.boolean(key, value),
             "agent_pane_split" => layer.agent_pane_split = f.split(key, value),
             "update_channel" => {
-                layer.update_channel =
-                    f.enumerated(key, value, "`stable`, `dev`", UpdateChannel::parse);
-            }
-            "rail_mode" => {
-                layer.rail_mode = f.enumerated(
+                layer.update_channel = f.enumerated(
                     key,
                     value,
-                    "`compact`, `normal`, `detailed`",
-                    RailMode::parse,
+                    &UpdateChannel::accepted_spellings(),
+                    UpdateChannel::parse,
                 );
+            }
+            "rail_mode" => {
+                layer.rail_mode =
+                    f.enumerated(key, value, &RailMode::accepted_spellings(), RailMode::parse);
             }
             other => f.unknown(other),
         }

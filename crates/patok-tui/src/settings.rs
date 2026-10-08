@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use patok_core::config::{
-    ConfigFiles, SettingValue, TuiSettings, load_tui, project_file, set_tui_field,
+    ConfigFiles, EnumSpelling, RunMode as CoreRunMode, SettingValue, TuiSettings, load_tui,
+    project_file, set_tui_field,
 };
 use patok_proto::settings_change::Change;
 use patok_proto::{Provider, Role, RunMode};
@@ -162,11 +163,15 @@ pub fn to_proto(field: &str, value: SettingValue) -> Result<Change, String> {
             role: role_of(&field[..field.len() - 6])? as i32,
             model: string()?,
         }),
-        "run_mode" => Change::RunMode(match string()?.as_str() {
-            "sprint" => RunMode::Sprint,
-            "continuous" => RunMode::Continuous,
-            _ => return wrong("one of `sprint`, `continuous`"),
-        } as i32),
+        "run_mode" => {
+            let mode = CoreRunMode::parse(&string()?).ok_or_else(|| {
+                format!(
+                    "`run_mode` must be one of {}",
+                    CoreRunMode::accepted_spellings()
+                )
+            })?;
+            Change::RunMode(proto_run_mode(mode) as i32)
+        }
         "plan_enabled" => Change::PlanEnabled(boolean()?),
         "skip_planner_for_simple" => Change::SkipPlannerForSimple(boolean()?),
         "skip_research_for_simple" => Change::SkipResearchForSimple(boolean()?),
@@ -191,6 +196,14 @@ pub fn to_proto(field: &str, value: SettingValue) -> Result<Change, String> {
         "auto_push_remote" => Change::AutoPushRemote(string()?),
         other => return Err(format!("no settings-change case for `{other}`")),
     })
+}
+
+/// The wire enum of a core run mode.
+fn proto_run_mode(mode: CoreRunMode) -> RunMode {
+    match mode {
+        CoreRunMode::Sprint => RunMode::Sprint,
+        CoreRunMode::Continuous => RunMode::Continuous,
+    }
 }
 
 fn role_of(name: &str) -> Result<Role, String> {

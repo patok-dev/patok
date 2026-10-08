@@ -11,8 +11,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::daemon::DaemonSettings;
-use super::{ConfigFiles, project_file};
+use super::daemon::{AcceptPolicy, DaemonSettings, RunMode};
+use super::tui::{RailMode, Theme, UpdateChannel};
+use super::{ConfigFiles, EnumSpelling, project_file};
 
 /// A settings value as submitted by a settings change, mapped onto the field's expected
 /// type by the per-schema field registry.
@@ -171,10 +172,8 @@ fn daemon_field(name: &str) -> Option<FieldKind> {
         "agent_timeout_secs" | "discovery_cooldown_secs" | "discovery_cooldown_cap_secs" => {
             FieldKind::PositiveUint
         }
-        "run_mode" => FieldKind::Enum(&["sprint", "continuous"]),
-        "plan_revision_accept_policy" => {
-            FieldKind::Enum(&["no-high", "no-high-medium", "no-findings"])
-        }
+        "run_mode" => FieldKind::Enum(RunMode::SPELLINGS),
+        "plan_revision_accept_policy" => FieldKind::Enum(AcceptPolicy::SPELLINGS),
         "confidence_threshold" => FieldKind::Float,
         "embedding_port" => FieldKind::Port,
         "skip_planner_for_simple"
@@ -201,14 +200,14 @@ fn daemon_field(name: &str) -> Option<FieldKind> {
 /// The tui field registry: every `[tui]` key and what it accepts.
 fn tui_field(name: &str) -> Option<FieldKind> {
     Some(match name {
-        "theme" => FieldKind::Enum(super::tui::THEME_KEYS),
+        "theme" => FieldKind::Enum(Theme::SPELLINGS),
         "truecolor" | "preview_wrap" => FieldKind::Bool,
         "agent_pane_split" => FieldKind::Range(
             super::tui::AGENT_PANE_SPLIT_MIN,
             super::tui::AGENT_PANE_SPLIT_MAX,
         ),
-        "update_channel" => FieldKind::Enum(&["stable", "dev"]),
-        "rail_mode" => FieldKind::Enum(&["compact", "normal", "detailed"]),
+        "update_channel" => FieldKind::Enum(UpdateChannel::SPELLINGS),
+        "rail_mode" => FieldKind::Enum(RailMode::SPELLINGS),
         _ => return None,
     })
 }

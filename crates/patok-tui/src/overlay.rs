@@ -12,7 +12,9 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use patok_core::config::{SettingValue, THEME_KEYS, daemon_help, tui_help};
+use patok_core::config::{
+    EnumSpelling, RailMode, RunMode, SettingValue, Theme, UpdateChannel, daemon_help, tui_help,
+};
 use ratatui::layout::Rect;
 
 use crate::app::Action;
@@ -172,7 +174,7 @@ static PIPELINE_SECTION: &[Row] = &[
         key: "run_mode",
         label: "run mode",
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(&["sprint", "continuous"]),
+        kind: FieldKind::Enum(RunMode::SPELLINGS),
     },
     Row {
         key: "plan_enabled",
@@ -299,7 +301,7 @@ static DISPLAY_SECTION: &[Row] = &[
         key: "theme",
         label: "theme",
         schema: Schema::Tui,
-        kind: FieldKind::Enum(THEME_KEYS),
+        kind: FieldKind::Enum(Theme::SPELLINGS),
     },
     Row {
         key: "truecolor",
@@ -317,13 +319,13 @@ static DISPLAY_SECTION: &[Row] = &[
         key: "update_channel",
         label: "update channel",
         schema: Schema::Tui,
-        kind: FieldKind::Enum(&["stable", "dev"]),
+        kind: FieldKind::Enum(UpdateChannel::SPELLINGS),
     },
     Row {
         key: "rail_mode",
         label: "rail mode",
         schema: Schema::Tui,
-        kind: FieldKind::Enum(&["compact", "normal", "detailed"]),
+        kind: FieldKind::Enum(RailMode::SPELLINGS),
     },
 ];
 

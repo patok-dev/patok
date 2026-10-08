@@ -6,32 +6,21 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+use super::spelling::config_enum;
+use super::{
+    ConfigFiles, EnumSpelling, Fields, migrate_project_file, project_file, read_layer_table,
+};
+
 use schemars::JsonSchema;
 
-use super::{ConfigFiles, Fields, migrate_project_file, project_file, read_layer_table};
-
-/// The providers the engine can run today.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ProviderKind {
-    #[default]
-    Claude,
-    Codex,
-    Mistral,
-}
-
-impl ProviderKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Mistral => "mistral",
-        }
-    }
-}
-
-impl fmt::Display for ProviderKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+config_enum! {
+    /// The providers the engine can run today.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum ProviderKind {
+        #[default]
+        Claude => "claude",
+        Codex => "codex",
+        Mistral => "mistral",
     }
 }
 
@@ -91,70 +80,26 @@ impl fmt::Display for ProviderName {
     }
 }
 
-/// The run mode.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(rename_all = "lowercase")]
-pub enum RunMode {
-    #[default]
-    Sprint,
-    Continuous,
-}
-
-impl RunMode {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_lowercase().as_str() {
-            "sprint" => Some(Self::Sprint),
-            "continuous" => Some(Self::Continuous),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Sprint => "sprint",
-            Self::Continuous => "continuous",
-        }
+config_enum! {
+    /// The run mode.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "lowercase")]
+    pub enum RunMode {
+        #[default]
+        Sprint => "sprint",
+        Continuous => "continuous",
     }
 }
 
-impl fmt::Display for RunMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// The plan self-review accept policy.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(rename_all = "kebab-case")]
-pub enum AcceptPolicy {
-    #[default]
-    NoHigh,
-    NoHighMedium,
-    NoFindings,
-}
-
-impl AcceptPolicy {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_lowercase().as_str() {
-            "no-high" => Some(Self::NoHigh),
-            "no-high-medium" => Some(Self::NoHighMedium),
-            "no-findings" => Some(Self::NoFindings),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NoHigh => "no-high",
-            Self::NoHighMedium => "no-high-medium",
-            Self::NoFindings => "no-findings",
-        }
-    }
-}
-
-impl fmt::Display for AcceptPolicy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+config_enum! {
+    /// The plan self-review accept policy.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "kebab-case")]
+    pub enum AcceptPolicy {
+        #[default]
+        NoHigh => "no-high",
+        NoHighMedium => "no-high-medium",
+        NoFindings => "no-findings",
     }
 }
 
@@ -441,7 +386,8 @@ pub(crate) fn parse_layer(
             "stage_overrides" => layer.stage_overrides = f.strings(key, value),
             // Pipeline flow (section 5).
             "run_mode" => {
-                layer.run_mode = f.enumerated(key, value, "`sprint`, `continuous`", RunMode::parse);
+                layer.run_mode =
+                    f.enumerated(key, value, &RunMode::accepted_spellings(), RunMode::parse);
             }
             "stages" => layer.stages = f.stages(value),
             "skip_planner_for_simple" => layer.skip_planner_for_simple = f.boolean(key, value),
@@ -461,7 +407,7 @@ pub(crate) fn parse_layer(
                 layer.plan_revision_accept_policy = f.enumerated(
                     key,
                     value,
-                    "`no-high`, `no-high-medium`, `no-findings`",
+                    &AcceptPolicy::accepted_spellings(),
                     AcceptPolicy::parse,
                 );
             }
