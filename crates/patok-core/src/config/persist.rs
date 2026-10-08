@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::daemon::{AcceptPolicy, DaemonSettings, RunMode};
+use super::daemon::{AcceptPolicy, DaemonSettings, ProviderName, RunMode};
 use super::tui::{RailMode, Theme, UpdateChannel};
 use super::{ConfigFiles, EnumSpelling, project_file};
 
@@ -112,6 +112,9 @@ enum FieldKind {
     OptStr,
     /// An enumerated field and its accepted spellings (trimmed, lowercased).
     Enum(&'static [&'static str]),
+    /// A provider field, accepted by `ProviderName::parse` (trimmed,
+    /// lowercased, aliases accepted).
+    Provider,
     /// An unsigned integer with an inclusive range.
     Range(u64, u64),
     /// A known key of the other (composite) shape that the settings-change flow cannot
@@ -119,22 +122,10 @@ enum FieldKind {
     Composite,
 }
 
-const PROVIDERS: &[&str] = &[
-    "claude",
-    "codex",
-    "opencode",
-    "ghcopilot",
-    "gh-copilot",
-    "github-copilot",
-    "copilot",
-    "mistral",
-    "vibe",
-];
-
 /// The daemon field registry: every `[daemon]` key and what it accepts.
 fn daemon_field(name: &str) -> Option<FieldKind> {
     Some(match name {
-        "provider" => FieldKind::Enum(PROVIDERS),
+        "provider" => FieldKind::Provider,
         "model"
         | "local_model"
         | "build_command"
@@ -153,7 +144,7 @@ fn daemon_field(name: &str) -> Option<FieldKind> {
         | "builder_provider"
         | "reviewer_provider"
         | "discovery_provider"
-        | "learning_extraction_provider" => FieldKind::Enum(PROVIDERS),
+        | "learning_extraction_provider" => FieldKind::Provider,
         "model_catalog_refresh_secs"
         | "review_confidence_threshold"
         | "plan_revision_cycles"
@@ -473,6 +464,21 @@ fn validate(
             }
         }
         (FieldKind::Enum(..), _) => reject("one of the documented values"),
+        (FieldKind::Provider, SettingValue::Str(s)) => {
+            let normalized = s.trim().to_lowercase();
+            if ProviderName::parse(&normalized).is_some() {
+                Ok(Some(normalized.into()))
+            } else {
+                Err(PersistError::new(format!(
+                    "{schema}.{name} must be one of {}, got {s:?}",
+                    ProviderName::accepted()
+                        .map(|a| format!("`{a}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )))
+            }
+        }
+        (FieldKind::Provider, _) => reject("one of the documented values"),
     }
 }
 
@@ -718,6 +724,50 @@ mod tests {
         );
         assert_eq!(daemon_field_value(&settings, "stages"), None);
         assert_eq!(daemon_field_value(&settings, "no_such_key"), None);
+    }
+
+    /// The provider fields accept the same spellings as the on-disk parser,
+    /// including every alias; the rejection message names them all, and an
+    /// alias persists normalized as submitted, exactly as before.
+    #[test]
+    fn provider_fields_validate_like_the_disk_parser() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut warnings = Vec::new();
+        let error = set_daemon_field(
+            dir.path(),
+            "provider",
+            SettingValue::Str("bogus".into()),
+            &mut warnings,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message,
+            "daemon.provider must be one of `claude`, `codex`, `opencode`, `ghcopilot`, \
+             `gh-copilot`, `github-copilot`, `copilot`, `mistral`, `vibe`, got \"bogus\""
+        );
+        assert!(!dir.path().join("patok.config.toml").exists());
+        // Aliases persist normalized, as submitted.
+        set_daemon_field(
+            dir.path(),
+            "provider",
+            SettingValue::Str("vibe".into()),
+            &mut warnings,
+        )
+        .unwrap();
+        set_daemon_field(
+            dir.path(),
+            "research_provider",
+            SettingValue::Str(" GitHub-Copilot ".into()),
+            &mut warnings,
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(dir.path().join("patok.config.toml")).unwrap();
+        assert!(text.contains("provider = \"vibe\""), "{text}");
+        assert!(
+            text.contains("research_provider = \"github-copilot\""),
+            "{text}"
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

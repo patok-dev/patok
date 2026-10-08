@@ -2,6 +2,7 @@
 //! newline-delimited JSON stream (`--output streaming`).
 
 use async_trait::async_trait;
+use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
@@ -36,7 +37,7 @@ impl Vibe {
 #[async_trait]
 impl Provider for Vibe {
     fn slug(&self) -> &'static str {
-        "mistral"
+        ProviderKind::Mistral.as_str()
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {

@@ -1,5 +1,6 @@
 //! The agent output frame: its title, pane rendering and session lines.
 
+use patok_core::config::ProviderKind;
 use patok_core::event::SessionOutcome;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -22,13 +23,13 @@ pub(super) fn output_hints() -> Vec<&'static str> {
     vec!["↑↓ scroll", "PgUp/PgDn page", "End follow", "Tab tasks"]
 }
 
-/// The provider's display name for the output frame title ("claude" -> "Claude").
+/// The provider's display name for the output frame title ("claude" -> "Claude");
+/// a slug no engine provider spells (the unimplemented names, the mock) passes
+/// through unchanged.
 pub(super) fn provider_display_name(provider: &str) -> &str {
-    match provider {
-        "claude" => "Claude",
-        "codex" => "Codex",
-        "mistral" => "Mistral",
-        other => other,
+    match ProviderKind::parse(provider) {
+        Some(kind) => kind.display_name(),
+        None => provider,
     }
 }
 

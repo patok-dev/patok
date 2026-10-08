@@ -8,6 +8,7 @@
 //! config override.
 
 use async_trait::async_trait;
+use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
@@ -42,7 +43,7 @@ impl Codex {
 #[async_trait]
 impl Provider for Codex {
     fn slug(&self) -> &'static str {
-        "codex"
+        ProviderKind::Codex.as_str()
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {

@@ -2,6 +2,7 @@
 //! stream-json output.
 
 use async_trait::async_trait;
+use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, Usage, preview};
 use serde_json::Value;
 
@@ -17,7 +18,7 @@ pub struct Claude;
 #[async_trait]
 impl Provider for Claude {
     fn slug(&self) -> &'static str {
-        "claude"
+        ProviderKind::Claude.as_str()
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {

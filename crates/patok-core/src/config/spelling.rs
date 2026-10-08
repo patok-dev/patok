@@ -95,7 +95,9 @@ pub(crate) use config_enum;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AcceptPolicy, ProviderKind, RailMode, RunMode, Theme, UpdateChannel};
+    use crate::config::{
+        AcceptPolicy, ProviderKind, ProviderName, RailMode, RunMode, Theme, UpdateChannel,
+    };
     use std::collections::HashSet;
     use std::fmt;
 
@@ -140,6 +142,11 @@ mod tests {
             ProviderKind::accepted_spellings(),
             "`claude`, `codex`, `mistral`"
         );
+    }
+
+    #[test]
+    fn provider_name_round_trips_every_variant() {
+        check::<ProviderName>();
     }
 
     #[test]

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use patok_core::config::{
-    ConfigFiles, EnumSpelling, RunMode as CoreRunMode, SettingValue, TuiSettings, load_tui,
-    project_file, set_tui_field,
+    ConfigFiles, EnumSpelling, ProviderName, RunMode as CoreRunMode, SettingValue, TuiSettings,
+    load_tui, project_file, set_tui_field,
 };
 use patok_proto::settings_change::Change;
 use patok_proto::{Provider, Role, RunMode};
@@ -217,15 +217,24 @@ fn role_of(name: &str) -> Result<Role, String> {
     }
 }
 
-/// The canonical wire spelling of a provider; unknown text is a user-facing rejection.
+/// The wire enum of a provider's canonical spelling; unknown text is a
+/// user-facing rejection. Only canonical spellings travel the wire (aliases
+/// are a TOML-only concern), so this uses the trait's canonical parse, not
+/// the alias-aware `ProviderName::parse`.
 fn provider_of(name: &str) -> Result<Provider, String> {
+    <ProviderName as EnumSpelling>::parse(name)
+        .map(proto_provider)
+        .ok_or_else(|| format!("`provider` must be a provider name, got {name:?}"))
+}
+
+/// The wire enum of a core provider name.
+fn proto_provider(name: ProviderName) -> Provider {
     match name {
-        "claude" => Ok(Provider::Claude),
-        "codex" => Ok(Provider::Codex),
-        "opencode" => Ok(Provider::Opencode),
-        "ghcopilot" => Ok(Provider::Ghcopilot),
-        "mistral" => Ok(Provider::Mistral),
-        other => Err(format!("`provider` must be a provider name, got {other:?}")),
+        ProviderName::Claude => Provider::Claude,
+        ProviderName::Codex => Provider::Codex,
+        ProviderName::OpenCode => Provider::Opencode,
+        ProviderName::GhCopilot => Provider::Ghcopilot,
+        ProviderName::Mistral => Provider::Mistral,
     }
 }
 
@@ -385,8 +394,46 @@ mod tests {
         assert!(error.contains("no settings-change case"), "{error}");
         let error = to_proto("provider", SettingValue::Str("not-a-provider".into())).unwrap_err();
         assert!(error.contains("provider name"), "{error}");
+        // The alias is a TOML-only concern: only canonical spellings travel the wire.
+        let error = to_proto("provider", SettingValue::Str("vibe".into())).unwrap_err();
+        assert!(error.contains("provider name"), "{error}");
         let error = to_proto("research_model", SettingValue::Bool(true)).unwrap_err();
         assert!(error.contains("must be a string"), "{error}");
+    }
+
+    /// Finding 11: every provider spelling traces back to the core enums. Each
+    /// engine-implemented kind resolves to a provider whose slug is the enum's
+    /// own spelling (or, when its CLI is not installed, names the missing CLI),
+    /// and each config name round-trips its canonical spelling through both
+    /// proto mappers, with distinct wire numbers, matching the kind it
+    /// resolves to.
+    #[test]
+    fn every_provider_variant_resolves_and_round_trips_the_wire() {
+        use patok_core::config::ProviderKind;
+        use patok_engine::from_proto;
+        use patok_providers::{ProviderError, resolve};
+
+        for &(kind, spelling) in ProviderKind::VARIANTS {
+            match resolve(kind) {
+                Ok(provider) => assert_eq!(provider.slug(), spelling),
+                Err(ProviderError::CliNotFound { .. }) => {}
+                Err(other) => panic!("unexpected error for `{spelling}`: {other}"),
+            }
+        }
+        let mut wire_numbers = std::collections::HashSet::new();
+        for &(name, spelling) in ProviderName::VARIANTS {
+            let change = to_proto("provider", SettingValue::Str(spelling.into())).unwrap();
+            assert!(wire_numbers.insert(match change {
+                Change::Provider(raw) => raw,
+                other => panic!("`{spelling}` did not map to a wire provider: {other:?}"),
+            }));
+            let (key, value) = from_proto(&change);
+            assert_eq!(key, "provider");
+            assert_eq!(value, SettingValue::Str(spelling.into()), "{spelling}");
+            if let Some(kind) = name.kind() {
+                assert_eq!(kind.as_str(), spelling);
+            }
+        }
     }
 
     /// A holder whose user-local layer is a tempdir file, plus its path.

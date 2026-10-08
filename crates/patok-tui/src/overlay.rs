@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use patok_core::config::{
-    EnumSpelling, RailMode, RunMode, SettingValue, Theme, UpdateChannel, daemon_help, tui_help,
+    EnumSpelling, ProviderName, RailMode, RunMode, SettingValue, Theme, UpdateChannel, daemon_help,
+    tui_help,
 };
 use ratatui::layout::Rect;
 
@@ -80,8 +81,6 @@ pub struct Section {
 // no single-value editor) and `agent_pane_split` (the TUI has a fixed split and no
 // dragging). Everything else the registries accept appears below.
 
-const PROVIDERS: &[&str] = &["claude", "codex", "opencode", "ghcopilot", "mistral"];
-
 static PROVIDER_SECTION: &[Row] = &[
     Row {
         key: "engine_version",
@@ -99,7 +98,7 @@ static PROVIDER_SECTION: &[Row] = &[
         key: "provider",
         label: "provider",
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
+        kind: FieldKind::Enum(ProviderName::SPELLINGS),
     },
     Row {
         key: "model",
@@ -111,7 +110,7 @@ static PROVIDER_SECTION: &[Row] = &[
         key: "research_provider",
         label: "research provider",
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
+        kind: FieldKind::Enum(ProviderName::SPELLINGS),
     },
     Row {
         key: "research_model",
@@ -123,7 +122,7 @@ static PROVIDER_SECTION: &[Row] = &[
         key: "planner_provider",
         label: "planner provider",
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
+        kind: FieldKind::Enum(ProviderName::SPELLINGS),
     },
     Row {
         key: "planner_model",
@@ -135,7 +134,7 @@ static PROVIDER_SECTION: &[Row] = &[
         key: "builder_provider",
         label: "builder provider",
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
+        kind: FieldKind::Enum(ProviderName::SPELLINGS),
     },
     Row {
         key: "builder_model",
@@ -147,7 +146,7 @@ static PROVIDER_SECTION: &[Row] = &[
         key: "reviewer_provider",
         label: "reviewer provider",
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
+        kind: FieldKind::Enum(ProviderName::SPELLINGS),
     },
     Row {
         key: "reviewer_model",
@@ -159,7 +158,7 @@ static PROVIDER_SECTION: &[Row] = &[
         key: "discovery_provider",
         label: "discovery provider",
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
+        kind: FieldKind::Enum(ProviderName::SPELLINGS),
     },
     Row {
         key: "discovery_model",

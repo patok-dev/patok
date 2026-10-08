@@ -37,30 +37,57 @@ pub enum ProviderName {
     Mistral,
 }
 
+impl ProviderKind {
+    /// The capitalized spelling, as the output frame title shows it.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+            Self::Mistral => "Mistral",
+        }
+    }
+}
+
 impl ProviderName {
     pub const ACCEPTED_SPELLINGS: &str = "claude, codex, opencode, ghcopilot (aliases gh-copilot, github-copilot, copilot), mistral (alias vibe)";
 
-    /// Parses a config spelling; `None` for anything unrecognized.
+    /// The config aliases, keyed by spelling: they parse like the canonical
+    /// spellings and appear after each variant's spelling in [`Self::accepted`].
+    pub const ALIASES: &[(&'static str, Self)] = &[
+        ("gh-copilot", Self::GhCopilot),
+        ("github-copilot", Self::GhCopilot),
+        ("copilot", Self::GhCopilot),
+        ("vibe", Self::Mistral),
+    ];
+
+    /// Parses a config spelling: the canonical spellings, then the aliases;
+    /// trimmed, case-insensitive; `None` for anything unrecognized.
     pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_lowercase().as_str() {
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
-            "opencode" => Some(Self::OpenCode),
-            "ghcopilot" | "gh-copilot" | "github-copilot" | "copilot" => Some(Self::GhCopilot),
-            "mistral" | "vibe" => Some(Self::Mistral),
-            _ => None,
-        }
+        EnumSpelling::parse(value).or_else(|| {
+            let normalized = value.trim().to_lowercase();
+            Self::ALIASES
+                .iter()
+                .find(|(alias, _)| normalized == *alias)
+                .map(|(_, variant)| *variant)
+        })
+    }
+
+    /// Every accepted spelling in the persistence validator's order: each
+    /// variant's canonical spelling followed by its aliases.
+    pub fn accepted() -> impl Iterator<Item = &'static str> {
+        Self::VARIANTS.iter().flat_map(|&(variant, spelling)| {
+            std::iter::once(spelling).chain(
+                Self::ALIASES
+                    .iter()
+                    .filter(move |&&(_, aliased)| aliased == variant)
+                    .map(|&(alias, _)| alias),
+            )
+        })
     }
 
     /// The primary config spelling.
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::OpenCode => "opencode",
-            Self::GhCopilot => "ghcopilot",
-            Self::Mistral => "mistral",
-        }
+        EnumSpelling::as_str(self)
     }
 
     /// The engine-implemented kind, or `None` for a provider this build does not ship yet.
@@ -70,6 +97,29 @@ impl ProviderName {
             Self::Codex => Some(ProviderKind::Codex),
             Self::Mistral => Some(ProviderKind::Mistral),
             Self::OpenCode | Self::GhCopilot => None,
+        }
+    }
+}
+
+impl EnumSpelling for ProviderName {
+    const VARIANTS: &'static [(Self, &'static str)] = &[
+        (Self::Claude, "claude"),
+        (Self::Codex, "codex"),
+        (Self::OpenCode, "opencode"),
+        (Self::GhCopilot, "ghcopilot"),
+        (Self::Mistral, "mistral"),
+    ];
+    const SPELLINGS: &'static [&'static str] =
+        &["claude", "codex", "opencode", "ghcopilot", "mistral"];
+
+    // The compile-exhaustive proof: a variant without a spelling fails here.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::OpenCode => "opencode",
+            Self::GhCopilot => "ghcopilot",
+            Self::Mistral => "mistral",
         }
     }
 }
@@ -885,6 +935,69 @@ mod tests {
         assert_eq!(loaded.settings.provider, ProviderName::Codex);
         assert_eq!(loaded.settings.provider.kind(), Some(ProviderKind::Codex));
         assert_eq!(ProviderKind::Codex.as_str(), "codex");
+    }
+
+    /// The aliases parse to their variants exactly like the canonical spellings:
+    /// trimmed and case-insensitive; anything else is rejected.
+    #[test]
+    fn provider_aliases_parse_to_their_variants() {
+        assert_eq!(
+            ProviderName::parse("gh-copilot"),
+            Some(ProviderName::GhCopilot)
+        );
+        assert_eq!(
+            ProviderName::parse("github-copilot"),
+            Some(ProviderName::GhCopilot)
+        );
+        assert_eq!(
+            ProviderName::parse("copilot"),
+            Some(ProviderName::GhCopilot)
+        );
+        assert_eq!(ProviderName::parse("vibe"), Some(ProviderName::Mistral));
+        assert_eq!(
+            ProviderName::parse(" GitHub-Copilot "),
+            Some(ProviderName::GhCopilot)
+        );
+        assert_eq!(ProviderName::parse("CLAUDE"), Some(ProviderName::Claude));
+        assert_eq!(
+            ProviderName::parse("ghcopilot"),
+            Some(ProviderName::GhCopilot)
+        );
+        assert_eq!(ProviderName::parse("not-a-provider"), None);
+        assert_eq!(ProviderName::parse(""), None);
+    }
+
+    /// The derived accepted list names every canonical spelling followed by its
+    /// aliases, in the order the persistence validator's error message shows.
+    #[test]
+    fn accepted_spellings_list_every_alias_after_its_variant() {
+        assert_eq!(
+            ProviderName::accepted().collect::<Vec<_>>(),
+            [
+                "claude",
+                "codex",
+                "opencode",
+                "ghcopilot",
+                "gh-copilot",
+                "github-copilot",
+                "copilot",
+                "mistral",
+                "vibe",
+            ]
+        );
+    }
+
+    /// The display names the output frame title shows, one per implemented kind.
+    #[test]
+    fn display_names_capitalize_the_spellings() {
+        for &(kind, spelling) in ProviderKind::VARIANTS {
+            let display = kind.display_name();
+            assert!(
+                display.starts_with(|c: char| c.is_uppercase()),
+                "`{spelling}` has no capitalized display name"
+            );
+            assert_eq!(display.to_lowercase(), spelling);
+        }
     }
 
     /// The help registry (T85.1) answers every overlay key it owns with

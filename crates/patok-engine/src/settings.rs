@@ -1,6 +1,8 @@
 //! The wire `SettingsChange` mapped onto the daemon registry's key names and values.
 
-use patok_core::config::{AcceptPolicy as CoreAcceptPolicy, RunMode as CoreRunMode, SettingValue};
+use patok_core::config::{
+    AcceptPolicy as CoreAcceptPolicy, ProviderName, RunMode as CoreRunMode, SettingValue,
+};
 use patok_proto::settings_change::Change;
 use patok_proto::{AcceptPolicy, Provider, Role, RunMode};
 
@@ -172,15 +174,20 @@ fn role_name(role: Role) -> &'static str {
     }
 }
 
+/// The core config enum of a wire provider, whose `as_str` supplies the spelling.
+fn core_provider(provider: Provider) -> ProviderName {
+    match provider {
+        Provider::Claude => ProviderName::Claude,
+        Provider::Codex => ProviderName::Codex,
+        Provider::Opencode => ProviderName::OpenCode,
+        Provider::Ghcopilot => ProviderName::GhCopilot,
+        Provider::Mistral => ProviderName::Mistral,
+    }
+}
+
 /// The canonical config spelling of a provider.
 fn provider_name(provider: Provider) -> &'static str {
-    match provider {
-        Provider::Claude => "claude",
-        Provider::Codex => "codex",
-        Provider::Opencode => "opencode",
-        Provider::Ghcopilot => "ghcopilot",
-        Provider::Mistral => "mistral",
-    }
+    core_provider(provider).as_str()
 }
 
 /// The core config enum of a wire run mode, whose `as_str` supplies the spelling.
