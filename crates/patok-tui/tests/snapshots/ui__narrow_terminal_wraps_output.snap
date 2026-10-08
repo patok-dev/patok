@@ -2,15 +2,15 @@
 source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 40, 12)"
 ---
-             ┌ Builder ────────────────┐
-[ Research  ]│a rather long line of age│
-      ↓      │nt output that must wrap │
-[   Plan    ]│in a narrow pane         │
-      ↓      │                         │
-[   Build   ]│                         │
-      ↓      └─────────────────────────┘
-[  Review   ]┌ Tasks | 1/3 - 2 left ───┐
-             │○ T1.2  add the parser fo│
-[   Ship    ]│ a add tasks             │
-[ Discover  ]└─────────────────────────┘
- STOPPED  sprint     Enter  start build
+            ┌ Builder ─────────────────┐
+[ Research ]│a rather long line of agen│
+      ↓     │t output that must wrap in│
+[   Plan   ]│ a narrow pane            │
+      ↓     │                          │
+[  Build   ]│                          │
+      ↓     └──────────────────────────┘
+[  Review  ]┌ Tasks | 1/3 - 2 left ────┐
+            │○ T1.2  add the parser for│
+[ Discover ]│ a add tasks              │
+            └──────────────────────────┘
+ STOPPED  sprint        [ Enter ] start

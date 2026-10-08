@@ -2,27 +2,27 @@
 source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
-             ┌ Planner ───────────────────────────────────────────────── 00:00 ┐
-[ Research  ]│Reading TASKS.md to see what exists.                             │
-      ↓      │▸ Edit TASKS.md                                                  │
-[   Plan    ]│Plan                                                             │
-      ↓      │Read the task parser, then:                                      │
-[   Build   ]│- parse the task lines                                           │
-      ↓      │- fix the task.rs fixture                                        │
-[  Review   ]│- run cargo test                                                 │
-             │Finally:                                                         │
-[   Ship    ]│  let tasks = parse(&text);                                      │
-[ Discover  ]│                                                                 │
-[ Learnings ]│                                                                 │
-             │                                                                 │
-             │                                                                 │
-             │ v rail view · ↑↓ scroll · PgUp/PgDn page · End follow           │
-             └─────────────────────────────────────────────────────────────────┘
-             ┌ Tasks | 1/3 - 2 left ───────────────────────────────────────────┐
-             │✔ T1.1  scaffold the workspace                                   │
-             │○ T1.2  add the parser for task files                            │
-             │○ T1.3  wire the engine to the shell                             │
-             │                                                                 │
-             │                                                                 │
-             └─────────────────────────────────────────────────────────────────┘
- PLANNING  sprint                                             Planner running...
+            ┌ Planner ────────────────────────────────────────────────── 00:00 ┐
+[ Research ]│Reading TASKS.md to see what exists.                              │
+      ↓     │▸ Edit TASKS.md                                                   │
+[   Plan   ]│Plan                                                              │
+      ↓     │Read the task parser, then:                                       │
+[  Build   ]│- parse the task lines                                            │
+      ↓     │- fix the task.rs fixture                                         │
+[  Review  ]│- run cargo test                                                  │
+            │Finally:                                                          │
+[ Discover ]│  let tasks = parse(&text);                                       │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │                                                                  │
+            │ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks              │
+            └──────────────────────────────────────────────────────────────────┘
+            ┌ Tasks | 1/3 - 2 left ────────────────────────────────────────────┐
+            │✔ T1.1  scaffold the workspace                                    │
+            │○ T1.2  add the parser for task files                             │
+            │○ T1.3  wire the engine to the shell                              │
+            │                                                                  │
+            │                                                                  │
+            └──────────────────────────────────────────────────────────────────┘
+ PLANNING  sprint                                      [ Esc ] stop  [ m ] menu

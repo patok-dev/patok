@@ -246,11 +246,17 @@ fn narrow_terminal_wraps_output() {
 fn header_shows_only_the_status_chip_and_run_mode() {
     let mut app = app();
     let idle = draw(&app, 80, 14);
-    // The merged status line (T86.1): the chips on the left, the key hints
-    // right-aligned behind them. At 80 columns the idle line fits whole.
+    // The merged status line (T86.1): the chips on the left, the hint
+    // buttons right-aligned behind them. At 80 columns the idle line fits
+    // whole; the shorter strip the m menu leaves (T128.1) right-aligns its
+    // two buttons, rendered through the shared modal button formatting
+    // (T141.1).
     assert_eq!(
         idle.lines().last().unwrap(),
-        " STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit"
+        format!(
+            " STOPPED  sprint {} [ Enter ] start  [ m ] menu",
+            " ".repeat(34)
+        )
     );
     assert!(!idle.contains("Waiting..."));
     // The body starts on the frame's first row (the header row is gone,
@@ -263,7 +269,7 @@ fn header_shows_only_the_status_chip_and_run_mode() {
             .trim_start()
             .starts_with("┌ Builder")
     );
-    assert!(idle.lines().nth(1).unwrap().starts_with("[ Research  ]"));
+    assert!(idle.lines().nth(1).unwrap().starts_with("[ Research ]"));
 
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
@@ -513,16 +519,48 @@ fn narrow_header_drops_the_run_mode_chip() {
     let screen = draw(&app(), 12, 10);
     assert_eq!(screen.lines().last().unwrap(), " STOPPED");
     insta::assert_snapshot!(screen);
-    // 60 columns keep both chips and drop whole hint pairs from the tail
-    // (T86.1): ` d detach` and ` q quit` go, no half chip ever shows.
+    // 60 columns keep both chips and every hint button: the secondary hints
+    // moved behind the m menu (T128.1), so the two buttons that remain -- the
+    // idle Enter button and the menu button -- fit whole, right-aligned.
     let screen = draw(&app(), 60, 12);
     let status = screen.lines().last().unwrap();
     assert_eq!(
         status,
-        " STOPPED  sprint  Enter  start build  ?  settings  t  theme"
+        format!(
+            " STOPPED  sprint {} [ Enter ] start  [ m ] menu",
+            " ".repeat(14)
+        )
     );
     assert!(!status.contains(" detach"), "{status}");
     assert!(!status.contains(" quit"), "{status}");
+    // 45 columns fit only the Enter button whole: the m button drops whole
+    // from the tail (T141.1), no half-cut ` [ m` fragment stays behind and
+    // the menu chip's rect goes zero.
+    let narrow_app = app();
+    let mut terminal = Terminal::new(TestBackend::new(45, 12)).unwrap();
+    terminal.draw(|frame| render(frame, &narrow_app)).unwrap();
+    let status: String = (0..45)
+        .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    assert_eq!(
+        status,
+        format!(" STOPPED  sprint {} [ Enter ] start", " ".repeat(11))
+    );
+    assert!(!status.contains(" [ m"), "{status}");
+    assert_eq!(narrow_app.menu_chip.get(), ratatui::layout::Rect::default());
+    // 46 columns fit both buttons whole -- exactly, with no pad between the
+    // mode chip and the Enter button.
+    let screen = draw(&app(), 46, 12);
+    let status = screen.lines().last().unwrap();
+    assert_eq!(status, " STOPPED  sprint  [ Enter ] start  [ m ] menu");
+    // 40 columns still fit only the Enter button (the labels are never cut).
+    let screen = draw(&app(), 40, 12);
+    assert_eq!(
+        screen.lines().last().unwrap(),
+        format!(" STOPPED  sprint {} [ Enter ] start", " ".repeat(6))
+    );
 }
 
 #[test]
@@ -862,7 +900,7 @@ fn the_timer_hides_while_idle_and_returns_for_the_next_session() {
             .lines()
             .nth(1)
             .unwrap()
-            .starts_with("[ Research  ]"),
+            .starts_with("[ Research ]"),
         "the rail's first tile sits one row below the top"
     );
     assert!(!title.contains("00:00"), "{title}");
@@ -1568,7 +1606,7 @@ fn the_s_key_triggers_nothing_in_any_state() {
     assert!(!running.stop_open);
     assert_eq!(running.status, None);
 
-    // During a planner run: no refusal, the run's own notice stays.
+    // During a planner run: no refusal, no message.
     let mut planning = app();
     planning.apply(EngineEvent::AgentChanged {
         agent: "planner".into(),
@@ -1576,7 +1614,7 @@ fn the_s_key_triggers_nothing_in_any_state() {
     });
     planning.apply(EngineEvent::PlanningChanged { planning: true });
     assert_eq!(planning.on_key(s), Action::None);
-    assert_eq!(planning.status.as_deref(), Some("Planner running..."));
+    assert_eq!(planning.status, None);
 
     // During a discovery round: no refusal, no message.
     let mut discovering = app();
@@ -1598,15 +1636,16 @@ fn the_s_key_triggers_nothing_in_any_state() {
     assert!(!stopping.stop_open);
 }
 
-/// The theme picker (T43.1) opens with `t` from every engine state, so the
-/// status bar advertises it beside the other modal key in all of them.
+/// The m menu opens with `m` from every engine state, so the status bar
+/// advertises it beside the idle Enter hint in all of them (T128.1); the
+/// settings, theme, detach and quit chips it replaced are gone.
 #[test]
-fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
+fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     use ratatui::style::Modifier;
 
     // A wide terminal fits the merged status line whole (T86.1): the chips on
     // the left, the hint strip right-aligned behind them, so the exact line
-    // pins the theme button's place and the order of every other hint.
+    // pins the menu chip's place and the order of the remaining hint.
     let strip = |app: &App| draw(app, 130, 14).lines().last().unwrap().to_string();
     let merged = |chips: &str, hints: &str| {
         let pad = 130 - chips.chars().count() - hints.chars().count() - 1;
@@ -1616,10 +1655,7 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
     let idle = app();
     assert_eq!(
         strip(&idle),
-        merged(
-            " STOPPED  sprint ",
-            " Enter  start build  ?  settings  t  theme  d  detach  q  quit"
-        )
+        merged(" STOPPED  sprint ", " [ Enter ] start  [ m ] menu")
     );
 
     let mut running = app();
@@ -1628,10 +1664,7 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
     });
     assert_eq!(
         strip(&running),
-        merged(
-            " RUNNING  sprint ",
-            " Esc  stop build  ?  settings  t  theme  d  detach  q  quit"
-        )
+        merged(" RUNNING  sprint ", " [ Esc ] stop  [ m ] menu")
     );
 
     let mut planning = app();
@@ -1640,47 +1673,45 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
         started_ms: 0,
     });
     planning.apply(EngineEvent::PlanningChanged { planning: true });
-    // The transient planner notice covers the strip while it runs (T29.1);
-    // clearing it shows the planning state's persistent hints.
-    planning.status = None;
+    assert_eq!(planning.status, None);
     assert_eq!(
         strip(&planning),
-        merged(
-            " PLANNING  sprint ",
-            " ?  settings  t  theme  d  detach  q  quit"
-        )
+        merged(" PLANNING  sprint ", " [ Esc ] stop  [ m ] menu")
     );
 
     let mut discovering = app();
     discovering.apply(EngineEvent::DiscoveryChanged { discovering: true });
     assert_eq!(
         strip(&discovering),
-        merged(
-            " DISCOVERING  sprint ",
-            " ?  settings  t  theme  d  detach  q  quit"
-        )
+        merged(" DISCOVERING  sprint ", " [ Esc ] stop  [ m ] menu")
     );
 
     // The add-tasks, Tab and scroll chips are gone from the status line
-    // (T73.1); their keys still work and the in-frame hints strip of T71.1
-    // keeps advertising them inside the panes.
+    // (T73.1), and so are the secondary chips the m menu replaced: their keys
+    // still work through the menu's entries.
     for app in [&idle, &running, &planning, &discovering] {
         let strip = strip(app);
         assert!(!strip.contains(" add tasks "), "{strip}");
         assert!(!strip.contains(" scroll "), "{strip}");
         assert!(!strip.contains(" Tab "), "{strip}");
+        assert!(!strip.contains(" settings "), "{strip}");
+        assert!(!strip.contains(" theme "), "{strip}");
+        assert!(!strip.contains(" detach "), "{strip}");
+        assert!(!strip.contains(" quit "), "{strip}");
+        assert!(!strip.contains(" stop build "), "{strip}");
     }
 
-    // The shorter strip now fits an 80-column line whole, up to the quit
+    // The shorter strip now fits an 80-column line whole, through the menu
     // chip; no `s` chip survives anywhere.
     let narrow = draw(&idle, 80, 14).lines().last().unwrap().to_string();
-    assert!(narrow.contains(" settings "), "{narrow}");
-    assert!(narrow.contains(" theme "), "{narrow}");
-    assert!(narrow.ends_with("quit"), "{narrow}");
+    assert!(narrow.contains(" menu"), "{narrow}");
+    assert!(narrow.ends_with("menu"), "{narrow}");
     assert!(!narrow.contains(" s "), "{narrow}");
 
-    // The theme button wears the same status-bar colours as the settings
-    // hint beside it, so it recolours with the active theme (T34.1).
+    // The interactive chips (T133.1, T134.1, T141.1) render through the
+    // shared modal button formatting: the brackets and the key of each
+    // button wear the modal buttons' accent so they recolour with the active
+    // theme, while each label wears the buttons' regular foreground.
     let theme = patok_tui::Theme::DARK;
     let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
     terminal.draw(|frame| render(frame, &idle)).unwrap();
@@ -1694,52 +1725,57 @@ fn the_status_bar_advertises_the_theme_key_in_every_engine_state() {
             .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
             .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
     };
-    let settings = column(&[" ", "?", " "]);
-    let theme_key = column(&[" ", "t", " "]);
-    let detach = column(&[" ", "d", " "]);
-    for offset in 0..3u16 {
-        assert_eq!(
-            buffer[(theme_key as u16 + offset, row)].style(),
-            buffer[(settings as u16 + offset, row)].style(),
-            "the theme chip must wear the settings chip's colours"
-        );
+    let enter = column(&[" ", "[", " ", "E", "n", "t", "e", "r", " ", "]", " "]);
+    let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+    for (name, x, width) in [("Enter", enter as u16, 11u16), ("m", menu_key as u16, 7)] {
+        for offset in 0..width {
+            let style = buffer[(x + offset, row)].style();
+            assert_eq!(style.fg, Some(theme.highlighted_text), "the {name} accent");
+            assert_eq!(style.bg, Some(theme.background), "the {name} background");
+            assert!(
+                !style.add_modifier.contains(Modifier::BOLD),
+                "the {name} key stays unbold"
+            );
+        }
     }
-    let chip = buffer[(theme_key as u16, row)].style();
-    assert_eq!(chip.fg, Some(theme.contrast_text));
-    assert_eq!(chip.bg, Some(theme.chip_neutral));
-    assert!(chip.add_modifier.contains(Modifier::BOLD));
-    for offset in 0..7u16 {
-        assert_eq!(
-            buffer[(theme_key as u16 + 3 + offset, row)].style(),
-            buffer[(settings as u16 + 3 + offset, row)].style(),
-            "the theme label must wear the settings label's colours"
-        );
+    for (name, x, width) in [
+        ("start label", enter as u16 + 11, 6u16),
+        ("menu label", menu_key as u16 + 7, 5),
+    ] {
+        for offset in 0..width {
+            assert_eq!(
+                buffer[(x + offset, row)].style().fg,
+                Some(theme.normal_text),
+                "the {name} colour"
+            );
+        }
     }
-    assert_eq!(
-        buffer[(theme_key as u16 + 3, row)].style().fg,
-        Some(theme.muted_text)
-    );
-    // The theme label ends right where the detach chip begins.
-    assert_eq!(symbols[theme_key + 3..detach].concat(), " theme ");
+    // The menu label is the strip's last content.
+    assert_eq!(symbols[menu_key + 7..menu_key + 12].concat(), "menu ");
 }
 
-/// The status bar's key hints are chips, not modal buttons (T46.1): in both
-/// the default and a palette theme every chip wears the chip colours and
-/// every label the muted status colour -- no status-bar cell ever carries the
-/// modal button accent (T64.1).
+/// The status bar's interactive chips are modal buttons (T133.1, T134.1,
+/// T141.1): in both the default and a palette theme the idle Enter chip and
+/// the running Esc stop chip join the m menu chip in rendering through the
+/// shared button formatting -- the brackets and the key in the button
+/// accent, the label after them in the buttons' regular foreground, no chip
+/// background, no bold. No other status-bar cell does.
 #[test]
-fn the_status_bar_hints_never_wear_the_button_accent() {
+fn only_the_interactive_chips_wear_the_button_accent() {
     use patok_core::config::Theme as ThemeKey;
+    use ratatui::style::Modifier;
 
     for theme_key in [ThemeKey::Dark, ThemeKey::TokyoNightDark] {
-        let mut app = app();
-        app.tui.theme = theme_key;
-        app.tui.truecolor = Some(true);
         let theme = patok_tui::Theme::resolve(theme_key, Some(true));
         let mut terminal = Terminal::new(TestBackend::new(130, 14)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
-        let buffer = terminal.backend().buffer();
         let row: u16 = 13;
+
+        // The idle strip: the Enter and m buttons are the buttons.
+        let mut idle = app();
+        idle.tui.theme = theme_key;
+        idle.tui.truecolor = Some(true);
+        terminal.draw(|frame| render(frame, &idle)).unwrap();
+        let buffer = terminal.backend().buffer();
         // One symbol per column, so chip positions stay column indices.
         let symbols: Vec<&str> = (0..130u16).map(|x| buffer[(x, row)].symbol()).collect();
         let column = |chip: &[&str]| {
@@ -1747,25 +1783,84 @@ fn the_status_bar_hints_never_wear_the_button_accent() {
                 .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
                 .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
         };
-        let settings = column(&[" ", "?", " "]);
-        for offset in 0..3u16 {
-            let style = buffer[(settings as u16 + offset, row)].style();
-            assert_eq!(style.fg, Some(theme.contrast_text), "the chip text colour");
-            assert_eq!(style.bg, Some(theme.chip_neutral), "the chip background");
+        let enter = column(&[" ", "[", " ", "E", "n", "t", "e", "r", " ", "]", " "]);
+        let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+        // Each button's own width: 11 key-span columns in the accent, the
+        // label columns in the regular foreground.
+        for (name, x, key_width, width) in [
+            ("Enter button", enter as u16, 11u16, 17u16),
+            ("m button", menu_key as u16, 7, 12),
+        ] {
+            for offset in 0..width {
+                let style = buffer[(x + offset, row)].style();
+                let expected = if offset < key_width {
+                    theme.highlighted_text
+                } else {
+                    theme.normal_text
+                };
+                assert_eq!(style.fg, Some(expected), "{name} cell {offset}");
+                assert_eq!(style.bg, Some(theme.background), "{name} background");
+                assert!(!style.add_modifier.contains(Modifier::BOLD), "{name} bold");
+            }
         }
-        for offset in 0..10u16 {
-            assert_eq!(
-                buffer[(settings as u16 + 3 + offset, row)].style().fg,
-                Some(theme.muted_text),
-                "the label colour"
-            );
-        }
-        assert_eq!(symbols[settings + 3..settings + 13].concat(), " settings ");
+        assert_eq!(symbols[menu_key + 7..menu_key + 12].concat(), "menu ");
+        // No status-bar cell outside the two buttons carries the button
+        // accent.
         for x in 0..130u16 {
+            if (enter as u16..enter as u16 + 17).contains(&x)
+                || (menu_key as u16..menu_key as u16 + 12).contains(&x)
+            {
+                continue;
+            }
             assert_ne!(
                 buffer[(x, row)].style().fg,
                 Some(theme.highlighted_text),
-                "no status-bar cell wears the button accent at x={x}"
+                "no status-bar cell but the Enter and m buttons wears the button accent at x={x}"
+            );
+        }
+
+        // The running strip: the Esc stop button joins the buttons the same
+        // way.
+        let mut running = app();
+        running.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        running.tui.theme = theme_key;
+        running.tui.truecolor = Some(true);
+        terminal.draw(|frame| render(frame, &running)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let symbols: Vec<&str> = (0..130u16).map(|x| buffer[(x, row)].symbol()).collect();
+        let column = |chip: &[&str]| {
+            (0..=130 - chip.len())
+                .find(|&x| (0..chip.len()).all(|i| symbols[x + i] == chip[i]))
+                .unwrap_or_else(|| panic!("{chip:?} is not on the strip"))
+        };
+        let esc = column(&[" ", "[", " ", "E", "s", "c", " ", "]", " "]);
+        let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+        for (name, x, key_width, width) in [
+            ("Esc button", esc as u16, 9u16, 14u16),
+            ("m button", menu_key as u16, 7, 12),
+        ] {
+            for offset in 0..width {
+                let style = buffer[(x + offset, row)].style();
+                let expected = if offset < key_width {
+                    theme.highlighted_text
+                } else {
+                    theme.normal_text
+                };
+                assert_eq!(style.fg, Some(expected), "{name} cell {offset}");
+            }
+        }
+        for x in 0..130u16 {
+            if (esc as u16..esc as u16 + 14).contains(&x)
+                || (menu_key as u16..menu_key as u16 + 12).contains(&x)
+            {
+                continue;
+            }
+            assert_ne!(
+                buffer[(x, row)].style().fg,
+                Some(theme.highlighted_text),
+                "no running status-bar cell but the Esc and m buttons wears the button accent at x={x}"
             );
         }
     }
@@ -2589,7 +2684,11 @@ mod dialog {
             screen.contains("Reading TASKS.md to see what exists."),
             "{screen}"
         );
-        assert!(screen.contains("Planner running..."), "{screen}");
+        // The run's own notice no longer appears in the status bar; the
+        // strip keeps the planning chips and the menu hint (T139.1).
+        let bottom = screen.lines().last().unwrap();
+        assert!(bottom.contains(" [ m ] menu"), "{screen}");
+        assert!(!bottom.contains("running..."), "{screen}");
         insta::assert_snapshot!(screen);
     }
 
@@ -2614,10 +2713,10 @@ mod dialog {
         assert!(screen.contains("2 tasks added."), "{screen}");
         let bottom = screen.lines().last().unwrap();
         assert!(!bottom.contains(" add tasks "), "{screen}");
-        assert!(bottom.contains(" settings "), "{screen}");
+        assert!(bottom.contains(" menu"), "{screen}");
         // The add-tasks chip is gone from the strip (T73.1); the shorter
-        // strip fits an 80-column line whole, through the quit chip.
-        assert!(bottom.ends_with("quit"), "{screen}");
+        // strip fits an 80-column line whole, through the menu chip.
+        assert!(bottom.ends_with("menu"), "{screen}");
         assert!(!bottom.contains("Added 2 tasks"), "{screen}");
         insta::assert_snapshot!(screen);
     }
@@ -2634,7 +2733,7 @@ mod dialog {
         let screen = draw(&app, 80, 24);
         assert!(screen.contains("planner result rejected"), "{screen}");
         let bottom = screen.lines().last().unwrap();
-        assert!(bottom.contains(" settings "), "{screen}");
+        assert!(bottom.contains(" menu"), "{screen}");
         assert!(!bottom.contains(" add tasks "), "{screen}");
         assert!(!bottom.contains("planner result rejected"), "{screen}");
         insta::assert_snapshot!(screen);
@@ -2666,7 +2765,7 @@ mod dialog {
         assert_eq!(app.status, None);
         let screen = draw(&app, 80, 24);
         let bottom = screen.lines().last().unwrap();
-        assert!(bottom.contains(" settings "), "{screen}");
+        assert!(bottom.contains(" menu"), "{screen}");
         assert!(!bottom.contains(" add tasks "), "{screen}");
         assert!(!bottom.contains("1 task added."), "{screen}");
         // The quit message still lands on the last line (a quit from idle uses
@@ -2856,12 +2955,13 @@ mod dialog {
         use patok_tui::Theme;
         use ratatui::style::Color;
         let (x0, y0) = input_origin();
-        // The block cursor's fg/bg pair (the cell may carry an underline colour
-        // reset the Paragraph renderer adds). The colours come from the theme, so
-        // this test follows any future cursor restyling.
+        // The block cursor's style (the cell may carry an underline colour
+        // reset the Paragraph renderer adds): the highlighted-text foreground
+        // with no accent background (T138.1). The colours come from the theme,
+        // so this test follows any future cursor restyling.
         let is_block = |cell: &ratatui::buffer::Cell| {
-            cell.style().fg == Some(Theme::DARK.contrast_text)
-                && cell.style().bg == Some(Theme::DARK.accent)
+            cell.style().fg == Some(Theme::DARK.highlighted_text)
+                && cell.style().bg != Some(Theme::DARK.accent)
         };
         let is_plain = |cell: &ratatui::buffer::Cell| {
             matches!(cell.style().fg, None | Some(Color::Reset))
@@ -3030,12 +3130,12 @@ mod dialog {
 
         let mut app = self::app();
         app.apply(EngineEvent::PlanningChanged { planning: true });
-        // The event's own status line ("planner running...") stays as it is;
-        // the key itself adds nothing to it.
-        let before = app.status.clone();
+        // The event sets no status any more (T139.1); the key itself adds
+        // nothing to it either.
+        assert_eq!(app.status, None);
         press(&mut app, KeyCode::Char('a'));
         assert!(!app.dialog_open);
-        assert_eq!(app.status, before);
+        assert_eq!(app.status, None);
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('a'));
         assert!(!app.dialog_open);
@@ -3187,12 +3287,14 @@ mod dialog {
 ///.
 mod explore {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use patok_core::config::SettingValue;
     use patok_core::event::Snapshot;
     use patok_core::scenario::{ProjectScan, Scenario, SpecState, TaskFileState};
     use patok_core::task;
-    use patok_tui::{Action, FrameFocus, QueueRun};
+    use patok_tui::{Action, FrameFocus, QueueRun, footer_button_rects};
 
     /// An app whose task queue is `tasks`.
     fn app_with(tasks: &str) -> App {
@@ -3407,7 +3509,7 @@ mod explore {
         let strip = explore.lines().last().unwrap();
         // Pending tasks remain, so Enter starts the build loop (T46.1).
         assert!(strip.contains(" Enter "), "{strip}");
-        assert!(strip.contains(" start build "), "{strip}");
+        assert!(strip.contains(" start "), "{strip}");
         assert!(!strip.contains(" run discovery "), "{strip}");
         // The old add-task title wording is gone from the strip.
         assert!(!strip.contains("What do you want to do?"), "{strip}");
@@ -3423,7 +3525,7 @@ mod explore {
         let strip = screen.lines().last().unwrap();
         assert!(strip.contains(" Enter "), "{strip}");
         assert!(strip.contains(" run discovery "), "{strip}");
-        assert!(!strip.contains(" start build "), "{strip}");
+        assert!(!strip.contains(" start "), "{strip}");
 
         // An empty task list is complete too: Enter runs a discovery round.
         let mut empty = app_with("");
@@ -3447,8 +3549,13 @@ mod explore {
         let running = draw(&app, 80, 14);
         let strip = running.lines().last().unwrap();
         assert!(!strip.contains(" Enter "), "{strip}");
+        // The running strip shows the Esc stop hint as a real chip (T134.1)
+        // beside the menu chip.
         assert!(strip.contains(" Esc "), "{strip}");
-        assert!(strip.contains(" stop build "), "{strip}");
+        assert!(strip.contains(" stop "), "{strip}");
+        assert!(!strip.contains(" stop build "), "{strip}");
+        assert!(strip.contains(" m "), "{strip}");
+        assert!(strip.contains(" menu"), "{strip}");
     }
 
     #[test]
@@ -3592,6 +3699,184 @@ mod explore {
         // "Submit".
         assert_eq!(app.primary_label(), "Submit");
         assert_eq!(submit(&mut app), Action::ResearchQueue(QueueRun::Bootstrap));
+    }
+
+    /// Draws (recording the footer rect), then clicks inside the primary
+    /// button's rect -- the same hit-test `on_dialog_mouse` performs.
+    fn primary_click(app: &mut App) -> Action {
+        draw(app, 80, 24);
+        let rects = footer_button_rects(
+            app.dialog_footer.get(),
+            &[("Enter", app.primary_label()), ("Esc", "Close")],
+        );
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rects[0].x + 2,
+            row: rects[0].y,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// A click on the dialog's primary footer button runs exactly the Enter
+    /// key in every dialog kind and scenario (T144.1): the actions and the
+    /// app states match, because the driver routes both through the one
+    /// shared submit dispatch.
+    #[test]
+    fn a_primary_button_click_runs_exactly_the_enter_key_in_every_scenario() {
+        // The add dialog with typed text (queue-ready facts): the Submit
+        // button's click is the Enter key's submit, and the driver's
+        // accepted-submit cleanup closes both identically.
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut clicked);
+        type_text(&mut clicked, "add a login page");
+        assert_eq!(clicked.primary_label(), "Submit");
+        assert_eq!(
+            primary_click(&mut clicked),
+            Action::SubmitTasks("add a login page".into())
+        );
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut keyed);
+        type_text(&mut keyed, "add a login page");
+        assert_eq!(
+            keyed.on_key(key(KeyCode::Enter)),
+            Action::SubmitTasks("add a login page".into())
+        );
+        clicked.on_tasks_submitted();
+        keyed.on_tasks_submitted();
+        for app in [&mut clicked, &mut keyed] {
+            assert!(!app.dialog_open);
+            assert_eq!(app.focus, FrameFocus::Output);
+            assert_eq!(app.dialog_text, "");
+        }
+
+        // The add dialog with an empty input, queue ready (the label renders
+        // "Start"): the Enter key refuses an empty input before the scenario
+        // dispatch, so the click does too -- the queue-ready StartBuild run
+        // stays on the Ctrl+S path, and this parity is the controlling
+        // requirement ("exactly like pressing Enter").
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut clicked);
+        assert_eq!(clicked.primary_label(), "Start");
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut keyed);
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to submit -- type a request first.")
+            );
+        }
+
+        // The inject modal with typed text: the Inject button's click is the
+        // Enter key's inject, and the driver's injected cleanup closes both
+        // identically with the task list focused.
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        clicked.on_key(key(KeyCode::Char('i')));
+        assert!(clicked.dialog_open);
+        type_text(&mut clicked, "- [ ] T78.1: Polish the README");
+        assert_eq!(clicked.primary_label(), "Inject");
+        assert_eq!(
+            primary_click(&mut clicked),
+            Action::InjectTask("- [ ] T78.1: Polish the README".into())
+        );
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        keyed.on_key(key(KeyCode::Char('i')));
+        type_text(&mut keyed, "- [ ] T78.1: Polish the README");
+        assert_eq!(
+            keyed.on_key(key(KeyCode::Enter)),
+            Action::InjectTask("- [ ] T78.1: Polish the README".into())
+        );
+        clicked.on_task_injected();
+        keyed.on_task_injected();
+        for app in [&mut clicked, &mut keyed] {
+            assert!(!app.dialog_open);
+            assert_eq!(app.focus, FrameFocus::Tasks);
+            assert_eq!(app.dialog_text, "");
+        }
+
+        // The inject modal with an empty input: the same inline refusal.
+        let mut clicked = app_with(TASKS);
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        clicked.on_key(key(KeyCode::Char('i')));
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with(TASKS);
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        keyed.on_key(key(KeyCode::Char('i')));
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to inject -- type a task line first.")
+            );
+        }
+
+        // EmptyProject with typed text: the brief submit, identical on both
+        // paths (the driver's brief write keeps the dialog open).
+        let mut clicked = app_with("");
+        clicked.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
+        open_dialog(&mut clicked);
+        type_text(&mut clicked, "A web service for recipes.");
+        assert_eq!(
+            primary_click(&mut clicked),
+            Action::SaveBrief("A web service for recipes.".into())
+        );
+        let mut keyed = app_with("");
+        keyed.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
+        open_dialog(&mut keyed);
+        type_text(&mut keyed, "A web service for recipes.");
+        assert_eq!(
+            keyed.on_key(key(KeyCode::Enter)),
+            Action::SaveBrief("A web service for recipes.".into())
+        );
+        assert!(clicked.dialog_open);
+        assert!(keyed.dialog_open);
+
+        // NeedsQueue with an empty input: the [Enter] click cannot bootstrap
+        // -- the plain Enter refuses an empty input first; the driver-side
+        // ResearchQueue mapping is pinned by the run.rs dispatch tests.
+        let mut clicked = app_with("");
+        clicked.project_status = status(true, TaskFileState::Missing, SpecState::Content);
+        open_dialog(&mut clicked);
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with("");
+        keyed.project_status = status(true, TaskFileState::Missing, SpecState::Content);
+        open_dialog(&mut keyed);
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to submit -- type a request first.")
+            );
+        }
+
+        // QueueComplete with an empty input (the label renders "Scan"): the
+        // same inline refusal, click and key alike.
+        let mut clicked = app_with("- [x] T1.1: done\n");
+        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut clicked);
+        assert_eq!(clicked.primary_label(), "Scan");
+        assert_eq!(primary_click(&mut clicked), Action::None);
+        let mut keyed = app_with("- [x] T1.1: done\n");
+        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+        open_dialog(&mut keyed);
+        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
+        for app in [&mut clicked, &mut keyed] {
+            assert!(app.dialog_open);
+            assert_eq!(
+                app.dialog_status.as_deref(),
+                Some("Nothing to submit -- type a request first.")
+            );
+        }
     }
 
     #[test]
@@ -4041,7 +4326,7 @@ mod view {
         // rail's blank top row (T63.1); the output frame starts beside the
         // blank row on the frame's first row (the header row is gone).
         assert!(lines[0].trim_start().starts_with("┌ Builder"));
-        assert!(lines[1].contains("[ Research  ]"));
+        assert!(lines[1].contains("[ Research ]"));
         let tasks = app.tasks_area.get();
         assert!(lines[usize::from(tasks.y)].contains("┌ Tasks | 1/3 - 2 left"));
         assert!(screen.contains("working on it"));
@@ -4133,8 +4418,12 @@ mod hints {
     /// frame (T75.1 dropped the idle `q quit` entry; T76.1 added the `i
     /// inject task` entry, whose width makes the trailing `Tab output` hint
     /// drop at 80 columns -- the leading hints stay).
-    const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start build · ↑↓ scroll";
-    const OUTPUT_STRIP: &str = " v rail view · ↑↓ scroll · PgUp/PgDn page · End follow";
+    const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start · ↑↓ scroll";
+    /// The focused output frame's strip with every hint that fits the
+    /// 80-column frame (T124.1 dropped the leading `v rail view` entry,
+    /// which makes the trailing `Tab tasks` hint fit; T125.1 removed the
+    /// `v` binding itself).
+    const OUTPUT_STRIP: &str = " ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks";
 
     #[test]
     fn the_focused_task_list_shows_its_hints_along_its_bottom_edge() {
@@ -4168,7 +4457,7 @@ mod hints {
         );
         assert_eq!(
             OUTPUT_STRIP,
-            " v rail view · ↑↓ scroll · PgUp/PgDn page · End follow"
+            " ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks"
         );
         // The unfocused output frame has no strip, so exactly one of the two
         // frames shows hints at any time.
@@ -4326,51 +4615,41 @@ mod hints {
         let hints = [
             "a add tasks",
             "i inject task",
-            "Enter start build",
+            "Enter start",
             "↑↓ scroll",
             "Tab output",
         ];
         // One leading space plus ` · ` between hints: the cumulative widths
-        // are 12, 28, 48, 60 and 73 columns.
+        // are 12, 28, 42, 54 and 67 columns.
         assert!(fitted_hints(&hints, 0).is_empty());
         assert!(fitted_hints(&hints, 11).is_empty());
         assert_eq!(fitted_hints(&hints, 12), ["a add tasks"]);
         assert_eq!(fitted_hints(&hints, 27), ["a add tasks"]);
         assert_eq!(fitted_hints(&hints, 28), ["a add tasks", "i inject task"]);
-        assert_eq!(fitted_hints(&hints, 47), ["a add tasks", "i inject task"]);
+        assert_eq!(fitted_hints(&hints, 41), ["a add tasks", "i inject task"]);
         assert_eq!(
-            fitted_hints(&hints, 48),
-            ["a add tasks", "i inject task", "Enter start build"]
+            fitted_hints(&hints, 42),
+            ["a add tasks", "i inject task", "Enter start"]
         );
         assert_eq!(
-            fitted_hints(&hints, 59),
-            ["a add tasks", "i inject task", "Enter start build"]
+            fitted_hints(&hints, 53),
+            ["a add tasks", "i inject task", "Enter start"]
         );
         assert_eq!(
-            fitted_hints(&hints, 60),
-            [
-                "a add tasks",
-                "i inject task",
-                "Enter start build",
-                "↑↓ scroll"
-            ]
+            fitted_hints(&hints, 54),
+            ["a add tasks", "i inject task", "Enter start", "↑↓ scroll"]
         );
         assert_eq!(
-            fitted_hints(&hints, 72),
-            [
-                "a add tasks",
-                "i inject task",
-                "Enter start build",
-                "↑↓ scroll"
-            ]
+            fitted_hints(&hints, 66),
+            ["a add tasks", "i inject task", "Enter start", "↑↓ scroll"]
         );
-        assert_eq!(fitted_hints(&hints, 73), hints);
+        assert_eq!(fitted_hints(&hints, 67), hints);
     }
 
     #[test]
     fn a_narrow_frame_drops_trailing_hints_inside_its_borders() {
         // 60 columns leave the focused task list 45 inner columns: the first
-        // two hints fit and everything from `Enter start build` drops.
+        // three hints fit and everything from `↑↓ scroll` drops.
         let app = app();
         let mut terminal = Terminal::new(TestBackend::new(60, H)).unwrap();
         terminal.draw(|frame| render(frame, &app)).unwrap();
@@ -4378,7 +4657,10 @@ mod hints {
         let tasks = app.tasks_area.get();
         let row = bottom_row(tasks);
         let rendered = row_text(buffer, row);
-        assert_eq!(rendered.trim_end(), " a add tasks · i inject task");
+        assert_eq!(
+            rendered.trim_end(),
+            " a add tasks · i inject task · Enter start"
+        );
         // The strip never reaches the frame's borders.
         assert_eq!(buffer[(tasks.x, row.y)].symbol(), "│");
         assert_eq!(buffer[(tasks.right() - 1, row.y)].symbol(), "│");
@@ -4413,7 +4695,9 @@ mod hints {
 /// and its three choices map to the soft stop, the interrupt and a plain close.
 mod stop_dialog {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use patok_tui::Action;
 
     fn press(app: &mut App, code: KeyCode) -> Action {
@@ -4675,6 +4959,194 @@ mod stop_dialog {
             assert_eq!(press(&mut app, KeyCode::Down), Action::None);
         }
         assert_eq!(app.stop_selected, 2);
+    }
+
+    /// A mouse event of the given kind at a screen position, for the
+    /// dialog's hover and click handling (T148.1).
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// A pointer move over a choice row moves only the selection highlight
+    /// there, without running it (T148.1): the dialog stays open, the
+    /// build keeps running, and a later Enter confirms the hovered row --
+    /// the full Enter path per row.
+    #[test]
+    fn pointer_moves_follow_the_choice_rows() {
+        let mut app = open();
+        draw(&app, 80, 24);
+        let body = app.stop_body.get();
+        assert_eq!(body, ratatui::layout::Rect::new(14, 8, 52, 6));
+        for index in 0..3u16 {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
+                Action::None
+            );
+            assert_eq!(app.stop_selected, index as usize);
+            assert!(app.stop_open);
+            assert!(!app.stopping);
+            assert_eq!(app.phase, Phase::Running);
+            assert_eq!(app.current_task.as_deref(), Some("T1.2"));
+        }
+        // Enter on the hovered row confirms it: each row from a fresh open.
+        let expected = [
+            (Action::Quit, true, "stops after the current task"),
+            (Action::Interrupt, true, "cancelled"),
+            (Action::None, false, ""),
+        ];
+        for (index, (action, stopping, status_part)) in expected.iter().enumerate() {
+            let mut app = open();
+            draw(&app, 80, 24);
+            let body = app.stop_body.get();
+            assert_eq!(
+                app.on_mouse(mouse(
+                    MouseEventKind::Moved,
+                    body.x + 3,
+                    body.y + index as u16
+                )),
+                Action::None
+            );
+            assert_eq!(app.stop_selected, index);
+            assert_eq!(press(&mut app, KeyCode::Enter), *action);
+            assert!(!app.stop_open);
+            assert_eq!(app.stopping, *stopping);
+            if status_part.is_empty() {
+                // Cancel leaves the soft-stop and interrupt statuses unset.
+                assert!(app.status.is_none());
+            } else {
+                let status = app.status.as_deref().unwrap();
+                assert!(status.contains(status_part), "status: {status}");
+            }
+        }
+    }
+
+    /// A left click inside a choice row is that row's Enter key verbatim
+    /// (T148.1): each row's click returns exactly the action and reaches
+    /// exactly the state Enter on the hovered row produces.
+    #[test]
+    fn clicks_run_the_hovered_row_like_enter() {
+        let expected = [
+            (Action::Quit, true, "stops after the current task"),
+            (Action::Interrupt, true, "cancelled"),
+            (Action::None, false, ""),
+        ];
+        for (index, (action, stopping, status_part)) in expected.iter().enumerate() {
+            let mut app = open();
+            draw(&app, 80, 24);
+            let body = app.stop_body.get();
+            assert_eq!(
+                app.on_mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    body.x + 3,
+                    body.y + index as u16
+                )),
+                *action
+            );
+            assert!(!app.stop_open);
+            assert_eq!(app.stopping, *stopping);
+            assert_eq!(app.stop_selected, index);
+            assert_eq!(app.phase, Phase::Running);
+            assert_eq!(app.current_task.as_deref(), Some("T1.2"));
+            if status_part.is_empty() {
+                assert!(app.status.is_none());
+            } else {
+                let status = app.status.as_deref().unwrap();
+                assert!(status.contains(status_part), "status: {status}");
+            }
+        }
+    }
+
+    /// Moves and clicks that miss every choice row -- the border above the
+    /// body, the title row, the footer's hint zone, the blank body padding
+    /// below the choices, the shell outside -- leave the selection and the
+    /// build untouched (T148.1).
+    #[test]
+    fn moves_and_clicks_that_miss_the_rows_change_nothing() {
+        let mut app = open();
+        draw(&app, 80, 24);
+        let body = app.stop_body.get();
+        let footer = app.stop_footer.get();
+        // Hover the middle row first, so the misses below are observable.
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 1)),
+            Action::None
+        );
+        assert_eq!(app.stop_selected, 1);
+        let misses = [
+            (body.x + 3, body.y - 1, "the border above the body"),
+            (body.x + 3, body.y - 2, "the title row"),
+            (footer.x + 1, footer.y, "the footer's hint zone"),
+            (
+                body.x + 3,
+                body.y + 3,
+                "the blank padding below the choices",
+            ),
+            (0, 0, "the shell outside"),
+        ];
+        for (column, row, where_) in misses {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
+                Action::None,
+                "{where_}"
+            );
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), column, row)),
+                Action::None,
+                "{where_}"
+            );
+            assert!(app.stop_open, "{where_}");
+            assert_eq!(app.stop_selected, 1, "{where_}");
+            assert!(!app.stopping, "{where_}");
+            assert_eq!(app.phase, Phase::Running, "{where_}");
+            assert_eq!(app.current_task.as_deref(), Some("T1.2"), "{where_}");
+        }
+    }
+
+    /// Pointer moves while the dialog is closed are inert (T148.1): the
+    /// recorded row rects are stale but nothing reads them, and no other
+    /// modal's selection moves.
+    #[test]
+    fn pointer_moves_while_the_dialog_is_closed_change_nothing() {
+        // Opened, drawn, closed with Esc: the recorded body rect stays set,
+        // but moves over its rows leave every modal alone.
+        let mut app = open();
+        draw(&app, 80, 24);
+        let body = app.stop_body.get();
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(!app.stop_open);
+        for index in 0..3u16 {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
+                Action::None
+            );
+            assert!(!app.stop_open);
+            assert!(!app.stopping);
+            assert!(!app.menu_open);
+            assert_eq!(app.menu_selected, 0);
+            assert!(!app.theme_modal.open);
+            assert_eq!(app.theme_modal.selected, 0);
+            assert!(!app.settings_open());
+            assert_eq!(app.overlay.focus, 0);
+        }
+        // A never-opened dialog's zero rect contains no position at all:
+        // moves over the same screen rows stay inert there too.
+        let mut app = running();
+        draw(&app, 80, 24);
+        assert_eq!(app.stop_body.get(), ratatui::layout::Rect::default());
+        for index in 0..3u16 {
+            assert_eq!(
+                app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
+                Action::None
+            );
+            assert!(!app.stop_open);
+            assert!(!app.stopping);
+            assert!(!app.menu_open);
+        }
     }
 }
 
@@ -5062,14 +5534,16 @@ mod modal_footer {
         assert_eq!(app.phase, Phase::Running);
         assert_eq!(app.current_task.as_deref(), Some("T1.2"));
 
-        // Clicks on the hint zone and on the choice rows change nothing.
+        // Clicks on the hint zone and on the blank body padding below the
+        // choice rows change nothing (the rows themselves answer clicks
+        // since T148.1).
         let mut app = open_stop();
         buffer(&app);
         let footer = app.stop_footer.get();
         assert_eq!(app.on_mouse(click(footer.x + 1, footer.y)), Action::None);
         assert!(app.stop_open);
         assert_eq!(
-            app.on_mouse(click(footer.x + 2, footer.y - 4)),
+            app.on_mouse(click(footer.x + 2, footer.y - 1)),
             Action::None
         );
         assert!(app.stop_open);
@@ -5672,7 +6146,7 @@ mod pipeline {
 
     /// The tiles and their colours follow the pipeline state through a
     /// plan-then-build run: the plan stage accent and bold while it runs, then
-    /// green once the build stage takes over, and SHIP green while shipping.
+    /// green once the build stage takes over.
     #[test]
     fn the_tiles_follow_the_pipeline_state_through_a_plan_then_build_run() {
         let theme = Theme::DARK;
@@ -5706,23 +6180,6 @@ mod pipeline {
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
             ("[ B ]".to_string(), Some(theme.accent), true)
-        );
-
-        // Shipping: SH is green while shipping and bold; both stages stay green.
-        app.apply(EngineEvent::PipelineChanged {
-            state: PipelineState {
-                ship: TileStatus::Active,
-                ..stage_state(TileStatus::Done, TileStatus::Done)
-            },
-        });
-        let buffer = draw_buffer(&app);
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Ship)),
-            ("[ SH ]".to_string(), Some(theme.success), true)
-        );
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ B ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -5782,25 +6239,19 @@ mod pipeline {
         );
     }
 
-    /// The SH, DI and LN tiles reflect their flags: DISCOVER muted in sprint
-    /// mode, accent while a round runs and green after one ran, LEARNINGS
-    /// green once a learning was learned, SHIP green while shipping.
+    /// The DI tile reflects its flag: DISCOVER muted in sprint
+    /// mode, accent while a round runs and green after one ran.
     #[test]
     fn the_standalone_tiles_reflect_their_flags() {
         let theme = Theme::DARK;
 
-        // Sprint mode, engine idle: DI renders muted in the rail, and LN
-        // stays muted until a learning was learned this session.
+        // Sprint mode, engine idle: DI renders muted in the rail.
         let mut app = app();
         app.tui.rail_mode = RailMode::Compact;
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
             ("[ DI ]".to_string(), Some(theme.muted_text), false)
-        );
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Learnings)),
-            ("[ LN ]".to_string(), Some(theme.muted_text), false)
         );
 
         // A discovery round runs: DI is accent and bold in the rail.
@@ -5817,13 +6268,11 @@ mod pipeline {
             ("[ DI ]".to_string(), Some(theme.accent), true)
         );
 
-        // The round ran in this session: DI and LN turn green (LN once any
-        // learning was learned).
+        // The round ran in this session: DI turns green.
         app.apply(EngineEvent::DiscoveryChanged { discovering: false });
         app.apply(EngineEvent::PipelineChanged {
             state: PipelineState {
                 discover: TileStatus::Done,
-                learnings: TileStatus::Done,
                 ..stage_state(TileStatus::Muted, TileStatus::Muted)
             },
         });
@@ -5831,10 +6280,6 @@ mod pipeline {
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
             ("[ DI ]".to_string(), Some(theme.success), false)
-        );
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Learnings)),
-            ("[ LN ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -5850,19 +6295,19 @@ mod pipeline {
         });
         draw_buffer(&shell);
 
-        // The pointer crosses the plan and ship tiles: no action, no focus or
-        // scroll change, and the status line keeps its key hints.
-        for id in [TileId::Plan, TileId::Ship] {
+        // The pointer crosses the plan and discover tiles: no action, no focus
+        // or scroll change, and the status line keeps its key hints.
+        for id in [TileId::Plan, TileId::Discover] {
             let rect = tile_rect(&shell, id);
             assert_eq!(shell.on_mouse(moved(rect.x + 2, rect.y)), Action::None);
         }
         assert_eq!(shell.focus, FrameFocus::Output);
         assert_eq!((shell.scroll, shell.task_scroll), (0, 0));
         let hints = draw(&shell, 130, 24).lines().last().unwrap().to_string();
-        assert!(hints.contains(" settings "), "{hints}");
-        assert!(hints.contains(" stop build "), "{hints}");
+        assert!(hints.contains(" menu"), "{hints}");
+        assert!(!hints.contains(" stop build "), "{hints}");
         assert!(!hints.trim_end().ends_with("Plan"), "{hints}");
-        assert!(!hints.trim_end().ends_with("Ship"), "{hints}");
+        assert!(!hints.trim_end().ends_with("Discover"), "{hints}");
 
         // The same holds over the normal-mode boxes and while idle.
         let mut idle = app();
@@ -5876,7 +6321,7 @@ mod pipeline {
     }
 
     #[test]
-    fn detailed_mode_displays_configured_agent_provider_and_model_and_v_toggles() {
+    fn detailed_mode_displays_configured_agent_provider_and_model_and_ignores_v() {
         let mut shell = app();
         shell.settings.insert(
             "provider".into(),
@@ -5884,13 +6329,16 @@ mod pipeline {
         );
         shell.settings.insert(
             "planner_model".into(),
-            patok_core::config::SettingValue::Str("sonnet-plan".into()),
+            patok_core::config::SettingValue::Str("sonnet-xl".into()),
         );
         shell.tui.rail_mode = RailMode::Detailed;
         let screen = draw(&shell, 100, 30);
         assert!(screen.contains("claude"), "{screen}");
-        assert!(screen.contains("sonnet-plan"), "{screen}");
+        assert!(screen.contains("sonnet-xl"), "{screen}");
         assert_eq!(rail_width(RailMode::Detailed), rail_width(RailMode::Normal));
+        // T125.1 removed the `v` rail-view binding: a bare `v` is a no-op
+        // in the shell and the rail mode only changes through the settings
+        // overlay.
         assert_eq!(
             shell.on_key(crossterm::event::KeyEvent::new(
                 crossterm::event::KeyCode::Char('v'),
@@ -5898,7 +6346,7 @@ mod pipeline {
             )),
             Action::None
         );
-        assert_eq!(shell.tui.rail_mode, RailMode::Compact);
+        assert_eq!(shell.tui.rail_mode, RailMode::Detailed);
         assert!(
             rail_tile_rects(
                 &shell.pipeline,
@@ -5920,7 +6368,6 @@ mod pipeline {
         let theme = Theme::DARK;
         let state = PipelineState {
             discover: TileStatus::Done,
-            learnings: TileStatus::Done,
             ..stage_state(TileStatus::Done, TileStatus::Active)
         };
         let mut planning = app();
@@ -5938,21 +6385,13 @@ mod pipeline {
             shell.tui.rail_mode = RailMode::Compact;
         }
 
-        let ids = [
-            TileId::Plan,
-            TileId::Build,
-            TileId::Ship,
-            TileId::Discover,
-            TileId::Learnings,
-        ];
+        let ids = [TileId::Plan, TileId::Build, TileId::Discover];
         // The letters, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, SHIP muted, DI and LN done.
+        // every shell: Plan done, Build active, DI done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
             ("[ P ]".to_string(), Some(theme.success), false),
             ("[ B ]".to_string(), Some(theme.accent), true),
-            ("[ SH ]".to_string(), Some(theme.muted_text), false),
             ("[ DI ]".to_string(), Some(theme.success), false),
-            ("[ LN ]".to_string(), Some(theme.success), false),
         ];
 
         // The whole rail area's drawn cells, as the equality reference:
@@ -6031,7 +6470,6 @@ mod pipeline {
         let theme = Theme::DARK;
         let state = PipelineState {
             discover: TileStatus::Done,
-            learnings: TileStatus::Done,
             ..stage_state(TileStatus::Done, TileStatus::Active)
         };
 
@@ -6052,21 +6490,17 @@ mod pipeline {
             }
             let width = rail_width(mode);
             // The tiles' text, colours and boldness, the same per status in
-            // both modes: Plan done, Build active, SHIP muted, DI and LN done.
+            // both modes: Plan done, Build active, DI done.
             let expected: Vec<(String, Option<Color>, bool)> = match mode {
                 RailMode::Compact => vec![
                     ("[ P ]".to_string(), Some(theme.success), false),
                     ("[ B ]".to_string(), Some(theme.accent), true),
-                    ("[ SH ]".to_string(), Some(theme.muted_text), false),
                     ("[ DI ]".to_string(), Some(theme.success), false),
-                    ("[ LN ]".to_string(), Some(theme.success), false),
                 ],
                 RailMode::Normal | RailMode::Detailed => vec![
-                    ("[   Plan    ]".to_string(), Some(theme.success), false),
-                    ("[   Build   ]".to_string(), Some(theme.accent), true),
-                    ("[   Ship    ]".to_string(), Some(theme.muted_text), false),
-                    ("[ Discover  ]".to_string(), Some(theme.success), false),
-                    ("[ Learnings ]".to_string(), Some(theme.success), false),
+                    ("[   Plan   ]".to_string(), Some(theme.success), false),
+                    ("[  Build   ]".to_string(), Some(theme.accent), true),
+                    ("[ Discover ]".to_string(), Some(theme.success), false),
                 ],
             };
 
@@ -6098,11 +6532,7 @@ mod pipeline {
                 // below keep their old relative offsets.
                 let rects = rail_tile_rects(&shell.pipeline, area, mode);
                 let rows: Vec<u16> = rects.iter().map(|(_, rect)| rect.y).collect();
-                assert_eq!(
-                    rows,
-                    vec![area.y + 1, area.y + 3, area.y + 5, area.y + 6, area.y + 7,],
-                    "{name}"
-                );
+                assert_eq!(rows, vec![area.y + 1, area.y + 3, area.y + 5], "{name}");
                 // The connector moved with the tiles: still exactly one row
                 // below the first stage tile.
                 assert_eq!(
@@ -6212,7 +6642,6 @@ mod pipeline {
         let theme = Theme::DARK;
         let state = PipelineState {
             discover: TileStatus::Done,
-            learnings: TileStatus::Done,
             ..stage_state(TileStatus::Done, TileStatus::Active)
         };
         let mut planning = app();
@@ -6231,16 +6660,14 @@ mod pipeline {
         }
 
         // The full names, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, SHIP muted, DI and LN done.
+        // every shell: Plan done, Build active, DI done.
         let expected: Vec<(String, Option<Color>, bool)> = vec![
-            ("[   Plan    ]".to_string(), Some(theme.success), false),
-            ("[   Build   ]".to_string(), Some(theme.accent), true),
-            ("[   Ship    ]".to_string(), Some(theme.muted_text), false),
-            ("[ Discover  ]".to_string(), Some(theme.success), false),
-            ("[ Learnings ]".to_string(), Some(theme.success), false),
+            ("[   Plan   ]".to_string(), Some(theme.success), false),
+            ("[  Build   ]".to_string(), Some(theme.accent), true),
+            ("[ Discover ]".to_string(), Some(theme.success), false),
         ];
         let width = rail_width(RailMode::Normal);
-        assert_eq!(width, 13, "the longest name (Learnings) plus its padding");
+        assert_eq!(width, 12, "the longest name (Discover) plus its padding");
 
         // The whole rail area's drawn cells, as the cross-state equality
         // reference: symbol, foreground, background and modifiers.
@@ -6312,7 +6739,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[   Plan    ]".to_string(), Some(Theme::DARK.accent), true)
+            ("[   Plan   ]".to_string(), Some(Theme::DARK.accent), true)
         );
         let width = rail_width(RailMode::Normal);
         assert_eq!(app.pipeline_area.get().width, width);
@@ -6432,7 +6859,12 @@ mod pipeline {
             .iter()
             .position(|entry| matches!(entry, Entry::Row(row) if row.key == "rail_mode"))
             .expect("the rail mode row is visible");
-        app.overlay.focus = index;
+        // Walk the focus there with the keys so the offset follows the
+        // selection into view (T136.1).
+        let _ = draw(&app, 100, 30);
+        while app.overlay.focus < index {
+            app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
         let screen = draw(&app, 100, 30);
         assert!(screen.contains("rail mode  ‹ normal ›"), "{screen}");
     }

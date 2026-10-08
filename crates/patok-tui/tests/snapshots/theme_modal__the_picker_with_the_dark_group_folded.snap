@@ -2,27 +2,27 @@
 source: crates/patok-tui/tests/theme_modal.rs
 expression: "draw(&app, 80, 24)"
 ---
-             ┌ Builder | Claude ───────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                    │
-      ↓      │                                                                 │
-[   Plan    ]│                                                                 │
-      ↓      ┌────────────────────── Theme ──────────────── [ x ] ┐            │
-[   Build   ]│▶ ▸ Dark                                            │            │
-      ↓      │  ▾ Light                                           │────────────┘
-[  Review   ]│      atom_one_light                                │────────────┐
-             │      tokyo_night_day                               │            │
-[   Ship    ]│      catppuccin_latte                              │            │
-[ Discover  ]│      solarized_light                               │            │
-[ Learnings ]│      gruvbox_light                                 │            │
-             │                                                    │            │
-             │                                                    │            │
-             │                                                    │            │
-             │                                                    │            │
-             │                                                    │            │
-             │                                                    │            │
-             │ ↑↓/jk previews      [ Enter ] Save  [ Esc ] Cancel │            │
-             └────────────────────────────────────────────────────┘            │
-             │                                                                 │
-             │ a add tasks · i inject task · Enter start build · ↑↓ scroll     │
-             └─────────────────────────────────────────────────────────────────┘
- STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit
+            ┌ Builder | Claude ────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                     │
+      ↓     │                                                                  │
+[   Plan   ]│                                                                  │
+      ↓     │┌────────────────────── Theme ──────────────── [ x ] ┐            │
+[  Build   ]││▶ ▸ Dark                                            │            │
+      ↓     └│  ▾ Light                                           │────────────┘
+[  Review  ]┌│      atom_one_light                                │────────────┐
+            ││      tokyo_night_day                               │            │
+[ Discover ]││      catppuccin_latte                              │            │
+            ││      solarized_light                               │            │
+            ││      gruvbox_light                                 │            │
+            ││                                                    │            │
+            ││                                                    │            │
+            ││                                                    │            │
+            ││                                                    │            │
+            ││                                                    │            │
+            ││                                                    │            │
+            ││ ↑↓/jk previews      [ Enter ] Save  [ Esc ] Cancel │            │
+            │└────────────────────────────────────────────────────┘            │
+            │                                                                  │
+            │ a add tasks · i inject task · Enter start · ↑↓ scroll            │
+            └──────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu

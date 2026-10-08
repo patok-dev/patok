@@ -35,6 +35,7 @@ fn setup() -> Setup {
         skip_research_for_simple: true,
         review_in_loop: false,
         review_history: data.path().join("review-history.json"),
+        open_group: data.path().join("open-group.json"),
         config_files: patok_core::config::ConfigFiles::default(),
     };
     Setup {
@@ -1008,11 +1009,12 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
     assert!(screen.contains("T2.1"), "{screen}");
     assert!(screen.contains("write the greeting tests"), "{screen}");
     let bottom = screen.lines().last().unwrap();
-    assert!(bottom.contains(" settings "), "{screen}");
-    // The add-tasks, scroll and Tab chips left the status line (T73.1); the
-    // shorter strip fits this width whole, through the quit chip.
+    assert!(bottom.contains(" menu "), "{screen}");
+    // The add-tasks, scroll and Tab chips left the status line (T73.1), and
+    // the secondary chips moved behind the m menu (T128.1); the shorter strip
+    // fits this width whole, through the menu chip.
     assert!(!bottom.contains(" add tasks "), "{screen}");
-    assert!(bottom.trim_end().ends_with(" quit"), "{screen}");
+    assert!(bottom.trim_end().ends_with(" menu"), "{screen}");
     assert!(!bottom.contains("1 task added."), "{screen}");
 
     engine.shutdown_token().cancel();
@@ -1122,6 +1124,9 @@ async fn the_plan_stage_shows_the_planner_then_the_builder_for_one_task() {
     assert!(planner.contains(" RUNNING  sprint"), "{planner}");
     assert!(planner.contains(" Planner "), "{planner}");
     assert!(planner.contains("File Operations"), "{planner}");
+    // The timer runs from the agent's announce: the frame the planner's output
+    // first appears on already carries the mm:ss readout (T131.1).
+    assert!(planner.contains("00:0"), "{planner}");
 
     // The builder phase follows for the same task, with its own output.
     let builder = builder_screen.expect("the builder phase was on screen");

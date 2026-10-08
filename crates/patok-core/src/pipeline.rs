@@ -1,6 +1,6 @@
 //! The pipeline-rail model: the source data the
 //! engine reports and the shell renders. One tile per enabled stage in order,
-//! then the three standalone tiles SHIP, DISCOVER and LEARNINGS.
+//! then the standalone DISCOVER tile.
 
 use serde::{Deserialize, Serialize};
 
@@ -60,13 +60,11 @@ pub struct Tile {
 }
 
 /// The full pipeline rail: the enabled stage tiles
-/// in order, then the three standalone tiles.
+/// in order, then the standalone tiles.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineState {
     pub stages: Vec<Tile>,
-    pub ship: TileStatus,
     pub discover: TileStatus,
-    pub learnings: TileStatus,
 }
 
 impl PipelineState {
@@ -129,9 +127,7 @@ mod tests {
     fn the_default_rail_is_empty_and_all_muted() {
         let state = PipelineState::default();
         assert!(state.stages.is_empty());
-        assert_eq!(state.ship, TileStatus::Muted);
         assert_eq!(state.discover, TileStatus::Muted);
-        assert_eq!(state.learnings, TileStatus::Muted);
     }
 
     #[test]
@@ -168,12 +164,19 @@ mod tests {
                     status: TileStatus::Active,
                 },
             ],
-            ship: TileStatus::Active,
             discover: TileStatus::Done,
-            learnings: TileStatus::Muted,
         };
         let json = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<PipelineState>(&json).unwrap(), state);
         assert!(json.contains("\"plan\""));
+        // A payload saved before the LEARNINGS and SHIP tiles were removed
+        // still deserializes: the leftover keys are ignored.
+        assert_eq!(
+            serde_json::from_str::<PipelineState>(
+                r#"{"stages":[],"ship":"muted","discover":"muted","learnings":"done"}"#
+            )
+            .unwrap(),
+            PipelineState::default()
+        );
     }
 }

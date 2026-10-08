@@ -335,9 +335,7 @@ fn pipeline_proto(state: &PipelineState) -> ProtoPipelineState {
                 status: tile_status_proto(tile.status) as i32,
             })
             .collect(),
-        ship: tile_status_proto(state.ship) as i32,
         discover: tile_status_proto(state.discover) as i32,
-        learnings: tile_status_proto(state.learnings) as i32,
     }
 }
 

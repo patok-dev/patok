@@ -2,18 +2,18 @@
 source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 80, 24)"
 ---
-             ┌ Builder ────────────────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                    │
+            ┌ Builder ─────────────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                     │
     ┌ Inject a task ──────────────────────────────────────────────── [ x ] ┐   │
 [   │- [ ] T78.1: Polish the README                                        │   │
     │                                                                      │   │
-[   │                                                                      │   │
+[  B│                                                                      │   │
     │                                                                      │───┘
 [  R│                                                                      │───┐
     │                                                                      │   │
-[   │                                                                      │   │
 [ Di│                                                                      │   │
-[ Le│                                                                      │   │
+    │                                                                      │   │
+    │                                                                      │   │
     │                                                                      │   │
     │                                                                      │   │
     │                                                                      │   │
@@ -24,5 +24,5 @@ expression: "draw(&app, 80, 24)"
     │                                                                      │   │
     │ ↑↓←→ move · Shift-Enter new line ·   [ Enter ] Inject  [ Esc ] Close │   │
     └──────────────────────────────────────────────────────────────────────┘   │
-             └─────────────────────────────────────────────────────────────────┘
- STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit
+            └──────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu

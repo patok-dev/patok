@@ -72,6 +72,9 @@ pub struct EngineConfig {
     pub review_in_loop: bool,
     /// The persistent learned-confidence history file, stored globally per user.
     pub review_history: PathBuf,
+    /// The open-group record (`open-group.json`), stored in the project data
+    /// directory: the batch-review group open across restarts.
+    pub open_group: PathBuf,
     /// The user-layer config files (user-global and user-local); the project-local
     /// `patok.config.toml` is always derived from `data_dir`.
     pub config_files: patok_core::config::ConfigFiles,
@@ -94,6 +97,7 @@ impl EngineConfig {
                 )
             })?;
         let review_history = Self::default_review_history(&data_dir);
+        let open_group = data_dir.join("open-group.json");
         Ok(Self {
             runtime_dir: patok_core::paths::runtime_dir_from_env(&project_dir),
             project_dir,
@@ -107,6 +111,7 @@ impl EngineConfig {
             skip_research_for_simple: true,
             review_in_loop: true,
             review_history,
+            open_group,
             config_files: patok_core::config::ConfigFiles::from_env(),
         })
     }
@@ -184,19 +189,14 @@ struct State {
     build: TileStatus,
     /// The review stage tile's status within the running task (T70.1).
     review: TileStatus,
-    /// The ship tile's status: active while the engine commits a task.
-    ship: TileStatus,
     /// The leading task-ID number of the current batch-review group: a contiguous run of same-numbered tasks.
     group_number: Option<String>,
-    /// The HEAD SHA captured when the current batch-review group started, so
-    /// the group's last review diffs across every commit of the group.
+    /// The full HEAD SHA the current batch-review group started at (or the
+    /// open-group record's base, on a resumed group), so the group's last
+    /// review diffs across every commit of the group.
     group_base: Option<String>,
     /// A discovery round ran to completion this session.
     discovery_ran: bool,
-    /// A learning was learned this session; recorded through
-    /// [`Engine::record_learning_learned`], the post-review extractor's future
-    /// hook -- learning extraction is not implemented yet.
-    learning_learned: bool,
 }
 
 /// The central in-memory configuration: the merged, normalized
@@ -541,11 +541,9 @@ impl Engine {
                     plan: TileStatus::Muted,
                     build: TileStatus::Muted,
                     review: TileStatus::Muted,
-                    ship: TileStatus::Muted,
                     group_number: None,
                     group_base: None,
                     discovery_ran: false,
-                    learning_learned: false,
                 }),
                 events,
                 phase,
@@ -727,13 +725,7 @@ impl Engine {
                     },
                 })
                 .collect(),
-            ship: state.ship,
             discover,
-            learnings: if state.learning_learned {
-                TileStatus::Done
-            } else {
-                TileStatus::Muted
-            },
         };
         if pipeline != state.pipeline {
             state.pipeline = pipeline.clone();
@@ -741,25 +733,23 @@ impl Engine {
         }
     }
 
-    /// A task's tiles start over: both stages pending, ship muted (the statuses
+    /// A task's tiles start over: both stages pending (the statuses
     /// reset per task).
     fn task_tiles_started_locked(&self, state: &mut State) {
         state.research = TileStatus::Pending;
         state.plan = TileStatus::Pending;
         state.build = TileStatus::Pending;
         state.review = TileStatus::Pending;
-        state.ship = TileStatus::Muted;
         self.refresh_pipeline_locked(state);
     }
 
-    /// A task ended: its stage and ship tiles are muted again, whatever the
+    /// A task ended: its stage tiles are muted again, whatever the
     /// outcome.
     fn task_tiles_finished_locked(&self, state: &mut State) {
         state.research = TileStatus::Muted;
         state.plan = TileStatus::Muted;
         state.build = TileStatus::Muted;
         state.review = TileStatus::Muted;
-        state.ship = TileStatus::Muted;
         self.refresh_pipeline_locked(state);
     }
 
@@ -1072,8 +1062,8 @@ impl Engine {
         let cancel = CancellationToken::new();
         state.cancel = cancel.clone();
         // A new session starts a new batch-review group: the same leading number recurring after a different task ran
-        // starts a fresh group with a fresh base, and an interrupted group's
-        // base is re-derived from the commit history (see `note_group`).
+        // starts a fresh group with a fresh base, and an interrupted group
+        // resumes through the open-group record (see `note_group`).
         state.group_number = None;
         state.group_base = None;
         state.current_task = Some(task.id.clone());
@@ -1603,16 +1593,6 @@ impl Engine {
         self.state().ui_added_ids.iter().any(|i| i == id)
     }
 
-    /// Records that a learning was learned this session, so the pipeline rail's
-    /// LEARNINGS tile turns done. This is the hook
-    /// the post-review learning extractor will call once it exists; the engine
-    /// owns the flag because the session is its lifetime.
-    pub fn record_learning_learned(&self) {
-        let mut state = self.state();
-        state.learning_learned = true;
-        self.refresh_pipeline_locked(&mut state);
-    }
-
     /// Runs one agent session on the configured provider: its normalised events are streamed
     /// to attached shells and its raw stream is written to the history log. With `capture`,
     /// the normalised events are also collected and returned (the plan stage reads the plan
@@ -1958,9 +1938,10 @@ impl Engine {
     /// with the outcome and returns it; the session-level loop decides what happens
     /// next. All sessions run on the session's settings snapshot `unit`.
     async fn run_task(&self, task: Task, unit: &Unit, cancel: CancellationToken) -> TaskOutcome {
-        // The batch-review group of this task is noted first: a new leading number starts a group and
-        // captures the current HEAD as the base its last review diffs across.
-        self.note_group(&task.id).await;
+        // The batch-review group of this task is noted first: a new leading
+        // number starts or resumes a group through the open-group record,
+        // capturing the base its last review diffs across.
+        self.note_group(&task).await;
 
         // The research stage (T68.1): one research session runs before the task is
         // planned (or built, with the plan stage off), unless a fresh report is on
@@ -2075,7 +2056,7 @@ impl Engine {
                     self.write_claims_file(&task.id, &review::trim_claims(claims));
                 }
                 // The build tile is done once the builder session completed: the
-                // stages before the running one are always done, so review and ship never render with the build
+                // stages before the running one are always done, so review never renders with the build
                 // still in-progress.
                 {
                     let mut state = self.state();
@@ -2120,59 +2101,123 @@ impl Engine {
         self.finish_task(&task, outcome, commit)
     }
 
-    /// Records the task's batch-review group: a contiguous run of same-leading-number task IDs in execution
-    /// order. A changed number starts a new group and derives its base from
-    /// the commit history, so the group's last review diffs across every
-    /// commit made for the group -- also across a restart of an interrupted
-    /// group (a failed review left the group's commits in the log; a rerun
-    /// must still review them all). The group state is reset at each session
-    /// start, which makes the re-derivation below re-run for the session's
-    /// first task.
-    async fn note_group(&self, task_id: &str) {
-        let number = review::leading_number(task_id);
+    /// Records the task's batch-review group: a contiguous run of
+    /// same-leading-number task IDs in execution order. A changed number
+    /// starts a new group: the open-group record decides through
+    /// `resume_decision` whether an interrupted group resumes (its base is
+    /// restored, so the group's last review still diffs across every commit
+    /// of the group) or a fresh one starts at the current HEAD, and the
+    /// record is written so the group survives a restart. The group state is
+    /// reset at each session start, which makes the decision re-run for the
+    /// session's first task.
+    async fn note_group(&self, task: &Task) {
+        let number = review::leading_number(&task.id);
         {
             let state = self.state();
             if state.group_number.is_some() && state.group_number == number {
                 return;
             }
         }
-        let base = self.group_base(number.as_deref()).await;
+        let (base, record) = self.group_base(task, number.as_deref()).await;
+        if let Some(record) = &record {
+            let path = self.inner.config.open_group.clone();
+            if let Err(error) = record.save(&path) {
+                tracing::warn!("cannot write the open group {}: {error}", path.display());
+            }
+        }
         let mut state = self.state();
         state.group_number = number;
         state.group_base = base;
     }
 
-    /// The base a new batch-review group diffs against. When the newest
-    /// commits already carry the group's leading number -- a rerun of the
-    /// group's last task after its review failed, or a soft stop mid-group --
-    /// the base is the parent of the oldest contiguous such commit, so the
-    /// group's diff span survives the session restart; when the group's
-    /// first commit is the root, git's empty tree stands in. Otherwise (a
-    /// fresh group: no same-number commit is at the top of the history, the
-    /// same leading number recurring after a different task ran) the base is
-    /// the current HEAD, exactly as before.
-    async fn group_base(&self, number: Option<&str>) -> Option<String> {
-        let Some(number) = number else {
-            return self.git().head_sha().await;
-        };
+    /// The base a new batch-review group diffs against, and the open-group
+    /// record to write. A group with no leading number (or no commits yet)
+    /// records nothing; its base is the current HEAD (`None` without a
+    /// repository). Otherwise the record on disk decides: `resume_decision`
+    /// resumes an interrupted group (a failed review left its commits behind
+    /// with HEAD at the record's `last` commit) by restoring its base, and
+    /// anything else -- a moved HEAD, a non-ancestor base, a different
+    /// number, or a reused task ID whose description hash differs -- starts
+    /// a fresh group whose base and record sit at the current HEAD.
+    async fn group_base(
+        &self,
+        task: &Task,
+        number: Option<&str>,
+    ) -> (Option<String>, Option<review::OpenGroup>) {
         let git = self.git();
-        let log = git.log_subjects().await;
-        let run: Vec<&str> = log
+        let head = git.head_full_sha().await;
+        let Some(number) = number else {
+            return (head, None); // no group: the base diffs HEAD, no record
+        };
+        let Some(head) = head else {
+            return (None, None); // no commits yet: nothing to record
+        };
+        let fresh = || review::OpenGroup {
+            number: number.to_string(),
+            base: head.clone(),
+            last: head.clone(),
+            members: Vec::new(),
+        };
+        match review::OpenGroup::load(&self.inner.config.open_group) {
+            Some(record) => {
+                let ancestor = git.is_ancestor(&record.base, &head).await;
+                match review::resume_decision(&record, &head, ancestor, &task.id, &task.description)
+                {
+                    review::ResumeDecision::Resume => (Some(record.base.clone()), Some(record)),
+                    review::ResumeDecision::Fresh => (Some(head.clone()), Some(fresh())),
+                }
+            }
+            None => (Some(head.clone()), Some(fresh())),
+        }
+    }
+
+    /// Updates the open-group record after an in-group commit: `last` becomes
+    /// the new commit's full SHA and the task joins `members`. A missing
+    /// record (the group already closed, or no HEAD when it started) is left
+    /// alone.
+    fn record_group_commit(&self, task: &Task, full: &str) {
+        {
+            let state = self.state();
+            let Some(number) = state.group_number.as_deref() else {
+                return;
+            };
+            if review::leading_number(&task.id).as_deref() != Some(number) {
+                return;
+            }
+        }
+        let path = self.inner.config.open_group.clone();
+        let Some(mut record) = review::OpenGroup::load(&path) else {
+            return;
+        };
+        record.last = full.to_string();
+        let hash = review::description_hash(&task.description);
+        if !record
+            .members
             .iter()
-            .take_while(|(_, subject)| {
-                review::subject_task_id(subject)
-                    .and_then(review::leading_number)
-                    .as_deref()
-                    == Some(number)
-            })
-            .map(|(sha, _)| sha.as_str())
-            .collect();
-        match run.last() {
-            Some(oldest) => git
-                .parent_sha(oldest)
-                .await
-                .or_else(|| Some(String::from("4b825dc642cb6eb9a060e54bf8d69288fbee4904"))),
-            None => git.head_sha().await,
+            .any(|(id, member_hash)| id == &task.id && member_hash == &hash)
+        {
+            record.members.push((task.id.clone(), hash));
+        }
+        if let Err(error) = record.save(&path) {
+            tracing::warn!("cannot write the open group {}: {error}", path.display());
+        }
+    }
+
+    /// Deletes the open-group record when the group's last task completed its
+    /// review validated; a failed review keeps it so the rerun still diffs
+    /// the whole group. A task outside the current group (or without a
+    /// leading number) closes nothing.
+    fn close_group(&self, task_id: &str) {
+        let number = review::leading_number(task_id);
+        {
+            let state = self.state();
+            if number.is_none() || state.group_number != number {
+                return;
+            }
+        }
+        let path = self.inner.config.open_group.clone();
+        if let Err(error) = review::OpenGroup::clear(&path) {
+            tracing::warn!("cannot delete the open group {}: {error}", path.display());
         }
     }
 
@@ -2264,9 +2309,13 @@ impl Engine {
             .map(|t| t.id)
             .collect();
         let history = review::ReviewHistory::load(&self.inner.config.review_history);
+        // The raw deferral decides the group's close beside the skip rule:
+        // the batch deferral is not the group's last task, and its skip is
+        // not a completed review.
+        let deferred = review::batch_deferred(&task.id, &pending_after);
         let inputs = review::SkipInputs {
             review_in_loop: unit.review_in_loop,
-            batch_deferred: unit.batch_review && review::batch_deferred(&task.id, &pending_after),
+            batch_deferred: unit.batch_review && deferred,
             skip_review_for_simple: unit.skip_review_for_simple,
             complexity: Some(complexity),
             builder_clean: true,
@@ -2282,6 +2331,12 @@ impl Engine {
             );
             // A skipped stage renders done on the rail like the research and
             // plan stages do; the dash lives in the task-line indicator.
+            // A skip other than the batch deferral validated the task, so
+            // the group's last task closes the record; the deferral leaves
+            // it open for the group's real last task.
+            if !deferred {
+                self.close_group(&task.id);
+            }
             let mut state = self.state();
             state.review = TileStatus::Done;
             self.refresh_pipeline_locked(&mut state);
@@ -2407,6 +2462,12 @@ impl Engine {
         }
         if verdict.passed {
             self.notice(NoticeLevel::Info, format!("Review passed for {}.", task.id));
+            // The group's last task completed its review validated: the
+            // record goes. A failed review keeps it so the rerun still
+            // diffs the whole group.
+            if !deferred {
+                self.close_group(&task.id);
+            }
             ReviewStage::Passed
         } else {
             let report = review_path
@@ -2646,16 +2707,17 @@ impl Engine {
             }
         }
         self.reconcile();
-        self.ship_committing();
         let kind = if validated {
             CommitKind::Feat
         } else {
             CommitKind::Wip
         };
-        let commit = self
-            .git()
-            .commit_all(kind, &task.id, &task.description)
-            .await;
+        let commit = self.git().commit_all(kind, &task.description).await;
+        let full = commit.as_ref().map(|commit| commit.full.clone());
+        let commit = commit.map(|commit| commit.short);
+        if let Some(full) = full {
+            self.record_group_commit(task, &full);
+        }
         self.report_commit(commit.as_deref());
         commit
     }
@@ -2931,14 +2993,6 @@ impl Engine {
                 format!("cannot write {}: {e}", path.display()),
             ),
         }
-    }
-
-    /// The ship tile turns active while the engine commits a task, around both commit sites -- the `feat` commit of a completed task
-    /// and the `WIP` commit on the failure path. `finish_task` mutes it again.
-    fn ship_committing(&self) {
-        let mut state = self.state();
-        state.ship = TileStatus::Active;
-        self.refresh_pipeline_locked(&mut state);
     }
 
     fn report_commit(&self, commit: Option<&str>) {

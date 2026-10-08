@@ -89,8 +89,8 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
     assert!(file.contains("- [x] T1.1: [--.B-] add the greeting file"));
     assert!(file.contains("- [x] T1.2: [--.B-] fix the second task"));
     let log = fixture.git(&["log", "--format=%s"]);
-    assert_eq!(log.lines().next(), Some("feat(T1.2): fix the second task"));
-    assert!(log.contains("feat(T1.1): add the greeting file"));
+    assert_eq!(log.lines().next(), Some("feat: fix the second task"));
+    assert!(log.contains("feat: add the greeting file"));
     let files = fixture.git(&["show", "--name-only", "--format=", "HEAD~1"]);
     assert!(
         files.contains("greeting.txt") && files.contains("TASKS.md"),
@@ -184,7 +184,7 @@ async fn a_failed_agent_commits_wip_and_leaves_the_task_pending() {
     assert!(fixture.tasks_file().contains("- [ ] T1.1"));
     assert_eq!(
         fixture.git(&["log", "--format=%s", "-1"]).trim(),
-        "WIP(T1.1): add the greeting file"
+        "WIP: add the greeting file"
     );
 }
 
@@ -1422,7 +1422,7 @@ async fn a_soft_stop_finishes_the_task_stops_the_loop_and_keeps_the_engine_servi
     );
     assert_eq!(
         fixture.git(&["log", "--format=%s", "-1"]).trim(),
-        "feat(T1.1): add the greeting file"
+        "feat: add the greeting file"
     );
     // No second task and no discovery round: the loop stopped.
     assert_eq!(provider.sessions().len(), 1);
@@ -2508,7 +2508,7 @@ async fn a_discovery_round_that_appends_tasks_continues_the_session() {
     assert!(
         fixture
             .git(&["log", "--format=%s"])
-            .contains("feat(D1.1): fix the follow-up")
+            .contains("feat: fix the follow-up")
     );
     // The round that found work postponed the next one, so the session ended there.
     assert_eq!(provider.sessions().len(), 3);
@@ -2613,18 +2613,17 @@ fn rail(events: &[EngineEvent]) -> Vec<PipelineState> {
         .collect()
 }
 
-/// The (plan, build, review, ship) tile statuses of one rail state.
-fn walk(state: &PipelineState) -> (TileStatus, TileStatus, TileStatus, TileStatus) {
+/// The (plan, build, review) tile statuses of one rail state.
+fn walk(state: &PipelineState) -> (TileStatus, TileStatus, TileStatus) {
     (
         state.stage_status(Stage::Plan).unwrap(),
         state.stage_status(Stage::Build).unwrap(),
         state.stage_status(Stage::Review).unwrap(),
-        state.ship,
     )
 }
 
 #[tokio::test]
-async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
+async fn a_build_run_walks_the_pipeline_tiles_plan_build_review() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
         vec![Step::Event(AgentEvent::Result {
@@ -2655,8 +2654,8 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
     // Plan pending, then active in the plan session, then done while the builder
     // runs; the build tile goes done when the builder session completes, so the
     // stages before the running one are always done. The review stage is skipped
-    // (review off), so its tile goes done with the skip; then ship active around
-    // the commit, then everything muted again.
+    // (review off), so its tile goes done with the skip; then everything is
+    // muted again.
     let walked: Vec<_> = rail.iter().map(walk).collect();
     assert_eq!(
         walked,
@@ -2665,44 +2664,12 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_ship() {
                 TileStatus::Pending,
                 TileStatus::Pending,
                 TileStatus::Pending,
-                TileStatus::Muted
             ),
-            (
-                TileStatus::Active,
-                TileStatus::Pending,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Active,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Active
-            ),
-            (
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted
-            ),
+            (TileStatus::Active, TileStatus::Pending, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
+            (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],
         "{rail:#?}"
     );
@@ -2731,38 +2698,11 @@ async fn a_build_without_the_plan_stage_walks_build_directly() {
                 TileStatus::Pending,
                 TileStatus::Pending,
                 TileStatus::Pending,
-                TileStatus::Muted
             ),
-            (
-                TileStatus::Done,
-                TileStatus::Active,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Pending,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Muted
-            ),
-            (
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Done,
-                TileStatus::Active
-            ),
-            (
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted,
-                TileStatus::Muted
-            ),
+            (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
+            (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],
         "{:#?}",
         rail(&events)
@@ -2788,12 +2728,7 @@ async fn a_review_run_shows_the_build_tile_done_while_the_reviewer_is_active() {
     // The build tile is done while the reviewer runs: the stages before the
     // running one are always done.
     assert!(
-        walked.contains(&(
-            TileStatus::Done,
-            TileStatus::Done,
-            TileStatus::Active,
-            TileStatus::Muted
-        )),
+        walked.contains(&(TileStatus::Done, TileStatus::Done, TileStatus::Active,)),
         "the reviewer-active rail state is missing: {walked:#?}"
     );
     // The regression guard: the build and review tiles are never both
@@ -2801,18 +2736,13 @@ async fn a_review_run_shows_the_build_tile_done_while_the_reviewer_is_active() {
     assert!(
         !walked
             .iter()
-            .any(|(_, build, review, _)| *build == TileStatus::Active
+            .any(|(_, build, review)| *build == TileStatus::Active
                 && *review == TileStatus::Active),
         "the build tile is still in-progress while the reviewer runs: {walked:#?}"
     );
     assert_eq!(
         walked.last().unwrap(),
-        &(
-            TileStatus::Muted,
-            TileStatus::Muted,
-            TileStatus::Muted,
-            TileStatus::Muted
-        ),
+        &(TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         "{walked:#?}"
     );
 }
@@ -2895,9 +2825,7 @@ async fn an_idle_engine_reports_every_tile_muted() {
             }
         ]
     );
-    assert_eq!(pipeline.ship, TileStatus::Muted);
     assert_eq!(pipeline.discover, TileStatus::Muted);
-    assert_eq!(pipeline.learnings, TileStatus::Muted);
 }
 
 #[tokio::test]
@@ -2943,27 +2871,6 @@ async fn an_attaching_shell_receives_the_current_pipeline_state() {
             .any(|e| matches!(e, EngineEvent::PipelineChanged { .. }))
     );
     collect_until(&mut attachment.events, is_phase_startup).await;
-}
-
-#[tokio::test]
-async fn a_learned_learning_marks_the_learnings_tile_done() {
-    let fixture = Fixture::new(TASKS);
-    let engine = fixture.engine(scripted());
-    let mut attachment = engine.attach().unwrap();
-
-    engine.record_learning_learned();
-    let events = collect_until(&mut attachment.events, |e| {
-        matches!(e, EngineEvent::PipelineChanged { .. })
-    })
-    .await;
-
-    assert_eq!(
-        rail(&events)[0],
-        PipelineState {
-            learnings: TileStatus::Done,
-            ..PipelineState::today()
-        }
-    );
 }
 
 mod provider_config {
@@ -3353,7 +3260,7 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
             .contains("- [x] T1.1: [--.BR] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1): add the greeting file"), "{log}");
+    assert!(log.contains("feat: add the greeting file"), "{log}");
     // The builder and reviewer raw streams are in the history log.
     assert_eq!(fixture.data_path("history").read_dir().unwrap().count(), 2);
 }
@@ -3617,7 +3524,7 @@ async fn a_fail_verdict_produces_a_wip_commit_with_the_task_not_validated() {
             .contains("- [ ] T1.1: [--.BR!] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.1): add the greeting file"), "{log}");
+    assert!(log.contains("WIP: add the greeting file"), "{log}");
 }
 
 #[tokio::test]
@@ -3650,7 +3557,7 @@ async fn an_invalid_findings_block_fails_the_review() {
             .contains("- [ ] T1.1: [--.BR!] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.1)"), "{log}");
+    assert!(log.contains("WIP: add the greeting file"), "{log}");
 }
 
 #[tokio::test]
@@ -3693,7 +3600,10 @@ async fn no_changed_files_fails_the_review() {
             .contains("- [ ] T1.1: [R-.BR!] introduce the greeting file for the review stage")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.1)"), "{log}");
+    assert!(
+        log.contains("WIP: introduce the greeting file for the review stage"),
+        "{log}"
+    );
 }
 
 #[tokio::test]
@@ -3719,7 +3629,7 @@ async fn review_in_loop_off_skips_the_review_with_its_reason() {
             .contains("- [x] T1.1: [--.B-] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
+    assert!(log.contains("feat: add the greeting file"), "{log}");
 }
 
 #[tokio::test]
@@ -3877,9 +3787,9 @@ async fn batch_review_defers_every_task_but_the_last_and_the_last_diff_spans_the
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
-    assert!(log.contains("feat(T1.2)"), "{log}");
-    assert!(log.contains("feat(T1.3)"), "{log}");
+    assert!(log.contains("feat: add the first file"), "{log}");
+    assert!(log.contains("feat: add the second file"), "{log}");
+    assert!(log.contains("feat: add the third file"), "{log}");
 
     // One builder per task, then one reviewer session for the group's last
     // task, whose diff spans every commit of the group.
@@ -3945,9 +3855,9 @@ async fn batch_review_passes_the_groups_last_task_and_advances_to_the_next_group
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
-    assert!(log.contains("feat(T1.2)"), "{log}");
-    assert!(log.contains("feat(T2.1)"), "{log}");
+    assert!(log.contains("feat: add the first file"), "{log}");
+    assert!(log.contains("feat: add the second file"), "{log}");
+    assert!(log.contains("feat: add the third file"), "{log}");
     // T2.1's group base is fresh: its review sees only its own file.
     let second_reviewer_prompt = &sessions[4].prompt;
     assert!(
@@ -4003,8 +3913,8 @@ async fn a_restart_after_a_failed_review_of_a_groups_last_task_passes_the_rerun_
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("WIP(T1.2)"), "{log}");
-    assert!(!log.contains("feat(T2.1)"), "{log}");
+    assert!(log.contains("WIP: add the second file"), "{log}");
+    assert!(!log.contains("feat: add the third file"), "{log}");
 
     // The restart (what the TUI's Enter and a fresh headless run do).
     engine.start_build().unwrap();
@@ -4047,8 +3957,8 @@ async fn a_restart_after_a_failed_review_of_a_groups_last_task_passes_the_rerun_
         "{file}"
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.2)"), "{log}");
-    assert!(log.contains("feat(T2.1)"), "{log}");
+    assert!(log.contains("feat: add the second file"), "{log}");
+    assert!(log.contains("feat: add the third file"), "{log}");
 }
 
 /// T107.1: the same restart recovery for a single-task group, whose failed
@@ -4105,7 +4015,289 @@ async fn a_restart_after_a_failed_review_of_a_single_task_group_passes_the_rerun
             .contains("- [x] T1.1: [--.BR] add the greeting file")
     );
     let log = fixture.git(&["log", "--format=%s"]);
-    assert!(log.contains("feat(T1.1)"), "{log}");
+    assert!(log.contains("feat: add the greeting file"), "{log}");
+}
+
+/// The parsed open-group record, failing the test when it is missing.
+fn open_group_record(fixture: &Fixture) -> serde_json::Value {
+    let path = fixture.data.path().join("open-group.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("no open-group record at {}", path.display()));
+    serde_json::from_str(&text).expect("the record parses")
+}
+
+/// T123.3: an interrupted group resumes through the on-disk open-group
+/// record. The first run's failed review keeps the record -- updated to the
+/// WIP commit, its members holding both tasks -- and a fresh engine over the
+/// same repository resumes the group, so the rerun's review diffs the whole
+/// group; the group's completed review then deletes the record.
+#[tokio::test]
+async fn an_interrupted_group_resumes_from_the_open_group_record_after_a_restart() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n- [ ] T2.1: add the third file\n";
+    let fixture = Fixture::new(tasks);
+    // The fixture's initial commit is the group's base.
+    let base = fixture.git(&["rev-parse", "HEAD"]).trim().to_string();
+    // The scripts cover both runs: the mock's session record is shared by
+    // the provider clones, so a fresh engine continues the script index.
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        // The rerun's builder changes nothing new: its work is in the WIP commit.
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The record survived the failed review with the group's whole span:
+    // the base is the initial commit, the last is the WIP commit at HEAD.
+    let record = open_group_record(&fixture);
+    assert_eq!(record["number"], "1", "{record}");
+    assert_eq!(record["base"], base, "{record}");
+    assert_eq!(
+        record["last"],
+        fixture.git(&["rev-parse", "HEAD"]).trim(),
+        "{record}"
+    );
+    let members = record["members"].as_array().expect("members");
+    let ids: Vec<&str> = members.iter().map(|m| m[0].as_str().unwrap()).collect();
+    assert_eq!(ids, ["T1.1", "T1.2"], "{record}");
+    let hashes: Vec<&str> = members.iter().map(|m| m[1].as_str().unwrap()).collect();
+    assert!(
+        hashes
+            .iter()
+            .all(|hash| { hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) }),
+        "{record}"
+    );
+    assert_ne!(hashes[0], hashes[1]);
+
+    // The restart (what the TUI's Enter and a fresh headless run do): a
+    // fresh engine over the same fixture and provider.
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(events.iter().all(|e| !matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Failed | TaskOutcome::Cancelled,
+            ..
+        }
+    )));
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["T1.1", "T1.2", "review", "T1.2", "review", "T2.1", "review"]
+    );
+    // The resumed base restored the group's whole diff.
+    let rerun_reviewer_prompt = &sessions[4].prompt;
+    assert!(
+        rerun_reviewer_prompt.contains("first.txt"),
+        "the resumed group base should span the group's first commit: {rerun_reviewer_prompt}"
+    );
+    assert!(
+        rerun_reviewer_prompt.contains("second.txt"),
+        "{rerun_reviewer_prompt}"
+    );
+    let file = fixture.tasks_file();
+    assert!(
+        file.contains("- [x] T1.2: [--.BR] add the second file"),
+        "{file}"
+    );
+    assert!(
+        file.contains("- [x] T2.1: [--.BR] add the third file"),
+        "{file}"
+    );
+    // The group's completed review deleted the record.
+    assert!(!fixture.data.path().join("open-group.json").exists());
+}
+
+/// T123.3: a moved HEAD invalidates the open-group record: the restart
+/// starts a fresh group whose base is the new HEAD, so the rerun's review
+/// diffs only the rerun's own work.
+#[tokio::test]
+async fn a_moved_head_starts_a_fresh_group_from_the_open_group_record() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        // New content, so the changed-files gate of the rerun's review passes.
+        builder_with_claims("second.txt", "second v2\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+    assert!(
+        fixture.data.path().join("open-group.json").exists(),
+        "the failed review keeps the record"
+    );
+
+    // An external commit moves HEAD past the group's last WIP commit.
+    std::fs::write(fixture.path().join("unrelated.txt"), "unrelated\n").unwrap();
+    fixture.git(&["add", "-A"]);
+    fixture.git(&["commit", "-q", "-m", "external"]);
+
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Done,
+            ..
+        }
+    )));
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T1.2", "review"]);
+    let prompt = &sessions[4].prompt;
+    assert!(prompt.contains("second.txt"), "{prompt}");
+    assert!(
+        !prompt.contains("first.txt"),
+        "a moved HEAD should start a fresh group: {prompt}"
+    );
+    assert!(!prompt.contains("unrelated.txt"), "{prompt}");
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.2: [--.BR] add the second file")
+    );
+    // The fresh group's completed review deleted the record.
+    assert!(!fixture.data.path().join("open-group.json").exists());
+}
+
+/// T123.3: a closed group is never resumed. The group's last task completes
+/// its review and the record is deleted, so a later task of the same number
+/// starts its own fresh group whose diff holds none of the closed group's
+/// commits -- even though HEAD sits at the record's `last` commit, which
+/// would resume a kept record.
+#[tokio::test]
+async fn a_closed_group_is_never_resumed() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The group's last task completed its review: the record is gone.
+    assert!(!fixture.data.path().join("open-group.json").exists());
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.2: [--.BR] add the second file")
+    );
+
+    // A later same-number task appended to the file runs on a fresh engine.
+    let mut tasks = std::fs::read_to_string(fixture.path().join(TASK_FILE)).unwrap();
+    tasks.push_str("- [ ] T1.3: add the third file\n");
+    std::fs::write(fixture.path().join(TASK_FILE), tasks).unwrap();
+
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T1.3", "review"]);
+    let prompt = &sessions[4].prompt;
+    assert!(prompt.contains("third.txt"), "{prompt}");
+    assert!(
+        !prompt.contains("first.txt"),
+        "a closed group must not be resumed: {prompt}"
+    );
+    assert!(!prompt.contains("second.txt"), "{prompt}");
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.3: [--.BR] add the third file")
+    );
+    assert!(!fixture.data.path().join("open-group.json").exists());
+}
+
+/// T123.3: a reused task ID with a different description is not the group's
+/// member anymore: the record starts a fresh group at HEAD, so the rerun's
+/// review diffs only the reworded task's own work.
+#[tokio::test]
+async fn a_reused_task_id_with_a_different_description_starts_a_fresh_group() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        builder_with_claims("renamed.txt", "renamed\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The task is reworded but stays unchecked: same ID, new description.
+    let file = fixture.tasks_file();
+    assert!(
+        file.contains("- [ ] T1.2: [--.BR!] add the second file"),
+        "{file}"
+    );
+    let reworded = file.replace(
+        "- [ ] T1.2: [--.BR!] add the second file",
+        "- [ ] T1.2: [--.BR!] add the renamed file",
+    );
+    std::fs::write(fixture.path().join(TASK_FILE), reworded).unwrap();
+
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        EngineEvent::TaskFinished {
+            outcome: TaskOutcome::Done,
+            ..
+        }
+    )));
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T1.2", "review"]);
+    let prompt = &sessions[4].prompt;
+    assert!(prompt.contains("renamed.txt"), "{prompt}");
+    assert!(
+        !prompt.contains("first.txt"),
+        "the reused ID's fresh group should not span the old commits: {prompt}"
+    );
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [x] T1.2: [--.BR] add the renamed file")
+    );
+    assert!(!fixture.data.path().join("open-group.json").exists());
 }
 
 #[tokio::test]

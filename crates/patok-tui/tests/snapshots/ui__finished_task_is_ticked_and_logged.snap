@@ -2,17 +2,17 @@
 source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 80, 14)"
 ---
-             ┌ Builder ────────────────────────────────────────────────────────┐
-[ Research  ]│✔ T1.2 done (abc1234)                                            │
-      ↓      │                                                                 │
-[   Plan    ]│                                                                 │
-      ↓      │                                                                 │
-[   Build   ]│                                                                 │
-      ↓      └─────────────────────────────────────────────────────────────────┘
-[  Review   ]┌ Tasks | 2/3 - 1 left ───────────────────────────────────────────┐
-             │✔ T1.2  add the parser for task files                            │
-[   Ship    ]│○ T1.3  wire the engine to the shell                             │
-[ Discover  ]│                                                                 │
-[ Learnings ]│ a add tasks · i inject task · Enter start build · ↑↓ scroll     │
-             └─────────────────────────────────────────────────────────────────┘
- STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit
+            ┌ Builder ─────────────────────────────────────────────────────────┐
+[ Research ]│✔ T1.2 done (abc1234)                                             │
+      ↓     │                                                                  │
+[   Plan   ]│                                                                  │
+      ↓     │                                                                  │
+[  Build   ]│                                                                  │
+      ↓     └──────────────────────────────────────────────────────────────────┘
+[  Review  ]┌ Tasks | 2/3 - 1 left ────────────────────────────────────────────┐
+            │✔ T1.2  add the parser for task files                             │
+[ Discover ]│○ T1.3  wire the engine to the shell                              │
+            │                                                                  │
+            │ a add tasks · i inject task · Enter start · ↑↓ scroll            │
+            └──────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu

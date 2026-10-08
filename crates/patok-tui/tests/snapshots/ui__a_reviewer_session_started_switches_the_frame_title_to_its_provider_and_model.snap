@@ -2,17 +2,17 @@
 source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
-             ┌ Reviewer | Claude - opus ──────────────────────────────── 00:00 ┐
-[ Research  ]│Reviewer started (claude, opus)                                  │
-      ↓      │Review                                                           │
-[   Plan    ]│Verifying the builder's claims.                                  │
-      ↓      │ v rail view · ↑↓ scroll · PgUp/PgDn page · End follow           │
-[   Build   ]└─────────────────────────────────────────────────────────────────┘
-      ↓      ┌ Tasks | 1/3 - 2 left ───────────────────────────────────────────┐
-[  Review   ]│✔ T1.1  scaffold the workspace                                   │
-             │▶ T1.2  add the parser for task files                            │
-[   Ship    ]│○ T1.3  wire the engine to the shell                             │
-[ Discover  ]│                                                                 │
-[ Learnings ]│                                                                 │
-             └─────────────────────────────────────────────────────────────────┘
- RUNNING  sprint     Esc  stop build  ?  settings  t  theme  d  detach  q  quit
+            ┌ Reviewer | Claude - opus ───────────────────────────────── 00:00 ┐
+[ Research ]│Reviewer started (claude, opus)                                   │
+      ↓     │Review                                                            │
+[   Plan   ]│Verifying the builder's claims.                                   │
+      ↓     │ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks              │
+[  Build   ]└──────────────────────────────────────────────────────────────────┘
+      ↓     ┌ Tasks | 1/3 - 2 left ────────────────────────────────────────────┐
+[  Review  ]│✔ T1.1  scaffold the workspace                                    │
+            │▶ T1.2  add the parser for task files                             │
+[ Discover ]│○ T1.3  wire the engine to the shell                              │
+            │                                                                  │
+            │                                                                  │
+            └──────────────────────────────────────────────────────────────────┘
+ RUNNING  sprint                                       [ Esc ] stop  [ m ] menu

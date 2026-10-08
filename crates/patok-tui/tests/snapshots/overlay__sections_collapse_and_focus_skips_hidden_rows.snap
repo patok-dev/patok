@@ -2,18 +2,18 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: screen
 ---
-             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                                        │
-      ↓      │                                                                                     │
-[   Plan    ]│                                                                                     │
+            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                                         │
+      ↓     │                                                                                      │
+[   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[   B│      reviewer model  sonnet                                                           ││    │
+[  Bu│      reviewer model  sonnet                                                           ││    │
      │      discovery provider  ‹ claude ›                                                   ││────┘
 [  Re│      discovery model  opus                                                            ││────┐
      │  ▾ Pipeline                                                                           ││    │
-[   S│      run mode  ‹ sprint ›                                                             ││    │
-[ Dis│      [ ] plan enabled                                                                 ││    │
-[ Lea│      [ ] skip planner for simple                                                      █│    │
+[ Dis│      run mode  ‹ sprint ›                                                             ││    │
+     │      [ ] plan enabled                                                                 ││    │
+     │      [ ] skip planner for simple                                                      █│    │
      │      [ ] skip research for simple                                                     █│    │
      │      [ ] skip review for simple                                                       █│    │
      │      review confidence threshold  5                                                   █│    │
@@ -38,7 +38,7 @@ expression: screen
      │                                                                                        │    │
      │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
      └────────────────────────────────────────────────────────────────────────────────────────┘    │
-             │                                                                                     │
-             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
-             └─────────────────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit
+            │                                                                                      │
+            │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                   │
+            └──────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                                        [ Enter ] start  [ m ] menu

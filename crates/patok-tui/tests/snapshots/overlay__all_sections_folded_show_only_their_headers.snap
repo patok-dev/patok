@@ -2,18 +2,18 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: screen
 ---
-             ┌ Builder | Claude ───────────────────────────────────────────────────────────────────┐
-[ Research  ]│no output yet                                                                        │
-      ↓      │                                                                                     │
-[   Plan    ]│                                                                                     │
+            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────┐
+[ Research ]│no output yet                                                                         │
+      ↓     │                                                                                      │
+[   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[   B│  ▸ Provider and model                                                                  │    │
+[  Bu│  ▸ Provider and model                                                                  │    │
      │  ▸ Pipeline                                                                            │────┘
 [  Re│  ▸ Timeouts and pauses                                                                 │────┐
      │  ▸ Git                                                                                 │    │
-[   S│▶ ▸ Display and theme                                                                   │    │
-[ Dis│                                                                                        │    │
-[ Lea│                                                                                        │    │
+[ Dis│▶ ▸ Display and theme                                                                   │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
      │                                                                                        │    │
      │                                                                                        │    │
      │                                                                                        │    │
@@ -38,7 +38,7 @@ expression: screen
      │                                                                                        │    │
      │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
      └────────────────────────────────────────────────────────────────────────────────────────┘    │
-             │                                                                                     │
-             │ a add tasks · i inject task · Enter start build · ↑↓ scroll · Tab output            │
-             └─────────────────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                      Enter  start build  ?  settings  t  theme  d  detach  q  quit
+            │                                                                                      │
+            │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                   │
+            └──────────────────────────────────────────────────────────────────────────────────────┘
+ STOPPED  sprint                                                        [ Enter ] start  [ m ] menu

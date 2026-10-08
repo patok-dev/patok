@@ -9,11 +9,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use std::time::Duration;
 
-use crate::app::{App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOICES};
-use crate::markdown::markdown_lines;
-use crate::overlay::{
-    Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel, scroll_offset,
+use crate::app::{
+    App, DialogKind, FrameFocus, LineKind, OutLine, Pane, STOP_CHOICES, menu_entries,
 };
+use crate::markdown::markdown_lines;
+use crate::overlay::{Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel};
 use crate::pipeline::{rail_width, render_rail};
 use crate::theme::{Theme, theme_modal_groups};
 
@@ -81,7 +81,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     app.tasks_area.set(tasks);
     render_output(frame, app, output);
     render_tasks(frame, app, tasks);
-    frame.render_widget(status_widget(app, usize::from(status.width)), status);
+    frame.render_widget(status_widget(app, status), status);
     if app.settings_open() {
         render_settings_overlay(frame, app);
     }
@@ -93,6 +93,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     if app.stop_open {
         render_stop_dialog(frame, app);
+    }
+    if app.menu_open {
+        render_menu(frame, app);
     }
     if app.theme_modal.open {
         render_theme_modal(frame, app);
@@ -243,7 +246,7 @@ fn task_hints(app: &App) -> Vec<&'static str> {
     let mut hints = vec!["a add tasks", "i inject task"];
     if app.is_idle() {
         hints.push(if app.tasks.iter().any(|t| !t.done) {
-            "Enter start build"
+            "Enter start"
         } else {
             "Enter run discovery"
         });
@@ -256,14 +259,10 @@ fn task_hints(app: &App) -> Vec<&'static str> {
 /// The agent output frame's key hints (T71.1): the keys its focused state
 /// owns -- the scroll keys move the output, PageUp/PageDown page through it,
 /// `End` resumes the live follow, and Tab moves the keys to the other frame.
+/// T124.1 dropped the leading `v rail view` entry (as T75.1 did for the
+/// idle `q quit` hint), and T125.1 removed the `v` binding itself.
 fn output_hints() -> Vec<&'static str> {
-    vec![
-        "v rail view",
-        "↑↓ scroll",
-        "PgUp/PgDn page",
-        "End follow",
-        "Tab tasks",
-    ]
+    vec!["↑↓ scroll", "PgUp/PgDn page", "End follow", "Tab tasks"]
 }
 
 /// The focused frame's inner split (T71.1): the bottom inner row reserved for
@@ -407,15 +406,18 @@ fn render_settings_overlay(frame: &mut Frame, app: &App) {
         .enumerate()
         .map(|(index, entry)| settings_row_line(app, index, entry, usize::from(list.width)))
         .collect();
-    // Keep the focused row on screen with a 4-row margin: the view scrolls only
-    // once the cursor approaches an edge, then follows keeping that margin.
+    // The offset follows the cursor from the key path (`move_focus`) and the
+    // wheel moves it freely (`scroll_by`); the render only records the list
+    // rect and clamps the offset into the scrollable range, so folds and
+    // resizes self-heal without pulling the wheel's free offset back into
+    // the cursor's margin band.
     let height = usize::from(list.height.max(1));
-    let start = scroll_offset(
-        app.overlay.focus,
-        lines.len(),
-        height,
-        app.overlay.scroll.get(),
-    );
+    let start = app
+        .overlay
+        .scroll
+        .get()
+        .min(lines.len().saturating_sub(height));
+    app.overlay.list.set(list);
     app.overlay.scroll.set(start);
     frame.render_widget(Paragraph::new(lines[start..].to_vec()), list);
     render_scrollbar(frame, theme, list, start, lines.len());
@@ -432,7 +434,7 @@ fn render_settings_overlay(frame: &mut Frame, app: &App) {
         Some((text, StatusLevel::Info)) => frame.render_widget(
             Paragraph::new(Line::styled(
                 text.clone(),
-                Style::new().fg(theme.muted_text),
+                Style::new().fg(theme.highlighted_text),
             )),
             status_line,
         ),
@@ -501,6 +503,7 @@ fn render_settings_confirm(frame: &mut Frame, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.overlay.confirm_body.set(body);
     let lines: Vec<Line> = SETTINGS_CHOICES
         .iter()
         .enumerate()
@@ -636,10 +639,14 @@ fn settings_row_line(
                     let shown: String = value.chars().skip(skip).collect();
                     let mut spans = vec![Span::raw(prefix), Span::raw(shown)];
                     if editor.is_some() {
-                        // The block cursor at the end of the buffer.
+                        // The block cursor at the end of the buffer, wearing
+                        // the highlighted-text foreground (T138.1), the colour
+                        // selected rows and the scrollbar thumb already share.
                         spans.push(Span::styled(
                             " ",
-                            Style::new().add_modifier(Modifier::REVERSED),
+                            Style::new()
+                                .fg(theme.highlighted_text)
+                                .add_modifier(Modifier::REVERSED),
                         ));
                     }
                     Line::from(spans)
@@ -757,8 +764,14 @@ fn render_dialog(frame: &mut Frame, app: &App) {
     // The block cursor covers the cell at the cursor: the character under it
     // on the cursor style, or a styled space at the end of a logical line or
     // on an empty one. No cell is added, so the letters around the cursor
-    // stay in place while it moves.
-    let cursor_style = Style::new().fg(theme.contrast_text).bg(theme.accent);
+    // stay in place while it moves. The cursor cell wears the highlighted-text
+    // foreground (T138.1), the colour selected rows and the scrollbar thumb
+    // already share.
+    // REVERSED keeps the cell a visible block: a bare foreground on a space
+    // would draw nothing.
+    let cursor_style = Style::new()
+        .fg(theme.highlighted_text)
+        .add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line> = if app.dialog_text.is_empty() {
         // The empty-input watermark (T41.1): a dim hint followed by the block
         // cursor, which keeps the focus indicator visible.
@@ -837,6 +850,7 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.stop_body.set(body);
     let lines: Vec<Line> = STOP_CHOICES
         .iter()
         .enumerate()
@@ -874,6 +888,82 @@ fn render_stop_dialog(frame: &mut Frame, app: &App) {
     );
 }
 
+/// The m menu's rect: a small centered modal, at least 54 columns wide and
+/// tall enough for its rows -- the border (2), the entry rows and the footer
+/// (1) -- clamped to the screen; the stop entry adds one row while a
+/// build runs.
+pub fn menu_area(screen: Rect, running: bool) -> Rect {
+    let width = (screen.width * 3 / 5).max(54).min(screen.width);
+    let height = (menu_entries(running).len() + 3).min(usize::from(screen.height)) as u16;
+    Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    )
+}
+
+/// The m menu (the `m` key): a centered " Menu " modal listing the status
+/// bar's former secondary hints as rows -- the selected choice in the shared
+/// selected-row style (T118.1) -- and a two-zone bottom line of hints left,
+/// buttons right (T59.1), styled like the stop dialog. Each entry runs the
+/// action its direct key binding triggers; the stop row renders only
+/// while a build runs. Each rendered row is clickable: a left click moves
+/// the selection to the row and runs it (T137.1), so the body rect is
+/// recorded for the app's mouse hit-testing. Rendered on top of everything
+/// else.
+fn render_menu(frame: &mut Frame, app: &App) {
+    let theme = app.theme();
+    let running = app.phase == Phase::Running;
+    let area = menu_area(frame.area(), running);
+    frame.render_widget(Clear, area);
+    app.menu_close.set(close_button_rect(area));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .style(base_style(theme))
+        .title_top(Line::from(" Menu ").centered())
+        .title_top(close_button_line(theme).right_aligned());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.menu_body.set(body);
+    let lines: Vec<Line> = menu_entries(running)
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| {
+            let focused = index == app.menu_selected;
+            let marker = if focused { "▶ " } else { "  " };
+            let mut line = Line::from(vec![
+                Span::raw(marker),
+                Span::raw(choice.label()),
+                Span::styled(
+                    format!(" -- {}", choice.detail()),
+                    Style::new().fg(if focused {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
+                ),
+            ]);
+            if focused {
+                line = line.style(selected_row_style(theme));
+            }
+            line
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), body);
+    // The bottom line's two zones (T59.1): the selection hint on the left, the
+    // Confirm and Close buttons on the right.
+    app.menu_footer.set(footer);
+    render_modal_footer(
+        frame,
+        footer,
+        &["↑↓ move"],
+        &[("Enter", "Confirm"), ("Esc", "Close")],
+        theme,
+    );
+}
+
 /// The theme picker's rect (T43.1, T116.1): a centered modal, at least 54
 /// columns wide and tall enough for its full grouped list -- the border (2),
 /// the two group headers, the eleven one-line entries (13 body rows) and the
@@ -900,6 +990,59 @@ pub fn theme_row_at(position: Position, body: Rect, visible_len: usize) -> Optio
     }
     let row = usize::from(position.y - body.y);
     (row < visible_len).then_some(row)
+}
+
+/// The m menu's entry the pointer sits on (T137.1): the entry index when
+/// the position is on one of the body's rendered rows, `None` on the border,
+/// the title, the footer or the shell behind the modal. A pure hit-test
+/// like [`theme_row_at`].
+pub fn menu_row_at(position: Position, body: Rect, visible_len: usize) -> Option<usize> {
+    if !body.contains(position) {
+        return None;
+    }
+    let row = usize::from(position.y - body.y);
+    (row < visible_len).then_some(row)
+}
+
+/// The unsaved-changes dialog's choice the pointer sits on (T146.1): the row
+/// index when the position is on one of the dialog's three choice rows, `None`
+/// on the dialog's blank body padding below them, the border, the title, the
+/// footer or the shell outside. A pure hit-test like [`menu_row_at`].
+pub fn confirm_row_at(position: Position, body: Rect) -> Option<usize> {
+    if !body.contains(position) {
+        return None;
+    }
+    let row = usize::from(position.y - body.y);
+    (row < SETTINGS_CHOICES.len()).then_some(row)
+}
+
+/// The stop dialog's choice the pointer sits on (T148.1): the row index
+/// when the position is on one of the dialog's three choice rows, `None`
+/// on the dialog's blank body padding below them, the border, the title,
+/// the footer or the shell outside. A pure hit-test like [`menu_row_at`].
+pub fn stop_row_at(position: Position, body: Rect) -> Option<usize> {
+    if !body.contains(position) {
+        return None;
+    }
+    let row = usize::from(position.y - body.y);
+    (row < STOP_CHOICES.len()).then_some(row)
+}
+
+/// The settings list's entry the pointer sits on: the visible entry index
+/// when the position is on one of the list's rendered rows (offset by the
+/// current scroll), `None` outside the list rect or on a viewport row past
+/// the last visible entry. A pure hit-test like [`theme_row_at`].
+pub fn settings_row_at(
+    position: Position,
+    list: Rect,
+    scroll: usize,
+    visible_len: usize,
+) -> Option<usize> {
+    if !list.contains(position) {
+        return None;
+    }
+    let index = scroll + usize::from(position.y - list.y);
+    (index < visible_len).then_some(index)
 }
 
 /// The theme picker (the `t` key, T43.1, T116.1): a centered " Theme " modal
@@ -1441,10 +1584,18 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
 /// The merged status line (T86.1): one bottom row holding the old header's
 /// chips on the left -- the status chip, then the run-mode chip when the two
 /// fit -- and the status content on the right: a transient message, else the
-/// key-hint chips, right-aligned. Hint chips drop as whole chip+label pairs
-/// from the tail when they do not fit; a message is never dropped -- it
-/// truncates at the line's right edge like a bare status bar message.
-fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
+/// key-hint buttons, right-aligned. Hint buttons drop as whole buttons from
+/// the tail when they do not fit; a message is never dropped -- it truncates
+/// at the line's right edge like a bare status bar message. The secondary
+/// hints (settings, theme, detach, quit) live behind the m menu, so the zone
+/// carries the idle Enter button, the running Esc stop button (T134.1) and
+/// the m menu button. All three are interactive (T133.1, T134.1): each renders
+/// through the shared [`button_line`] so it reads as a modal button, and each
+/// records a rect covering its full [`button_text`] width on
+/// [`App::menu_chip`], [`App::enter_chip`] or [`App::stop_chip`] for the mouse
+/// hit-test -- a left click anywhere on the button runs its key's action.
+fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
+    let width = usize::from(area.width);
     let theme = app.theme();
     // A discovery round runs either on an idle engine or inside a session's empty-queue gap
     // (the phase stays Running for the whole session), so it wins over the phase chips.
@@ -1474,6 +1625,12 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
     }
     let left_width: usize = spans.iter().map(|span| span.content.chars().count()).sum();
 
+    // The interactive chips' rects reset every render: a showing message or
+    // a pair dropped for width leaves the zero rect, which contains no real
+    // position, so a click misses naturally.
+    app.menu_chip.set(Rect::default());
+    app.enter_chip.set(Rect::default());
+    app.stop_chip.set(Rect::default());
     let right = match &app.status {
         Some(message) => {
             // Bare text: one separating space so it does not glue to the mode
@@ -1499,34 +1656,35 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
                 keys.push((
                     "Enter",
                     if app.tasks.iter().any(|t| !t.done) {
-                        "start build"
+                        "start"
                     } else {
                         "run discovery"
                     },
                 ));
             }
-            // Esc opens the stop dialog while a build runs (T46.1); during a
-            // planner or discovery run it does nothing, so no hint.
-            if app.phase == Phase::Running {
-                keys.push(("Esc", "stop build"));
+            // The Esc stop chip (T134.1): the Esc binding's scope while a run
+            // is active -- a build, a planner run or a discovery run -- a
+            // pending soft stop's Esc cancels the stop instead, so the chip
+            // hides while one is pending. A click on it opens the stop
+            // dialog, exactly like the key; the m menu's stop entry keeps
+            // its build-only scope.
+            if (app.phase == Phase::Running || app.planning || app.discovering) && !app.stopping {
+                keys.push(("Esc", "stop"));
             }
-            keys.extend([
-                ("?", "settings"),
-                // The theme picker (T43.1) opens with `t` from any engine
-                // state, so its hint sits beside the other modal key.
-                ("t", "theme"),
-                ("d", "detach"),
-                ("q", "quit"),
-            ]);
-            // A pair drops as a whole from the tail when it does not fit the
-            // zone left of the chips, so no half-cut chip ever shows; the kept
-            // prefix is right-aligned. The chips' own padding separates them
-            // from the mode chip, so no extra gap column is added.
+            // The m menu button: the settings, theme, detach and quit hints
+            // live behind the menu modal, so the bar keeps one button for
+            // all of them.
+            keys.push(("m", "menu"));
+            // A button drops as a whole from the tail when it does not fit
+            // the zone left of the chips, so no half-cut button ever shows;
+            // the kept prefix is right-aligned. The buttons' own padding
+            // separates them from the mode chip, so no extra gap column is
+            // added.
             let zone = width.saturating_sub(left_width);
             let mut kept: Vec<(&str, &str)> = Vec::new();
             let mut used = 0;
             for (key, label) in keys {
-                let pair = key.chars().count() + label.chars().count() + 4;
+                let pair = button_text(key, label).chars().count();
                 if used + pair > zone {
                     break;
                 }
@@ -1534,18 +1692,34 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
                 kept.push((key, label));
             }
             let mut right = vec![Span::raw(" ".repeat(zone.saturating_sub(used)))];
+            // The hint zone's running column: the pad ends where the first
+            // kept button starts, and each button advances it by its own
+            // character count, so every interactive chip's rect is the exact
+            // columns its full button text occupies.
+            let mut column = left_width + zone.saturating_sub(used);
             for (key, label) in kept {
-                right.push(Span::styled(
-                    format!(" {key} "),
-                    Style::new()
-                        .bold()
-                        .fg(theme.contrast_text)
-                        .bg(theme.chip_neutral),
-                ));
-                right.push(Span::styled(
-                    format!(" {label} "),
-                    Style::new().fg(theme.muted_text),
-                ));
+                // The interactive chips (T133.1, T134.1, T141.1) -- the m menu
+                // button, the idle Enter button and the running Esc stop
+                // button -- render through the shared [`button_line`] so each
+                // reads as the modal button it is, and record a rect covering
+                // the full [`button_text`] width -- key, brackets and label
+                // together, the same width [`footer_button_rects`] uses --
+                // so a left click anywhere on the button runs its key's
+                // action.
+                let width = u16::try_from(button_text(key, label).chars().count()).unwrap_or(0);
+                let rect = Rect::new(
+                    area.x + u16::try_from(column).unwrap_or(0),
+                    area.y,
+                    width,
+                    1,
+                );
+                match key {
+                    "m" => app.menu_chip.set(rect),
+                    "Enter" => app.enter_chip.set(rect),
+                    _ => app.stop_chip.set(rect),
+                }
+                right.extend(button_line(key, label, theme).spans);
+                column += usize::from(width);
             }
             right
         }
@@ -1557,8 +1731,9 @@ fn status_widget(app: &App, width: usize) -> Paragraph<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlay::Editor;
     use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
-    use patok_core::event::{Phase, Snapshot};
+    use patok_core::event::{EngineEvent, Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
     use patok_core::task::Task;
     use ratatui::Terminal;
@@ -1679,11 +1854,11 @@ mod tests {
         }
     }
 
-    /// The status bar's planning message wears the highlighted-text colour in
-    /// full on every built-in theme (T117.1), the agent's display name inside
-    /// it included — never the fixated per-agent name colour.
+    /// The status bar's status message wears the highlighted-text colour in
+    /// full on every built-in theme (T117.1) — never the fixated per-agent
+    /// name colour.
     #[test]
-    fn planning_status_message_wears_the_highlighted_colour_on_every_theme() {
+    fn status_messages_wear_the_highlighted_colour_on_every_theme() {
         for key in every_key() {
             let theme = Theme::resolve(key, Some(true));
             let mut app = app_with_one_task();
@@ -1691,10 +1866,10 @@ mod tests {
             app.tui.truecolor = Some(true);
             app.planning = true;
             app.agent = "planner".into();
-            let message = "Planner running...";
+            let message = "The planner is already running.";
             app.status = Some(message.into());
             let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
-            status_widget(&app, 100).render(buffer.area, &mut buffer);
+            status_widget(&app, buffer.area).render(buffer.area, &mut buffer);
             let row: String = (0..100).map(|x| buffer[(x, 0)].symbol()).collect();
             // A byte index would mis-column on multibyte symbols, so the
             // match's column is the character count before it.
@@ -1710,6 +1885,76 @@ mod tests {
                     x + i as u16
                 );
             }
+        }
+    }
+
+    /// The status bar's interactive chips render exactly as modal buttons on
+    /// every built-in theme (T133.1, T134.1, T141.1): the idle Enter button
+    /// and the m menu button -- and the running Esc stop button -- spell the
+    /// shared [`button_text`] form, with the brackets and the key in the
+    /// button accent and the label in the regular foreground, no background,
+    /// no bold -- the shared [`button_line`] look.
+    #[test]
+    fn the_interactive_chips_render_as_modal_buttons_on_every_theme() {
+        // Draws the app's status row and checks one button: the row carries
+        // its exact [`button_text`], every cell of the bracketed key span
+        // wears the button accent, every cell of the label span the regular
+        // foreground, none with a chip background or bold.
+        fn assert_button(theme: Theme, key: ThemeKey, app: &App, key_name: &str, label: &str) {
+            let button = button_text(key_name, label);
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
+            status_widget(app, buffer.area).render(buffer.area, &mut buffer);
+            let row: String = (0..100).map(|x| buffer[(x, 0)].symbol()).collect();
+            assert!(row.contains(&button), "the {button:?} button on {key:?}");
+            // A byte index would mis-column on multibyte symbols, so the
+            // match's column is the character count before it.
+            let key_span = format!(" [ {key_name} ] ");
+            let label_span = format!("{label} ");
+            for (name, span, expected) in [
+                ("key", key_span, theme.highlighted_text),
+                ("label", label_span, theme.normal_text),
+            ] {
+                let x = row
+                    .find(&span)
+                    .map(|at| row[..at].chars().count())
+                    .unwrap_or_else(|| panic!("the {span:?} {name} on {key:?}"))
+                    as u16;
+                for column in x..x + span.chars().count() as u16 {
+                    let style = buffer[(column, 0)].style();
+                    assert_eq!(
+                        style.fg,
+                        Some(expected),
+                        "the {span:?} {name} cell ({column}, 0) on {key:?}"
+                    );
+                    // The button look: no chip background, no bold -- the
+                    // bare buffer's cells carry Reset backgrounds.
+                    assert_ne!(
+                        style.bg,
+                        Some(theme.chip_neutral),
+                        "cell ({column}, 0) on {key:?}"
+                    );
+                    assert!(
+                        !style.add_modifier.contains(Modifier::BOLD),
+                        "cell ({column}, 0) on {key:?}"
+                    );
+                }
+            }
+        }
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            // Idle: the Enter `start` button and the m `menu` button.
+            assert_eq!(app.phase, Phase::Startup);
+            assert_button(theme, key, &app, "Enter", "start");
+            assert_button(theme, key, &app, "m", "menu");
+            // Running: the Esc `stop` button joins them.
+            app.apply(EngineEvent::PhaseChanged {
+                phase: Phase::Running,
+            });
+            assert_button(theme, key, &app, "Esc", "stop");
+            assert_button(theme, key, &app, "m", "menu");
         }
     }
 
@@ -1781,6 +2026,180 @@ mod tests {
                     "two built-in themes share a scrollbar thumb colour"
                 );
             }
+        }
+    }
+
+    /// The dialog input's cells on an 80x24 screen, rendered through
+    /// `render_dialog` with the app's input state as the caller set it.
+    fn dialog_buffer(app: &App) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render_dialog(frame, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The add-task dialog input's block cursor wears the `highlighted_text`
+    /// class on every built-in theme (T138.1) — the colour selected rows and
+    /// the scrollbar thumb already share — both over a typed character and as
+    /// the styled space in the empty-input watermark row, with no accent
+    /// background left behind.
+    #[test]
+    fn dialog_input_cursor_wears_highlighted_text_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let area = dialog_area(Rect::new(0, 0, 80, 24));
+            let (x0, y0) = (area.x + 1, area.y + 1);
+            // With text: the cursor cell covers the character under it.
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.dialog_open = true;
+            app.dialog_text = "hello".into();
+            app.dialog_cursor = 3;
+            let buffer = dialog_buffer(&app);
+            let under = &buffer[(x0 + 3, y0)];
+            assert_eq!(under.symbol(), "l", "{key:?}");
+            assert_eq!(under.style().fg, Some(theme.highlighted_text), "{key:?}");
+            assert_ne!(under.style().bg, Some(theme.accent), "{key:?}");
+            let neighbour = &buffer[(x0 + 1, y0)];
+            assert_eq!(neighbour.symbol(), "e", "{key:?}");
+            // The neighbour is typed text, not the cursor: it never wears the
+            // highlighted-text foreground or an accent background.
+            assert_ne!(
+                neighbour.style().fg,
+                Some(theme.highlighted_text),
+                "the neighbour stays plain text: {:?} on {key:?}",
+                neighbour.style().fg
+            );
+            assert_ne!(neighbour.style().bg, Some(theme.accent), "{key:?}");
+            // Empty input: the watermark in the muted colour (T41.1), then
+            // the block cursor's styled space.
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.dialog_open = true;
+            let buffer = dialog_buffer(&app);
+            for (i, ch) in DIALOG_WATERMARK.chars().enumerate() {
+                let cell = &buffer[(x0 + i as u16, y0)];
+                assert_eq!(cell.symbol(), ch.to_string(), "{key:?}");
+                assert_eq!(cell.style().fg, Some(theme.muted_text), "{key:?}");
+            }
+            let width = DIALOG_WATERMARK.chars().count() as u16;
+            let cursor = &buffer[(x0 + width, y0)];
+            assert_eq!(cursor.symbol(), " ", "{key:?}");
+            assert_eq!(cursor.style().fg, Some(theme.highlighted_text), "{key:?}");
+            assert_ne!(cursor.style().bg, Some(theme.accent), "{key:?}");
+        }
+    }
+
+    /// The unsaved-changes dialog's row hit-test (T146.1): the first three
+    /// body rows are the three choices, the padding below them and every
+    /// position outside the body miss.
+    #[test]
+    fn confirm_row_at_hits_only_the_three_choice_rows() {
+        let body = Rect::new(20, 5, 40, 6);
+        for row in 0..3u16 {
+            assert_eq!(
+                confirm_row_at(Position::new(20, body.y + row), body),
+                Some(row as usize)
+            );
+        }
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y + 3), body),
+            None,
+            "the blank padding below the choices misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y + 5), body),
+            None,
+            "the body's last padding row misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y - 1), body),
+            None,
+            "above the body misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(19, body.y), body),
+            None,
+            "left of the body misses"
+        );
+        assert_eq!(
+            confirm_row_at(Position::new(20, body.y), Rect::default()),
+            None,
+            "a zero rect contains no position"
+        );
+    }
+
+    /// The stop dialog's row hit-test (T148.1): the first three body rows
+    /// are the three choices, the padding below them and every position
+    /// outside the body miss.
+    #[test]
+    fn stop_row_at_hits_only_the_three_choice_rows() {
+        let body = Rect::new(20, 5, 40, 6);
+        for row in 0..3u16 {
+            assert_eq!(
+                stop_row_at(Position::new(20, body.y + row), body),
+                Some(row as usize)
+            );
+        }
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y + 3), body),
+            None,
+            "the blank padding below the choices misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y + 5), body),
+            None,
+            "the body's last padding row misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y - 1), body),
+            None,
+            "above the body misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(19, body.y), body),
+            None,
+            "left of the body misses"
+        );
+        assert_eq!(
+            stop_row_at(Position::new(20, body.y), Rect::default()),
+            None,
+            "a zero rect contains no position"
+        );
+    }
+
+    /// The settings overlay inline editor's end-of-buffer block cursor wears
+    /// the `highlighted_text` class on every built-in theme (T138.1) instead
+    /// of the REVERSED modifier, mirroring the selected-row and scrollbar
+    /// style tests.
+    #[test]
+    fn inline_editor_cursor_wears_highlighted_text_on_every_theme() {
+        for key in every_key() {
+            let theme = Theme::resolve(key, Some(true));
+            let mut app = app_with_one_task();
+            app.tui.theme = key;
+            app.tui.truecolor = Some(true);
+            app.overlay.editor = Some(Editor {
+                field: "model",
+                kind: FieldKind::Text,
+                buffer: "abc".into(),
+            });
+            let row = SECTIONS
+                .iter()
+                .flat_map(|section| section.rows.iter())
+                .find(|row| row.key == "model")
+                .expect("model is a settings row");
+            // Index 0 matches the overlay's default focus, so the row renders
+            // focused like the real open-editor render does.
+            let line = settings_row_line(&app, 0, &Entry::Row(row), 40);
+            let cursor = line.spans.last().expect("the editor cursor span");
+            assert_eq!(cursor.content, " ", "{key:?}");
+            assert_eq!(cursor.style.fg, Some(theme.highlighted_text), "{key:?}");
+            assert!(
+                cursor.style.add_modifier.contains(Modifier::REVERSED),
+                "the cursor stays a visible block on {key:?}"
+            );
         }
     }
 }

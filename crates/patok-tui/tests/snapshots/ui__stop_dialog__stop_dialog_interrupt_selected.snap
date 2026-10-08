@@ -2,19 +2,19 @@
 source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 60, 16)"
 ---
-             ┌ Builder ───────────────────────────── 00:00 ┐
-[ Research  ]│── T1.2: add the parser for task files       │
-      ↓      │                                             │
+            ┌ Builder ────────────────────────────── 00:00 ┐
+[ Research ]│── T1.2: add the parser for task files        │
+      ↓     │                                              │
 [  ┌──────────────────── Stop build ───────────── [ x ] ┐  │
    │  Soft stop -- finish the current task, then stop   │  │
 [  │▶ Interrupt -- cancel the current task, stay open   │  │
    │  Cancel -- keep the build running                  │  │
 [  │                                                    │──┘
    │                                                    │──┐
-[  │                                                    │  │
-[ D│ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │  │
-[ L└────────────────────────────────────────────────────┘  │
-             │                                             │
-             │                                             │
-             └─────────────────────────────────────────────┘
- RUNNING  sprint     Esc  stop build  ?  settings  t  theme
+[ D│                                                    │  │
+   │ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │  │
+   └────────────────────────────────────────────────────┘  │
+            │                                              │
+            │                                              │
+            └──────────────────────────────────────────────┘
+ RUNNING  sprint                   [ Esc ] stop  [ m ] menu

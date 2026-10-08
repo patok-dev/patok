@@ -2,17 +2,17 @@
 source: crates/patok-tui/tests/e2e.rs
 expression: screen
 ---
-             ┌ Builder | mock ────────────────────────────────────────── 00:00 ┐
-[ Research  ]│Not committed (not a git repository, nothing to commit, or the co│
-      ↓      │mmit failed).                                                    │
-[   Plan    ]│✔ T1.1 done                                                      │
-      ↓      │ v rail view · ↑↓ scroll · PgUp/PgDn page · End follow           │
-[   Build   ]└─────────────────────────────────────────────────────────────────┘
-      ↓      ┌ Tasks | 1/1 - 0 left ───────────────────────────────────────────┐
-[  Review   ]│✔ T1.1  add hello                                                │
-             │                                                                 │
-[   Ship    ]│                                                                 │
-[ Discover  ]│                                                                 │
-[ Learnings ]│                                                                 │
-             └─────────────────────────────────────────────────────────────────┘
- DISCOVERING  continuous      Esc  stop build  ?  settings  t  theme  d  detach
+            ┌ Builder | mock ─────────────────────────────────────────── 00:00 ┐
+[ Research ]│Not committed (not a git repository, nothing to commit, or the com│
+      ↓     │mit failed).                                                      │
+[   Plan   ]│✔ T1.1 done                                                       │
+      ↓     │ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks              │
+[  Build   ]└──────────────────────────────────────────────────────────────────┘
+      ↓     ┌ Tasks | 1/1 - 0 left ────────────────────────────────────────────┐
+[  Review  ]│✔ T1.1  add hello                                                 │
+            │                                                                  │
+[ Discover ]│                                                                  │
+            │                                                                  │
+            │                                                                  │
+            └──────────────────────────────────────────────────────────────────┘
+ DISCOVERING  continuous                               [ Esc ] stop  [ m ] menu

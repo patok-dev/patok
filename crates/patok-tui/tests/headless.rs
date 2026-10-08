@@ -61,6 +61,7 @@ fn setup() -> Setup {
         skip_research_for_simple: true,
         review_in_loop: false,
         review_history: data.path().join("review-history.json"),
+        open_group: data.path().join("open-group.json"),
         config_files: patok_core::config::ConfigFiles::default(),
     };
     Setup {

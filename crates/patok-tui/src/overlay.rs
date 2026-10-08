@@ -523,15 +523,24 @@ pub struct SettingsOverlay {
     /// The dialog's selected row; indexes [`SETTINGS_CHOICES`].
     pub confirm_selected: usize,
     pub status: Option<(String, StatusLevel)>,
-    /// The body's scroll offset, recomputed by the renderer through
-    /// [`scroll_offset`] after every key press.
+    /// The body's scroll offset: `move_focus` follows the cursor through
+    /// [`scroll_offset`] after every navigation key, the pointer's row hover
+    /// follows the same way (T145.1), the wheel moves it freely through
+    /// [`Self::scroll_by`], and the renderer clamps it into the scrollable
+    /// range at each render.
     pub scroll: Cell<usize>,
+    /// The list area's rect at the last render; the row hit-test and the
+    /// viewport height (its height) read it.
+    pub list: Cell<Rect>,
     /// The overlay's bottom line rect at the last render; the Close button's
     /// mouse hit-testing reads it (T59.1).
     pub footer: Cell<Rect>,
     /// The unsaved-changes dialog's bottom line rect at the last render; its
     /// buttons' mouse hit-testing reads it (T59.1).
     pub confirm_footer: Cell<Rect>,
+    /// The unsaved-changes dialog's choice rows' area rect at the last render
+    /// (T146.1); the row hit-test splits it by row.
+    pub confirm_body: Cell<Rect>,
     /// The overlay's close button rect at the last render (T66.1); a click on
     /// it runs the overlay's Esc key.
     pub close: Cell<Rect>,
@@ -634,11 +643,47 @@ impl SettingsOverlay {
         // focus only needs clamping into the (possibly shortened) visible list.
         let len = self.visible().len();
         self.focus = clamp_focus(self.focus, len);
+        // Folding shortens the list under the cursor, so the offset follows
+        // the still-focused entry like a navigation key does.
+        self.follow_focus(len);
     }
 
     fn move_focus(&mut self, delta: isize) {
         let len = self.visible().len();
         self.focus = (self.focus.saturating_add_signed(delta)).min(len - 1);
+        self.follow_focus(len);
+    }
+
+    /// Moves the focus to `index` -- an absolute visible-row index, as the
+    /// mouse hit-test returns -- and scrolls the viewport to keep it
+    /// visible, the same follow the navigation keys run. The pointer's row
+    /// hover (T145.1) is the only caller: it never activates the row, and
+    /// a move that misses every row never reaches this.
+    pub fn hover_focus(&mut self, index: usize) {
+        let len = self.visible().len();
+        self.focus = index.min(len.saturating_sub(1));
+        self.follow_focus(len);
+    }
+
+    /// Moves the scroll offset so the focus stays inside the recorded
+    /// viewport with the margin band -- the same follow the renderer used to
+    /// run at render time. No viewport recorded yet (a zero-height rect
+    /// before the first render) keeps the offset untouched: the renderer
+    /// clamps it instead, so pure-state callers are unaffected.
+    fn follow_focus(&mut self, len: usize) {
+        let height = usize::from(self.list.get().height);
+        self.scroll
+            .set(scroll_offset(self.focus, len, height, self.scroll.get()));
+    }
+
+    /// Scrolls the list by `delta` rows without moving the focus, clamped at
+    /// both ends: 0 and the last offset that still fills the viewport.
+    pub fn scroll_by(&mut self, delta: isize) {
+        let len = self.visible().len();
+        let height = usize::from(self.list.get().height);
+        let max = len.saturating_sub(height);
+        self.scroll
+            .set(self.scroll.get().saturating_add_signed(delta).min(max));
     }
 
     /// Handles one key. `current` is the focused row's current value -- the draft
@@ -656,7 +701,7 @@ impl SettingsOverlay {
         }
         // hjkl alias the arrows everywhere the arrows act on the overlay (T25.1):
         // this is never reached while an editor is open (the letters keep typing
-        // there) and the close dialog above ignores them like the arrows.
+        // there) and the close dialog above treats j/k like the arrows too.
         let code = match key.code {
             KeyCode::Char('h') if !ctrl => KeyCode::Left,
             KeyCode::Char('j') if !ctrl => KeyCode::Down,
@@ -691,13 +736,16 @@ impl SettingsOverlay {
         }
     }
 
-    /// The unsaved-changes dialog's keys: Up/Down move the selection, Enter
-    /// confirms it, Esc cancels back to the overlay, and everything else is
-    /// swallowed. Ctrl+C is handled before this runs (it detaches from anywhere).
+    /// The unsaved-changes dialog's keys: Up and k move the selection up,
+    /// Down and j move it down, Enter confirms it, Esc cancels back to the
+    /// overlay, and everything else is swallowed. Ctrl+C is handled before this
+    /// runs (it detaches from anywhere).
     fn on_confirm_key(&mut self, code: KeyCode) -> Action {
         match code {
-            KeyCode::Up => self.confirm_selected = self.confirm_selected.saturating_sub(1),
-            KeyCode::Down => {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.confirm_selected = self.confirm_selected.saturating_sub(1)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.confirm_selected = (self.confirm_selected + 1).min(SETTINGS_CHOICES.len() - 1);
             }
             KeyCode::Esc => self.confirm_open = false,
@@ -1395,6 +1443,46 @@ mod tests {
     }
 
     #[test]
+    fn the_close_dialog_moves_with_j_and_k() {
+        // Dirty: Esc opens the dialog with Save selected.
+        let mut subject = overlay();
+        subject
+            .drafts
+            .insert("plan_enabled".into(), SettingValue::Bool(true));
+        assert!(subject.dirty());
+        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
+        assert!(subject.confirm_open);
+        assert_eq!(subject.confirm_selected, 0);
+        // k clamps at the first row; j walks to the last and clamps there.
+        assert_eq!(subject.on_key(key(KeyCode::Char('k')), None), Action::None);
+        assert_eq!(subject.confirm_selected, 0);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(subject.confirm_selected, 1);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(subject.confirm_selected, 2);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(subject.confirm_selected, 2);
+        // Enter on Cancel (row 2) leaves the overlay open with drafts intact.
+        assert_eq!(subject.on_key(key(KeyCode::Enter), None), Action::None);
+        assert!(!subject.confirm_open);
+        assert!(subject.open);
+        assert!(subject.dirty());
+
+        // Reopening resets to Save; a j move selects Discard, which closes and
+        // throws the drafts away.
+        subject.on_key(key(KeyCode::Esc), None);
+        assert!(subject.confirm_open);
+        assert_eq!(subject.confirm_selected, 0);
+        subject.on_key(key(KeyCode::Char('j')), None);
+        assert_eq!(
+            subject.on_key(key(KeyCode::Enter), None),
+            Action::CloseSettings
+        );
+        assert!(!subject.open);
+        assert!(subject.drafts.is_empty());
+    }
+
+    #[test]
     fn down_scrolling_holds_then_advances_keeping_the_margin() {
         // len=40, height=20: the margin band keeps the cursor at viewport rows
         // 4..=15; the view stays put until the cursor would pass row 15.
@@ -1482,5 +1570,67 @@ mod tests {
                 assert!(offset <= cursor && cursor - offset < height);
             }
         }
+    }
+
+    /// A viewport the renderer recorded; the wiring tests hit-test and scroll
+    /// against it. Height 10 with the full 48-entry list leaves 38 rows to
+    /// scroll through.
+    fn viewport(height: u16) -> Rect {
+        Rect::new(0, 0, 60, height)
+    }
+
+    #[test]
+    fn the_scroll_offset_follows_the_selection_down_past_the_edge() {
+        let mut subject = overlay();
+        let len = subject.visible().len();
+        subject.list.set(viewport(10));
+        // The cursor starts at the top: the margin band holds the offset at 0.
+        for _ in 0..5 {
+            subject.on_key(key(KeyCode::Down), None);
+        }
+        assert_eq!(subject.focus, 5);
+        assert_eq!(subject.scroll.get(), 0);
+        // Past the band the offset follows (j aliases Down here), keeping the
+        // cursor visible, and lands on the last scrollable offset at the
+        // last row.
+        for _ in 0..(len - 6) {
+            subject.on_key(key(KeyCode::Char('j')), None);
+        }
+        assert_eq!(subject.focus, len - 1);
+        assert_eq!(subject.scroll.get(), len - 10);
+        assert!(subject.focus - subject.scroll.get() < 10);
+        // Extra Down presses clamp at the last row and the last offset.
+        subject.on_key(key(KeyCode::Down), None);
+        assert_eq!(subject.focus, len - 1);
+        assert_eq!(subject.scroll.get(), len - 10);
+    }
+
+    #[test]
+    fn the_scroll_offset_follows_the_selection_back_up_to_the_top() {
+        let mut subject = overlay();
+        let len = subject.visible().len();
+        subject.list.set(viewport(10));
+        // Start at the last row, the offset the down walk ends on.
+        subject.focus = len - 1;
+        subject.on_key(key(KeyCode::Char('k')), None);
+        assert!(subject.scroll.get() > 0);
+        // Walking back up with k (the Up alias) keeps the cursor visible and
+        // the offset walks back with it ...
+        for _ in 0..(len - 1) {
+            subject.on_key(key(KeyCode::Char('k')), None);
+            assert!(
+                subject.focus - subject.scroll.get() < 10,
+                "focus {} offset {}",
+                subject.focus,
+                subject.scroll.get()
+            );
+        }
+        // ... until both clamp at the first row, and extra Up presses stay
+        // clamped there.
+        assert_eq!(subject.focus, 0);
+        assert_eq!(subject.scroll.get(), 0);
+        subject.on_key(key(KeyCode::Up), None);
+        assert_eq!(subject.focus, 0);
+        assert_eq!(subject.scroll.get(), 0);
     }
 }

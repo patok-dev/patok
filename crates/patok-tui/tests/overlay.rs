@@ -4,13 +4,13 @@
 
 use std::collections::BTreeMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use patok_core::config::{ApplyTiming, SettingValue};
 use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
 use patok_tui::{
-    Action, App, Entry, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
+    Action, App, Entry, FieldKind, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
     SETTINGS_HELP_PANEL_WIDTH, settings_area, settings_body_areas,
 };
 use ratatui::Terminal;
@@ -99,6 +99,15 @@ fn ctrl(app: &mut App, c: char) -> Action {
     app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
 }
 
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
 fn open() -> App {
     let mut app = app();
     assert_eq!(press(&mut app, KeyCode::Char('?')), Action::None);
@@ -114,7 +123,7 @@ fn focus_field(app: &mut App, field: &str) {
         .iter()
         .position(|entry| matches!(entry, Entry::Row(row) if row.key == field))
         .unwrap_or_else(|| panic!("`{field}` is not visible"));
-    app.overlay.focus = index;
+    move_focus_to(app, index);
 }
 
 /// Puts the overlay's focus on a section header.
@@ -125,7 +134,23 @@ fn focus_header(app: &mut App, index: usize) {
         .iter()
         .position(|entry| *entry == Entry::Header(index))
         .expect("the header is visible");
-    app.overlay.focus = header;
+    move_focus_to(app, header);
+}
+
+/// Walks the focus to `index` with the navigation keys, one row per press,
+/// so the scroll offset follows the selection like it does in the shell
+/// (T136.1) -- the pointer's row hover moves the focus too (T145.1), but
+/// the keys stay the baseline. The draw first records the list viewport
+/// the follow reads.
+fn move_focus_to(app: &mut App, index: usize) {
+    let _ = draw(app, W, H);
+    while app.overlay.focus < index {
+        press(app, KeyCode::Down);
+    }
+    while app.overlay.focus > index {
+        press(app, KeyCode::Up);
+    }
+    assert_eq!(app.overlay.focus, index);
 }
 
 /// Puts focus on a section header and toggles it with Enter.
@@ -673,9 +698,13 @@ fn all_sections_folded_show_only_their_headers() {
 fn every_section_expands_and_the_overflowing_body_gains_a_scrollbar() {
     let mut app = open();
     // Every section opens expanded, so the full row model -- the tui-schema fields
-    // included -- is showing; the bottom rows only render once the body scrolls to
-    // the focused last entry row.
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    // included -- is showing; the bottom rows only render once the body scrolls
+    // to the focused last entry row, reached through the keys so the offset
+    // follows the selection (T136.1).
+    let _ = draw(&app, W, H);
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::PageDown);
+    }
     let screen = draw(&app, W, H);
     assert!(screen.contains("auto-push remote"), "{screen}");
     assert!(screen.contains("‹ dark ›"), "{screen}");
@@ -825,8 +854,12 @@ fn arrows_move_focus_and_pages_jump() {
     assert!(app.overlay.focus > 10);
     press(&mut app, KeyCode::PageUp);
     assert!(app.overlay.focus < 10);
-    // The focused row stays on screen when the body scrolls.
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    // The focused row stays on screen when the body scrolls: the last row,
+    // reached through the keys, drags the offset along with it (T136.1).
+    let _ = draw(&app, W, H);
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::PageDown);
+    }
     let screen = draw(&app, W, H);
     assert!(screen.contains("update channel"), "{screen}");
     assert!(screen.contains("│"), "{screen}");
@@ -1050,6 +1083,63 @@ fn up_scrolls_only_once_the_cursor_is_four_rows_below_the_top() {
     assert!(draw(&app, W, H).contains("▾ Provider and model"));
 }
 
+/// Hovering the bottom viewport row scrolls the list exactly like the Down
+/// key: the first hover reaches the state nineteen Down presses reach, and
+/// keeping the pointer there walks down to the clamp at the last full
+/// screen (T145.1).
+#[test]
+fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
+    let mut app = open();
+    draw(&app, W, H);
+    // At W = 100, H = 40 the help box under the list (T85.1) leaves the list
+    // 20 rows over the 44-row expanded model -- the same geometry the Down
+    // key test pins.
+    let list = app.overlay.list.get();
+    assert_eq!(list.height, 20);
+    let len = app.overlay.visible().len();
+    assert_eq!(app.overlay.scroll.get(), 0);
+
+    // The pointer lands on the bottom viewport row: the highlight moves
+    // there without activating anything, and the follow scrolls exactly
+    // like nineteen Down presses.
+    assert_eq!(
+        app.on_mouse(mouse(
+            MouseEventKind::Moved,
+            list.x + 3,
+            list.y + list.height - 1
+        )),
+        Action::None
+    );
+    assert_eq!(app.overlay.focus, 19);
+    assert_eq!(app.overlay.scroll.get(), 4);
+    assert!(app.overlay.editor.is_none());
+    assert!(app.overlay.drafts.is_empty());
+
+    // Keeping the pointer on the bottom row walks the list down like the
+    // Down key does, the hovered row always on screen, to the clamp at the
+    // last full screen.
+    while app.overlay.focus < len - 1 {
+        let hovered = app.overlay.scroll.get() + usize::from(list.height - 1);
+        assert_eq!(
+            app.on_mouse(mouse(
+                MouseEventKind::Moved,
+                list.x + 3,
+                list.y + list.height - 1
+            )),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, hovered);
+        assert!(app.overlay.focus >= app.overlay.scroll.get());
+        assert!(app.overlay.focus - app.overlay.scroll.get() < usize::from(list.height));
+    }
+    assert_eq!(app.overlay.focus, len - 1);
+    assert_eq!(app.overlay.scroll.get(), 24);
+
+    // The hovered row's selection marker is on screen at the walk's end.
+    let screen = draw(&app, W, H);
+    assert_cursor_visible(&app, &screen, 20);
+}
+
 #[test]
 fn the_margin_holds_with_sections_folded() {
     let mut app = open();
@@ -1146,33 +1236,42 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         assert_eq!(app.overlay.scroll.get(), scroll, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    // Folding Pipeline while scrolled to the bottom shortens the list to 33 rows:
-    // the focus clamps into it and the draw pulls the offset back into range.
+    // Folding Pipeline while scrolled to the bottom shortens the list to 33
+    // rows: walking the focus to the header and back down with the keys keeps
+    // every step visible, and the offset clamps into the shortened range.
     let header = app
         .overlay
         .visible()
         .iter()
         .position(|entry| *entry == Entry::Header(1))
         .unwrap();
-    app.overlay.focus = header;
+    while app.overlay.focus > header {
+        press(&mut app, KeyCode::Up);
+    }
     press(&mut app, KeyCode::Left);
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::Down);
+    }
     let screen = draw(&app, W, 24);
     assert_eq!(app.overlay.visible().len(), 33);
     assert_eq!(app.overlay.focus, 32);
     assert_eq!(app.overlay.scroll.get(), 21);
     assert_cursor_visible(&app, &screen, 12);
-    // Unfolding grows the list again; whatever the focus, the next draw keeps it
-    // on screen -- here at the very bottom, back at the maximum offset.
+    // Unfolding grows the list again; walking back down to the very bottom
+    // keeps the cursor visible, back at the maximum offset.
     let header = app
         .overlay
         .visible()
         .iter()
         .position(|entry| *entry == Entry::Header(1))
         .unwrap();
-    app.overlay.focus = header;
+    while app.overlay.focus > header {
+        press(&mut app, KeyCode::Up);
+    }
     press(&mut app, KeyCode::Right);
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::Down);
+    }
     let screen = draw(&app, W, 24);
     assert_eq!(app.overlay.visible().len(), 44);
     assert_eq!(app.overlay.scroll.get(), 32);
@@ -1353,11 +1452,11 @@ fn the_list_ends_with_the_last_entry_and_no_enter_button() {
     assert!(screen.contains("rail mode"), "{screen}");
     assert!(!screen.contains("Close settings"), "{screen}");
     // No line carries a stray Enter button: the only Enter hints are the status
-    // bar's "Enter start build" and the footer's "Enter/Space edit".
+    // bar's "Enter start" and the footer's "Enter/Space edit".
     for line in screen.split('\n') {
         if line.contains("Enter") {
             assert!(
-                line.contains("Enter/Space") || line.contains("start build"),
+                line.contains("Enter/Space") || line.contains("start"),
                 "an Enter button row rendered: {line:?}"
             );
         }
@@ -1443,8 +1542,12 @@ fn the_last_row_still_edits_and_drafts() {
     let mut app = open();
     // Focus the last entry row: rail mode, a tui-schema enum reading "normal"
     // -- the default since T58.1, shown when the key is unset. Enter cycles to
-    // the detailed view mode (T89.1).
-    app.overlay.focus = app.overlay.visible().len() - 1;
+    // the detailed view mode (T89.1). The keys walk the focus there so the
+    // offset follows the selection (T136.1).
+    let _ = draw(&app, W, H);
+    while app.overlay.focus < app.overlay.visible().len() - 1 {
+        press(&mut app, KeyCode::PageDown);
+    }
     assert!(matches!(
         app.overlay.focused(),
         Entry::Row(row) if row.key == "rail_mode"
@@ -1650,7 +1753,9 @@ mod modal_footer {
         assert!(app.overlay.confirm_open);
         assert!(app.overlay.dirty());
 
-        // Clicks on the hint zone and on a settings row change nothing.
+        // Clicks on the hint zone change nothing; since T136.1 a click inside
+        // a list row selects it and runs its Enter -- the Bool row that spot
+        // lands on drafts its toggle, like focusing it and pressing Enter.
         let mut app = open();
         buffer(&app);
         let footer = app.overlay.footer.get();
@@ -1661,8 +1766,15 @@ mod modal_footer {
             Action::None
         );
         assert!(app.settings_open());
-        assert_eq!(app.overlay.focus, 0);
-        assert!(!app.overlay.dirty());
+        let clicked = app.overlay.focused();
+        assert!(matches!(clicked, Entry::Row(row) if row.kind == FieldKind::Bool));
+        assert_eq!(
+            app.overlay.drafts.get(match clicked {
+                Entry::Row(row) => row.key,
+                _ => "",
+            }),
+            Some(&SettingValue::Bool(true))
+        );
     }
 
     #[test]
@@ -1756,6 +1868,143 @@ mod modal_footer {
         assert!(!app.overlay.confirm_open);
         assert!(app.settings_open());
         assert!(app.overlay.dirty());
+    }
+}
+
+/// The settings overlay's status row (T147.1): the inline editor's Editing
+/// hint wears the highlighted-text colour on every built-in theme -- the same
+/// colour the validation error already wears, so the hint reads as the open
+/// editor's active prompt rather than a muted footnote -- an invalid Enter
+/// still swaps in the Error status with the editor kept open, and a
+/// status-free overlay leaves the row blank.
+mod status_line {
+    use super::*;
+    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+    use patok_tui::{StatusLevel, Theme};
+    use ratatui::layout::{Constraint, Layout, Rect};
+
+    fn buffer(app: &App) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(W, H)).unwrap();
+        terminal
+            .draw(|frame| patok_tui::render(frame, app))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn themed_open(theme: ThemeKey) -> App {
+        let mut app = app();
+        app.tui.theme = theme;
+        app.tui.truecolor = Some(true);
+        assert_eq!(press(&mut app, KeyCode::Char('?')), Action::None);
+        app
+    }
+
+    /// Opens the agent timeout's number editor and returns the Info hint.
+    fn open_editor(app: &mut App) -> String {
+        focus_field(app, "agent_timeout_secs");
+        assert_eq!(press(app, KeyCode::Enter), Action::None);
+        assert!(app.overlay.editor.is_some(), "Enter opens the editor");
+        let (text, level) = app
+            .overlay
+            .status
+            .clone()
+            .expect("opening the editor sets the hint");
+        assert_eq!(level, StatusLevel::Info);
+        text
+    }
+
+    /// The status row's rect: the second row of the overlay's inner layout,
+    /// one above the footer -- the same math `render_settings_overlay` runs.
+    fn status_rect() -> Rect {
+        let area = settings_area(Rect::new(0, 0, W, H));
+        let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
+        let [_body, status, _footer] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
+        status
+    }
+
+    /// Asserts every cell of `text` on the status row wears `colour`.
+    fn assert_status_colour(
+        buffer: &ratatui::buffer::Buffer,
+        text: &str,
+        colour: ratatui::style::Color,
+    ) {
+        let status = status_rect();
+        let line: String = (status.x..status.right())
+            .map(|x| buffer[(x, status.y)].symbol())
+            .collect();
+        // A byte index would mis-column on multibyte symbols, so the match's
+        // column is the character count before it.
+        let at = line
+            .find(text)
+            .map(|at| line[..at].chars().count())
+            .unwrap_or_else(|| panic!("{text:?} is not on the status row: {line:?}"));
+        for (i, _) in text.chars().enumerate() {
+            assert_eq!(
+                buffer[(status.x + (at + i) as u16, status.y)].style().fg,
+                Some(colour),
+                "cell {} of {text:?}",
+                at + i
+            );
+        }
+    }
+
+    /// The Editing hint renders in the highlighted-text colour on every
+    /// built-in theme, still set as the Info status when the editor opens.
+    #[test]
+    fn the_editing_hint_wears_highlighted_text_on_every_theme() {
+        for name in THEME_KEYS {
+            let key = ThemeKey::parse(name).expect("THEME_KEYS holds valid names");
+            let mut app = themed_open(key);
+            let hint = open_editor(&mut app);
+            let buffer = buffer(&app);
+            let theme = Theme::resolve(key, Some(true));
+            assert_status_colour(&buffer, &hint, theme.highlighted_text);
+        }
+    }
+
+    /// An invalid Enter keeps the editor open and swaps in the Error status,
+    /// which renders in the same highlighted-text colour.
+    #[test]
+    fn a_validation_error_keeps_the_editor_open_in_highlighted_text() {
+        let mut app = open();
+        open_editor(&mut app);
+        ctrl(&mut app, 'u');
+        press(&mut app, KeyCode::Char('0'));
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert!(
+            app.overlay.editor.is_some(),
+            "an invalid buffer keeps the editor open"
+        );
+        let (text, level) = app.overlay.status.clone().expect("the Error status is set");
+        assert_eq!(level, StatusLevel::Error);
+        assert!(
+            text.contains("greater than zero"),
+            "the error text: {text:?}"
+        );
+        let buffer = buffer(&app);
+        assert_status_colour(&buffer, &text, app.theme().highlighted_text);
+    }
+
+    /// A status-free overlay renders nothing on its status row.
+    #[test]
+    fn a_status_free_overlay_leaves_the_status_row_empty() {
+        let app = open();
+        assert!(app.overlay.status.is_none());
+        let buffer = buffer(&app);
+        let status = status_rect();
+        for x in status.x..status.right() {
+            assert_eq!(
+                buffer[(x, status.y)].symbol(),
+                " ",
+                "cell ({x}, {}) is blank",
+                status.y
+            );
+        }
     }
 }
 
@@ -1900,8 +2149,9 @@ mod close_button {
         assert_eq!(app.overlay.confirm_selected, 0);
         assert!(app.overlay.dirty());
 
-        // Clicks on the title row outside the button and on a settings row
-        // change nothing.
+        // Clicks on the title row outside the button change nothing; since
+        // T136.1 a click inside a list row selects it and runs its Enter --
+        // the enum row that spot lands on cycles and drafts its next choice.
         let mut app = open();
         buffer(&app);
         let close = app.overlay.close.get();
@@ -1909,7 +2159,9 @@ mod close_button {
         assert!(app.settings_open());
         assert_eq!(app.on_mouse(click(close.x + 3, close.y + 10)), Action::None);
         assert!(app.settings_open());
-        assert!(!app.overlay.dirty());
+        let clicked = app.overlay.focused();
+        assert!(matches!(clicked, Entry::Row(row) if matches!(row.kind, FieldKind::Enum(_))));
+        assert!(app.overlay.dirty());
     }
 
     #[test]

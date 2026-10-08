@@ -11,9 +11,8 @@ expression: "draw(&app, 80, 24)"
    ↓  └────────────────────────────────────────────────────────────────────────┘
 [ RV ]┌ Tasks | 1/3 - 2 left ──────────────────────────────────────────────────┐
       │✔ T1.1  scaffold the workspace                                          │
-[ SH ]│○ T1.2  add the parser for task files                                   │
-[ DI ]│○ T1.3  wire the engine to the shell                                    │
-[ LN ]│                                                                        │
+[ DI ]│○ T1.2  add the parser for task files                                   │
+      │○ T1.3  wire the engine to the shell                                    │
       │                                                                        │
       │                                                                        │
       │                                                                        │
@@ -23,6 +22,7 @@ expression: "draw(&app, 80, 24)"
       │                                                                        │
       │                                                                        │
       │                                                                        │
-      │ a add tasks · i inject task · Enter start build · ↑↓ scroll            │
+      │                                                                        │
+      │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output     │
       └────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint  Enter  start build  ?  settings  t  theme  d  detach  q  quit
+ STOPPED  sprint                                    [ Enter ] start  [ m ] menu
