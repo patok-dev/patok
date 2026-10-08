@@ -522,30 +522,15 @@ async fn event_loop(
                     // The overlay closed with nothing left to apply (a clean close
                     // or a discard): the drafts are gone from the state already.
                     Action::CloseSettings => {}
-                    // The close dialog's save choice: apply and persist every
-                    // drafted change through the settings-change flow, one by one;
-                    // the first rejection stops the loop, keeps the overlay open
-                    // with the reason and the remaining drafts, and a retry saves
+                    // The close dialog's save choice, its Enter key (T149.1):
+                    // the one shared dispatch below also runs the Save row's
+                    // click (T146.1). Apply and persist every drafted change
+                    // through the settings-change flow, one by one; the first
+                    // rejection stops the loop, keeps the overlay open with
+                    // the reason and the remaining drafts, and a retry saves
                     // only what is left.
                     Action::SaveSettings => {
-                        let pending = app.overlay.pending();
-                        for (schema, field, value) in pending {
-                            if !change_setting(
-                                client,
-                                app,
-                                &mut shell_settings,
-                                schema,
-                                &field,
-                                value,
-                            )
-                            .await
-                            {
-                                break;
-                            }
-                        }
-                        if !app.overlay.dirty() {
-                            app.overlay.close();
-                        }
+                        save_settings(app, &mut shell_settings, client).await;
                     }
                     // The theme picker's Enter or click (T43.1): the app state
                     // already carries the theme; persist it through the same
@@ -558,12 +543,12 @@ async fn event_loop(
                     // status bar.
                     Action::SetRunMode(mode) => {
                         change_setting(
-                            client,
                             app,
                             &mut shell_settings,
                             Schema::Daemon,
                             "run_mode",
                             SettingValue::Str(mode),
+                            client,
                         )
                         .await;
                     }
@@ -577,7 +562,9 @@ async fn event_loop(
                 // (T143.1); a click on the add-task dialog's or the
                 // inject-task modal's primary footer button runs its Enter
                 // key's submit flow through the same shared dispatch the key
-                // arm takes (T144.1).
+                // arm takes (T144.1); the unsaved-changes dialog's Save row
+                // click runs its Enter key's apply-and-persist flow through
+                // the same shared dispatch the key arm takes (T149.1).
                 Some(Ok(TermEvent::Mouse(mouse))) => match app.on_mouse(mouse) {
                     Action::None => {}
                     Action::StartBuild => start_build(client, app).await,
@@ -604,6 +591,13 @@ async fn event_loop(
                             }
                             ShutdownFlow::Keep => {}
                         }
+                    }
+                    // The unsaved-changes dialog's Save row click (T146.1,
+                    // T149.1): the same shared dispatch the key arm's Enter
+                    // takes, so a click applies and persists every draft
+                    // exactly like the key.
+                    Action::SaveSettings => {
+                        save_settings(app, &mut shell_settings, client).await;
                     }
                     _ => {}
                 },
@@ -783,18 +777,37 @@ pub fn save_theme(shell_settings: &mut ShellSettings, app: &mut App, theme: Them
     }
 }
 
+/// The settings-change RPC as the shared dispatches ask the engine for it:
+/// one method instead of a concrete `EngineClient`, so tests pass fakes. The
+/// returned future borrows the submitter, so one save flow can run the RPC
+/// once per drafted change in sequence.
+trait SettingsSubmit {
+    /// Sends one settings-change command and reports its call result.
+    fn settings_change(
+        &mut self,
+        request: CommandRequest,
+    ) -> impl std::future::Future<Output = CommandCall>;
+}
+
+impl SettingsSubmit for EngineClient<Channel> {
+    async fn settings_change(&mut self, request: CommandRequest) -> CommandCall {
+        self.submit_command(request).await
+    }
+}
+
 /// Applies and persists one drafted change: a
 /// daemon-schema field goes through the engine's settings-change flow, a tui-schema
 /// field is applied by the shell itself with no round trip. Returns whether the
 /// change applied; the overlay learns the outcome either way -- accepted or rejected
-/// with the reason.
-async fn change_setting(
-    client: &mut EngineClient<Channel>,
+/// with the reason. The submit RPC goes through [`SettingsSubmit`] instead of a
+/// concrete `EngineClient`, so tests pass fakes.
+async fn change_setting<S: SettingsSubmit>(
     app: &mut App,
     shell_settings: &mut ShellSettings,
     schema: Schema,
     field: &str,
     value: patok_core::config::SettingValue,
+    submitter: &mut S,
 ) -> bool {
     match schema {
         Schema::Daemon => {
@@ -810,7 +823,7 @@ async fn change_setting(
                     change: Some(change),
                 })),
             };
-            match client.submit_command(request).await {
+            match submitter.settings_change(request).await {
                 Ok(response) => {
                     let response = response.into_inner();
                     if !response.accepted {
@@ -846,23 +859,58 @@ async fn change_setting(
     }
 }
 
+/// Runs the close dialog's save choice (T149.1): the one dispatch both the
+/// key arm and the mouse arm of [`event_loop`] route `SaveSettings` through,
+/// so a click on the Save row runs exactly its Enter key's flow. Every
+/// drafted change is applied and persisted one by one through the
+/// settings-change flow; the first rejection stops the loop and keeps the
+/// overlay open with the reason and the remaining drafts, and the overlay
+/// closes only once nothing dirty remains. The submit RPC goes through
+/// [`SettingsSubmit`] instead of a concrete `EngineClient`, so tests pass
+/// fakes.
+async fn save_settings<S: SettingsSubmit>(
+    app: &mut App,
+    shell_settings: &mut ShellSettings,
+    submitter: &mut S,
+) {
+    let pending = app.overlay.pending();
+    for (schema, field, value) in pending {
+        if !change_setting(app, shell_settings, schema, &field, value, submitter).await {
+            break;
+        }
+    }
+    if !app.overlay.dirty() {
+        app.overlay.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
-    use patok_core::config::Theme as ThemeKey;
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use patok_core::config::{ConfigFiles, RailMode, SettingValue, Theme as ThemeKey};
     use patok_core::event::{EngineEvent, Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
     use patok_core::scenario::{SPEC_FILE, SpecState};
     use patok_core::task;
-    use patok_proto::{AddTasksKind, CommandRequest, CommandResponse, command_request};
+    use patok_proto::{
+        AddTasksKind, CommandRequest, CommandResponse, SettingsChange, command_request,
+        settings_change::Change,
+    };
+    use ratatui::layout::Rect;
 
     use crate::app::FrameFocus;
+    use crate::overlay::StatusLevel;
+    use crate::settings::ShellSettings;
 
     use super::{
-        Action, App, CommandCall, Outcome, QueueRun, ShutdownCall, ShutdownFlow, SubmitFlow,
-        interrupt_status, run_shutdown_family, run_submit_family,
+        Action, App, CommandCall, Outcome, QueueRun, Schema, SettingsSubmit, ShutdownCall,
+        ShutdownFlow, SubmitFlow, interrupt_status, run_shutdown_family, run_submit_family,
+        save_settings,
     };
     use super::{ModifyOtherKeys, shutdown_request};
 
@@ -966,6 +1014,89 @@ mod tests {
     /// fails the test.
     fn unused_submit() -> impl FnOnce(CommandRequest) -> std::future::Pending<CommandCall> {
         move |command| panic!("no submit was expected, got {command:?}")
+    }
+
+    /// A shell settings holder whose user-local layer is a tempdir file (the
+    /// settings.rs `holder` pattern), so tui drafts persist somewhere real.
+    fn shell() -> (tempfile::TempDir, ShellSettings) {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, warnings) = ShellSettings::with_files(
+            ConfigFiles {
+                user_global: None,
+                user_local: Some(dir.path().join("config.local.toml")),
+            },
+            dir.path(),
+            None,
+        );
+        assert!(warnings.is_empty());
+        (dir, settings)
+    }
+
+    /// A save-flow submit fake: it records the command it was asked for into
+    /// the shared list and answers with the given outcome -- the same
+    /// recording-and-answer shape as [`recording_submit`], on the
+    /// [`SettingsSubmit`] trait the multi-draft save dispatch takes.
+    struct RecordingSave {
+        commands: Arc<Mutex<Vec<CommandRequest>>>,
+        accepted: bool,
+        error: &'static str,
+    }
+
+    impl SettingsSubmit for RecordingSave {
+        async fn settings_change(&mut self, request: CommandRequest) -> CommandCall {
+            self.commands.lock().unwrap().push(request);
+            Ok(tonic::Response::new(CommandResponse {
+                accepted: self.accepted,
+                error: self.error.into(),
+                ..Default::default()
+            }))
+        }
+    }
+
+    /// A save-flow submit fake that is never supposed to run: its RPC panics,
+    /// so any call fails the test.
+    struct UnusedSave;
+
+    impl SettingsSubmit for UnusedSave {
+        async fn settings_change(&mut self, request: CommandRequest) -> CommandCall {
+            panic!("no submit was expected, got {request:?}")
+        }
+    }
+
+    /// The app at the save dispatch: the dialog gone (its Save choice, key
+    /// or click, already dismissed it), the overlay open with the drafted
+    /// changes pending.
+    fn save_app(drafts: &[(&str, &str)]) -> App {
+        let mut app = app();
+        app.overlay.open();
+        for (field, value) in drafts {
+            app.overlay
+                .drafts
+                .insert((*field).into(), SettingValue::Str((*value).into()));
+        }
+        app
+    }
+
+    /// The app at the close dialog's Save row (T146.1): the dialog open, row
+    /// 0 (Save) selected, the choice rows' area recorded. The body rect lies
+    /// outside any other recorded rect, so its rows 0-2 are the choices.
+    fn confirm_app() -> (App, Rect) {
+        let mut app = save_app(&[("model", "opus")]);
+        app.overlay.confirm_open = true;
+        app.overlay.confirm_selected = 0;
+        let body = Rect::new(0, 20, 50, 6);
+        app.overlay.confirm_body.set(body);
+        (app, body)
+    }
+
+    /// A mouse event of `kind` at (`column`, `row`).
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     /// Detach maps to the detached outcome with the completed count, and no
@@ -1283,6 +1414,218 @@ mod tests {
             assert!(matches!(flow, SubmitFlow::Keep), "{action:?}");
             assert!(app.dialog_open, "{action:?}");
             assert_eq!(app.dialog_status, None, "{action:?}");
+        }
+    }
+
+    /// The shared save dispatch (T149.1) applies and persists every drafted
+    /// change one by one -- the daemon field through the engine's
+    /// settings-change command, the tui field by the shell itself -- and the
+    /// overlay closes once nothing dirty remains.
+    #[tokio::test]
+    async fn save_settings_applies_and_persists_every_draft_and_closes_the_overlay() {
+        let (temp, mut shell) = shell();
+        let mut app = save_app(&[("model", "opus"), ("rail_mode", "detailed")]);
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let mut submit = RecordingSave {
+            commands: Arc::clone(&commands),
+            accepted: true,
+            error: "",
+        };
+        save_settings(&mut app, &mut shell, &mut submit).await;
+        // The tui field takes no RPC: exactly the one daemon command ran.
+        let commands = commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        match &commands[0].action {
+            Some(command_request::Action::SettingsChange(change)) => {
+                assert_eq!(
+                    change.change,
+                    Some(Change::ModelOverride("opus".into())),
+                    "{change:?}"
+                );
+            }
+            other => panic!("expected a SettingsChange command, got {other:?}"),
+        }
+        assert!(!app.overlay.open);
+        assert!(app.overlay.drafts.is_empty());
+        assert_eq!(
+            app.settings.get("model"),
+            Some(&SettingValue::Str("opus".into()))
+        );
+        assert_eq!(shell.settings().rail_mode, RailMode::Detailed);
+        assert_eq!(app.tui.rail_mode, RailMode::Detailed);
+        let text = std::fs::read_to_string(temp.path().join("config.local.toml")).unwrap();
+        assert!(text.contains("rail_mode = \"detailed\""), "{text}");
+    }
+
+    /// A rejected change stops the save loop: the overlay stays open with
+    /// the reason and the unspent drafts, and a retry saves only what is
+    /// left.
+    #[tokio::test]
+    async fn a_rejection_keeps_the_overlay_open_and_a_retry_saves_the_rest() {
+        let (_temp, mut shell) = shell();
+        let mut app = save_app(&[("provider", "mistral"), ("model", "opus")]);
+        // `provider` precedes `model` in the pending rows, so the provider
+        // draft applies and the model draft takes the rejection.
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        /// Records every command and rejects anything but a provider change.
+        struct RejectingModels {
+            commands: Arc<Mutex<Vec<CommandRequest>>>,
+        }
+
+        impl SettingsSubmit for RejectingModels {
+            async fn settings_change(&mut self, request: CommandRequest) -> CommandCall {
+                let accepted = matches!(
+                    request.action,
+                    Some(command_request::Action::SettingsChange(SettingsChange {
+                        change: Some(Change::Provider(_)),
+                    }))
+                );
+                self.commands.lock().unwrap().push(request);
+                Ok(tonic::Response::new(CommandResponse {
+                    accepted,
+                    error: if accepted {
+                        String::new()
+                    } else {
+                        "no such model".into()
+                    },
+                    ..Default::default()
+                }))
+            }
+        }
+
+        let mut submit = RejectingModels {
+            commands: Arc::clone(&commands),
+        };
+        save_settings(&mut app, &mut shell, &mut submit).await;
+        assert!(app.overlay.open);
+        assert!(app.overlay.dirty());
+        assert_eq!(
+            app.overlay.status,
+            Some(("no such model".to_string(), StatusLevel::Error))
+        );
+        assert_eq!(
+            app.overlay.pending(),
+            vec![(
+                Schema::Daemon,
+                "model".to_string(),
+                SettingValue::Str("opus".into())
+            )]
+        );
+        assert_eq!(
+            app.settings.get("provider"),
+            Some(&SettingValue::Str("mistral".into()))
+        );
+        assert_eq!(commands.lock().unwrap().len(), 2);
+        // The retry accepts what is left: one command, the overlay closes.
+        let retry = Arc::new(Mutex::new(Vec::new()));
+        let mut retrying = RecordingSave {
+            commands: Arc::clone(&retry),
+            accepted: true,
+            error: "",
+        };
+        save_settings(&mut app, &mut shell, &mut retrying).await;
+        let retry = retry.lock().unwrap();
+        assert_eq!(retry.len(), 1);
+        match &retry[0].action {
+            Some(command_request::Action::SettingsChange(change)) => {
+                assert_eq!(
+                    change.change,
+                    Some(Change::ModelOverride("opus".into())),
+                    "{change:?}"
+                );
+            }
+            other => panic!("expected a SettingsChange command, got {other:?}"),
+        }
+        assert!(!app.overlay.open);
+        assert!(app.overlay.drafts.is_empty());
+        assert_eq!(
+            app.settings.get("model"),
+            Some(&SettingValue::Str("opus".into()))
+        );
+    }
+
+    /// A save with nothing drafted just closes the overlay: no RPC, no
+    /// request.
+    #[tokio::test]
+    async fn save_settings_with_no_drafts_closes_the_overlay_without_a_request() {
+        let (_temp, mut shell) = shell();
+        let mut app = app();
+        app.overlay.open();
+        let mut submit = UnusedSave;
+        save_settings(&mut app, &mut shell, &mut submit).await;
+        assert!(!app.overlay.open);
+        assert!(app.overlay.drafts.is_empty());
+    }
+
+    /// A click and the Enter key on the Save row are indistinguishable end
+    /// to end: both return `SaveSettings` over the identical pre-dispatch
+    /// state, and the one shared dispatch both event-loop arms call leaves
+    /// the identical applied state with the identical recorded command.
+    #[tokio::test]
+    async fn a_click_and_the_enter_key_on_the_save_row_run_the_same_save_flow() {
+        // The mouse path: a left click on the dialog's Save row (row 0).
+        let (mut clicked, body) = confirm_app();
+        assert_eq!(
+            clicked.on_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                body.x + 2,
+                body.y
+            )),
+            Action::SaveSettings
+        );
+        // The keyboard path: Enter on the selected Save row.
+        let (mut pressed, _body) = confirm_app();
+        assert_eq!(
+            pressed.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Action::SaveSettings
+        );
+        // Pre-dispatch: identical state, the dialog gone in both.
+        for app in [&mut clicked, &mut pressed] {
+            assert!(!app.overlay.confirm_open);
+            assert!(app.overlay.open);
+            assert_eq!(
+                app.overlay.pending(),
+                vec![(
+                    Schema::Daemon,
+                    "model".to_string(),
+                    SettingValue::Str("opus".into())
+                )]
+            );
+        }
+        // Both dispatches run the same flow with the same kind of applier.
+        let (_temp_clicked, mut shell_clicked) = shell();
+        let (_temp_pressed, mut shell_pressed) = shell();
+        let clicked_commands = Arc::new(Mutex::new(Vec::new()));
+        let pressed_commands = Arc::new(Mutex::new(Vec::new()));
+        let mut clicked_submit = RecordingSave {
+            commands: Arc::clone(&clicked_commands),
+            accepted: true,
+            error: "",
+        };
+        let mut pressed_submit = RecordingSave {
+            commands: Arc::clone(&pressed_commands),
+            accepted: true,
+            error: "",
+        };
+        save_settings(&mut clicked, &mut shell_clicked, &mut clicked_submit).await;
+        save_settings(&mut pressed, &mut shell_pressed, &mut pressed_submit).await;
+        assert!(!clicked.overlay.open);
+        assert!(!pressed.overlay.open);
+        assert!(clicked.overlay.drafts.is_empty());
+        assert!(pressed.overlay.drafts.is_empty());
+        assert_eq!(clicked.settings, pressed.settings);
+        let clicked_commands = clicked_commands.lock().unwrap();
+        let pressed_commands = pressed_commands.lock().unwrap();
+        assert_eq!(*clicked_commands, *pressed_commands);
+        match &clicked_commands[0].action {
+            Some(command_request::Action::SettingsChange(change)) => {
+                assert_eq!(
+                    change.change,
+                    Some(Change::ModelOverride("opus".into())),
+                    "{change:?}"
+                );
+            }
+            other => panic!("expected a SettingsChange command, got {other:?}"),
         }
     }
 }
