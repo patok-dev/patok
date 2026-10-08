@@ -635,6 +635,103 @@ fn a_menu_row_click_runs_that_entry() {
     assert_eq!(app.status.as_deref(), Some("Stopping the engine..."));
 }
 
+/// The shutdown rows' clicks match their keys in every engine state
+/// (T143.1): the Detach and Quit rows' clicks return the same action,
+/// stopping flag, status and selection the `m` plus Enter key path
+/// returns, in the idle and the running state alike -- the driver's mouse
+/// arm routes those actions through the same dispatch the key arm takes.
+#[test]
+fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
+    // Detach while idle: the click runs the `d` binding's action and leaves
+    // the same state the key path leaves.
+    let mut clicked = open();
+    draw(&clicked, 80, 14);
+    let body = clicked.menu_body.get();
+    assert_eq!(
+        clicked.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            body.x + 3,
+            body.y + 2
+        )),
+        Action::Detach
+    );
+    let mut keyed = open();
+    assert_eq!(confirm_entry(&mut keyed, 2), Action::Detach);
+    for app in [&mut clicked, &mut keyed] {
+        assert!(!app.menu_open);
+        assert_eq!(app.menu_selected, 2);
+        assert!(!app.stopping);
+    }
+
+    // Detach while a build runs: the same parity.
+    let mut clicked = running_app();
+    assert_eq!(press(&mut clicked, KeyCode::Char('m')), Action::None);
+    draw(&clicked, 80, 14);
+    let body = clicked.menu_body.get();
+    assert_eq!(
+        clicked.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            body.x + 3,
+            body.y + 2
+        )),
+        Action::Detach
+    );
+    let mut keyed = running_app();
+    assert_eq!(press(&mut keyed, KeyCode::Char('m')), Action::None);
+    assert_eq!(confirm_entry(&mut keyed, 2), Action::Detach);
+    for app in [&mut clicked, &mut keyed] {
+        assert!(!app.menu_open);
+        assert_eq!(app.menu_selected, 2);
+        assert!(!app.stopping);
+    }
+
+    // Quit while a build runs: the soft stop, with the pending-stop status
+    // and the stopping flag -- the same state the key path reaches.
+    let mut clicked = running_app();
+    assert_eq!(press(&mut clicked, KeyCode::Char('m')), Action::None);
+    draw(&clicked, 80, 14);
+    let body = clicked.menu_body.get();
+    assert_eq!(
+        clicked.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            body.x + 3,
+            body.y + 3
+        )),
+        Action::Quit
+    );
+    let mut keyed = running_app();
+    assert_eq!(press(&mut keyed, KeyCode::Char('m')), Action::None);
+    assert_eq!(confirm_entry(&mut keyed, 3), Action::Quit);
+    for app in [&mut clicked, &mut keyed] {
+        assert!(!app.menu_open);
+        assert_eq!(app.menu_selected, 3);
+        assert!(app.stopping);
+        assert_eq!(app.status.as_deref(), Some(patok_tui::SOFT_STOP_PENDING));
+    }
+
+    // Quit while idle: the true quit (the NOW interrupt), the same state the
+    // key path reaches.
+    let mut clicked = open();
+    draw(&clicked, 80, 14);
+    let body = clicked.menu_body.get();
+    assert_eq!(
+        clicked.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            body.x + 3,
+            body.y + 3
+        )),
+        Action::Interrupt
+    );
+    let mut keyed = open();
+    assert_eq!(confirm_entry(&mut keyed, 3), Action::Interrupt);
+    for app in [&mut clicked, &mut keyed] {
+        assert!(!app.menu_open);
+        assert_eq!(app.menu_selected, 3);
+        assert!(app.stopping);
+        assert_eq!(app.status.as_deref(), Some("Stopping the engine..."));
+    }
+}
+
 /// While a build runs the fifth row joins the body, and a click on it
 /// runs the Esc binding's action -- the same state the key path reaches
 /// with `m` plus Enter on that row.

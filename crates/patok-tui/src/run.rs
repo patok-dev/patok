@@ -206,6 +206,97 @@ async fn probe_status(dir: &std::path::Path) -> patok_core::scenario::ProjectSca
         .unwrap_or_default()
 }
 
+/// What running one shutdown-family action left the event loop with.
+enum ShutdownFlow {
+    /// The loop returns this outcome: the shell leaves, the engine keeps
+    /// running.
+    Detach(Outcome),
+    /// A shutdown was requested; the caller stores this pair and its
+    /// `next_shutdown` branch polls it. The stream is boxed to keep the enum
+    /// small.
+    Pending(
+        shutdown_request::Scope,
+        Box<Streaming<patok_proto::ShutdownUpdate>>,
+    ),
+    /// Keep looping as before: the action was not a shutdown-family one, or an
+    /// interrupt hit an engine that is already exiting -- the pending
+    /// shutdown stream finishes the cleanup.
+    Keep,
+}
+
+/// The shutdown RPC's result, as the shared dispatch asks the engine for it.
+type ShutdownCall = Result<tonic::Response<Streaming<patok_proto::ShutdownUpdate>>, tonic::Status>;
+
+/// The status line the driver shows while an interrupt runs: the true quit's
+/// stopping message while idle, the keep-running notice otherwise.
+fn interrupt_status(app: &App) -> String {
+    if app.is_idle() {
+        "Stopping the engine...".to_string()
+    } else {
+        "Interrupting -- the current task is cancelled and the app keeps running.".to_string()
+    }
+}
+
+/// Runs one shutdown-family action's dispatch (T143.1): the one dispatch both
+/// the key arm and the mouse arm of [`event_loop`] route `Detach`, `Quit` and
+/// `Interrupt` through, so a click runs exactly its key's flow. `request` is
+/// the shutdown RPC, a generic function instead of a concrete `EngineClient`,
+/// so tests pass fakes; the event loop needs a terminal and a live engine,
+/// and tonic's `Streaming` has no public constructor, so the Ok paths stay
+/// covered by the e2e protocol tests.
+async fn run_shutdown_family<Req, Fut>(
+    app: &mut App,
+    action: &Action,
+    request: Req,
+) -> anyhow::Result<ShutdownFlow>
+where
+    Req: FnOnce(shutdown_request::Scope) -> Fut,
+    Fut: std::future::Future<Output = ShutdownCall>,
+{
+    match action {
+        // The `d` key: the shell leaves, the engine keeps running.
+        Action::Detach => Ok(ShutdownFlow::Detach(Outcome::Detached {
+            completed: app.completed,
+        })),
+        // A quit (the first `q` while busy): a SOFT-scope shutdown -- the
+        // current task finishes, no further task starts, the engine keeps
+        // running and the shell stays open. The app state already carries the
+        // pending-stop status, so it is left alone; a transport failure
+        // propagates with the `q` key's message.
+        Action::Quit => {
+            let stream = request(shutdown_request::Scope::Soft)
+                .await
+                .context("could not request engine shutdown")?
+                .into_inner();
+            Ok(ShutdownFlow::Pending(
+                shutdown_request::Scope::Soft,
+                Box::new(stream),
+            ))
+        }
+        // An interrupt (the second `q`, or the interrupt choice of the stop
+        // dialog): cancel the current task and stop the build loop without
+        // waiting. While idle (the plain `q`) it is the true quit: the engine
+        // exits and the shell ends with it. A failed request is tolerated:
+        // the engine is likely already exiting (the soft-stop stream is still
+        // draining), so the loop keeps polling that stream instead of failing
+        // the shell.
+        Action::Interrupt => {
+            app.status = Some(interrupt_status(app));
+            match request(shutdown_request::Scope::Now).await {
+                Ok(stream) => Ok(ShutdownFlow::Pending(
+                    shutdown_request::Scope::Now,
+                    Box::new(stream.into_inner()),
+                )),
+                Err(status) => {
+                    app.status = Some(format!("interrupt failed: {}", status.message()));
+                    Ok(ShutdownFlow::Keep)
+                }
+            }
+        }
+        _ => Ok(ShutdownFlow::Keep),
+    }
+}
+
 async fn event_loop(
     terminal: &mut DefaultTerminal,
     app: &mut App,
@@ -259,7 +350,6 @@ async fn event_loop(
             key = keys.next() => match key {
                 Some(Ok(TermEvent::Key(key))) => match app.on_key(key) {
                     Action::None => {}
-                    Action::Detach => return Ok(Outcome::Detached { completed: app.completed }),
                     Action::StartBuild => start_build(client, app).await,
                     Action::RunDiscovery => run_discovery(client, app).await,
                     // Esc while a soft stop is pending: the engine clears the
@@ -341,48 +431,21 @@ async fn event_loop(
                         restart(terminal, app, client, &mut updates, spawn).await?;
                         stopped_reason = None;
                     }
-                    Action::Quit => {
-                        shutdown = Some(
-                            (
-                                shutdown_request::Scope::Soft,
-                                client
-                                    .shutdown(ShutdownRequest {
-                                        scope: shutdown_request::Scope::Soft as i32,
-                                    })
-                                    .await
-                                    .context("could not request engine shutdown")?
-                                    .into_inner(),
-                            ),
-                        );
-                    }
-                    // An interrupt (the second q, or the interrupt choice of
-                    // the stop dialog): cancel the current task and stop the
-                    // build loop without waiting. While idle (the plain q) it
-                    // is the true quit: the engine exits and the shell ends
-                    // with it.
-                    Action::Interrupt => {
-                        app.status = Some(if app.is_idle() {
-                            "Stopping the engine...".to_string()
-                        } else {
-                            "Interrupting -- the current task is cancelled and the app keeps running.".to_string()
-                        });
-                        match client
-                            .shutdown(ShutdownRequest {
-                                scope: shutdown_request::Scope::Now as i32,
-                            })
-                            .await
+                    // The shutdown family (T143.1): the `d` key, the first and
+                    // second `q`, and every mouse path that runs one of those
+                    // keys -- the m menu's Detach and Quit row clicks -- go
+                    // through the one shared dispatch.
+                    action @ (Action::Detach | Action::Quit | Action::Interrupt) => {
+                        match run_shutdown_family(app, &action, |scope| {
+                            client.shutdown(ShutdownRequest { scope: scope as i32 })
+                        })
+                        .await?
                         {
-                            Ok(stream) => {
-                                shutdown =
-                                    Some((shutdown_request::Scope::Now, stream.into_inner()))
+                            ShutdownFlow::Detach(outcome) => return Ok(outcome),
+                            ShutdownFlow::Pending(scope, stream) => {
+                                shutdown = Some((scope, *stream))
                             }
-                            // The engine is likely already exiting (the soft-stop
-                            // stream is still draining); keep polling that stream
-                            // instead of failing the shell.
-                            Err(status) => {
-                                app.status =
-                                    Some(format!("interrupt failed: {}", status.message()));
-                            }
+                            ShutdownFlow::Keep => {}
                         }
                     }
                     // The overlay closed with nothing left to apply (a clean close
@@ -437,12 +500,28 @@ async fn event_loop(
                 Some(Ok(TermEvent::Paste(text))) => app.on_paste(&text),
                 // A click inside one of the two frames focuses it (T30.1);
                 // the theme picker's row click saves its theme (T43.1); the
-                // status bar's chips run their keys' actions (T134.1).
+                // status bar's chips run their keys' actions (T134.1); the m
+                // menu's Detach and Quit row clicks run their keys' shutdown
+                // flows through the same shared dispatch the key arm takes
+                // (T143.1).
                 Some(Ok(TermEvent::Mouse(mouse))) => match app.on_mouse(mouse) {
                     Action::None => {}
                     Action::StartBuild => start_build(client, app).await,
                     Action::RunDiscovery => run_discovery(client, app).await,
                     Action::SaveTheme(theme) => save_theme(&mut shell_settings, app, theme),
+                    action @ (Action::Detach | Action::Quit | Action::Interrupt) => {
+                        match run_shutdown_family(app, &action, |scope| {
+                            client.shutdown(ShutdownRequest { scope: scope as i32 })
+                        })
+                        .await?
+                        {
+                            ShutdownFlow::Detach(outcome) => return Ok(outcome),
+                            ShutdownFlow::Pending(scope, stream) => {
+                                shutdown = Some((scope, *stream))
+                            }
+                            ShutdownFlow::Keep => {}
+                        }
+                    }
                     _ => {}
                 },
                 Some(Ok(_)) => {}
@@ -713,7 +792,18 @@ async fn change_setting(
 
 #[cfg(test)]
 mod tests {
-    use super::ModifyOtherKeys;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    use patok_core::config::Theme as ThemeKey;
+    use patok_core::event::{EngineEvent, Phase, Snapshot};
+    use patok_core::pipeline::PipelineState;
+    use patok_core::task;
+
+    use super::{
+        Action, App, Outcome, ShutdownCall, ShutdownFlow, interrupt_status, run_shutdown_family,
+    };
+    use super::{ModifyOtherKeys, shutdown_request};
 
     fn ansi(command: &ModifyOtherKeys) -> String {
         let mut bytes = String::new();
@@ -725,5 +815,146 @@ mod tests {
     fn modify_other_keys_sets_and_resets_the_mode() {
         assert_eq!(ansi(&ModifyOtherKeys(2)), "\x1b[>4;2m");
         assert_eq!(ansi(&ModifyOtherKeys(0)), "\x1b[>4m");
+    }
+
+    /// An idle shell, the state a fresh attach builds.
+    fn app() -> App {
+        App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: task::parse("## Phase 1\n- [ ] T1.1: scaffold the workspace\n"),
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: BTreeMap::new(),
+                pipeline: PipelineState::today(),
+                recent: vec![],
+            },
+            "0.1.0".into(),
+        )
+    }
+
+    /// A running engine, so `is_idle` is false and the interrupt status is the
+    /// keep-running notice.
+    fn running() -> App {
+        let mut app = app();
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        app
+    }
+
+    /// A shutdown-request fake that always fails: it records the scope it was
+    /// asked for and answers with the given status. tonic's `Streaming` has no
+    /// public constructor, so only the failure paths are unit-testable here;
+    /// the Ok paths are the key arm's moved code plus the e2e protocol tests.
+    fn failing_request(
+        scopes: &Arc<Mutex<Vec<shutdown_request::Scope>>>,
+        message: &'static str,
+    ) -> impl FnOnce(shutdown_request::Scope) -> std::future::Ready<ShutdownCall> {
+        let scopes = Arc::clone(scopes);
+        move |scope| {
+            scopes.lock().unwrap().push(scope);
+            let answer: ShutdownCall = Err(tonic::Status::unavailable(message));
+            std::future::ready(answer)
+        }
+    }
+
+    /// A shutdown-request fake that is never supposed to run: it panics, so
+    /// any call fails the test.
+    fn unused_request() -> impl FnOnce(shutdown_request::Scope) -> std::future::Pending<ShutdownCall>
+    {
+        move |scope| panic!("no shutdown request was expected, got {scope:?}")
+    }
+
+    /// Detach maps to the detached outcome with the completed count, and no
+    /// shutdown request is sent -- the engine keeps running.
+    #[tokio::test]
+    async fn detach_maps_to_the_detached_outcome_without_a_request() {
+        let mut app = app();
+        app.completed = 3;
+        let flow = run_shutdown_family(&mut app, &Action::Detach, unused_request())
+            .await
+            .unwrap();
+        assert!(matches!(
+            flow,
+            ShutdownFlow::Detach(Outcome::Detached { completed: 3 })
+        ));
+    }
+
+    /// Quit asks for a SOFT stop, leaves the app state's status alone, and
+    /// propagates a transport failure with the `q` key's message.
+    #[tokio::test]
+    async fn quit_requests_a_soft_stop_and_propagates_a_failure() {
+        let mut app = app();
+        let scopes = Arc::new(Mutex::new(Vec::new()));
+        let error = run_shutdown_family(
+            &mut app,
+            &Action::Quit,
+            failing_request(&scopes, "unavailable"),
+        )
+        .await
+        .err()
+        .expect("quit propagates a failed shutdown request");
+        assert_eq!(error.to_string(), "could not request engine shutdown");
+        assert_eq!(*scopes.lock().unwrap(), vec![shutdown_request::Scope::Soft]);
+        assert_eq!(app.status, None);
+    }
+
+    /// Interrupt asks for a NOW stop and tolerates an engine that is already
+    /// exiting: the failure lands in the status bar and the loop keeps going,
+    /// polling the earlier shutdown's stream.
+    #[tokio::test]
+    async fn interrupt_requests_a_now_stop_and_tolerates_an_exiting_engine() {
+        let mut app = app();
+        let scopes = Arc::new(Mutex::new(Vec::new()));
+        let flow = run_shutdown_family(
+            &mut app,
+            &Action::Interrupt,
+            failing_request(&scopes, "the engine is exiting"),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(flow, ShutdownFlow::Keep));
+        assert_eq!(*scopes.lock().unwrap(), vec![shutdown_request::Scope::Now]);
+        assert_eq!(
+            app.status.as_deref(),
+            Some("interrupt failed: the engine is exiting")
+        );
+    }
+
+    /// The interrupt status line is the true quit's stopping message while
+    /// idle and the keep-running notice otherwise -- the key arm's exact
+    /// texts.
+    #[test]
+    fn interrupt_status_names_the_true_quit_while_idle() {
+        assert_eq!(interrupt_status(&app()), "Stopping the engine...");
+        assert_eq!(
+            interrupt_status(&running()),
+            "Interrupting -- the current task is cancelled and the app keeps running."
+        );
+    }
+
+    /// Every other action keeps its own arm in the event loop: the shared
+    /// dispatch returns `Keep` for them without a request, so the mouse
+    /// arm's StartBuild/RunDiscovery/SaveTheme handling and the wildcard are
+    /// unchanged.
+    #[tokio::test]
+    async fn other_actions_keep_looping_without_a_request() {
+        for action in [
+            Action::None,
+            Action::StartBuild,
+            Action::SaveTheme(ThemeKey::default()),
+        ] {
+            let mut app = app();
+            let flow = run_shutdown_family(&mut app, &action, unused_request())
+                .await
+                .unwrap();
+            assert!(matches!(flow, ShutdownFlow::Keep), "{action:?}");
+            assert_eq!(app.status, None);
+        }
     }
 }
