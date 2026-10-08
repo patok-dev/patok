@@ -1401,7 +1401,11 @@ impl App {
     /// A click on the title row's close button runs the menu's Esc key the
     /// same way (T66.1). A left click inside a rendered entry row moves the
     /// selection to that row and runs it -- exactly the `m` plus Enter
-    /// path (T137.1). A click on the status bar's m menu chip closes the
+    /// path (T137.1). The pointer moving onto a rendered entry moves only
+    /// the selection highlight there, without running it (T140.1), so a
+    /// click is exactly hover plus Enter; a move inside the modal but
+    /// outside every row -- or anywhere else -- leaves the selection
+    /// unchanged. A click on the status bar's m menu chip closes the
     /// menu, the second half of the chip's toggle (T133.1). Everything else
     /// -- the border, the title, the footer's non-button columns, the shell
     /// behind the modal -- is swallowed, as before.
@@ -1420,19 +1424,33 @@ impl App {
         ) {
             return self.on_menu_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
-        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-            let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-            let body = self.menu_body.get();
-            let entries = menu_entries(self.phase == Phase::Running);
-            let visible = entries.len().min(usize::from(body.height));
-            if let Some(index) = menu_row_at(position, body, visible) {
-                // The click is the row's Enter key verbatim: it moves the
-                // highlight to the row, then runs the Enter dispatch -- so a
-                // click and `m` plus Enter on the same row are
-                // indistinguishable.
-                self.menu_selected = index;
-                return self.on_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+        let body = self.menu_body.get();
+        let entries = menu_entries(self.phase == Phase::Running);
+        let visible = entries.len().min(usize::from(body.height));
+        let row = menu_row_at(position, body, visible);
+        match mouse.kind {
+            MouseEventKind::Moved => {
+                // The pointer move moves only the highlight, never the
+                // dispatch (T140.1): a move that misses every row -- the
+                // border, the title, the footer, the shell behind the
+                // modal, the running-only stop row's absent slot -- leaves
+                // the selection alone.
+                if let Some(index) = row {
+                    self.menu_selected = index;
+                }
             }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(index) = row {
+                    // The click is the row's Enter key verbatim: it moves the
+                    // highlight to the row, then runs the Enter dispatch -- so a
+                    // click and `m` plus Enter on the same row are
+                    // indistinguishable.
+                    self.menu_selected = index;
+                    return self.on_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+            }
+            _ => {}
         }
         Action::None
     }

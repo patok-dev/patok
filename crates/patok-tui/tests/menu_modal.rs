@@ -4,7 +4,9 @@
 //! entry -- each entry runs exactly the action its direct key binding
 //! triggers -- the rows' mouse handling -- a left click on a rendered row
 //! moves the highlight there and runs that row exactly like `m` plus
-//! Enter (T137.1) -- and the status bar's slimmed-down hint strip.
+//! Enter (T137.1), and a pointer move onto a rendered row moves only the
+//! highlight, never the dispatch (T140.1) -- and the status bar's
+//! slimmed-down hint strip.
 
 use std::collections::BTreeMap;
 
@@ -736,4 +738,154 @@ fn a_click_in_the_modal_padding_does_nothing() {
     assert_eq!(press(&mut app, KeyCode::Down), Action::None);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::Detach);
     assert!(!app.menu_open);
+}
+
+/// The pointer moving onto a rendered row moves only the highlight (T140.1):
+/// each idle row follows the pointer without running anything, and a
+/// subsequent Enter runs the hovered row, exactly like the click path.
+#[test]
+fn hovering_a_menu_row_moves_the_highlight_without_running_it() {
+    // The body rect the render records, pinned: the modal's inner area
+    // below the title border, one row per idle entry.
+    let probe = open();
+    draw(&probe, 80, 14);
+    assert_eq!(
+        probe.menu_body.get(),
+        ratatui::layout::Rect::new(14, 4, 52, 4)
+    );
+
+    // Each of the four idle rows: the move lands on the row, the highlight
+    // follows, and nothing runs -- the menu stays open and every modal
+    // a row would open stays closed.
+    let mut app = open();
+    draw(&app, 80, 14);
+    let body = app.menu_body.get();
+    for (i, offset) in (0u16..4).enumerate() {
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + offset)),
+            Action::None
+        );
+        assert_eq!(app.menu_selected, i);
+        assert!(app.menu_open);
+        assert!(!app.settings_open());
+        assert!(!app.theme_modal.open);
+        assert!(!app.stop_open);
+    }
+
+    // A subsequent Enter runs the hovered row: hover row 1 (Theme), then
+    // Enter opens the theme picker, exactly the `m` plus Enter path.
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 1)),
+        Action::None
+    );
+    assert_eq!(app.menu_selected, 1);
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    assert!(!app.menu_open);
+    assert!(app.theme_modal.open);
+}
+
+/// A pointer move inside the modal but outside every row rect -- the border
+/// above the body, the footer below it, the shell behind the modal and the
+/// status bar's m chip -- leaves the selection alone (T140.1).
+#[test]
+fn hovering_the_menu_padding_or_outside_changes_nothing() {
+    let mut app = open();
+    draw(&app, 80, 14);
+    let body = app.menu_body.get();
+    // Hover row 2 (Detach) first, so every later miss is observable.
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 2)),
+        Action::None
+    );
+    assert_eq!(app.menu_selected, 2);
+
+    let chip = app.menu_chip.get();
+    for (column, row) in [
+        (body.x + 3, body.y - 1),
+        (body.x + 10, body.y + body.height),
+        (0, 0),
+        (chip.x + 1, chip.y),
+    ] {
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
+            Action::None
+        );
+        assert_eq!(app.menu_selected, 2, "a move at ({column}, {row})");
+        assert!(app.menu_open);
+        assert!(!app.overlay.open);
+        assert!(!app.theme_modal.open);
+        assert!(!app.stop_open);
+    }
+}
+
+/// While a build runs the fifth row joins the body, and a pointer move onto
+/// it moves the highlight there without opening the stop dialog (T140.1) --
+/// a subsequent Enter opens it, the same state the click and key paths
+/// reach.
+#[test]
+fn hovering_the_stop_build_row_selects_it_without_running_it() {
+    // The running body rect, pinned: one row taller than the idle one.
+    let mut app = running_app();
+    assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
+    draw(&app, 80, 14);
+    assert_eq!(
+        app.menu_body.get(),
+        ratatui::layout::Rect::new(14, 4, 52, 5)
+    );
+    let body = app.menu_body.get();
+
+    // The hover selects the stop row but never runs it: the menu stays
+    // open, the stop dialog stays closed.
+    assert_eq!(
+        app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 4)),
+        Action::None
+    );
+    assert_eq!(app.menu_selected, 4);
+    assert!(app.menu_open);
+    assert!(!app.stop_open);
+
+    // Enter on the hovered row opens the stop dialog, the key path's state.
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    assert!(!app.menu_open);
+    assert!(app.stop_open);
+    assert_eq!(app.stop_selected, 0);
+}
+
+/// Pointer moves never open the closed menu or disturb any other
+/// selection (T140.1): the merged view's move handling stays inert, and
+/// the settings overlay keeps its own focus through moves sent while it
+/// is open.
+#[test]
+fn pointer_moves_while_the_menu_is_closed_change_nothing() {
+    // While the menu is closed a move over where the body would be and
+    // over the m chip leaves it closed: the row hover runs only while
+    // the menu is open.
+    let mut app = app();
+    draw(&app, 80, 14);
+    let chip = app.menu_chip.get();
+    for (column, row) in [(17, 5), (chip.x + 1, chip.y)] {
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
+            Action::None
+        );
+        assert!(!app.menu_open);
+    }
+
+    // The same moves while the settings overlay is open leave its focus
+    // alone: the overlay's mouse path has no row hover, so nothing
+    // underneath moves either.
+    assert_eq!(press(&mut app, KeyCode::Char('?')), Action::None);
+    assert!(app.settings_open());
+    assert_eq!(app.overlay.focus, 0);
+    assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    assert_eq!(app.overlay.focus, 1);
+    draw(&app, 80, 14);
+    for (column, row) in [(17, 5), (chip.x + 1, chip.y)] {
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
+            Action::None
+        );
+        assert_eq!(app.overlay.focus, 1);
+        assert!(!app.menu_open);
+    }
 }
