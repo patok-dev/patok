@@ -1,0 +1,372 @@
+//! The agent output frame: its title, pane rendering and session lines.
+
+use patok_core::event::SessionOutcome;
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use std::time::Duration;
+
+use super::common::{render_hints_strip, split_hints_row};
+use crate::app::{App, FrameFocus, LineKind, OutLine, Pane};
+use crate::markdown::markdown_lines;
+use crate::theme::Theme;
+
+/// The agent output frame's key hints (T71.1): the keys its focused state
+/// owns -- the scroll keys move the output, PageUp/PageDown page through it,
+/// `End` resumes the live follow, and Tab moves the keys to the other frame.
+/// T124.1 dropped the leading `v rail view` entry (as T75.1 did for the
+/// idle `q quit` hint), and T125.1 removed the `v` binding itself.
+pub(super) fn output_hints() -> Vec<&'static str> {
+    vec!["↑↓ scroll", "PgUp/PgDn page", "End follow", "Tab tasks"]
+}
+
+/// The provider's display name for the output frame title ("claude" -> "Claude").
+pub(super) fn provider_display_name(provider: &str) -> &str {
+    match provider {
+        "claude" => "Claude",
+        "codex" => "Codex",
+        "mistral" => "Mistral",
+        other => other,
+    }
+}
+
+/// The output frame title: " Builder | Claude - claude-sonnet-5.5 ", dropping the
+/// model first and then the provider when `width` is too narrow; the agent type
+/// always stays, so the title is never empty.
+pub fn output_title(agent: &str, provider: &str, model: &str, width: usize) -> String {
+    output_title_parts(agent, provider, model, None, width).0
+}
+
+/// What survives the width squeeze (T31.1): the agent type always stays; the
+/// model drops first, then the provider, then the timer.
+struct KeptTitle {
+    provider: Option<String>,
+    model: Option<String>,
+    timer: Option<String>,
+}
+
+/// The output frame title's left side from its kept parts: `" {agent}"`, then
+/// `" | {provider}"` and `" - {model}"` when they survived, closed by a
+/// trailing space.
+fn left_title(agent: &str, provider: Option<&str>, model: Option<&str>) -> String {
+    let mut left = format!(" {agent}");
+    if let Some(provider) = provider {
+        left.push_str(" | ");
+        left.push_str(provider);
+    }
+    if let Some(model) = model {
+        left.push_str(" - ");
+        left.push_str(model);
+    }
+    left.push(' ');
+    left
+}
+
+/// The shared T31.1 truncation decision: which of the provider, model and
+/// timer survive `width` columns. The candidates drop the model first, then
+/// the provider; each is tried with the timer (`left + right <= width`), then
+/// without it. The agent type always stays, so the title is never empty.
+fn kept_title(
+    agent: &str,
+    provider: &str,
+    model: &str,
+    timer: Option<&str>,
+    width: usize,
+) -> KeptTitle {
+    let timer = timer.map(|t| format!(" {t} "));
+    let mut candidates: Vec<(Option<&str>, Option<&str>)> = Vec::new();
+    if !provider.is_empty() {
+        if !model.is_empty() {
+            candidates.push((Some(provider), Some(model)));
+        }
+        candidates.push((Some(provider), None));
+    }
+    candidates.push((None, None));
+    let right_len = timer.as_ref().map_or(0, |t| t.chars().count());
+    for &(provider, model) in &candidates {
+        if left_title(agent, provider, model).chars().count() + right_len <= width {
+            return KeptTitle {
+                provider: provider.map(String::from),
+                model: model.map(String::from),
+                timer,
+            };
+        }
+    }
+    // The timer is the last element to disappear: without it, try the left parts
+    // against the full width.
+    for &(provider, model) in &candidates {
+        if left_title(agent, provider, model).chars().count() <= width {
+            return KeptTitle {
+                provider: provider.map(String::from),
+                model: model.map(String::from),
+                timer: None,
+            };
+        }
+    }
+    KeptTitle {
+        provider: None,
+        model: None,
+        timer: None,
+    }
+}
+
+/// The output frame title in two parts: the agent type with provider and model
+/// on the left, the running timer on the right. A narrow `width` drops the model
+/// first, then the provider, and only then the timer; the agent type always
+/// keeps its surrounding spaces, so the left side is never empty.
+pub fn output_title_parts(
+    agent: &str,
+    provider: &str,
+    model: &str,
+    timer: Option<&str>,
+    width: usize,
+) -> (String, String) {
+    let kept = kept_title(agent, provider, model, timer, width);
+    (
+        left_title(agent, kept.provider.as_deref(), kept.model.as_deref()),
+        kept.timer.unwrap_or_default(),
+    )
+}
+
+/// The output frame title in per-segment spans (T37.1): the agent type name
+/// keeps its agent colour and bold while the separator, provider, model and
+/// timer carry the theme's low-emphasis `detail_colour`. Concatenated, the
+/// spans are exactly [`output_title_parts`]'s strings, so the T31.1 truncation
+/// behaviour is shared.
+pub fn output_title_spans(
+    agent: &str,
+    provider: &str,
+    model: &str,
+    timer: Option<&str>,
+    width: usize,
+    agent_colour: Color,
+    detail_colour: Color,
+) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
+    let kept = kept_title(agent, provider, model, timer, width);
+    let agent_style = Style::new().fg(agent_colour).bold();
+    let detail_style = Style::new().fg(detail_colour);
+    // The agent span closes itself when nothing else survived the squeeze.
+    let mut left = vec![Span::styled(
+        if kept.provider.is_none() {
+            format!(" {agent} ")
+        } else {
+            format!(" {agent}")
+        },
+        agent_style,
+    )];
+    if let Some(provider) = kept.provider.as_deref() {
+        if let Some(model) = kept.model.as_deref() {
+            left.push(Span::styled(format!(" | {provider}"), detail_style));
+            left.push(Span::styled(format!(" - {model} "), detail_style));
+        } else {
+            left.push(Span::styled(format!(" | {provider} "), detail_style));
+        }
+    }
+    let right = kept
+        .timer
+        .map(|timer| vec![Span::styled(timer, detail_style)])
+        .unwrap_or_default();
+    (left, right)
+}
+
+/// A session's elapsed time as `mm:ss` with zero-padded minutes.
+pub fn format_elapsed(elapsed: Duration) -> String {
+    let total = elapsed.as_secs();
+    format!("{:02}:{:02}", total / 60, total % 60)
+}
+
+/// The output frame title's agent type: the active agent's name capitalised
+/// ("planner" -> "Planner", "builder" -> "Builder"; T11.1).
+pub fn agent_display(agent: &str) -> String {
+    let mut chars = agent.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// A session's duration in human words (T42.1): `M sec` under a minute,
+/// `N min M sec` under an hour (seconds zero-padded) and `N h M min` beyond
+/// (minutes-within-the-hour zero-padded).
+pub fn human_duration(duration: Duration) -> String {
+    let total = duration.as_secs();
+    let (mins, secs) = (total / 60, total % 60);
+    if total < 60 {
+        format!("{secs} sec")
+    } else if total < 3600 {
+        format!("{mins} min {secs:02} sec")
+    } else {
+        format!("{} h {:02} min", total / 3600, mins % 60)
+    }
+}
+
+/// The started line appended to the output pane when one agent session begins
+/// (T78.1): the agent type name exactly as the finished line shows it, the
+/// provider it runs on, and the configured model when one exists.
+pub fn started_line(agent: &str, provider: &str, model: Option<&str>) -> String {
+    match model {
+        Some(model) => format!("{} started ({provider}, {model})", agent_display(agent)),
+        None => format!("{} started ({provider})", agent_display(agent)),
+    }
+}
+
+/// The finished line appended to the output pane when one agent session ends
+/// (T42.1): the agent type name exactly as the frame title shows it, the
+/// outcome's word (`finished`, `failed` or `cancelled`) and the human duration.
+pub fn finished_line(agent: &str, outcome: SessionOutcome, duration: Duration) -> String {
+    let word = match outcome {
+        SessionOutcome::Finished => "finished",
+        SessionOutcome::Failed => "failed",
+        SessionOutcome::Cancelled => "cancelled",
+    };
+    format!(
+        "{} {word} in {}",
+        agent_display(agent),
+        human_duration(duration)
+    )
+}
+
+pub(super) fn render_output(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = app.theme();
+    let timer = app.session_elapsed().map(format_elapsed);
+    // The agent type name keeps its fixed agent colour in every theme (T11.1,
+    // T24.1, T110.1); the frame title is the one surface that keeps the
+    // fixated name colour (T117.1), and the separator, provider, model and
+    // timer render in the theme's low-emphasis detail colour (T37.1).
+    let title_colour = Theme::agent_name_color(theme, &app.agent);
+    let (left, right) = output_title_spans(
+        &agent_display(&app.agent),
+        provider_display_name(&app.provider),
+        &app.model,
+        timer.as_deref(),
+        usize::from(area.width.saturating_sub(2)),
+        title_colour,
+        theme.muted_text,
+    );
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .title_top(Line::from(left));
+    // The running session timer sits right-aligned on the same title line.
+    if !right.is_empty() {
+        block = block.title_top(Line::from(right).right_aligned());
+    }
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    // The focused frame reserves its bottom inner row for the key hints strip
+    // (T71.1); the unfocused frame keeps the full inner area and no strip.
+    let (content, hints_row) = split_hints_row(inner, app.focus == FrameFocus::Output);
+    let max_scroll = render_pane(
+        frame,
+        theme,
+        &app.output,
+        app.scroll,
+        "no output yet",
+        content,
+    );
+    app.max_scroll.set(max_scroll);
+    render_hints_strip(frame, hints_row, &output_hints(), theme);
+}
+
+/// Draws agent output scrolled up `scroll` visual lines from the bottom; returns the largest useful scroll.
+pub(super) fn render_pane(
+    frame: &mut Frame,
+    theme: Theme,
+    pane: &Pane,
+    scroll: usize,
+    empty: &str,
+    inner: Rect,
+) -> usize {
+    if pane.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                empty.to_string(),
+                Style::new().fg(theme.muted_text),
+            )),
+            inner,
+        );
+        return 0;
+    }
+
+    let width = usize::from(inner.width.max(1));
+    let height = usize::from(inner.height);
+    let visual: Vec<Line> = pane
+        .lines
+        .iter()
+        .flat_map(|line| visual_lines(theme, line, width))
+        .collect();
+    let max_scroll = visual.len().saturating_sub(height);
+    let scroll = scroll.min(max_scroll);
+    let end = visual.len() - scroll;
+    let start = end.saturating_sub(height);
+    frame.render_widget(Paragraph::new(visual[start..end].to_vec()), inner);
+    max_scroll
+}
+
+/// One logical output line as visual rows: plain text hard-wraps; thinking renders
+/// as markdown first, so headings, emphasis, lists and code blocks show up styled.
+/// Every line, the agent's name inside it included, wears its line kind's colour;
+/// the fixated per-agent name colour reaches only the output frame title (T117.1).
+pub(super) fn visual_lines(theme: Theme, line: &OutLine, width: usize) -> Vec<Line<'static>> {
+    let style = style_of(theme, line.kind);
+    if line.kind == LineKind::Thinking {
+        markdown_lines(&line.text, style)
+            .into_iter()
+            .flat_map(|row| wrap_line(&row, width))
+            .collect()
+    } else {
+        wrap(&line.text, width)
+            .into_iter()
+            .map(|piece| Line::styled(piece, style))
+            .collect()
+    }
+}
+
+/// Wraps a styled line at `width` columns, keeping each span's style.
+pub(super) fn wrap_line(line: &Line<'_>, width: usize) -> Vec<Line<'static>> {
+    let cells: Vec<(char, Style)> = line
+        .spans
+        .iter()
+        .flat_map(|span| span.content.chars().map(move |c| (c, span.style)))
+        .collect();
+    if cells.is_empty() {
+        return vec![Line::default()];
+    }
+    cells
+        .chunks(width.max(1))
+        .map(|chunk| {
+            let mut spans: Vec<Span> = Vec::new();
+            for (c, style) in chunk {
+                match spans.last_mut() {
+                    Some(last) if last.style == *style => last.content.to_mut().push(*c),
+                    _ => spans.push(Span::styled(c.to_string(), *style)),
+                }
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+pub(super) fn style_of(theme: Theme, kind: LineKind) -> Style {
+    // `Text` renders unstyled: no fg at all, so the line inherits the base
+    // style's foreground instead of resetting it.
+    if kind == LineKind::Text {
+        return Style::new();
+    }
+    let style = Style::new().fg(Theme::line_color(theme, kind));
+    if kind == LineKind::Heading {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
+    }
+}
+
+/// Hard-wraps at `width` characters; an empty line stays one empty line.
+pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars.chunks(width).map(|c| c.iter().collect()).collect()
+}
