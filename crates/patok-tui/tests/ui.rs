@@ -1895,9 +1895,7 @@ fn esc_cancels_a_pending_soft_stop() {
         phase: shutdown_update::Phase::Complete as i32,
         message: "Soft stop cancelled -- the build keeps running.".into(),
     };
-    assert!(
-        patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Soft, &update).is_none()
-    );
+    patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Soft, &update);
     assert!(!app.run.stopping);
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Startup,

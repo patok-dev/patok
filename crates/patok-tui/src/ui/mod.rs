@@ -17,9 +17,7 @@ use crate::app::{App, FrameFocus, Modal};
 use crate::pipeline::{rail_width, render_rail};
 
 pub use common::fitted_hints;
-pub use dialogs::{
-    DIALOG_WATERMARK, INJECT_WATERMARK, dialog_area, menu_area, stop_area, theme_area,
-};
+pub use dialogs::{DIALOG_WATERMARK, dialog_area, stop_area, theme_area};
 pub use output::{format_elapsed, output_title, output_title_parts, output_title_spans};
 pub use settings::{
     SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH,

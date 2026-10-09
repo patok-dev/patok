@@ -1343,6 +1343,7 @@ dependencies = [
  "patok-engine",
  "patok-proto",
  "patok-providers",
+ "patok-tui",
  "ratatui",
  "tempfile",
  "tokio",

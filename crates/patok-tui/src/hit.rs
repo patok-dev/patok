@@ -12,8 +12,12 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::app::{FrameFocus, STOP_CHOICES};
+use crate::app::FrameFocus;
+#[cfg(test)]
+use crate::app::STOP_CHOICES;
+#[cfg(test)]
 use crate::choice::choice_row_at;
+#[cfg(test)]
 use crate::overlay::SETTINGS_CHOICES;
 use crate::theme::Theme;
 
@@ -202,7 +206,9 @@ pub fn menu_row_at(position: Position, body: Rect, visible_len: usize) -> Option
 /// index when the position is on one of the dialog's three choice rows, `None`
 /// on the dialog's blank body padding below them, the border, the title, the
 /// footer or the shell outside. A pure hit-test like [`menu_row_at`], over
-/// the shared choice-dialog rows (finding 6).
+/// the shared choice-dialog rows (finding 6). Test-only: the confirm dialog
+/// is keyboard-driven; the unit tests pin the shared row geometry.
+#[cfg(test)]
 pub fn confirm_row_at(position: Position, body: Rect) -> Option<usize> {
     choice_row_at(position, body, SETTINGS_CHOICES.len())
 }
@@ -211,7 +217,9 @@ pub fn confirm_row_at(position: Position, body: Rect) -> Option<usize> {
 /// when the position is on one of the dialog's three choice rows, `None`
 /// on the dialog's blank body padding below them, the border, the title,
 /// the footer or the shell outside. A pure hit-test like [`menu_row_at`],
-/// over the shared choice-dialog rows (finding 6).
+/// over the shared choice-dialog rows (finding 6). Test-only: the stop dialog
+/// is keyboard-driven; the unit tests pin the shared row geometry.
+#[cfg(test)]
 pub fn stop_row_at(position: Position, body: Rect) -> Option<usize> {
     choice_row_at(position, body, STOP_CHOICES.len())
 }

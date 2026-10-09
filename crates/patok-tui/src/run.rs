@@ -627,17 +627,13 @@ async fn event_loop(
             progress = next_shutdown(&mut shutdown) => match progress {
                 Some(Ok(update)) => {
                     let scope = shutdown.as_ref().expect("a pending shutdown").0;
-                    match shutdown_progress(app, scope, &update) {
-                        Some(outcome) => return Ok(outcome),
-                        // A completed shutdown is a stop, not a quit: drop the
-                        // finished stream below so keys work again. The shell
-                        // still ends through the attach stream when the engine
-                        // really exits.
-                        None => {
-                            if update.phase == shutdown_update::Phase::Complete as i32 {
-                                shutdown_done = true;
-                            }
-                        }
+                    shutdown_progress(app, scope, &update);
+                    // A completed shutdown is a stop, not a quit: drop the
+                    // finished stream below so keys work again. The shell
+                    // still ends through the attach stream when the engine
+                    // really exits.
+                    if update.phase == shutdown_update::Phase::Complete as i32 {
+                        shutdown_done = true;
                     }
                 }
                 // Stream ended or failed: the engine is gone either way.
@@ -659,14 +655,14 @@ pub fn shutdown_progress(
     app: &mut App,
     scope: shutdown_request::Scope,
     update: &patok_proto::ShutdownUpdate,
-) -> Option<Outcome> {
+) {
     // While a SOFT stop is pending, the two-keys message stays on screen for
     // the whole pending window; the engine's generic progress text does not
     // overwrite it. The Complete update still carries its own message.
     if scope == shutdown_request::Scope::Soft
         && update.phase != shutdown_update::Phase::Complete as i32
     {
-        app.status = Some(crate::SOFT_STOP_PENDING.to_string());
+        app.status = Some(crate::app::SOFT_STOP_PENDING.to_string());
     } else {
         app.status = Some(update.message.clone());
     }
@@ -675,9 +671,6 @@ pub fn shutdown_progress(
         // the shell stays open (a SOFT stop finishes the running task first,
         // a NOW interrupt cancels it).
         app.run.stopping = false;
-        None
-    } else {
-        None
     }
 }
 

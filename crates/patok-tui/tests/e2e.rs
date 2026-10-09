@@ -251,10 +251,7 @@ async fn soft_stop_during_a_build_keeps_the_shell_running_and_a_new_build_starts
         .into_inner();
     while let Some(update) = progress.message().await.unwrap() {
         // A completed SOFT stop is a stop, not a quit: the shell keeps running.
-        assert!(
-            patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Soft, &update)
-                .is_none()
-        );
+        patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Soft, &update);
     }
     assert!(!app.run.stopping, "keys work again after the soft stop");
 
@@ -444,9 +441,7 @@ async fn choosing_interrupt_from_the_stop_modal_keeps_the_shell_running_and_a_ne
         .into_inner();
     let mut last = None;
     while let Some(update) = progress.message().await.unwrap() {
-        assert!(
-            patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Now, &update).is_none()
-        );
+        patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Now, &update);
         last = Some(update);
     }
     let last = last.unwrap();
@@ -667,10 +662,7 @@ async fn a_cancelled_soft_stop_continues_the_loop_over_grpc() {
     // The pending SOFT shutdown stream ends with the cancelled update.
     let mut last = None;
     while let Some(update) = progress.message().await.unwrap() {
-        assert!(
-            patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Soft, &update)
-                .is_none()
-        );
+        patok_tui::shutdown_progress(&mut app, shutdown_request::Scope::Soft, &update);
         last = Some(update);
     }
     let last = last.expect("the shutdown stream ended with an update");
