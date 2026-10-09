@@ -238,6 +238,34 @@ impl RunState {
     }
 }
 
+/// Which `start_*` command is asking: the four entry points share one guard
+/// preamble and differ only in the wording of two of its rejections (finding
+/// 17 in docs/private/structure-review.md).
+enum StartCommand {
+    Build,
+    AddTasks,
+    QueueCreation,
+    Discovery,
+}
+
+impl StartCommand {
+    /// The rejection when a build session is active.
+    fn running_rejection(self) -> &'static str {
+        match self {
+            Self::Build => "a build is already running",
+            _ => "a build is running; wait for it to finish",
+        }
+    }
+
+    /// The rejection when a planner session is active.
+    fn planning_rejection(self) -> &'static str {
+        match self {
+            Self::AddTasks => "the planner is already running",
+            _ => "tasks are being planned; wait for the planner to finish",
+        }
+    }
+}
+
 /// A pending stop: no new unit of work starts. A soft stop (`Soft`) is
 /// cancellable by [`Engine::cancel_soft_stop`]; a NOW stop (`Now`) already
 /// cancelled the running agent and is not. Both are released by
@@ -547,6 +575,55 @@ enum ReviewRun {
     Cancelled,
 }
 
+/// How the shared stage session's starting line is produced (finding 17 in
+/// docs/private/structure-review.md): five stages announce inside
+/// [`Engine::run_stage`]; the planner and queue-creation runs were announced
+/// by their `start_*` under the state guard, before the planning flag
+/// flipped (T24.1), and pass that instant.
+enum StageStart {
+    /// Announce now, as the active agent.
+    Announce,
+    /// Already announced; the recorded instant the duration is measured from.
+    Announced(Instant),
+}
+
+/// The stage-specific words of the shared announce-run-match-exit skeleton
+/// (finding 17 in docs/private/structure-review.md): every stage reports a
+/// session that could not start with the provider's error, a cancelled one
+/// with the stage's warning (the reviewer session stays silent), and a failed
+/// one with the stage's level and wording (the research stage's failure is a
+/// non-blocking warning; every other stage's is an error).
+struct StageWords {
+    /// Whether the stage reads the session's normalised events (the plan
+    /// stage reads the plan out of them, T10.1); the exit's `Completed`
+    /// carries them only when this is on.
+    capture: bool,
+    /// The tracing subject, e.g. "planner could not start" or
+    /// "agent could not start for T42.1".
+    could_not_start: String,
+    /// The failure reason when the provider reported none.
+    default_failure: String,
+    /// The cancelled-session warning, or `None` to stay silent.
+    cancelled_notice: Option<String>,
+    /// The failed-session notice level.
+    failure_level: NoticeLevel,
+    /// The failed-session notice around the reason.
+    failure_prefix: String,
+    failure_suffix: String,
+}
+
+/// One stage session's classified exit (finding 17 in
+/// docs/private/structure-review.md): the caller continues with the
+/// stage-specific post-processing.
+enum StageExit {
+    /// Completed; the captured events when the stage asked for capture.
+    Completed(Vec<AgentEvent>),
+    /// Cancelled; the stage's warning, when it has one, was reported.
+    Cancelled,
+    /// Failed or could not start; the failure notice was reported.
+    Failed,
+}
+
 /// Merges `findings` into `merged`, de-duplicated by file and issue.
 fn merge_findings(merged: &mut review::Findings, findings: review::Findings) {
     for severity in [Severity::High, Severity::Medium, Severity::Low] {
@@ -813,6 +890,28 @@ impl Engine {
                 ExitKind::Cancelled => SessionOutcome::Cancelled,
                 ExitKind::Failed | ExitKind::TimedOut => SessionOutcome::Failed,
             },
+        }
+    }
+
+    /// The shared preamble of the four `start_*` commands (finding 17 in
+    /// docs/private/structure-review.md): a pending stop or a non-idle run
+    /// state rejects the command with the same reasons as before. The caller
+    /// holds the state guard, so the ordering against each command's own
+    /// pre-checks (the task-file read of `start_build`, the reuse window of
+    /// `start_queue_creation`) is unchanged.
+    fn check_start(state: &State, command: StartCommand) -> Result<(), String> {
+        if state.stop.is_pending() {
+            return Err("the engine is shutting down".into());
+        }
+        match state.run {
+            RunState::Running | RunState::SessionDiscovery => {
+                Err(command.running_rejection().into())
+            }
+            RunState::Planning => Err(command.planning_rejection().into()),
+            RunState::Discovering => {
+                Err("a discovery round is running; wait for it to finish".into())
+            }
+            RunState::Idle => Ok(()),
         }
     }
 
@@ -1200,21 +1299,7 @@ impl Engine {
         let tasks =
             taskfile::load(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let mut state = self.state();
-        if state.stop.is_pending() {
-            return Err("the engine is shutting down".into());
-        }
-        match state.run {
-            RunState::Running | RunState::SessionDiscovery => {
-                return Err("a build is already running".into());
-            }
-            RunState::Planning => {
-                return Err("tasks are being planned; wait for the planner to finish".into());
-            }
-            RunState::Discovering => {
-                return Err("a discovery round is running; wait for it to finish".into());
-            }
-            RunState::Idle => {}
-        }
+        Self::check_start(&state, StartCommand::Build)?;
         let task = task::next_pending(&tasks)
             .ok_or_else(|| format!("no pending tasks in {TASK_FILE}"))?
             .clone();
@@ -1368,21 +1453,7 @@ impl Engine {
         }
         let unit = self.unit()?;
         let mut state = self.state();
-        if state.stop.is_pending() {
-            return Err("the engine is shutting down".into());
-        }
-        match state.run {
-            RunState::Running | RunState::SessionDiscovery => {
-                return Err("a build is running; wait for it to finish".into());
-            }
-            RunState::Planning => {
-                return Err("the planner is already running".into());
-            }
-            RunState::Discovering => {
-                return Err("a discovery round is running; wait for it to finish".into());
-            }
-            RunState::Idle => {}
-        }
+        Self::check_start(&state, StartCommand::AddTasks)?;
         // Record the task list as it is before the planner touches it (validated in T3.6).
         // A missing file is created with a minimal header first. The lock is held only for
         // that read and released before the session runs, so an inject is never blocked by
@@ -1427,21 +1498,7 @@ impl Engine {
     pub fn start_queue_creation(&self, kind: QueueCreation) -> Result<(), String> {
         let unit = self.unit()?;
         let mut state = self.state();
-        if state.stop.is_pending() {
-            return Err("the engine is shutting down".into());
-        }
-        match state.run {
-            RunState::Running | RunState::SessionDiscovery => {
-                return Err("a build is running; wait for it to finish".into());
-            }
-            RunState::Planning => {
-                return Err("tasks are being planned; wait for the planner to finish".into());
-            }
-            RunState::Discovering => {
-                return Err("a discovery round is running; wait for it to finish".into());
-            }
-            RunState::Idle => {}
-        }
+        Self::check_start(&state, StartCommand::QueueCreation)?;
         // A fresh same-kind research report is reused: no session (the T68.1
         // reuse window covers the queue-creation reports).
         if self.reusable_research_report(kind.stem()).is_some() {
@@ -1493,21 +1550,7 @@ impl Engine {
     pub fn start_discovery(&self) -> Result<(), String> {
         let unit = self.unit()?;
         let mut state = self.state();
-        if state.stop.is_pending() {
-            return Err("the engine is shutting down".into());
-        }
-        match state.run {
-            RunState::Running | RunState::SessionDiscovery => {
-                return Err("a build is running; wait for it to finish".into());
-            }
-            RunState::Planning => {
-                return Err("tasks are being planned; wait for the planner to finish".into());
-            }
-            RunState::Discovering => {
-                return Err("a discovery round is running; wait for it to finish".into());
-            }
-            RunState::Idle => {}
-        }
+        Self::check_start(&state, StartCommand::Discovery)?;
         // Like the planner run: the file is recorded first under a briefly held
         // lock, released before the session runs (T77.1).
         let path = self.inner.config.task_file();
@@ -1810,6 +1853,61 @@ impl Engine {
         (session, captured)
     }
 
+    /// Runs one stage session through the shared announce-run-match-exit
+    /// skeleton (finding 17 in docs/private/structure-review.md): the agent
+    /// is announced as the active agent (or its already-recorded start
+    /// instant is used when the `start_*` command announced it under the
+    /// state guard, T24.1), the session runs, and one finished line lands
+    /// after the agent output and before the stage's own outcome notices
+    /// (T42.1). A session that could not start reports the provider's
+    /// error, a cancelled one the stage's warning (the reviewer session
+    /// stays silent), and a failed one the stage's level and wording; the
+    /// caller continues with the stage-specific post-processing.
+    async fn run_stage(
+        &self,
+        start: StageStart,
+        role: AgentRole,
+        agent: AgentPrompt,
+        cancel: CancellationToken,
+        unit: &Unit,
+        words: StageWords,
+    ) -> StageExit {
+        let start = match start {
+            StageStart::Announce => {
+                self.announce_session(role, unit.provider.slug(), unit.model.as_deref())
+            }
+            StageStart::Announced(start) => start,
+        };
+        let (session, events) = self
+            .run_agent_session(agent, cancel, words.capture, unit)
+            .await;
+        self.finish_session(role, start, Self::session_outcome(&session));
+        match session {
+            Err(error) => {
+                tracing::error!("{}: {error}", words.could_not_start);
+                self.notice(NoticeLevel::Error, error.to_string());
+                StageExit::Failed
+            }
+            Ok(result) if result.exit == ExitKind::Completed => StageExit::Completed(events),
+            Ok(result) if result.exit == ExitKind::Cancelled => {
+                if let Some(text) = &words.cancelled_notice {
+                    self.notice(NoticeLevel::Warning, text.clone());
+                }
+                StageExit::Cancelled
+            }
+            Ok(result) => {
+                let reason = result
+                    .failure
+                    .unwrap_or_else(|| words.default_failure.clone());
+                self.notice(
+                    words.failure_level,
+                    format!("{}{reason}{}", words.failure_prefix, words.failure_suffix),
+                );
+                StageExit::Failed
+            }
+        }
+    }
+
     /// One planner session. `before` is the task file as it was before the run;
     /// `start` is the moment the run was announced in `start_add_tasks`. The run
     /// uses the settings snapshot taken when it was started. The task-file lock
@@ -1826,8 +1924,10 @@ impl Engine {
     ) {
         // The append-tasks planner is the active agent for the whole run (T11.1), so the
         // shell's output frame shows the planner title while it streams.
-        let (session, _) = self
-            .run_agent_session(
+        let exit = self
+            .run_stage(
+                StageStart::Announced(start),
+                AgentRole::Planner,
                 AgentPrompt {
                     prompt: prompt::planner(&request),
                     system_prompt: prompt::PLANNER_SYSTEM,
@@ -1835,27 +1935,20 @@ impl Engine {
                     tools: PLANNER_TOOLS,
                 },
                 cancel,
-                false,
                 &unit,
+                StageWords {
+                    capture: false,
+                    could_not_start: "planner could not start".into(),
+                    default_failure: "planner failed".into(),
+                    cancelled_notice: Some("Planner cancelled.".into()),
+                    failure_level: NoticeLevel::Error,
+                    failure_prefix: "planner: ".into(),
+                    failure_suffix: String::new(),
+                },
             )
             .await;
-        self.finish_session(AgentRole::Planner, start, Self::session_outcome(&session));
-
-        match session {
-            Err(error) => {
-                tracing::error!("planner could not start: {error}");
-                self.notice(NoticeLevel::Error, error.to_string());
-            }
-            Ok(result) if result.exit == ExitKind::Completed => {
-                self.check_planner_result(&before).await;
-            }
-            Ok(result) if result.exit == ExitKind::Cancelled => {
-                self.notice(NoticeLevel::Warning, "Planner cancelled.");
-            }
-            Ok(result) => {
-                let reason = result.failure.unwrap_or_else(|| "planner failed".into());
-                self.notice(NoticeLevel::Error, format!("planner: {reason}"));
-            }
+        if let StageExit::Completed(_) = exit {
+            self.check_planner_result(&before).await;
         }
 
         {
@@ -1883,8 +1976,10 @@ impl Engine {
     ) {
         // The research agent is the active agent for the whole run (T11.1), so
         // the shell's output frame shows the research title while it streams.
-        let (session, events) = self
-            .run_agent_session(
+        let exit = self
+            .run_stage(
+                StageStart::Announced(start),
+                AgentRole::Research,
                 AgentPrompt {
                     prompt: match kind {
                         QueueCreation::Bootstrap => prompt::research_queue_bootstrap(),
@@ -1895,49 +1990,42 @@ impl Engine {
                     tools: RESEARCH_TOOLS,
                 },
                 cancel,
-                true,
                 &unit,
+                StageWords {
+                    capture: true,
+                    could_not_start: "research agent could not start".into(),
+                    default_failure: "research failed".into(),
+                    cancelled_notice: Some("Research cancelled.".into()),
+                    failure_level: NoticeLevel::Error,
+                    failure_prefix: "research: ".into(),
+                    failure_suffix: String::new(),
+                },
             )
             .await;
-        self.finish_session(AgentRole::Research, start, Self::session_outcome(&session));
-
-        match session {
-            Err(error) => {
-                tracing::error!("research agent could not start: {error}");
-                self.notice(NoticeLevel::Error, error.to_string());
-            }
-            Ok(result) if result.exit == ExitKind::Completed => {
-                // The appended tasks pass the existing append-tasks validation,
-                // count as UI-added like the planner's, and reconcile the queue;
-                // only a pass saves the research report, so a rejected run
-                // re-runs rather than being covered by the reuse window.
-                if self
-                    .check_appended(
-                        &before,
-                        AgentRole::Research,
-                        taskfile::validate_append_ignoring,
-                        true,
-                    )
-                    .await
-                    .is_ok()
-                {
-                    let report = plan::captured_text(&events);
-                    if report.trim().is_empty() {
-                        self.notice(
-                            NoticeLevel::Warning,
-                            "the research run returned no report; nothing was saved",
-                        );
-                    } else {
-                        self.write_research_report(kind.stem(), &report);
-                    }
+        if let StageExit::Completed(events) = exit {
+            // The appended tasks pass the existing append-tasks validation,
+            // count as UI-added like the planner's, and reconcile the queue;
+            // only a pass saves the research report, so a rejected run
+            // re-runs rather than being covered by the reuse window.
+            if self
+                .check_appended(
+                    &before,
+                    AgentRole::Research,
+                    taskfile::validate_append_ignoring,
+                    true,
+                )
+                .await
+                .is_ok()
+            {
+                let report = plan::captured_text(&events);
+                if report.trim().is_empty() {
+                    self.notice(
+                        NoticeLevel::Warning,
+                        "the research run returned no report; nothing was saved",
+                    );
+                } else {
+                    self.write_research_report(kind.stem(), &report);
                 }
-            }
-            Ok(result) if result.exit == ExitKind::Cancelled => {
-                self.notice(NoticeLevel::Warning, "Research cancelled.");
-            }
-            Ok(result) => {
-                let reason = result.failure.unwrap_or_else(|| "research failed".into());
-                self.notice(NoticeLevel::Error, format!("research: {reason}"));
             }
         }
 
@@ -1963,13 +2051,10 @@ impl Engine {
     ) -> Option<usize> {
         // The discovery agent is the active agent for the whole round (T11.1), so the
         // shell's output frame shows its title while it streams.
-        let start = self.announce_session(
-            AgentRole::Discovery,
-            unit.provider.slug(),
-            unit.model.as_deref(),
-        );
-        let (session, _) = self
-            .run_agent_session(
+        let exit = self
+            .run_stage(
+                StageStart::Announce,
+                AgentRole::Discovery,
                 AgentPrompt {
                     prompt: prompt::discovery(),
                     system_prompt: prompt::DISCOVERY_SYSTEM,
@@ -1977,30 +2062,21 @@ impl Engine {
                     tools: DISCOVERY_TOOLS,
                 },
                 cancel,
-                false,
                 unit,
+                StageWords {
+                    capture: false,
+                    could_not_start: "discovery could not start".into(),
+                    default_failure: "discovery failed".into(),
+                    cancelled_notice: Some("Discovery cancelled.".into()),
+                    failure_level: NoticeLevel::Error,
+                    failure_prefix: "discovery: ".into(),
+                    failure_suffix: String::new(),
+                },
             )
             .await;
-        self.finish_session(AgentRole::Discovery, start, Self::session_outcome(&session));
-
-        let added = match session {
-            Err(error) => {
-                tracing::error!("discovery could not start: {error}");
-                self.notice(NoticeLevel::Error, error.to_string());
-                None
-            }
-            Ok(result) if result.exit == ExitKind::Completed => {
-                Some(self.check_discovery_result(&before).await.len())
-            }
-            Ok(result) if result.exit == ExitKind::Cancelled => {
-                self.notice(NoticeLevel::Warning, "Discovery cancelled.");
-                None
-            }
-            Ok(result) => {
-                let reason = result.failure.unwrap_or_else(|| "discovery failed".into());
-                self.notice(NoticeLevel::Error, format!("discovery: {reason}"));
-                None
-            }
+        let added = match exit {
+            StageExit::Completed(_) => Some(self.check_discovery_result(&before).await.len()),
+            _ => None,
         };
 
         {
@@ -2173,16 +2249,13 @@ impl Engine {
             tiles.set(Stage::Plan, TileStatus::Done);
             tiles.set(Stage::Build, TileStatus::Active);
         });
-        let session_start = self.announce_session(
-            AgentRole::Builder,
-            unit.provider.slug(),
-            unit.model.as_deref(),
-        );
 
         // The builder's final message carries the build claims section the review
         // stage reviews, so the events are captured like the plan stage's.
-        let (session, builder_events) = self
-            .run_agent_session(
+        let exit = self
+            .run_stage(
+                StageStart::Announce,
+                AgentRole::Builder,
                 AgentPrompt {
                     prompt: prompt::builder(&task, plan.as_deref(), research.as_deref()),
                     system_prompt: prompt::SYSTEM,
@@ -2190,26 +2263,25 @@ impl Engine {
                     tools: BUILDER_TOOLS,
                 },
                 cancel.clone(),
-                true,
                 unit,
+                StageWords {
+                    capture: true,
+                    could_not_start: format!("agent could not start for {}", task.id),
+                    default_failure: "agent failed".into(),
+                    cancelled_notice: Some("Agent cancelled; nothing committed.".into()),
+                    failure_level: NoticeLevel::Error,
+                    failure_prefix: format!("{}: ", task.id),
+                    failure_suffix: String::new(),
+                },
             )
             .await;
-        // One finished line lands after the agent output and before the task's own
-        // outcome line (T42.1).
-        self.finish_session(
-            AgentRole::Builder,
-            session_start,
-            Self::session_outcome(&session),
-        );
 
-        let (outcome, commit) = match session {
-            Err(error) => {
-                tracing::error!("agent could not start for {}: {error}", task.id);
-                self.notice(NoticeLevel::Error, error.to_string());
+        let (outcome, commit) = match exit {
+            StageExit::Failed => {
                 let commit = self.finalize(&task, &progress(false, false), false).await;
                 (TaskOutcome::Failed, commit)
             }
-            Ok(result) if result.exit == ExitKind::Completed => {
+            StageExit::Completed(builder_events) => {
                 // The builder succeeded: its final message's build claims section
                 // becomes the claims artifact, with the
                 // verification-results trimming applied.
@@ -2244,16 +2316,7 @@ impl Engine {
                     }
                 }
             }
-            Ok(result) if result.exit == ExitKind::Cancelled => {
-                self.notice(NoticeLevel::Warning, "Agent cancelled; nothing committed.");
-                (TaskOutcome::Cancelled, None)
-            }
-            Ok(result) => {
-                let reason = result.failure.unwrap_or_else(|| "agent failed".into());
-                self.notice(NoticeLevel::Error, format!("{}: {reason}", task.id));
-                let commit = self.finalize(&task, &progress(false, false), false).await;
-                (TaskOutcome::Failed, commit)
-            }
+            StageExit::Cancelled => (TaskOutcome::Cancelled, None),
         };
 
         self.finish_task(&task, outcome, commit)
@@ -2660,13 +2723,10 @@ impl Engine {
         // (mistral when the reviewer provider is mistral), so the unit resolves first
         // (T78.1).
         let reviewer_unit = self.reviewer_unit(unit);
-        let start = self.announce_session(
-            AgentRole::Reviewer,
-            reviewer_unit.provider.slug(),
-            reviewer_unit.model.as_deref(),
-        );
-        let (session, events) = self
-            .run_agent_session(
+        let exit = self
+            .run_stage(
+                StageStart::Announce,
+                AgentRole::Reviewer,
                 AgentPrompt {
                     prompt: prompt.to_string(),
                     system_prompt: prompt::REVIEWER_SYSTEM,
@@ -2674,29 +2734,22 @@ impl Engine {
                     tools: REVIEWER_TOOLS,
                 },
                 cancel.clone(),
-                true,
                 &reviewer_unit,
+                StageWords {
+                    capture: true,
+                    could_not_start: format!("reviewer could not start for {}", task.id),
+                    default_failure: "review failed".into(),
+                    cancelled_notice: None,
+                    failure_level: NoticeLevel::Error,
+                    failure_prefix: format!("review for {}: ", task.id),
+                    failure_suffix: String::new(),
+                },
             )
             .await;
-        self.finish_session(AgentRole::Reviewer, start, Self::session_outcome(&session));
-        match session {
-            Err(error) => {
-                tracing::error!("reviewer could not start for {}: {error}", task.id);
-                self.notice(NoticeLevel::Error, error.to_string());
-                ReviewRun::Failed
-            }
-            Ok(result) if result.exit == ExitKind::Completed => {
-                ReviewRun::Report(plan::captured_text(&events))
-            }
-            Ok(result) if result.exit == ExitKind::Cancelled => ReviewRun::Cancelled,
-            Ok(result) => {
-                let reason = result.failure.unwrap_or_else(|| "review failed".into());
-                self.notice(
-                    NoticeLevel::Error,
-                    format!("review for {}: {reason}", task.id),
-                );
-                ReviewRun::Failed
-            }
+        match exit {
+            StageExit::Completed(events) => ReviewRun::Report(plan::captured_text(&events)),
+            StageExit::Cancelled => ReviewRun::Cancelled,
+            StageExit::Failed => ReviewRun::Failed,
         }
     }
 
@@ -2893,13 +2946,10 @@ impl Engine {
         // The research session is the running stage: its tile is active with the
         // later stages still pending.
         self.update_tiles(|tiles| tiles.set(Stage::Research, TileStatus::Active));
-        let start = self.announce_session(
-            AgentRole::Research,
-            unit.provider.slug(),
-            unit.model.as_deref(),
-        );
-        let (session, events) = self
-            .run_agent_session(
+        let exit = self
+            .run_stage(
+                StageStart::Announce,
+                AgentRole::Research,
                 AgentPrompt {
                     prompt: prompt::research(task),
                     system_prompt: prompt::RESEARCH_SYSTEM,
@@ -2907,40 +2957,23 @@ impl Engine {
                     tools: RESEARCH_TOOLS,
                 },
                 cancel.clone(),
-                true,
                 unit,
+                StageWords {
+                    capture: true,
+                    could_not_start: format!("research agent could not start for {}", task.id),
+                    default_failure: "research failed".into(),
+                    cancelled_notice: Some("Research cancelled; nothing committed.".into()),
+                    failure_level: NoticeLevel::Warning,
+                    failure_prefix: format!("research for {}: ", task.id),
+                    failure_suffix: "; continuing without a report".into(),
+                },
             )
             .await;
-        self.finish_session(AgentRole::Research, start, Self::session_outcome(&session));
-        let result = match session {
-            Err(error) => {
-                tracing::error!("research agent could not start for {}: {error}", task.id);
-                self.notice(NoticeLevel::Error, error.to_string());
-                return ResearchStage::Failed;
-            }
-            Ok(result) => result,
+        let events = match exit {
+            StageExit::Cancelled => return ResearchStage::Cancelled,
+            StageExit::Failed => return ResearchStage::Failed,
+            StageExit::Completed(events) => events,
         };
-        match result.exit {
-            ExitKind::Completed => {}
-            ExitKind::Cancelled => {
-                self.notice(
-                    NoticeLevel::Warning,
-                    "Research cancelled; nothing committed.",
-                );
-                return ResearchStage::Cancelled;
-            }
-            _ => {
-                let reason = result.failure.unwrap_or_else(|| "research failed".into());
-                self.notice(
-                    NoticeLevel::Warning,
-                    format!(
-                        "research for {}: {reason}; continuing without a report",
-                        task.id
-                    ),
-                );
-                return ResearchStage::Failed;
-            }
-        }
         let report = plan::captured_text(&events);
         if report.trim().is_empty() {
             self.notice(
@@ -3005,13 +3038,10 @@ impl Engine {
         for attempt in 1..=2 {
             // Every attempt is one planner session with its own timing, so a retried
             // plan leaves its own finished line (T42.1) and starting line (T78.1).
-            let start = self.announce_session(
-                AgentRole::Planner,
-                unit.provider.slug(),
-                unit.model.as_deref(),
-            );
-            let (session, events) = self
-                .run_agent_session(
+            let exit = self
+                .run_stage(
+                    StageStart::Announce,
+                    AgentRole::Planner,
                     AgentPrompt {
                         prompt: prompt_text,
                         system_prompt: prompt::PLAN_SYSTEM,
@@ -3019,34 +3049,23 @@ impl Engine {
                         tools: PLAN_TOOLS,
                     },
                     cancel.clone(),
-                    true,
                     unit,
+                    StageWords {
+                        capture: true,
+                        could_not_start: format!("plan agent could not start for {}", task.id),
+                        default_failure: "plan failed".into(),
+                        cancelled_notice: Some("Plan cancelled; nothing committed.".into()),
+                        failure_level: NoticeLevel::Error,
+                        failure_prefix: format!("plan for {}: ", task.id),
+                        failure_suffix: String::new(),
+                    },
                 )
                 .await;
-            self.finish_session(AgentRole::Planner, start, Self::session_outcome(&session));
-            let result = match session {
-                Err(error) => {
-                    tracing::error!("plan agent could not start for {}: {error}", task.id);
-                    self.notice(NoticeLevel::Error, error.to_string());
-                    return PlanStage::Failed;
-                }
-                Ok(result) => result,
+            let events = match exit {
+                StageExit::Cancelled => return PlanStage::Cancelled,
+                StageExit::Failed => return PlanStage::Failed,
+                StageExit::Completed(events) => events,
             };
-            match result.exit {
-                ExitKind::Completed => {}
-                ExitKind::Cancelled => {
-                    self.notice(NoticeLevel::Warning, "Plan cancelled; nothing committed.");
-                    return PlanStage::Cancelled;
-                }
-                _ => {
-                    let reason = result.failure.unwrap_or_else(|| "plan failed".into());
-                    self.notice(
-                        NoticeLevel::Error,
-                        format!("plan for {}: {reason}", task.id),
-                    );
-                    return PlanStage::Failed;
-                }
-            }
             let text = plan::captured_text(&events);
             match plan::gate_plan(&text) {
                 Ok(()) => return PlanStage::Accepted(text),
