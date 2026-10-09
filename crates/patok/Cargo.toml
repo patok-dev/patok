@@ -14,6 +14,7 @@ patok-engine.workspace = true
 patok-proto.workspace = true
 patok-providers.workspace = true
 patok-tui.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tonic.workspace = true

@@ -1261,6 +1261,7 @@ dependencies = [
  "patok-providers",
  "patok-tui",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -1276,7 +1277,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "toml",
 ]
