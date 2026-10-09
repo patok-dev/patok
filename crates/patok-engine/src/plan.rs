@@ -53,30 +53,14 @@ pub fn captured_text(events: &[AgentEvent]) -> String {
 /// The non-blank lines under the first heading named `name` (case-insensitively, any
 /// heading level), up to the next heading. `None` when the plan has no such heading.
 fn section_entries<'a>(plan: &'a str, name: &str) -> Option<Vec<&'a str>> {
-    let mut in_section = false;
-    let mut entries = Vec::new();
-    for line in plan.lines() {
-        if let Some(heading) = heading_name(line) {
-            if in_section {
-                break;
-            }
-            in_section = heading.eq_ignore_ascii_case(name);
-        } else if in_section {
-            let entry = line.trim();
-            if !entry.is_empty() {
-                entries.push(entry);
-            }
-        }
-    }
-    if in_section { Some(entries) } else { None }
-}
-
-/// The name of a markdown heading line (`#` through `######`), or `None` for any other
-/// line. The name is the heading text with the hashes and surrounding space stripped.
-fn heading_name(line: &str) -> Option<&str> {
-    let after_hashes = line.trim_start().strip_prefix('#')?.trim_start_matches('#');
-    let name = after_hashes.trim();
-    if name.is_empty() { None } else { Some(name) }
+    crate::markdown::section(plan, name).map(|found| {
+        plan[found.start..found.end]
+            .lines()
+            .skip(1)
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .collect()
+    })
 }
 
 #[cfg(test)]

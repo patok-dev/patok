@@ -28,20 +28,7 @@ const TRIM_KEEP: [&str; 4] = ["failed", "error", "panic", "assert"];
 /// text (`None` when the builder's final message has no such heading). The
 /// heading matches case-insensitively at any level.
 pub fn claims_section(text: &str) -> Option<&str> {
-    let start = text.lines().find_map(|line| {
-        heading_is(line, "Build Claims").then(|| line.as_ptr() as usize - text.as_ptr() as usize)
-    });
-    start.map(|start| &text[start..])
-}
-
-/// A heading line (`#` through `######`) whose name equals `name`
-/// case-insensitively.
-fn heading_is(line: &str, name: &str) -> bool {
-    let Some(after) = line.trim_start().strip_prefix('#') else {
-        return false;
-    };
-    let after = after.trim_start_matches('#').trim();
-    !after.is_empty() && after.eq_ignore_ascii_case(name)
+    crate::markdown::section(text, "Build Claims").map(|found| &text[found.start..])
 }
 
 /// Trims an over-long verification-results section of the build claims: a section over 100 lines is reduced to its first 20
@@ -49,20 +36,15 @@ fn heading_is(line: &str, name: &str) -> bool {
 /// error, panic or assert (case-insensitively), and its last 10 lines.
 /// Everything else in the claims is untouched.
 pub fn trim_claims(claims: &str) -> String {
-    let Some(bounds) = section_bounds(claims, "Verification Results") else {
+    let Some(bounds) = crate::markdown::section(claims, "Verification Results") else {
         return claims.to_string();
     };
     // The section's content: every line after its heading, up to the next one.
-    let content: Vec<&str> = claims[bounds.0..bounds.1].lines().skip(1).collect();
+    let content: Vec<&str> = claims[bounds.start..bounds.end].lines().skip(1).collect();
     if content.len() <= VERIFICATION_TRIM_LINES {
         return claims.to_string();
     }
-    let heading_end = bounds.0
-        + claims[bounds.0..bounds.1]
-            .lines()
-            .next()
-            .map_or(0, str::len)
-        + 1;
+    let heading_end = bounds.start + bounds.heading.len() + 1;
     let mut trimmed = String::with_capacity(claims.len());
     trimmed.push_str(&claims[..heading_end]);
     for line in &content[..TRIM_HEAD] {
@@ -89,27 +71,8 @@ pub fn trim_claims(claims: &str) -> String {
         trimmed.push_str(line);
         trimmed.push('\n');
     }
-    trimmed.push_str(&claims[bounds.1..]);
+    trimmed.push_str(&claims[bounds.end..]);
     trimmed
-}
-
-/// The byte bounds of the first section named `name` in `text`: the start of
-/// its heading line and the start of the next heading line (or the end).
-fn section_bounds(text: &str, name: &str) -> Option<(usize, usize)> {
-    let mut start = None;
-    for line in text.lines() {
-        let offset = line.as_ptr() as usize - text.as_ptr() as usize;
-        if !line.trim_start().starts_with('#') {
-            continue;
-        }
-        if let Some(start) = start {
-            return Some((start, offset));
-        }
-        if heading_is(line, name) {
-            start = Some(offset);
-        }
-    }
-    start.map(|start| (start, text.len()))
 }
 
 /// One finding of the review report's JSON block. Every field is optional at the JSON level -- the

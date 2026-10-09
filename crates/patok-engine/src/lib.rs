@@ -4,6 +4,7 @@
 mod artifact;
 mod engine;
 mod git;
+mod markdown;
 mod plan;
 mod prompt;
 mod review;
