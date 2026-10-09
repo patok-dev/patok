@@ -7,7 +7,7 @@ use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::{self, Task};
 use patok_providers::{
     BUILDER_TOOLS, DISCOVERY_TOOLS, ExitKind, PLANNER_TOOLS, ProviderError, RESEARCH_TOOLS,
-    SessionRequest, SessionResult,
+    SessionRequest, SessionResult, Tool,
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -31,7 +31,9 @@ pub(crate) struct AgentPrompt {
     pub(crate) prompt: String,
     pub(crate) system_prompt: &'static str,
     pub(crate) label: String,
-    pub(crate) tools: &'static [&'static str],
+    /// The session's tool allowlist, provider-neutral; the provider maps each
+    /// entry to its own CLI's tool name(s).
+    pub(crate) tools: &'static [Tool],
 }
 
 /// How the shared stage session's starting line is produced (finding 17 in
@@ -240,7 +242,7 @@ impl Engine {
                 label: agent.label,
                 idle_timeout: unit.agent_timeout,
                 cancel,
-                allowed_tools: agent.tools.iter().map(ToString::to_string).collect(),
+                allowed_tools: agent.tools.to_vec(),
             })
             .await;
         // The request (and its sender) is gone: let the forwarder flush the tail of the stream.

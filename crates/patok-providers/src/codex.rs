@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::cli::{self, CliSpec};
 use crate::process::Parsed;
-use crate::{Provider, ProviderError, SessionRequest, SessionResult};
+use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 /// Name of the CLI binary this provider needs.
 pub const CLI: &str = "codex";
@@ -22,15 +22,9 @@ pub const CLI: &str = "codex";
 pub struct Codex;
 
 impl Codex {
-    /// Fails with a clear error naming the CLI when `codex` is not on `PATH`. Run before a
-    /// session starts.
-    pub fn check_available() -> Result<(), ProviderError> {
-        cli::check_available::<Codex>()
-    }
-
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        cli::check_available_in::<Codex>(path)
+        cli::check_available_in(CLI, path)
     }
 }
 
@@ -49,6 +43,18 @@ impl CliSpec for Codex {
 impl Provider for Codex {
     fn slug(&self) -> &'static str {
         ProviderKind::Codex.as_str()
+    }
+
+    fn cli_name(&self) -> &'static str {
+        CLI
+    }
+
+    fn supports_reviewer_model(&self) -> bool {
+        false
+    }
+
+    fn check_available(&self) -> Result<(), ProviderError> {
+        cli::check_available::<Codex>()
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
@@ -87,15 +93,15 @@ fn build_args(request: &SessionRequest) -> Vec<String> {
     args
 }
 
-/// Maps role allowlist names (Claude tool names) to Codex's tool names: commands and
-/// file reads/searches run through its shell tool, edits through apply_patch.
-fn codex_tools(allowed: &[String]) -> Vec<&'static str> {
-    cli::map_tools(allowed, |name| match name {
-        "Bash" | "Read" | "Glob" | "Grep" => &["shell"],
-        "Edit" | "Write" => &["apply_patch"],
-        "WebSearch" => &["web_search"],
-        // WebFetch, NotebookEdit and unknown names have no Codex equivalent.
-        _ => &[],
+/// Maps role allowlist tools to Codex's tool names: commands and file
+/// reads/searches run through its shell tool, edits through apply_patch.
+fn codex_tools(allowed: &[Tool]) -> Vec<&'static str> {
+    cli::map_tools(allowed, |tool| match tool {
+        Tool::Bash | Tool::Read | Tool::Glob | Tool::Grep => &["shell"],
+        Tool::Edit | Tool::Write => &["apply_patch"],
+        Tool::WebSearch => &["web_search"],
+        // WebFetch and NotebookEdit have no Codex equivalent.
+        Tool::WebFetch | Tool::NotebookEdit => &[],
     })
 }
 
@@ -337,7 +343,7 @@ mod tests {
         );
     }
 
-    fn request(prompt: &str, system: Option<&str>, tools: &[&str]) -> SessionRequest {
+    fn request(prompt: &str, system: Option<&str>, tools: &[Tool]) -> SessionRequest {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         SessionRequest {
             model: None,
@@ -349,7 +355,7 @@ mod tests {
             label: "t".into(),
             idle_timeout: std::time::Duration::from_secs(1),
             cancel: Default::default(),
-            allowed_tools: tools.iter().map(ToString::to_string).collect(),
+            allowed_tools: tools.to_vec(),
         }
     }
 
@@ -387,23 +393,18 @@ mod tests {
         assert!(planner.contains(&"tools.web_search=false".to_string()));
         let research = build_args(&request("r", None, crate::RESEARCH_TOOLS));
         assert!(research.contains(&"tools.web_search=true".to_string()));
-        // The mapping itself: Claude role names to codex tool names, unmapped dropped.
+        // The mapping itself: role tools to codex tool names, unmapped dropped.
         assert_eq!(
-            codex_tools(&["Read", "Glob", "Grep", "Edit", "Write"].map(ToString::to_string)),
+            codex_tools(&[Tool::Read, Tool::Glob, Tool::Grep, Tool::Edit, Tool::Write]),
             ["shell", "apply_patch"]
         );
         assert_eq!(
-            codex_tools(
-                &crate::BUILDER_TOOLS
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            ),
+            codex_tools(crate::BUILDER_TOOLS),
             ["shell", "apply_patch", "web_search"]
         );
         // WebFetch and NotebookEdit have no codex equivalent.
         assert_eq!(
-            codex_tools(&["WebFetch", "NotebookEdit"].map(ToString::to_string)),
+            codex_tools(&[Tool::WebFetch, Tool::NotebookEdit]),
             [] as [&'static str; 0]
         );
     }

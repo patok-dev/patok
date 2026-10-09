@@ -1,5 +1,4 @@
 use patok_core::complexity::{self, Complexity};
-use patok_core::config::ProviderKind;
 use patok_core::event::{AgentRole, NoticeLevel};
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::review::Severity;
@@ -241,9 +240,9 @@ impl Engine {
 
     /// The reviewer session the review runs on when the reviewer provider names
     /// a provider this build implements (`reviewer_provider`): that provider,
-    /// resolved like any other unit of work. The claude provider also runs
-    /// with the configured reviewer model (`reviewer_model`); the other
-    /// providers keep the provider's default model.
+    /// resolved like any other unit of work. A provider that supports the
+    /// reviewer model (the claude provider) runs with the configured one
+    /// (`reviewer_model`); the other providers keep their default model.
     fn reviewer_unit(&self, unit: &Unit) -> Unit {
         let mut reviewer = unit.clone();
         if let Some(kind) = reviewer.reviewer_provider.kind() {
@@ -252,11 +251,10 @@ impl Engine {
                 Some(resolver) => match resolver(kind) {
                     Ok(provider) => {
                         reviewer.provider = provider;
-                        reviewer.model = if kind == ProviderKind::Claude {
-                            Some(reviewer.reviewer_model.clone())
-                        } else {
-                            None
-                        };
+                        reviewer.model = reviewer
+                            .provider
+                            .supports_reviewer_model()
+                            .then(|| reviewer.reviewer_model.clone());
                     }
                     Err(error) => {
                         tracing::warn!(

@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::cli::{self, CliSpec};
 use crate::process::Parsed;
-use crate::{Provider, ProviderError, SessionRequest, SessionResult};
+use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 /// Name of the CLI binary this provider needs.
 pub const CLI: &str = "vibe";
@@ -16,15 +16,9 @@ pub const CLI: &str = "vibe";
 pub struct Vibe;
 
 impl Vibe {
-    /// Fails with a clear error naming the CLI when `vibe` is not on `PATH`. Run before a
-    /// session starts.
-    pub fn check_available() -> Result<(), ProviderError> {
-        cli::check_available::<Vibe>()
-    }
-
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        cli::check_available_in::<Vibe>(path)
+        cli::check_available_in(CLI, path)
     }
 }
 
@@ -43,6 +37,18 @@ impl CliSpec for Vibe {
 impl Provider for Vibe {
     fn slug(&self) -> &'static str {
         ProviderKind::Mistral.as_str()
+    }
+
+    fn cli_name(&self) -> &'static str {
+        CLI
+    }
+
+    fn supports_reviewer_model(&self) -> bool {
+        false
+    }
+
+    fn check_available(&self) -> Result<(), ProviderError> {
+        cli::check_available::<Vibe>()
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
@@ -70,18 +76,18 @@ fn build_args(request: &SessionRequest) -> Vec<String> {
     args
 }
 
-/// Maps role allowlist names (Claude tool names) to Vibe's built-in tool names.
-fn vibe_tools(allowed: &[String]) -> Vec<&'static str> {
-    cli::map_tools(allowed, |name| match name {
-        "Bash" => &["bash"],
-        "Edit" => &["edit", "search_replace"],
-        "Write" => &["write_file"],
-        "Read" => &["read_file"],
-        "Glob" | "Grep" => &["grep"],
-        "WebFetch" => &["web_fetch"],
-        "WebSearch" => &["web_search"],
-        // NotebookEdit and unknown names have no Vibe equivalent.
-        _ => &[],
+/// Maps role allowlist tools to Vibe's built-in tool names.
+fn vibe_tools(allowed: &[Tool]) -> Vec<&'static str> {
+    cli::map_tools(allowed, |tool| match tool {
+        Tool::Bash => &["bash"],
+        Tool::Edit => &["edit", "search_replace"],
+        Tool::Write => &["write_file"],
+        Tool::Read => &["read_file"],
+        Tool::Glob | Tool::Grep => &["grep"],
+        Tool::WebFetch => &["web_fetch"],
+        Tool::WebSearch => &["web_search"],
+        // NotebookEdit has no Vibe equivalent.
+        Tool::NotebookEdit => &[],
     })
 }
 
@@ -309,10 +315,7 @@ mod tests {
             label: "t".into(),
             idle_timeout: std::time::Duration::from_secs(1),
             cancel: Default::default(),
-            allowed_tools: crate::PLANNER_TOOLS
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
+            allowed_tools: crate::PLANNER_TOOLS.to_vec(),
         };
         let args = build_args(&request);
         assert_eq!(args[..2], ["-p", "sys\n\ndo it"]);
@@ -325,10 +328,7 @@ mod tests {
             tools,
             ["read_file", "grep", "edit", "search_replace", "write_file"]
         );
-        request.allowed_tools = crate::BUILDER_TOOLS
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        request.allowed_tools = crate::BUILDER_TOOLS.to_vec();
         let args = build_args(&request).join(" ");
         assert!(args.contains("--enabled-tools bash"));
         assert!(args.contains("--enabled-tools web_search"));

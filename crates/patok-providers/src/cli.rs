@@ -7,7 +7,7 @@ use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
 use crate::process::{self, LineParser, Parsed, ProcessSpec};
-use crate::{ProviderError, SessionRequest, SessionResult, cli_in};
+use crate::{ProviderError, SessionRequest, SessionResult, Tool, cli_in};
 
 /// Tool-call inputs are truncated to this many characters.
 pub(crate) const TOOL_PREVIEW: usize = 120;
@@ -53,16 +53,16 @@ pub(crate) fn prepend_system_prompt(request: &SessionRequest) -> String {
     }
 }
 
-/// Maps each allowlist name through `map`, dropping unmapped names and duplicates.
+/// Maps each allowlist tool through `map`, dropping unmapped names and duplicates.
 pub(crate) fn map_tools(
-    allowed: &[String],
-    map: impl Fn(&str) -> &[&'static str],
+    allowed: &[Tool],
+    map: impl Fn(Tool) -> &'static [&'static str],
 ) -> Vec<&'static str> {
     let mut tools: Vec<&'static str> = vec![];
-    for name in allowed {
-        for tool in map(name.as_str()) {
-            if !tools.contains(tool) {
-                tools.push(tool);
+    for tool in allowed {
+        for name in map(*tool) {
+            if !tools.contains(name) {
+                tools.push(name);
             }
         }
     }
@@ -113,21 +113,29 @@ pub(crate) trait CliSpec {
     fn build_args(request: &SessionRequest) -> Vec<String>;
 }
 
-/// The availability check against an explicit `PATH` value.
-pub(crate) fn check_available_in<S: CliSpec>(
+/// The availability check for a CLI named `cli`: `Err(CliNotFound)` naming it
+/// when it is not on `PATH`. Run before a session starts.
+pub(crate) fn check_cli_on_path(cli: &str) -> Result<(), ProviderError> {
+    check_available_in(cli, std::env::var_os("PATH").as_deref())
+}
+
+/// The availability check for a CLI named `cli` against an explicit `PATH`
+/// value.
+pub(crate) fn check_available_in(
+    cli: &str,
     path: Option<&std::ffi::OsStr>,
 ) -> Result<(), ProviderError> {
-    if cli_in(S::CLI, path) {
+    if cli_in(cli, path) {
         Ok(())
     } else {
-        Err(ProviderError::CliNotFound { cli: S::CLI.into() })
+        Err(ProviderError::CliNotFound { cli: cli.into() })
     }
 }
 
 /// Fails with a clear error naming the CLI when it is not on `PATH`. Run before a
 /// session starts.
 pub(crate) fn check_available<S: CliSpec>() -> Result<(), ProviderError> {
-    check_available_in::<S>(std::env::var_os("PATH").as_deref())
+    check_cli_on_path(S::CLI)
 }
 
 /// Runs one session: check availability, spawn the CLI, stream its JSONL output through

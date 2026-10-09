@@ -10,6 +10,7 @@ use patok_core::pipeline::{PipelineState, Stage, Tile, TileStatus};
 use patok_engine::{QueueCreation, TASK_FILE};
 use patok_providers::ExitKind;
 use patok_providers::RESEARCH_TOOLS;
+use patok_providers::Tool;
 use patok_providers::mock::{MockProvider, Step};
 use support::{Fixture, collect_until, is_phase_startup};
 
@@ -102,7 +103,7 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
     let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(labels, ["T1.1", "T1.2", "discovery"]);
     assert!(sessions[0].prompt.contains("T1.1: add the greeting file"));
-    assert!(sessions[0].allowed_tools.contains(&"Bash".to_string()));
+    assert!(sessions[0].allowed_tools.contains(&Tool::Bash));
     // The round found nothing to append, so the session ended there.
     assert!(
         notices(&events)
@@ -138,7 +139,7 @@ async fn the_builder_session_label_contains_the_task_id() {
     assert!(
         sessions
             .iter()
-            .any(|s| s.label.contains("T1.1") && s.allowed_tools.contains(&"Bash".to_string()))
+            .any(|s| s.label.contains("T1.1") && s.allowed_tools.contains(&Tool::Bash))
     );
 }
 
@@ -235,7 +236,10 @@ async fn a_plan_session_precedes_the_builder_and_feeds_the_plan_forward() {
             .as_deref()
             .is_some_and(|p| p.contains("You are the Plan agent"))
     );
-    assert_eq!(sessions[0].allowed_tools, ["Read", "Glob", "Grep"]);
+    assert_eq!(
+        sessions[0].allowed_tools,
+        [Tool::Read, Tool::Glob, Tool::Grep]
+    );
     assert!(sessions[0].prompt.contains("T1.1: add the greeting file"));
     // The accepted plan reaches the builder prompt.
     assert!(sessions[1].prompt.contains("carry it out"));
@@ -2316,7 +2320,7 @@ async fn a_discovery_round_appends_valid_d_tasks_and_the_queue_reconciles() {
     // The read-only Discovery allowlist.
     assert_eq!(
         sessions[0].allowed_tools,
-        vec!["Read".to_string(), "Glob".to_string(), "Grep".to_string()]
+        [Tool::Read, Tool::Glob, Tool::Grep]
     );
     // The raw stream is written to the history log like a planner session.
     assert_eq!(
@@ -3253,7 +3257,14 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
     assert_eq!(labels, ["T1.1", "review"]);
     assert_eq!(
         sessions[1].allowed_tools,
-        ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
+        [
+            Tool::Read,
+            Tool::Glob,
+            Tool::Grep,
+            Tool::Bash,
+            Tool::Edit,
+            Tool::Write
+        ]
     );
     // The reviewer prompt carries the task, the claims, the changed files
     // (the diff is empty for an untracked file) and the pass number.
@@ -3356,7 +3367,12 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(
-                provider.clone().with_slug(kind.as_str()),
+                // The claude-slugged mock also answers the capability query the
+                // way the real claude provider does.
+                provider
+                    .clone()
+                    .with_slug(kind.as_str())
+                    .with_reviewer_model(kind == ProviderKind::Claude),
             ))
         },
     );
@@ -3478,7 +3494,12 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(
-                provider.clone().with_slug(kind.as_str()),
+                // The default reviewer provider is claude, so the claude-slugged
+                // mock answers the capability query like the real one does.
+                provider
+                    .clone()
+                    .with_slug(kind.as_str())
+                    .with_reviewer_model(kind == ProviderKind::Claude),
             ))
         },
     );

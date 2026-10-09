@@ -8,9 +8,12 @@ use serde_json::Value;
 
 use crate::cli;
 use crate::process::{self, Parsed, ProcessSpec};
-use crate::{Provider, ProviderError, SessionRequest, SessionResult};
+use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
+
+/// Name of the CLI binary this provider needs.
+pub const CLI: &str = "claude";
 
 pub struct Claude;
 
@@ -20,9 +23,21 @@ impl Provider for Claude {
         ProviderKind::Claude.as_str()
     }
 
+    fn cli_name(&self) -> &'static str {
+        CLI
+    }
+
+    fn supports_reviewer_model(&self) -> bool {
+        true
+    }
+
+    fn check_available(&self) -> Result<(), ProviderError> {
+        cli::check_cli_on_path(CLI)
+    }
+
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
         let spec = ProcessSpec {
-            program: "claude".into(),
+            program: CLI.into(),
             args: build_args(&request),
             // Marks a nested Claude session; emptied so the child does not refuse to start.
             env: vec![("CLAUDECODE", "")],
@@ -50,9 +65,29 @@ fn build_args(request: &SessionRequest) -> Vec<String> {
         args.extend(["--append-system-prompt".into(), system.into()]);
     }
     if !request.allowed_tools.is_empty() {
-        args.extend(["--allowedTools".into(), request.allowed_tools.join(",")]);
+        let tools: Vec<&str> = request
+            .allowed_tools
+            .iter()
+            .flat_map(|tool| claude_tools(*tool).iter().copied())
+            .collect();
+        args.extend(["--allowedTools".into(), tools.join(",")]);
     }
     args
+}
+
+/// Maps a role allowlist tool to the Claude CLI's own name for it.
+fn claude_tools(tool: Tool) -> &'static [&'static str] {
+    match tool {
+        Tool::Bash => &["Bash"],
+        Tool::Edit => &["Edit"],
+        Tool::Write => &["Write"],
+        Tool::Read => &["Read"],
+        Tool::Glob => &["Glob"],
+        Tool::Grep => &["Grep"],
+        Tool::NotebookEdit => &["NotebookEdit"],
+        Tool::WebFetch => &["WebFetch"],
+        Tool::WebSearch => &["WebSearch"],
+    }
 }
 
 /// Translates Claude's stream-json lines into normalised events. Stateful: text arrives twice
@@ -586,16 +621,26 @@ mod tests {
         assert!(!build_args(&request).contains(&"--model".to_string()));
         request.model = Some("opus".into());
         request.system_prompt = Some("s".into());
-        request.allowed_tools = vec!["Read".into(), "Bash".into()];
+        request.allowed_tools = vec![Tool::Read, Tool::Bash];
         let args = build_args(&request).join(" ");
         assert!(args.contains("--model opus"));
         assert!(args.contains("--append-system-prompt s"));
         assert!(args.contains("--allowedTools Read,Bash"));
-        request.allowed_tools = crate::PLANNER_TOOLS
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        request.allowed_tools = crate::PLANNER_TOOLS.to_vec();
         let args = build_args(&request).join(" ");
         assert!(args.contains("--allowedTools Read,Glob,Grep,Edit,Write"));
+    }
+
+    #[test]
+    fn role_tools_map_to_their_claude_names() {
+        assert_eq!(claude_tools(Tool::Bash), ["Bash"]);
+        assert_eq!(claude_tools(Tool::Edit), ["Edit"]);
+        assert_eq!(claude_tools(Tool::Write), ["Write"]);
+        assert_eq!(claude_tools(Tool::Read), ["Read"]);
+        assert_eq!(claude_tools(Tool::Glob), ["Glob"]);
+        assert_eq!(claude_tools(Tool::Grep), ["Grep"]);
+        assert_eq!(claude_tools(Tool::NotebookEdit), ["NotebookEdit"]);
+        assert_eq!(claude_tools(Tool::WebFetch), ["WebFetch"]);
+        assert_eq!(claude_tools(Tool::WebSearch), ["WebSearch"]);
     }
 }
