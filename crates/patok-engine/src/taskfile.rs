@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
 
+use patok_core::atomic_write::write_atomic;
 use patok_core::task::{self, Task};
 
 use patok_core::task::{CHECKED, UNCHECKED, split_id};
@@ -562,14 +563,6 @@ pub fn remove_task(path: &Path, id: &str) -> io::Result<RemoveOutcome> {
     }
     write_atomic(path, &updated)?;
     Ok(RemoveOutcome::Removed)
-}
-
-/// Writes through a temporary file in the same directory, then renames over the target.
-fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".patok-tmp");
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]

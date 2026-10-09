@@ -1,5 +1,6 @@
 //! Domain types and pure logic shared by the engine and the shell.
 
+pub mod atomic_write;
 pub mod complexity;
 pub mod config;
 pub mod event;

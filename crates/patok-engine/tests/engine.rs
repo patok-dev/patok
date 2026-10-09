@@ -4629,8 +4629,13 @@ async fn timed_injects_interleaved_with_a_run_all_land_intact_in_order() {
         .map(|s| s.label.clone())
         .collect();
     assert_eq!(labels, ["T1.1".to_string()]);
-    // No temporary rewrite file was left behind.
-    assert!(!fixture.path().join("TASKS.md.patok-tmp").exists());
+    // No temporary rewrite file was left behind, whatever its temp name.
+    let leftovers: Vec<String> = std::fs::read_dir(fixture.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "TASKS.md" && name.contains("TASKS.md"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
 /// T77.1: a line injected during a planner session survives a rejected run's

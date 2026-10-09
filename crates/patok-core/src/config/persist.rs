@@ -20,6 +20,7 @@ use super::daemon::{
 };
 use super::tui::{RailMode, Theme};
 use super::{ConfigFiles, EnumSpelling, project_file};
+use crate::atomic_write::write_atomic;
 use crate::update::UpdateChannel;
 
 /// A settings value as submitted by a settings change, mapped onto the field's expected
@@ -364,28 +365,6 @@ fn write_field(
         .map_err(|e| PersistError::new(format!("cannot serialize {}: {e}", path.display())))?;
     write_atomic(path, &text)
         .map_err(|e| PersistError::new(format!("cannot write {}: {e}", path.display())))
-}
-
-/// Writes through a temporary file in the same directory, then renames over the target
-/// (same pattern as the task file).
-fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut tmp = path.to_path_buf();
-    let unique = std::process::id()
-        ^ std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-    tmp.set_file_name(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("config"),
-        unique
-    ));
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]

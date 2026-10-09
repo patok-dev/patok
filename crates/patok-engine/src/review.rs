@@ -549,10 +549,10 @@ impl ReviewHistory {
     /// Saves the history to `path`, best-effort: the error is returned for the
     /// caller to log.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, serde_json::to_string(self).unwrap_or_default())
+        patok_core::atomic_write::write_atomic(
+            path,
+            &serde_json::to_string(self).unwrap_or_default(),
+        )
     }
 
     /// The consecutive review passes of the best-matching cluster for the task
