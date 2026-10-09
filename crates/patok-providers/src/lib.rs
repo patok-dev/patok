@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 pub mod claude;
 mod cli;
 pub mod codex;
+#[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 mod process;
 pub mod vibe;

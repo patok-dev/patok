@@ -15,6 +15,12 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 
+[features]
+# The scripted mock provider for tests. Enabled only through dev-dependencies
+# of crates whose tests use it (and the crate's own cfg(test) builds);
+# never in a normal or release build.
+test-support = []
+
 [dev-dependencies]
 tempfile.workspace = true
 

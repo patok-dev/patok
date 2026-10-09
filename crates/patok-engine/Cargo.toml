@@ -23,6 +23,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 hyper-util.workspace = true
+patok-providers = { path = "../patok-providers", features = ["test-support"] }
 tempfile.workspace = true
 tower.workspace = true
 

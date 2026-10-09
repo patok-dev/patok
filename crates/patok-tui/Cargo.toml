@@ -20,7 +20,7 @@ tonic.workspace = true
 [dev-dependencies]
 insta.workspace = true
 patok-engine.workspace = true
-patok-providers.workspace = true
+patok-providers = { path = "../patok-providers", features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

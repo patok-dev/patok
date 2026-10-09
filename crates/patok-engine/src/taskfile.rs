@@ -72,7 +72,8 @@ pub fn read_or_create(path: &Path) -> io::Result<String> {
 
 /// Ticks `task` in the file at `path`. Returns whether a matching unchecked line was found;
 /// when none is, nothing is written (the task was already checked or the file moved on).
-pub fn mark_done(path: &Path, task: &Task) -> io::Result<bool> {
+#[cfg(test)]
+pub(crate) fn mark_done(path: &Path, task: &Task) -> io::Result<bool> {
     let text = std::fs::read_to_string(path)?;
     let Some(updated) = task::mark_done(&text, task) else {
         return Ok(false);
@@ -234,23 +235,29 @@ fn strip_progress_token(description: &str) -> &str {
 /// line in the appended part must be unchecked with a well-formed `T`-prefixed ID that is
 /// unique in the whole file. Existing `H` and `D` lines in `before` are untouched and stay
 /// valid. Returns the number of tasks added.
-pub fn validate_append(before: &str, after: &str) -> Result<usize, String> {
+#[cfg(test)]
+pub(crate) fn validate_append(before: &str, after: &str) -> Result<usize, String> {
     validate_append_ids(before, after).map(|ids| ids.len())
 }
 
 /// Like [`validate_append`], but returns the IDs of the appended tasks in file order instead
 /// of their count. The engine remembers these as the session's UI-added task IDs.
-pub fn validate_append_ids(before: &str, after: &str) -> Result<Vec<String>, String> {
+#[cfg(test)]
+pub(crate) fn validate_append_ids(before: &str, after: &str) -> Result<Vec<String>, String> {
     validate_appended_ignoring(before, after, &[], 'T', "planner")
 }
 
 /// The discovery round's variant of [`validate_append_ids`]: appended tasks must carry
 /// `D`-prefixed IDs; an appended `T`, `H` or bare-number ID is a violation.
-pub fn validate_discovery_append_ids(before: &str, after: &str) -> Result<Vec<String>, String> {
+#[cfg(test)]
+pub(crate) fn validate_discovery_append_ids(
+    before: &str,
+    after: &str,
+) -> Result<Vec<String>, String> {
     validate_appended_ignoring(before, after, &[], 'D', "discovery")
 }
 
-/// [`validate_append_ids`] with the injected-chunk accounting of T77.1: the
+/// The planner append check with the injected-chunk accounting of T77.1: the
 /// exact chunks the engine itself appended through `inject_task` during the
 /// session are filtered out of the appended region first, so an injected
 /// line -- whatever its shape -- neither fails the session's append
@@ -341,11 +348,6 @@ fn validate_appended_ignoring(
         }
     }
     Ok(added.into_iter().map(|t| t.id).collect())
-}
-
-/// Puts `contents` back as the task file after a rejected planner run.
-pub fn restore(path: &Path, contents: &str) -> io::Result<()> {
-    write_atomic(path, contents)
 }
 
 /// Puts `before` back as the task file after a rejected append-style run,
