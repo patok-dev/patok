@@ -224,7 +224,7 @@ pub fn rail_connector_rects(state: &PipelineState, area: Rect, mode: RailMode) -
 /// which the renderer never writes into. Records the rail's rect at the last
 /// render.
 pub fn render_rail(frame: &mut Frame, app: &App, area: Rect) {
-    app.pipeline_area.set(area);
+    app.layout.pipeline_area.set(area);
     let theme = app.theme();
     let mode = app.tui.rail_mode;
     let state = &app.pipeline;

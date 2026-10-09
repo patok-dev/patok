@@ -1,7 +1,7 @@
 //! The add-task / inject-task dialog, the stop dialog and the theme picker.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -13,7 +13,7 @@ use super::modal::{ModalTitle, render_modal_frame};
 use crate::app::{
     App, DialogKind, MENU_BUTTONS, STOP_CHOICES, STOP_ESC_LABEL, THEME_BUTTONS, menu_entries,
 };
-use crate::overlay::{Entry, SETTINGS_CHOICES};
+use crate::overlay::Entry;
 use crate::theme::theme_modal_groups;
 use patok_core::event::Phase;
 
@@ -43,12 +43,12 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     // title and the empty-input watermark follow the dialog's kind; the
     // primary button's label flows from `App::primary_label`, which branches
     // on the same kind.
-    let (title, watermark) = match app.dialog_kind {
+    let (title, watermark) = match app.dialog.kind {
         DialogKind::Add => (" What do you want to do? ", DIALOG_WATERMARK),
         DialogKind::Inject => (" Inject a task ", INJECT_WATERMARK),
     };
     let chrome = render_modal_frame(frame, theme, area, ModalTitle::Left(title));
-    app.dialog_close.set(chrome.close);
+    app.dialog.close.set(chrome.close);
     let inner = chrome.inner;
     let [input, dialog_status, footer] = Layout::vertical([
         Constraint::Min(1),
@@ -57,7 +57,7 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     ])
     .areas(inner);
 
-    if let Some(message) = &app.dialog_status {
+    if let Some(message) = &app.dialog.status {
         frame.render_widget(
             Paragraph::new(Line::styled(
                 message.clone(),
@@ -68,11 +68,11 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     }
 
     let width = usize::from(input.width.max(2)) - 1;
-    app.dialog.set_width(width);
-    let chars: Vec<char> = app.dialog.text().chars().collect();
-    let rows = app.dialog.rows();
-    let cursor = app.dialog.cursor();
-    let cursor_row = app.dialog.cursor_row(&rows);
+    app.dialog.editor.set_width(width);
+    let chars: Vec<char> = app.dialog.editor.text().chars().collect();
+    let rows = app.dialog.editor.rows();
+    let cursor = app.dialog.editor.cursor();
+    let cursor_row = app.dialog.editor.cursor_row(&rows);
     // The block cursor covers the cell at the cursor: the character under it
     // on the cursor style, or a styled space at the end of a logical line or
     // on an empty one. No cell is added, so the letters around the cursor
@@ -84,7 +84,7 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     let cursor_style = Style::new()
         .fg(theme.highlighted_text)
         .add_modifier(Modifier::REVERSED);
-    let mut lines: Vec<Line> = if app.dialog.text().is_empty() {
+    let mut lines: Vec<Line> = if app.dialog.editor.text().is_empty() {
         // The empty-input watermark (T41.1): a dim hint followed by the block
         // cursor, which keeps the focus indicator visible.
         vec![Line::from(vec![
@@ -122,7 +122,7 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     // the primary-action and Close buttons on the right, all through the
     // shared footer renderer. The primary button's label follows the scenario
     //.
-    app.dialog_footer.set(footer);
+    app.dialog.footer.set(footer);
     render_modal_footer(
         frame,
         footer,
@@ -136,7 +136,7 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
 /// 9 rows tall, clamped to the screen -- the shared choice-dialog rect
 /// (finding 6).
 pub fn stop_area(screen: Rect) -> Rect {
-    super::choice::choice_area(screen)
+    crate::choice::choice_area(screen)
 }
 
 /// The stop dialog (Esc while a build runs, T46.1): a centered " Stop build "
@@ -151,12 +151,12 @@ pub(super) fn render_stop_dialog(frame: &mut Frame, app: &App) {
         app.theme(),
         " Stop build ",
         &STOP_CHOICES,
-        app.stop_selected,
+        app.stop.selected,
         STOP_ESC_LABEL,
     );
-    app.stop_close.set(rects.close);
-    app.stop_body.set(rects.body);
-    app.stop_footer.set(rects.footer);
+    app.stop.close.set(rects.close);
+    app.stop.body.set(rects.body);
+    app.stop.footer.set(rects.footer);
 }
 
 /// The m menu's rect: a small centered modal, at least 54 columns wide and
@@ -180,18 +180,18 @@ pub fn menu_area(screen: Rect, running: bool) -> Rect {
 /// else.
 pub(super) fn render_menu(frame: &mut Frame, app: &App) {
     let theme = app.theme();
-    let running = app.phase == Phase::Running;
+    let running = app.run.phase == Phase::Running;
     let area = menu_area(frame.area(), running);
     let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(" Menu "));
-    app.menu_close.set(chrome.close);
+    app.menu.close.set(chrome.close);
     let inner = chrome.inner;
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
-    app.menu_body.set(body);
+    app.menu.body.set(body);
     let lines: Vec<Line> = menu_entries(running)
         .iter()
         .enumerate()
         .map(|(index, choice)| {
-            let focused = index == app.menu_selected;
+            let focused = index == app.menu.selected;
             let marker = if focused { "▶ " } else { "  " };
             let mut line = Line::from(vec![
                 Span::raw(marker),
@@ -214,7 +214,7 @@ pub(super) fn render_menu(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(lines), body);
     // The bottom line's two zones (T59.1): the selection hint on the left, the
     // Confirm and Close buttons on the right.
-    app.menu_footer.set(footer);
+    app.menu.footer.set(footer);
     render_modal_footer(frame, footer, &["↑↓ move"], &MENU_BUTTONS, theme);
 }
 
@@ -226,49 +226,6 @@ pub fn theme_area(screen: Rect) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
     let height = 16.min(screen.height);
     super::modal::centered(screen, width, height)
-}
-
-/// The theme picker's entry the pointer sits on (T43.1, T116.1): the visible
-/// entry index when the position is on one of the body's visible entry rows,
-/// `None` on the border, the footer, the shell behind the modal or a body row
-/// past the last visible entry (a folded group's hidden area). A pure
-/// hit-test like `frame_at`.
-pub fn theme_row_at(position: Position, body: Rect, visible_len: usize) -> Option<usize> {
-    if !body.contains(position) {
-        return None;
-    }
-    let row = usize::from(position.y - body.y);
-    (row < visible_len).then_some(row)
-}
-
-/// The m menu's entry the pointer sits on (T137.1): the entry index when
-/// the position is on one of the body's rendered rows, `None` on the border,
-/// the title, the footer or the shell behind the modal. A pure hit-test
-/// like [`theme_row_at`].
-pub fn menu_row_at(position: Position, body: Rect, visible_len: usize) -> Option<usize> {
-    if !body.contains(position) {
-        return None;
-    }
-    let row = usize::from(position.y - body.y);
-    (row < visible_len).then_some(row)
-}
-
-/// The unsaved-changes dialog's choice the pointer sits on (T146.1): the row
-/// index when the position is on one of the dialog's three choice rows, `None`
-/// on the dialog's blank body padding below them, the border, the title, the
-/// footer or the shell outside. A pure hit-test like [`menu_row_at`], over
-/// the shared choice-dialog rows (finding 6).
-pub fn confirm_row_at(position: Position, body: Rect) -> Option<usize> {
-    super::choice::choice_row_at(position, body, SETTINGS_CHOICES.len())
-}
-
-/// The stop dialog's choice the pointer sits on (T148.1): the row index
-/// when the position is on one of the dialog's three choice rows, `None`
-/// on the dialog's blank body padding below them, the border, the title,
-/// the footer or the shell outside. A pure hit-test like [`menu_row_at`],
-/// over the shared choice-dialog rows (finding 6).
-pub fn stop_row_at(position: Position, body: Rect) -> Option<usize> {
-    super::choice::choice_row_at(position, body, STOP_CHOICES.len())
 }
 
 /// The theme picker (the `t` key, T43.1, T116.1): a centered " Theme " modal

@@ -173,7 +173,7 @@ where
             .into_inner();
         // The drain draws render with a fresh clock, so the timer does not sit on
         // the stale tick from before the restart.
-        app.now.set(Instant::now());
+        app.clock.now.set(Instant::now());
         while let Some(update) = progress
             .message()
             .await
@@ -187,7 +187,7 @@ where
     terminal.draw(|frame| ui::render(frame, app))?;
     *client = spawn().await.context("could not start a fresh engine")?;
     let (mut fresh, fresh_updates) = attach(client).await?;
-    fresh.completed = app.completed;
+    fresh.run.completed = app.run.completed;
     fresh.status = Some("Engine restarted.".into());
     *app = fresh;
     *updates = fresh_updates;
@@ -256,7 +256,7 @@ where
     match action {
         // The `d` key: the shell leaves, the engine keeps running.
         Action::Detach => Ok(ShutdownFlow::Detach(Outcome::Detached {
-            completed: app.completed,
+            completed: app.run.completed,
         })),
         // A quit (the first `q` while busy): a SOFT-scope shutdown -- the
         // current task finishes, no further task starts, the engine keeps
@@ -460,7 +460,7 @@ async fn event_loop(
 
     loop {
         // The timer recomputes on every render: refresh the clock first.
-        app.now.set(Instant::now());
+        app.clock.now.set(Instant::now());
         terminal.draw(|frame| ui::render(frame, app))?;
         shutdown_done = false;
         tokio::select! {
@@ -603,7 +603,7 @@ async fn event_loop(
                 },
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e.into()),
-                None => return Ok(Outcome::Detached { completed: app.completed }),
+                None => return Ok(Outcome::Detached { completed: app.run.completed }),
             },
             update = updates.message() => match update {
                 Ok(Some(update)) => match update.payload {
@@ -632,7 +632,7 @@ async fn event_loop(
                 // The stream ends once the engine is gone.
                 Ok(None) => {
                     let reason = stopped_reason.unwrap_or_else(|| "connection to the engine closed".into());
-                    return Ok(Outcome::EngineStopped { reason, completed: app.completed });
+                    return Ok(Outcome::EngineStopped { reason, completed: app.run.completed });
                 }
                 Err(status) => return Err(anyhow!("lost the engine connection: {}", status.message())),
             },
@@ -653,7 +653,7 @@ async fn event_loop(
                     }
                 }
                 // Stream ended or failed: the engine is gone either way.
-                _ => return Ok(Outcome::EngineStopped { reason: "stopped".into(), completed: app.completed }),
+                _ => return Ok(Outcome::EngineStopped { reason: "stopped".into(), completed: app.run.completed }),
             },
         }
         if shutdown_done {
@@ -686,7 +686,7 @@ pub fn shutdown_progress(
         // The loop has wound down; the engine is idle and keeps serving, so
         // the shell stays open (a SOFT stop finishes the running task first,
         // a NOW interrupt cancels it).
-        app.stopping = false;
+        app.run.stopping = false;
         None
     } else {
         None
@@ -753,7 +753,7 @@ async fn cancel_soft_stop(client: &mut EngineClient<Channel>, app: &mut App) {
         Err(status) => Some(format!("cancel failed: {}", status.message())),
     };
     if let Some(error) = error {
-        app.stopping = true;
+        app.run.stopping = true;
         app.status = Some(error);
     }
 }
@@ -1104,7 +1104,7 @@ mod tests {
     #[tokio::test]
     async fn detach_maps_to_the_detached_outcome_without_a_request() {
         let mut app = app();
-        app.completed = 3;
+        app.run.completed = 3;
         let flow = run_shutdown_family(&mut app, &Action::Detach, unused_request())
             .await
             .unwrap();
@@ -1193,8 +1193,8 @@ mod tests {
     #[tokio::test]
     async fn submit_tasks_sends_the_planner_add_tasks_and_closes_on_accept() {
         let mut app = app();
-        app.dialog_open = true;
-        app.dialog.set_text("add a login page");
+        app.dialog.open = true;
+        app.dialog.editor.set_text("add a login page");
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut app,
@@ -1213,9 +1213,9 @@ mod tests {
             }
             other => panic!("expected an AddTasks command, got {other:?}"),
         }
-        assert!(!app.dialog_open);
+        assert!(!app.dialog.open);
         assert_eq!(app.focus, FrameFocus::Output);
-        assert_eq!(app.dialog.text(), "");
+        assert_eq!(app.dialog.editor.text(), "");
     }
 
     /// The research queue-creation runs (T69.1) send the AddTasks command
@@ -1244,7 +1244,7 @@ mod tests {
                 }
                 other => panic!("expected an AddTasks command, got {other:?}"),
             }
-            assert!(!app.dialog_open, "{run:?}");
+            assert!(!app.dialog.open, "{run:?}");
         }
     }
 
@@ -1254,8 +1254,8 @@ mod tests {
     async fn a_failed_add_keeps_the_dialog_open_with_the_error() {
         // The engine rejected the request: its reason lands in the dialog.
         let mut app = app();
-        app.dialog_open = true;
-        app.dialog.set_text("add a login page");
+        app.dialog.open = true;
+        app.dialog.editor.set_text("add a login page");
         run_submit_family(
             &mut app,
             std::path::Path::new("/home/user/demo"),
@@ -1263,9 +1263,9 @@ mod tests {
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "planner busy"),
         )
         .await;
-        assert!(app.dialog_open);
-        assert_eq!(app.dialog.text(), "add a login page");
-        assert_eq!(app.dialog_status.as_deref(), Some("planner busy"));
+        assert!(app.dialog.open);
+        assert_eq!(app.dialog.editor.text(), "add a login page");
+        assert_eq!(app.dialog.status.as_deref(), Some("planner busy"));
 
         // The transport failed: the add's failure message lands instead.
         run_submit_family(
@@ -1275,9 +1275,9 @@ mod tests {
             failing_submit("nope"),
         )
         .await;
-        assert!(app.dialog_open);
-        assert_eq!(app.dialog.text(), "add a login page");
-        assert_eq!(app.dialog_status.as_deref(), Some("add failed: nope"));
+        assert!(app.dialog.open);
+        assert_eq!(app.dialog.editor.text(), "add a login page");
+        assert_eq!(app.dialog.status.as_deref(), Some("add failed: nope"));
     }
 
     /// The inject-task modal's confirm (T76.1) sends the InjectTask command
@@ -1286,7 +1286,7 @@ mod tests {
     #[tokio::test]
     async fn inject_sends_the_inject_command_and_closes_the_modal_on_accept() {
         let mut accepted = app();
-        accepted.dialog_open = true;
+        accepted.dialog.open = true;
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut accepted,
@@ -1305,11 +1305,11 @@ mod tests {
                 other => panic!("expected an InjectTask command, got {other:?}"),
             }
         }
-        assert!(!accepted.dialog_open);
+        assert!(!accepted.dialog.open);
         assert_eq!(accepted.focus, FrameFocus::Tasks);
         // A rejected append keeps the modal open with the engine's reason.
         let mut rejected = app();
-        rejected.dialog_open = true;
+        rejected.dialog.open = true;
         run_submit_family(
             &mut rejected,
             std::path::Path::new("/home/user/demo"),
@@ -1317,9 +1317,9 @@ mod tests {
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "empty text"),
         )
         .await;
-        assert!(rejected.dialog_open);
+        assert!(rejected.dialog.open);
         assert_eq!(
-            rejected.dialog_status.as_deref(),
+            rejected.dialog.status.as_deref(),
             Some("could not append to TASKS.md: empty text")
         );
 
@@ -1331,9 +1331,9 @@ mod tests {
             failing_submit("nope"),
         )
         .await;
-        assert!(rejected.dialog_open);
+        assert!(rejected.dialog.open);
         assert_eq!(
-            rejected.dialog_status.as_deref(),
+            rejected.dialog.status.as_deref(),
             Some("could not append to TASKS.md: inject failed: nope")
         );
     }
@@ -1345,7 +1345,7 @@ mod tests {
     async fn save_brief_writes_the_spec_file_and_reports_the_created_status() {
         let temp = tempfile::TempDir::new().unwrap();
         let mut app = app();
-        app.dialog_open = true;
+        app.dialog.open = true;
         let flow = run_submit_family(
             &mut app,
             temp.path(),
@@ -1359,9 +1359,9 @@ mod tests {
             contents,
             crate::project::brief_content("A web service for recipes.")
         );
-        assert!(app.dialog_open);
+        assert!(app.dialog.open);
         assert_eq!(
-            app.dialog_status.as_deref(),
+            app.dialog.status.as_deref(),
             Some("SPEC.md created -- review it, then press Enter to start.")
         );
         assert_eq!(app.project_status.spec, SpecState::Content);
@@ -1374,7 +1374,7 @@ mod tests {
         // A directory at the SPEC.md path makes the write fail.
         std::fs::create_dir(temp.path().join(SPEC_FILE)).unwrap();
         let mut app = app();
-        app.dialog_open = true;
+        app.dialog.open = true;
         run_submit_family(
             &mut app,
             temp.path(),
@@ -1382,9 +1382,10 @@ mod tests {
             unused_submit(),
         )
         .await;
-        assert!(app.dialog_open);
+        assert!(app.dialog.open);
         assert!(
-            app.dialog_status
+            app.dialog
+                .status
                 .as_deref()
                 .unwrap_or_default()
                 .starts_with("could not write SPEC.md: ")
@@ -1403,7 +1404,7 @@ mod tests {
             Action::Quit,
         ] {
             let mut app = app();
-            app.dialog_open = true;
+            app.dialog.open = true;
             let flow = run_submit_family(
                 &mut app,
                 std::path::Path::new("/home/user/demo"),
@@ -1412,8 +1413,8 @@ mod tests {
             )
             .await;
             assert!(matches!(flow, SubmitFlow::Keep), "{action:?}");
-            assert!(app.dialog_open, "{action:?}");
-            assert_eq!(app.dialog_status, None, "{action:?}");
+            assert!(app.dialog.open, "{action:?}");
+            assert_eq!(app.dialog.status, None, "{action:?}");
         }
     }
 

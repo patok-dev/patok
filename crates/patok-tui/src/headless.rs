@@ -223,7 +223,7 @@ async fn advance(
         if !build_started {
             return None;
         }
-        let pending = app.tasks.iter().filter(|t| !t.done).count();
+        let pending = app.run.tasks.iter().filter(|t| !t.done).count();
         return Some(HeadlessOutcome::Failed(format!(
             "the build stopped with {pending} task(s) pending"
         )));
@@ -240,8 +240,9 @@ async fn advance(
 /// Every task in the store is done: per the latest `TasksChanged`, or per the locally
 /// recorded completions when that list lags the final `PhaseChanged`.
 fn all_done(app: &App, done: &[String]) -> bool {
-    app.tasks.iter().all(|t| t.done)
+    app.run.tasks.iter().all(|t| t.done)
         || app
+            .run
             .tasks
             .iter()
             .filter(|t| !t.done)
@@ -368,7 +369,7 @@ impl Printer {
     /// (`Pane::append` only extends the last line while it is open), so the line at
     /// `printed` is final once a newer one exists behind it.
     fn drain<W: Write>(&mut self, out: &mut W, app: &App) -> std::io::Result<()> {
-        let lines = &app.output.lines;
+        let lines = &app.run.output.lines;
         if lines.len() < self.printed {
             // The 5000-line limit dropped the front; the old lines scroll off, as
             // in the frame.

@@ -160,14 +160,17 @@ fn t_opens_the_picker_from_every_app_state() {
         phase: Phase::Running,
     });
     assert_eq!(press(&mut stopping, KeyCode::Char('q')), Action::Quit);
-    assert!(stopping.stopping);
+    assert!(stopping.run.stopping);
     assert_eq!(press(&mut stopping, KeyCode::Char('t')), Action::None);
     assert!(stopping.theme_modal.open);
-    assert!(stopping.stopping, "the pending stop survives underneath");
+    assert!(
+        stopping.run.stopping,
+        "the pending stop survives underneath"
+    );
     // The picker swallows the stop's keys while it is open...
     assert_eq!(press(&mut stopping, KeyCode::Char('q')), Action::None);
     assert_eq!(press(&mut stopping, KeyCode::Esc), Action::None);
-    assert!(stopping.stopping);
+    assert!(stopping.run.stopping);
     assert!(!stopping.theme_modal.open);
     // ...and they reach the shell again after the picker closes.
     assert_eq!(press(&mut stopping, KeyCode::Char('q')), Action::Interrupt);
@@ -178,10 +181,10 @@ fn t_stays_with_the_modal_that_has_the_keyboard() {
     // The add-task dialog types the t.
     let mut dialog = app();
     press(&mut dialog, KeyCode::Char('a'));
-    assert!(dialog.dialog_open);
+    assert!(dialog.dialog.open);
     assert_eq!(press(&mut dialog, KeyCode::Char('t')), Action::None);
     assert!(!dialog.theme_modal.open);
-    assert_eq!(dialog.dialog.text(), "t");
+    assert_eq!(dialog.dialog.editor.text(), "t");
 
     // The settings overlay ignores it.
     let mut overlay = app();
@@ -196,7 +199,7 @@ fn t_stays_with_the_modal_that_has_the_keyboard() {
         phase: Phase::Running,
     });
     press(&mut stop, KeyCode::Esc);
-    assert!(stop.stop_open);
+    assert!(stop.stop.open);
     assert_eq!(press(&mut stop, KeyCode::Char('t')), Action::None);
     assert!(!stop.theme_modal.open);
 }
@@ -275,9 +278,9 @@ fn keys_and_mouse_are_swallowed_while_the_picker_is_open() {
     ] {
         assert_eq!(press(&mut app, key), Action::None);
     }
-    assert!(!app.stopping);
-    assert!(!app.dialog_open);
-    assert!(!app.stop_open);
+    assert!(!app.run.stopping);
+    assert!(!app.dialog.open);
+    assert!(!app.stop.open);
     assert!(!app.settings_open());
     assert_eq!(app.focus, FrameFocus::Tasks);
     assert_eq!(app.scroll, 0);

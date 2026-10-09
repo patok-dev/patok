@@ -3,34 +3,27 @@
 pub(crate) mod choice;
 mod common;
 mod dialogs;
-mod modal;
+pub(crate) mod modal;
 mod output;
 mod settings;
 mod status;
 mod tasks;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout};
 use ratatui::widgets::Block;
 
 use crate::app::{App, FrameFocus, Modal};
 use crate::pipeline::{rail_width, render_rail};
 
-pub use common::{
-    CLOSE_BUTTON_WIDTH, button_text, close_button_rect, close_clicked, fitted_hints,
-    footer_button_code, footer_button_rects,
-};
+pub use common::fitted_hints;
 pub use dialogs::{
-    DIALOG_WATERMARK, INJECT_WATERMARK, confirm_row_at, dialog_area, menu_area, menu_row_at,
-    stop_area, stop_row_at, theme_area, theme_row_at,
+    DIALOG_WATERMARK, INJECT_WATERMARK, dialog_area, menu_area, stop_area, theme_area,
 };
-pub use output::{
-    finished_line, format_elapsed, human_duration, output_title, output_title_parts,
-    output_title_spans, started_line,
-};
+pub use output::{format_elapsed, output_title, output_title_parts, output_title_spans};
 pub use settings::{
     SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH,
-    settings_area, settings_body_areas, settings_confirm_area, settings_row_at,
+    settings_area, settings_body_areas, settings_confirm_area,
 };
 
 use common::base_style;
@@ -69,8 +62,8 @@ pub fn render(frame: &mut Frame, app: &App) {
     // frame, sized by the frame focus — the focused frame takes all the free space,
     // the other shrinks to 5 content lines.
     let [output, tasks] = Layout::vertical(frame_constraints(app.focus)).areas(frames);
-    app.output_area.set(output);
-    app.tasks_area.set(tasks);
+    app.layout.output_area.set(output);
+    app.layout.tasks_area.set(tasks);
     render_output(frame, app, output);
     render_tasks(frame, app, tasks);
     frame.render_widget(status_widget(app, status), status);
@@ -104,28 +97,15 @@ pub fn frame_constraints(focus: FrameFocus) -> [Constraint; 2] {
     }
 }
 
-/// Which of the merged view's two frames the pointer is over; `None` outside both
-/// (status line, past the right edge). The rects are adjacent and never
-/// overlap, so the first match wins; `Rect::contains` is half-open, so the
-/// boundary row between the frames belongs to exactly one of them.
-pub fn frame_at(position: Position, output: Rect, tasks: Rect) -> Option<FrameFocus> {
-    if output.contains(position) {
-        Some(FrameFocus::Output)
-    } else if tasks.contains(position) {
-        Some(FrameFocus::Tasks)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::common::{render_scrollbar, selected_row_style};
-    use super::output::{agent_display, visual_lines};
+    use super::output::visual_lines;
     use super::settings::settings_row_line;
     use super::status::status_widget;
     use super::*;
-    use crate::app::{LineKind, OutLine};
+    use crate::app::{LineKind, OutLine, agent_display, finished_line, started_line};
+    use crate::hit::{button_text, confirm_row_at, stop_row_at};
     use crate::overlay::{Editor, Entry, FieldKind, SECTIONS};
     use crate::theme::Theme;
     use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
@@ -136,7 +116,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::layout::Rect;
+    use ratatui::layout::{Position, Rect};
     use ratatui::style::Modifier;
     use ratatui::widgets::Widget;
     use std::time::Duration;
@@ -263,8 +243,8 @@ mod tests {
             let mut app = app_with_one_task();
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
-            app.planning = true;
-            app.agent = "planner".into();
+            app.run.planning = true;
+            app.run.agent = "planner".into();
             let message = "The planner is already running.";
             app.status = Some(message.into());
             let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 1));
@@ -345,7 +325,7 @@ mod tests {
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
             // Idle: the Enter `start` button and the m `menu` button.
-            assert_eq!(app.phase, Phase::Startup);
+            assert_eq!(app.run.phase, Phase::Startup);
             assert_button(theme, key, &app, "Enter", "start");
             assert_button(theme, key, &app, "m", "menu");
             // Running: the Esc `stop` button joins them.
@@ -451,9 +431,9 @@ mod tests {
             let mut app = app_with_one_task();
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
-            app.dialog_open = true;
-            app.dialog.set_text("hello");
-            app.dialog.set_cursor(3);
+            app.dialog.open = true;
+            app.dialog.editor.set_text("hello");
+            app.dialog.editor.set_cursor(3);
             let buffer = dialog_buffer(&app);
             let under = &buffer[(x0 + 3, y0)];
             assert_eq!(under.symbol(), "l", "{key:?}");
@@ -475,7 +455,7 @@ mod tests {
             let mut app = app_with_one_task();
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
-            app.dialog_open = true;
+            app.dialog.open = true;
             let buffer = dialog_buffer(&app);
             for (i, ch) in DIALOG_WATERMARK.chars().enumerate() {
                 let cell = &buffer[(x0 + i as u16, y0)];

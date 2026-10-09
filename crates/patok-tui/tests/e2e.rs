@@ -271,7 +271,7 @@ async fn soft_stop_during_a_build_keeps_the_shell_running_and_a_new_build_starts
     // The first q soft-stops the build loop.
     let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
     assert_eq!(app.on_key(key), patok_tui::Action::Quit);
-    assert!(app.stopping);
+    assert!(app.run.stopping);
     let mut progress = client
         .shutdown(ShutdownRequest {
             scope: shutdown_request::Scope::Soft as i32,
@@ -286,7 +286,7 @@ async fn soft_stop_during_a_build_keeps_the_shell_running_and_a_new_build_starts
                 .is_none()
         );
     }
-    assert!(!app.stopping, "keys work again after the soft stop");
+    assert!(!app.run.stopping, "keys work again after the soft stop");
 
     // The engine finished the running task and started nothing further.
     let mut finished = None;
@@ -446,7 +446,7 @@ async fn choosing_interrupt_from_the_stop_modal_keeps_the_shell_running_and_a_ne
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         patok_tui::Action::None
     );
-    assert!(app.stop_open);
+    assert!(app.stop.open);
     assert_eq!(
         app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
         patok_tui::Action::None
@@ -455,8 +455,8 @@ async fn choosing_interrupt_from_the_stop_modal_keeps_the_shell_running_and_a_ne
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         patok_tui::Action::Interrupt
     );
-    assert!(!app.stop_open);
-    assert!(app.stopping);
+    assert!(!app.stop.open);
+    assert!(app.run.stopping);
     let status = app.status.as_deref().unwrap();
     assert!(
         status.contains("cancelled") && status.contains("keeps running"),
@@ -486,7 +486,7 @@ async fn choosing_interrupt_from_the_stop_modal_keeps_the_shell_running_and_a_ne
         "message: {}",
         last.message
     );
-    assert!(!app.stopping, "keys work again after the interrupt");
+    assert!(!app.run.stopping, "keys work again after the interrupt");
 
     // The engine cancelled the running task and started nothing further; the
     // merged view shows the cancelled task pending in the idle task list.
@@ -518,7 +518,7 @@ async fn choosing_interrupt_from_the_stop_modal_keeps_the_shell_running_and_a_ne
     );
     assert!(!second_started, "the next pending task never started");
     assert!(app.is_idle());
-    assert!(app.tasks.iter().any(|t| t.id == "T1.1" && !t.done));
+    assert!(app.run.tasks.iter().any(|t| t.id == "T1.1" && !t.done));
 
     // No shutdown notice reaches the attached shell: the engine keeps serving
     // (the typed idle run-state update is expected, a notice is not).
@@ -670,7 +670,7 @@ async fn a_cancelled_soft_stop_continues_the_loop_over_grpc() {
         app.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
         patok_tui::Action::Quit
     );
-    assert!(app.stopping);
+    assert!(app.run.stopping);
     let mut progress = client
         .shutdown(ShutdownRequest {
             scope: shutdown_request::Scope::Soft as i32,
@@ -684,7 +684,7 @@ async fn a_cancelled_soft_stop_continues_the_loop_over_grpc() {
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         patok_tui::Action::CancelSoftStop
     );
-    assert!(!app.stopping);
+    assert!(!app.run.stopping);
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::CancelSoftStop(CancelSoftStop {})),
@@ -710,7 +710,7 @@ async fn a_cancelled_soft_stop_continues_the_loop_over_grpc() {
         "message: {}",
         last.message
     );
-    assert!(!app.stopping);
+    assert!(!app.run.stopping);
 
     // The loop continued with the next pending task after the running one.
     let mut cancelled_notice = false;
@@ -745,7 +745,7 @@ async fn a_cancelled_soft_stop_continues_the_loop_over_grpc() {
     }
     assert!(cancelled_notice, "the cancel reached the attached shell");
     assert_eq!(finished, ["T1.1".to_string(), "T1.2".to_string()]);
-    assert!(!app.stopping);
+    assert!(!app.run.stopping);
     assert!(app.is_idle());
 
     // The keys behave normally again: with the queue complete, Enter asks
@@ -821,7 +821,7 @@ async fn restart_stops_the_engine_spawns_a_fresh_one_and_reattaches() {
     let mut app = patok_tui::App::new(snapshot, version);
     app.check_version("0.0.0-older-shell");
     assert!(app.version_mismatch);
-    app.completed = 3;
+    app.run.completed = 3;
 
     // The spawner waits for the old engine to exit, then starts a fresh one.
     let old_server = Arc::new(std::sync::Mutex::new(Some(old_server)));
@@ -855,7 +855,7 @@ async fn restart_stops_the_engine_spawns_a_fresh_one_and_reattaches() {
     .unwrap();
 
     // The shell stayed open: session counters survive, the mismatch is gone, status says so.
-    assert_eq!(app.completed, 3);
+    assert_eq!(app.run.completed, 3);
     assert!(!app.version_mismatch);
     assert_eq!(app.status.as_deref(), Some("Engine restarted."));
 
@@ -919,7 +919,7 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
     // Open the dialog, type the request, submit.
     let press = |app: &mut App, code, modifiers| app.on_key(KeyEvent::new(code, modifiers));
     press(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
-    assert!(app.dialog_open);
+    assert!(app.dialog.open);
     let mut action = Action::None;
     for c in "write greeting tests".chars() {
         press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
@@ -943,7 +943,7 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
         .into_inner();
     assert!(response.accepted, "{}", response.error);
     app.on_tasks_submitted();
-    assert!(!app.dialog_open, "the accepted submit closes the modal");
+    assert!(!app.dialog.open, "the accepted submit closes the modal");
     assert_eq!(app.focus, FrameFocus::Output);
 
     let draw = |app: &App| {
@@ -976,15 +976,15 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
             continue;
         };
         app.apply(EngineEvent::from_payload(&event.payload).unwrap());
-        seen_planning |= app.planning;
-        if seen_planning && app.planning {
+        seen_planning |= app.run.planning;
+        if seen_planning && app.run.planning {
             // The planner streams into the main agent output frame on the Dashboard tab.
             let screen = draw(&app);
             assert!(screen.contains(" PLANNING"), "{screen}");
-            drew_planner_frame |= app.agent == "planner" && screen.contains(" Planner ");
+            drew_planner_frame |= app.run.agent == "planner" && screen.contains(" Planner ");
             drew_streaming_output |= screen.contains("Planning the new work.");
         }
-        if seen_planning && !app.planning {
+        if seen_planning && !app.run.planning {
             break;
         }
     }
@@ -1003,7 +1003,7 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
     let screen = draw(&app);
     assert!(app.status.is_none(), "{screen}");
     assert!(app.is_new_task("T2.1"));
-    assert_eq!(app.tasks.len(), 2);
+    assert_eq!(app.run.tasks.len(), 2);
     assert!(screen.contains("Planning the new work."), "{screen}");
     assert!(screen.contains("1 task added."), "{screen}");
     assert!(screen.contains("T2.1"), "{screen}");
@@ -1108,13 +1108,13 @@ async fn the_plan_stage_shows_the_planner_then_the_builder_for_one_task() {
         saw_builder_output |= matches!(&event, EngineEvent::Agent { event: AgentEvent::Text { text } }
                 if text.contains("Creating greeting.txt"));
         app.apply(event);
-        if planner_screen.is_none() && saw_plan_output && app.agent == "planner" {
+        if planner_screen.is_none() && saw_plan_output && app.run.agent == "planner" {
             planner_screen = Some(draw(&app));
         }
-        if builder_screen.is_none() && saw_builder_output && app.agent == "builder" {
+        if builder_screen.is_none() && saw_builder_output && app.run.agent == "builder" {
             builder_screen = Some(draw(&app));
         }
-        if app.phase == Phase::Startup && app.completed == 1 {
+        if app.run.phase == Phase::Startup && app.run.completed == 1 {
             break;
         }
     }
@@ -1135,7 +1135,7 @@ async fn the_plan_stage_shows_the_planner_then_the_builder_for_one_task() {
     assert!(builder.contains("Creating greeting.txt."), "{builder}");
 
     // The task completed and the builder did the planned work.
-    assert!(app.tasks.iter().any(|t| t.id == "T1.1" && t.done));
+    assert!(app.run.tasks.iter().any(|t| t.id == "T1.1" && t.done));
     assert_eq!(
         std::fs::read_to_string(setup.config.project_dir.join("greeting.txt")).unwrap(),
         "hello\n"
@@ -1206,7 +1206,7 @@ async fn a_session_end_reaches_an_attached_client_with_the_agent_and_duration() 
             builder_end = Some(decoded.clone());
         }
         app.apply(decoded);
-        if app.phase == Phase::Startup && app.completed == 1 {
+        if app.run.phase == Phase::Startup && app.run.completed == 1 {
             break;
         }
     }
@@ -1304,7 +1304,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
         Snapshot::from_state(&info.snapshot.clone().unwrap().state).unwrap(),
         info.engine_version.clone(),
     );
-    assert!(!app.discovering);
+    assert!(!app.run.discovering);
     // The typed run state is idle at attach, before anything runs.
     assert_eq!(info.snapshot.unwrap().run_state, RunState::Idle as i32);
 
@@ -1354,7 +1354,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
             }
             _ => {}
         }
-        if app.discovering && !chip_snapshot_taken {
+        if app.run.discovering && !chip_snapshot_taken {
             chip_snapshot_taken = true;
             let screen = draw(&app);
             assert!(screen.contains(" DISCOVERING"), "{screen}");
@@ -1363,7 +1363,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
         if app.is_new_task("D1.1") {
             highlighted = true;
         }
-        if app.phase == Phase::Startup && app.completed == 2 {
+        if app.run.phase == Phase::Startup && app.run.completed == 2 {
             break;
         }
     }
@@ -1374,7 +1374,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
     );
 
     // The discovered task was built in the same session; the list shows it done.
-    assert!(app.tasks.iter().any(|t| t.id == "D1.1" && t.done));
+    assert!(app.run.tasks.iter().any(|t| t.id == "D1.1" && t.done));
     assert!(draw(&app).contains("STOPPED"));
     let tasks = std::fs::read_to_string(setup.config.project_dir.join("TASKS.md")).unwrap();
     assert_eq!(
@@ -1434,12 +1434,12 @@ async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
         info.engine_version.clone(),
     );
     assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
-    assert!(!app.discovering);
+    assert!(!app.run.discovering);
 
     // Enter no longer opens the dialog: it asks for a discovery round.
     let action = app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(action, Action::RunDiscovery);
-    assert!(!app.dialog_open);
+    assert!(!app.dialog.open);
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::RunDiscovery(
@@ -1499,14 +1499,14 @@ async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
             }
             _ => {}
         }
-        if app.discovering && !saw_chip {
+        if app.run.discovering && !saw_chip {
             saw_chip = true;
             chip_screen = Some(draw(&app));
         }
         if app.is_new_task("D1.1") {
             highlighted = true;
         }
-        if saw_discovering && !app.discovering && !app.tasks.is_empty() {
+        if saw_discovering && !app.run.discovering && !app.run.tasks.is_empty() {
             break;
         }
     }
@@ -1520,7 +1520,7 @@ async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
         highlighted,
         "the discovered task reused the new-task highlight"
     );
-    assert!(app.tasks.iter().any(|t| t.id == "D1.1" && !t.done));
+    assert!(app.run.tasks.iter().any(|t| t.id == "D1.1" && !t.done));
     let screen = draw(&app);
     assert!(screen.contains("D1.1"), "{screen}");
     assert!(screen.contains("fix the greeting"), "{screen}");
@@ -1570,8 +1570,8 @@ async fn the_frame_focus_follows_the_engine_state() {
     // shrinks to 5 content lines.
     draw(&app);
     assert_eq!(app.focus, FrameFocus::Tasks);
-    assert_eq!(app.output_area.get().height, 7);
-    assert_eq!(app.tasks_area.get().height, 16);
+    assert_eq!(app.layout.output_area.get().height, 7);
+    assert_eq!(app.layout.tasks_area.get().height, 16);
 
     let response = client
         .submit_command(CommandRequest {
@@ -1593,12 +1593,12 @@ async fn the_frame_focus_follows_the_engine_state() {
             continue;
         };
         app.apply(EngineEvent::from_payload(&event.payload).unwrap());
-        if app.phase == Phase::Running {
+        if app.run.phase == Phase::Running {
             draw(&app);
             saw_running_focus |=
-                app.focus == FrameFocus::Output && app.tasks_area.get().height == 7;
+                app.focus == FrameFocus::Output && app.layout.tasks_area.get().height == 7;
         }
-        if app.phase == Phase::Startup && app.completed == 1 {
+        if app.run.phase == Phase::Startup && app.run.completed == 1 {
             break;
         }
     }
@@ -1610,8 +1610,8 @@ async fn the_frame_focus_follows_the_engine_state() {
     // Back to idle: the task list takes the default focus again.
     draw(&app);
     assert_eq!(app.focus, FrameFocus::Tasks);
-    assert_eq!(app.output_area.get().height, 7);
-    assert_eq!(app.tasks_area.get().height, 16);
+    assert_eq!(app.layout.output_area.get().height, 7);
+    assert_eq!(app.layout.tasks_area.get().height, 16);
 
     engine.shutdown_token().cancel();
     server.await.unwrap().unwrap();
@@ -1634,7 +1634,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         .into_inner();
     let (version, snapshot) = snapshot_of(updates.message().await.unwrap().unwrap());
     let mut app = patok_tui::App::new(snapshot, version);
-    assert_eq!(app.model, "");
+    assert_eq!(app.run.model, "");
 
     // A valid change: accepted, written to the project-local layer, with its apply timing.
     let response = client
@@ -1679,7 +1679,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
             break;
         }
     }
-    assert_eq!(app.model, "opus");
+    assert_eq!(app.run.model, "opus");
     // A non-display field arrives as a notice line with its apply-timing hint.
     let response = client
         .submit_command(CommandRequest {
@@ -1717,6 +1717,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         }
     }
     let lines = app
+        .run
         .output
         .lines
         .iter()
@@ -2238,7 +2239,7 @@ async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
     // typed, Enter confirms. The action carries the raw typed text; the
     // normalizing happens engine-side.
     app.on_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
-    assert!(app.dialog_open);
+    assert!(app.dialog.open);
     for c in "polish the readme".chars() {
         app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }

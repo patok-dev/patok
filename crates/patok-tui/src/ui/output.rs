@@ -1,7 +1,9 @@
-//! The agent output frame: its title, pane rendering and session lines.
+//! The agent output frame: its title, pane rendering and session lines. The
+//! lifecycle status lines the event reducer appends (the started, finished
+//! and human-duration formatters) live on the shell state side
+//! ([`crate::app`]); the frame keeps the timer's `mm:ss` formatting.
 
 use patok_core::config::ProviderKind;
-use patok_core::event::SessionOutcome;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -10,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::Duration;
 
 use super::common::{render_hints_strip, split_hints_row};
-use crate::app::{App, FrameFocus, LineKind, OutLine, Pane};
+use crate::app::{App, FrameFocus, LineKind, OutLine, Pane, agent_display};
 use crate::markdown::markdown_lines;
 use crate::theme::Theme;
 
@@ -178,57 +180,6 @@ pub fn format_elapsed(elapsed: Duration) -> String {
     format!("{:02}:{:02}", total / 60, total % 60)
 }
 
-/// The output frame title's agent type: the active agent's name capitalised
-/// ("planner" -> "Planner", "builder" -> "Builder"; T11.1).
-pub fn agent_display(agent: &str) -> String {
-    let mut chars = agent.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
-}
-
-/// A session's duration in human words (T42.1): `M sec` under a minute,
-/// `N min M sec` under an hour (seconds zero-padded) and `N h M min` beyond
-/// (minutes-within-the-hour zero-padded).
-pub fn human_duration(duration: Duration) -> String {
-    let total = duration.as_secs();
-    let (mins, secs) = (total / 60, total % 60);
-    if total < 60 {
-        format!("{secs} sec")
-    } else if total < 3600 {
-        format!("{mins} min {secs:02} sec")
-    } else {
-        format!("{} h {:02} min", total / 3600, mins % 60)
-    }
-}
-
-/// The started line appended to the output pane when one agent session begins
-/// (T78.1): the agent type name exactly as the finished line shows it, the
-/// provider it runs on, and the configured model when one exists.
-pub fn started_line(agent: &str, provider: &str, model: Option<&str>) -> String {
-    match model {
-        Some(model) => format!("{} started ({provider}, {model})", agent_display(agent)),
-        None => format!("{} started ({provider})", agent_display(agent)),
-    }
-}
-
-/// The finished line appended to the output pane when one agent session ends
-/// (T42.1): the agent type name exactly as the frame title shows it, the
-/// outcome's word (`finished`, `failed` or `cancelled`) and the human duration.
-pub fn finished_line(agent: &str, outcome: SessionOutcome, duration: Duration) -> String {
-    let word = match outcome {
-        SessionOutcome::Finished => "finished",
-        SessionOutcome::Failed => "failed",
-        SessionOutcome::Cancelled => "cancelled",
-    };
-    format!(
-        "{} {word} in {}",
-        agent_display(agent),
-        human_duration(duration)
-    )
-}
-
 pub(super) fn render_output(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
     let timer = app.session_elapsed().map(format_elapsed);
@@ -236,11 +187,11 @@ pub(super) fn render_output(frame: &mut Frame, app: &App, area: Rect) {
     // T24.1, T110.1); the frame title is the one surface that keeps the
     // fixated name colour (T117.1), and the separator, provider, model and
     // timer render in the theme's low-emphasis detail colour (T37.1).
-    let title_colour = Theme::agent_name_color(theme, &app.agent);
+    let title_colour = Theme::agent_name_color(theme, &app.run.agent);
     let (left, right) = output_title_spans(
-        &agent_display(&app.agent),
-        provider_display_name(&app.provider),
-        &app.model,
+        &agent_display(&app.run.agent),
+        provider_display_name(&app.run.provider),
+        &app.run.model,
         timer.as_deref(),
         usize::from(area.width.saturating_sub(2)),
         title_colour,
@@ -261,12 +212,12 @@ pub(super) fn render_output(frame: &mut Frame, app: &App, area: Rect) {
     let max_scroll = render_pane(
         frame,
         theme,
-        &app.output,
+        &app.run.output,
         app.scroll,
         "no output yet",
         content,
     );
-    app.max_scroll.set(max_scroll);
+    app.layout.max_scroll.set(max_scroll);
     render_hints_strip(frame, hints_row, &output_hints(), theme);
 }
 

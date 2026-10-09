@@ -6,8 +6,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::common::{button_line, button_text};
 use crate::app::App;
+use crate::hit::{button_line, button_text};
 
 /// The merged status line (T86.1): one bottom row holding the old header's
 /// chips on the left -- the status chip, then the run-mode chip when the two
@@ -20,17 +20,17 @@ use crate::app::App;
 /// the m menu button. All three are interactive (T133.1, T134.1): each renders
 /// through the shared [`button_line`] so it reads as a modal button, and each
 /// records a rect covering its full [`button_text`] width on
-/// [`App::menu_chip`], [`App::enter_chip`] or [`App::stop_chip`] for the mouse
+/// [`App::layout`'s `menu_chip`, `enter_chip` or `stop_chip` for the mouse
 /// hit-test -- a left click anywhere on the button runs its key's action.
 pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     let width = usize::from(area.width);
     let theme = app.theme();
     // A discovery round runs either on an idle engine or inside a session's empty-queue gap
     // (the phase stays Running for the whole session), so it wins over the phase chips.
-    let (label, color) = match (app.stopping, app.phase) {
+    let (label, color) = match (app.run.stopping, app.run.phase) {
         (true, _) => ("STOPPING", theme.highlighted_text),
-        (false, _) if app.planning => ("PLANNING", theme.chip_planning),
-        (false, _) if app.discovering => ("DISCOVERING", theme.chip_discovering),
+        (false, _) if app.run.planning => ("PLANNING", theme.chip_planning),
+        (false, _) if app.run.discovering => ("DISCOVERING", theme.chip_discovering),
         (false, Phase::Running) => ("RUNNING", theme.success),
         (false, Phase::Startup) => ("STOPPED", theme.chip_neutral),
     };
@@ -56,9 +56,9 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     // The interactive chips' rects reset every render: a showing message or
     // a pair dropped for width leaves the zero rect, which contains no real
     // position, so a click misses naturally.
-    app.menu_chip.set(Rect::default());
-    app.enter_chip.set(Rect::default());
-    app.stop_chip.set(Rect::default());
+    app.layout.menu_chip.set(Rect::default());
+    app.layout.enter_chip.set(Rect::default());
+    app.layout.stop_chip.set(Rect::default());
     let right = match &app.status {
         Some(message) => {
             // Bare text: one separating space so it does not glue to the mode
@@ -83,7 +83,7 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
             if app.is_idle() {
                 keys.push((
                     "Enter",
-                    if app.tasks.iter().any(|t| !t.done) {
+                    if app.run.tasks.iter().any(|t| !t.done) {
                         "start"
                     } else {
                         "run discovery"
@@ -96,7 +96,9 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
             // hides while one is pending. A click on it opens the stop
             // dialog, exactly like the key; the m menu's stop entry keeps
             // its build-only scope.
-            if (app.phase == Phase::Running || app.planning || app.discovering) && !app.stopping {
+            if (app.run.phase == Phase::Running || app.run.planning || app.run.discovering)
+                && !app.run.stopping
+            {
                 keys.push(("Esc", "stop"));
             }
             // The m menu button: the settings, theme, detach and quit hints
@@ -142,9 +144,9 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
                     1,
                 );
                 match key {
-                    "m" => app.menu_chip.set(rect),
-                    "Enter" => app.enter_chip.set(rect),
-                    _ => app.stop_chip.set(rect),
+                    "m" => app.layout.menu_chip.set(rect),
+                    "Enter" => app.layout.enter_chip.set(rect),
+                    _ => app.layout.stop_chip.set(rect),
                 }
                 right.extend(button_line(key, label, theme).spans);
                 column += usize::from(width);

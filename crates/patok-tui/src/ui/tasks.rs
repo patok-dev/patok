@@ -20,7 +20,7 @@ use crate::app::{App, FrameFocus};
 pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
     let mut hints = vec!["a add tasks", "i inject task"];
     if app.is_idle() {
-        hints.push(if app.tasks.iter().any(|t| !t.done) {
+        hints.push(if app.run.tasks.iter().any(|t| !t.done) {
             "Enter start"
         } else {
             "Enter run discovery"
@@ -38,9 +38,9 @@ pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
 pub(super) fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
     let theme = app.theme();
     let detail = Style::new().fg(theme.muted_text);
-    let done = app.tasks.iter().filter(|t| t.done).count();
-    let total = app.tasks.len();
-    let left = app.tasks.iter().filter(|t| !t.done).count();
+    let done = app.run.tasks.iter().filter(|t| t.done).count();
+    let total = app.run.tasks.len();
+    let left = app.run.tasks.iter().filter(|t| !t.done).count();
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Line::from(vec![
@@ -61,19 +61,21 @@ pub(super) fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
     // Keep the first pending task in view, a third of the way down; `task_scroll`
     // rows scrolled up from that auto view (toward earlier tasks).
     let focus = app
+        .run
         .tasks
         .iter()
         .position(|t| !t.done)
-        .unwrap_or(app.tasks.len());
+        .unwrap_or(app.run.tasks.len());
     let auto = focus.saturating_sub(usize::from(content.height) / 3);
-    app.task_max_scroll.set(auto);
+    app.layout.task_max_scroll.set(auto);
     let offset = auto.saturating_sub(app.task_scroll.min(auto));
     let items: Vec<ListItem> = app
+        .run
         .tasks
         .iter()
         .skip(offset)
         .map(|task| {
-            let running = app.current_task.as_deref() == Some(task.id.as_str());
+            let running = app.run.current_task.as_deref() == Some(task.id.as_str());
             let (mark, style) = match (task.done, running) {
                 (true, _) => ("✔", Style::new().fg(theme.muted_text)),
                 (false, true) => ("▶", Style::new().fg(theme.success).bold()),

@@ -9,24 +9,25 @@ use crossterm::event::{
 };
 use patok_core::config::{ApplyTiming, SettingValue, Theme as ThemeKey, TuiSettings};
 use patok_core::event::{
-    AgentEvent, AgentRole, EngineEvent, NoticeLevel, Phase, Snapshot, TaskOutcome, Usage,
+    AgentEvent, AgentRole, EngineEvent, NoticeLevel, Phase, SessionOutcome, Snapshot, TaskOutcome,
+    Usage,
 };
 use patok_core::pipeline::PipelineState;
 use patok_core::scenario::{ProjectScan, Scenario, SpecState};
 use patok_core::task::Task;
 use ratatui::layout::Rect;
 
+use crate::choice::{Choice, ChoiceKey, ChoiceMouse, choice_key, choice_mouse};
 use crate::dialog_editor::DialogEditor;
+use crate::hit::{
+    chip_clicked, close_clicked, footer_button_code, frame_at, menu_row_at, settings_row_at,
+    theme_row_at,
+};
 use crate::overlay::{
     Entry, Row, SETTINGS_CHOICES, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries,
     header_fold,
 };
 use crate::theme::{Theme, theme_modal_groups};
-use crate::ui::choice::{Choice, ChoiceKey, ChoiceMouse, choice_key, choice_mouse};
-use crate::ui::{
-    close_clicked, finished_line, footer_button_code, frame_at, menu_row_at, settings_row_at,
-    started_line, theme_row_at,
-};
 
 /// Output lines kept; older ones scroll off for good.
 const OUTPUT_LIMIT: usize = 5000;
@@ -94,6 +95,57 @@ impl Pane {
 pub struct OutLine {
     pub kind: LineKind,
     pub text: String,
+}
+
+/// The output frame title's agent type: the active agent's name capitalised
+/// ("planner" -> "Planner", "builder" -> "Builder"; T11.1).
+pub fn agent_display(agent: &str) -> String {
+    let mut chars = agent.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// A session's duration in human words (T42.1): `M sec` under a minute,
+/// `N min M sec` under an hour (seconds zero-padded) and `N h M min` beyond
+/// (minutes-within-the-hour zero-padded).
+pub fn human_duration(duration: Duration) -> String {
+    let total = duration.as_secs();
+    let (mins, secs) = (total / 60, total % 60);
+    if total < 60 {
+        format!("{secs} sec")
+    } else if total < 3600 {
+        format!("{mins} min {secs:02} sec")
+    } else {
+        format!("{} h {:02} min", total / 3600, mins % 60)
+    }
+}
+
+/// The started line appended to the output pane when one agent session begins
+/// (T78.1): the agent type name exactly as the finished line shows it, the
+/// provider it runs on, and the configured model when one exists.
+pub fn started_line(agent: &str, provider: &str, model: Option<&str>) -> String {
+    match model {
+        Some(model) => format!("{} started ({provider}, {model})", agent_display(agent)),
+        None => format!("{} started ({provider})", agent_display(agent)),
+    }
+}
+
+/// The finished line appended to the output pane when one agent session ends
+/// (T42.1): the agent type name exactly as the frame title shows it, the
+/// outcome's word (`finished`, `failed` or `cancelled`) and the human duration.
+pub fn finished_line(agent: &str, outcome: SessionOutcome, duration: Duration) -> String {
+    let word = match outcome {
+        SessionOutcome::Finished => "finished",
+        SessionOutcome::Failed => "failed",
+        SessionOutcome::Cancelled => "cancelled",
+    };
+    format!(
+        "{} {word} in {}",
+        agent_display(agent),
+        human_duration(duration)
+    )
 }
 
 /// The two research queue-creation runs (T69.1): the Research agent's second
@@ -225,7 +277,7 @@ impl Choice for StopChoice {
     }
 }
 
-/// The stop dialog's rows, top to bottom; `stop_selected` indexes this list.
+/// The stop dialog's rows, top to bottom; the stop dialog's selected row (`StopState::selected`) indexes this list.
 pub const STOP_CHOICES: [StopChoice; 3] = [
     StopChoice::SoftStop,
     StopChoice::Interrupt,
@@ -273,7 +325,7 @@ impl MenuChoice {
 }
 
 /// The m menu's rows while a build runs (`running`), top to bottom;
-/// `menu_selected` indexes this list. The stop entry joins only while a
+/// the menu's selected row (`MenuState::selected`) indexes this list. The stop entry joins only while a
 /// build runs -- it keeps its build-only scope even though the Esc binding
 /// covers planner and discovery runs too (T142.1) -- so the key handler's
 /// clamp and the renderer read one list.
@@ -337,9 +389,9 @@ impl Modal {
         match self {
             Modal::Theme => app.theme_modal.open,
             Modal::Confirm => app.overlay.confirm_open,
-            Modal::Stop => app.stop_open,
-            Modal::Menu => app.menu_open,
-            Modal::Dialog => app.dialog_open,
+            Modal::Stop => app.stop.open,
+            Modal::Menu => app.menu.open,
+            Modal::Dialog => app.dialog.open,
             Modal::Overlay => app.overlay.open,
         }
     }
@@ -382,10 +434,11 @@ pub enum FrameFocus {
 /// same input box -- same styling, same cursor and multi-line editing, same
 /// cancel behaviour -- they differ only in their title, watermark, primary
 /// label and what confirming does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DialogKind {
     /// The add-task dialog (`a`): the scenario-driven submit of T74.1, which
     /// sends the text to the engine's planner or discovery flow.
+    #[default]
     Add,
     /// The inject-task modal (`i`): the engine normalizes the text into a
     /// well-formed unchecked task line before appending it to TASKS.md,
@@ -454,55 +507,44 @@ impl ThemeModal {
     }
 }
 
-pub struct App {
-    pub project: String,
-    /// The focused frame of the merged view; it takes all the free space. Defaults
-    /// to the task list while the engine is idle and the agent output while a run
-    /// is active.
-    pub focus: FrameFocus,
-    /// The scanned project facts behind the idle scenario.
-    pub project_status: ProjectScan,
-    pub engine_version: String,
-    /// Name of the engine's active provider; empty when unknown.
-    pub provider: String,
-    /// The engine's configured model name; empty when the provider picks its default.
-    pub model: String,
-    /// The configured provider and model behind [`App::provider`] and
-    /// [`App::model`]: the baseline the output frame title restores to after
-    /// a session that runs on another provider (a reviewer under a `claude`
-    /// reviewer provider) ends.
-    pub config_provider: String,
-    pub config_model: String,
-    /// The engine's active agent ("planner" during the plan stage, "builder" afterwards);
-    /// announced by `AgentChanged` events and replayed with the recent events (T11.1).
-    pub agent: String,
-    /// The engine's build differs from this shell's (set once, on attach).
-    pub version_mismatch: bool,
+/// The run state the event reducer (`App::apply`/`apply_agent`) writes: the
+/// engine's phase and run flags, the active agent, provider and model, the
+/// task list and the output pane. Grouped (finding 19) so the reducer's state
+/// reads as one thing instead of a dozen flat fields.
+pub struct RunState {
     pub phase: Phase,
-    pub tasks: Vec<Task>,
-    pub current_task: Option<String>,
-    pub output: Pane,
-    /// Visual lines scrolled up from the bottom; 0 follows the live output.
-    pub scroll: usize,
-    /// Largest useful scroll at the last render; keeps `scroll` from running past the top.
-    pub max_scroll: Cell<usize>,
-    /// Task rows scrolled up from the auto-follow view; 0 keeps the first pending
-    /// task a third of the way down.
-    pub task_scroll: usize,
-    /// Largest useful task scroll at the last render.
-    pub task_max_scroll: Cell<usize>,
-    /// The agent output frame's rect at the last render; mouse hit-testing reads it.
-    pub output_area: Cell<Rect>,
-    /// The task list frame's rect at the last render; mouse hit-testing reads it.
-    pub tasks_area: Cell<Rect>,
-    pub usage: Option<Usage>,
-    /// A one-line message in the status bar (rejections, quit progress).
-    pub status: Option<String>,
-    pub stopping: bool,
     /// The planner is running.
     pub planning: bool,
     /// A discovery round is running.
     pub discovering: bool,
+    pub stopping: bool,
+    /// The engine's active agent ("planner" during the plan stage, "builder" afterwards);
+    /// announced by `AgentChanged` events and replayed with the recent events (T11.1).
+    pub agent: String,
+    /// Name of the engine's active provider; empty when unknown.
+    pub provider: String,
+    /// The engine's configured model name; empty when the provider picks its default.
+    pub model: String,
+    /// The configured provider and model behind [`RunState::provider`] and
+    /// [`RunState::model`]: the baseline the output frame title restores to after
+    /// a session that runs on another provider (a reviewer under a `claude`
+    /// reviewer provider) ends.
+    pub config_provider: String,
+    config_model: String,
+    pub current_task: Option<String>,
+    pub completed: usize,
+    usage: Option<Usage>,
+    pub tasks: Vec<Task>,
+    /// IDs of tasks appended since the last key press or build start; shown highlighted.
+    new_tasks: Vec<String>,
+    pub output: Pane,
+}
+
+/// The session timer's clock (T42.1): the active session's start, the
+/// construction-time epoch anchor that maps the engine's epoch milliseconds
+/// onto the shell's `Instant` clock, and the render clock the timer reads.
+/// Grouped (finding 19) so the timer's state moves as one thing.
+pub struct SessionClock {
     /// The active session's start: `Some` from the moment the engine leaves
     /// idle until it returns, `None` while idle. A session is a build, planner
     /// or discovery run (the same classification `is_idle` makes).
@@ -517,43 +559,65 @@ pub struct App {
     /// The render clock the timer reads; the driver refreshes it before every
     /// frame. Tests that leave it still get a deterministic `00:00`.
     pub now: Cell<Instant>,
-    pub completed: usize,
-    /// The add-task dialog is open (true for both dialog kinds: the add-task
-    /// dialog and the inject-task modal share the input).
-    pub dialog_open: bool,
-    /// Which modal the open dialog is (T76.1): the add-task dialog or the
-    /// inject-task modal. Pinned back to [`DialogKind::Add`] whenever the
-    /// add-task dialog opens, so a reopen never inherits the inject kind.
-    pub dialog_kind: DialogKind,
-    /// The stop dialog is open (Esc pressed while a build runs, T46.1).
-    pub stop_open: bool,
-    /// The stop dialog's selected row; indexes [`STOP_CHOICES`].
-    pub stop_selected: usize,
-    /// The stop dialog's bottom line rect at the last render; its buttons'
-    /// mouse hit-testing reads it (T59.1).
-    pub stop_footer: Cell<Rect>,
-    /// The stop dialog's close button rect at the last render (T66.1); a click
-    /// on it runs the dialog's Esc key.
-    pub stop_close: Cell<Rect>,
-    /// The stop dialog's body rect at the last render (T148.1); its rows'
-    /// mouse hit-testing reads it -- a pointer move over a choice row moves
-    /// the selection there, and a left click selects and runs that row's
-    /// Enter.
-    pub stop_body: Cell<Rect>,
-    /// The m menu is open (the `m` key, from any engine state).
-    pub menu_open: bool,
-    /// The m menu's selected row; indexes [`menu_entries`].
-    pub menu_selected: usize,
-    /// The m menu's bottom line rect at the last render; its buttons' mouse
-    /// hit-testing reads it (T59.1).
-    pub menu_footer: Cell<Rect>,
-    /// The m menu's close button rect at the last render (T66.1); a click on
-    /// it runs the menu's Esc key.
-    pub menu_close: Cell<Rect>,
-    /// The m menu's body rect at the last render (T137.1); its rows' mouse
-    /// hit-testing reads it -- a left click on a rendered row selects and
-    /// runs that entry.
-    pub menu_body: Cell<Rect>,
+}
+
+impl SessionClock {
+    /// Captures the epoch anchor and starts the render clock.
+    fn new() -> Self {
+        Self {
+            session_start: None,
+            epoch_anchor: (SystemTime::now(), Instant::now()),
+            now: Cell::new(Instant::now()),
+        }
+    }
+
+    /// The instant the engine's epoch-millisecond timestamp falls on, mapped
+    /// through the construction-time anchor (T42.1). A session that started
+    /// before this shell attached maps to the instant before it, clamped to
+    /// the anchor when the clock cannot reach back that far.
+    fn anchored(&self, started_ms: u64) -> Instant {
+        let (epoch, at) = self.epoch_anchor;
+        let epoch_ms = epoch
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(started_ms);
+        let delta = Duration::from_millis(epoch_ms.abs_diff(started_ms));
+        if epoch_ms >= started_ms {
+            at.checked_sub(delta).unwrap_or(at)
+        } else {
+            at + delta
+        }
+    }
+
+    /// The active session's elapsed time on the render clock; `None` with no
+    /// anchor. The idle gate stays with the caller, which owns the
+    /// classification.
+    fn elapsed(&self) -> Option<Duration> {
+        self.session_start.map(|start| {
+            let now = self.now.get();
+            if now >= start {
+                now - start
+            } else {
+                Duration::ZERO
+            }
+        })
+    }
+}
+
+/// The render-side layout caches the ui module writes through `&App` at every
+/// render (finding 19): the frames' largest useful scrolls, the rects the
+/// mouse hit-tests read and the status bar's chip rects. The `Cell`
+/// interior mutability is load-bearing -- `render` takes `&App`.
+#[derive(Default)]
+pub struct LayoutCache {
+    /// Largest useful scroll at the last render; keeps `scroll` from running past the top.
+    pub max_scroll: Cell<usize>,
+    /// Largest useful task scroll at the last render.
+    pub task_max_scroll: Cell<usize>,
+    /// The agent output frame's rect at the last render; mouse hit-testing reads it.
+    pub output_area: Cell<Rect>,
+    /// The task list frame's rect at the last render; mouse hit-testing reads it.
+    pub tasks_area: Cell<Rect>,
     /// The status bar's m menu chip rect at the last render (T133.1); a left
     /// click on it opens the m menu (the m key's action) and a click while
     /// the menu is open closes it. The zero rect a chip-less render records
@@ -575,20 +639,111 @@ pub struct App {
     /// other engine state -- contains no real position, so a click misses
     /// naturally.
     pub stop_chip: Cell<Rect>,
-    /// The add-task dialog's multi-line text editor: the buffer, its cursor,
+    /// The rail's rect at the last render.
+    pub pipeline_area: Cell<Rect>,
+}
+
+/// The stop dialog's state (Esc pressed while a build runs, T46.1): its open
+/// flag, its selected row and the rects its mouse hit-testing reads.
+/// Grouped (finding 19) like the modal's own state.
+#[derive(Default)]
+pub struct StopState {
+    /// The stop dialog is open (Esc pressed while a build runs, T46.1).
+    pub open: bool,
+    /// The stop dialog's selected row; indexes [`STOP_CHOICES`].
+    pub selected: usize,
+    /// The stop dialog's bottom line rect at the last render; its buttons'
+    /// mouse hit-testing reads it (T59.1).
+    pub footer: Cell<Rect>,
+    /// The stop dialog's close button rect at the last render (T66.1); a click
+    /// on it runs the dialog's Esc key.
+    pub close: Cell<Rect>,
+    /// The stop dialog's body rect at the last render (T148.1); its rows'
+    /// mouse hit-testing reads it -- a pointer move over a choice row moves
+    /// the selection there, and a left click selects and runs that row's
+    /// Enter.
+    pub body: Cell<Rect>,
+}
+
+/// The m menu's state (the `m` key, from any engine state): its open flag,
+/// its selected row and the rects its mouse hit-testing reads. Grouped
+/// (finding 19) like the modal's own state.
+#[derive(Default)]
+pub struct MenuState {
+    /// The m menu is open (the `m` key, from any engine state).
+    pub open: bool,
+    /// The m menu's selected row; indexes [`menu_entries`].
+    pub selected: usize,
+    /// The m menu's bottom line rect at the last render; its buttons' mouse
+    /// hit-testing reads it (T59.1).
+    pub footer: Cell<Rect>,
+    /// The m menu's close button rect at the last render (T66.1); a click on
+    /// it runs the menu's Esc key.
+    pub close: Cell<Rect>,
+    /// The m menu's body rect at the last render (T137.1); its rows' mouse
+    /// hit-testing reads it -- a left click on a rendered row selects and
+    /// runs that entry.
+    pub body: Cell<Rect>,
+}
+
+/// The add-task / inject-task dialog's state (T74.1, T76.1): the shared
+/// multi-line editor, the open flag, which modal the open dialog is, the
+/// dialog's status line and the rects its mouse hit-testing reads. Grouped
+/// (finding 19) like the other modals' state.
+#[derive(Default)]
+pub struct DialogState {
+    /// The dialog's multi-line text editor: the buffer, its cursor,
     /// the Up/Down goal column and the wrap width the renderer reports
     /// (T154.2). The buffer is kept when the dialog is closed.
-    pub dialog: DialogEditor,
+    pub editor: DialogEditor,
+    /// The dialog is open (true for both dialog kinds: the add-task
+    /// dialog and the inject-task modal share the input).
+    pub open: bool,
+    /// Which modal the open dialog is (T76.1): the add-task dialog or the
+    /// inject-task modal. Pinned back to [`DialogKind::Add`] whenever the
+    /// add-task dialog opens, so a reopen never inherits the inject kind.
+    pub kind: DialogKind,
+    /// A one-line message in the dialog (empty input, command errors).
+    pub status: Option<String>,
     /// The dialog's bottom line rect at the last render; its buttons' mouse
     /// hit-testing reads it (T59.1).
-    pub dialog_footer: Cell<Rect>,
+    pub footer: Cell<Rect>,
     /// The dialog's close button rect at the last render (T66.1); a click on
     /// it runs the dialog's Esc key.
-    pub dialog_close: Cell<Rect>,
-    /// A one-line message in the dialog (empty input, command errors).
-    pub dialog_status: Option<String>,
-    /// IDs of tasks appended since the last key press or build start; shown highlighted.
-    pub new_tasks: Vec<String>,
+    pub close: Cell<Rect>,
+}
+
+pub struct App {
+    pub(crate) project: String,
+    /// The focused frame of the merged view; it takes all the free space. Defaults
+    /// to the task list while the engine is idle and the agent output while a run
+    /// is active.
+    pub focus: FrameFocus,
+    /// The scanned project facts behind the idle scenario.
+    pub project_status: ProjectScan,
+    pub engine_version: String,
+    /// The engine's build differs from this shell's (set once, on attach).
+    pub version_mismatch: bool,
+    /// A one-line message in the status bar (rejections, quit progress).
+    pub status: Option<String>,
+    /// Visual lines scrolled up from the bottom; 0 follows the live output.
+    pub scroll: usize,
+    /// Task rows scrolled up from the auto-follow view; 0 keeps the first pending
+    /// task a third of the way down.
+    pub task_scroll: usize,
+    /// The engine-reduced run state: the phase, the run flags, the active
+    /// agent, provider and model, the task list and the output pane.
+    pub run: RunState,
+    /// The session timer's clock.
+    pub clock: SessionClock,
+    /// The render-side layout caches the ui module writes.
+    pub layout: LayoutCache,
+    /// The stop dialog's state.
+    pub stop: StopState,
+    /// The m menu's state.
+    pub menu: MenuState,
+    /// The add-task / inject-task dialog's state.
+    pub dialog: DialogState,
     /// The settings overlay's interaction state.
     pub overlay: SettingsOverlay,
     /// The theme picker modal's state (T43.1), distinct from the overlay.
@@ -604,8 +759,6 @@ pub struct App {
     /// attach snapshot and updated by every `PipelineChanged`; rendered by the pipeline
     /// rail of T50.1.
     pub pipeline: PipelineState,
-    /// The rail's rect at the last render.
-    pub pipeline_area: Cell<Rect>,
 }
 
 impl App {
@@ -615,75 +768,62 @@ impl App {
             focus: FrameFocus::Tasks,
             project_status: ProjectScan::default(),
             engine_version,
-            provider: snapshot.provider.clone(),
-            model: snapshot.model.clone(),
-            config_provider: snapshot.provider,
-            config_model: snapshot.model,
-            agent: AgentRole::Builder.as_str().into(),
             version_mismatch: false,
-            phase: snapshot.phase,
-            tasks: snapshot.tasks,
-            current_task: snapshot.current_task,
-            output: Pane::default(),
-            scroll: 0,
-            max_scroll: Cell::new(0),
-            task_scroll: 0,
-            task_max_scroll: Cell::new(0),
-            output_area: Cell::new(Rect::default()),
-            tasks_area: Cell::new(Rect::default()),
-            usage: None,
             status: None,
-            stopping: false,
-            planning: false,
-            discovering: false,
-            session_start: None,
-            epoch_anchor: (SystemTime::now(), Instant::now()),
-            now: Cell::new(Instant::now()),
-            completed: 0,
-            dialog_open: false,
-            dialog_kind: DialogKind::Add,
-            stop_open: false,
-            stop_selected: 0,
-            stop_footer: Cell::new(Rect::default()),
-            stop_close: Cell::new(Rect::default()),
-            stop_body: Cell::new(Rect::default()),
-            menu_open: false,
-            menu_selected: 0,
-            menu_footer: Cell::new(Rect::default()),
-            menu_close: Cell::new(Rect::default()),
-            menu_body: Cell::new(Rect::default()),
-            menu_chip: Cell::new(Rect::default()),
-            enter_chip: Cell::new(Rect::default()),
-            stop_chip: Cell::new(Rect::default()),
-            dialog: DialogEditor::default(),
-            dialog_footer: Cell::new(Rect::default()),
-            dialog_close: Cell::new(Rect::default()),
-            dialog_status: None,
-            new_tasks: Vec::new(),
+            scroll: 0,
+            task_scroll: 0,
+            run: RunState {
+                phase: snapshot.phase,
+                planning: false,
+                discovering: false,
+                stopping: false,
+                agent: AgentRole::Builder.as_str().into(),
+                provider: snapshot.provider.clone(),
+                model: snapshot.model.clone(),
+                config_provider: snapshot.provider,
+                config_model: snapshot.model,
+                current_task: snapshot.current_task,
+                completed: 0,
+                usage: None,
+                tasks: snapshot.tasks,
+                new_tasks: Vec::new(),
+                output: Pane::default(),
+            },
+            clock: SessionClock::new(),
+            layout: LayoutCache::default(),
+            stop: StopState::default(),
+            menu: MenuState::default(),
+            dialog: DialogState {
+                editor: DialogEditor::default(),
+                open: false,
+                kind: DialogKind::Add,
+                status: None,
+                footer: Cell::new(Rect::default()),
+                close: Cell::new(Rect::default()),
+            },
             overlay: SettingsOverlay::default(),
             theme_modal: ThemeModal::default(),
             tui: TuiSettings::default(),
             settings: snapshot.settings,
             pipeline: snapshot.pipeline,
-            pipeline_area: Cell::new(Rect::default()),
         };
         for event in snapshot.recent {
             app.apply(event);
         }
         // Replayed history is not this session's work.
-        app.completed = 0;
-        app.new_tasks.clear();
-        app.planning = snapshot.planning;
-        app.discovering = snapshot.discovering;
+        app.run.completed = 0;
+        app.run.new_tasks.clear();
+        app.run.planning = snapshot.planning;
+        app.run.discovering = snapshot.discovering;
         // A replayed `AgentChanged` already anchored the timer to the engine's
         // session start, so a shell attaching mid-run shows the true elapsed
         // time; only an unanchored busy attach counts from here (T42.1). An
         // idle snapshot clears any anchor a replayed `AgentChanged` from a
         // finished session left behind, so the next run starts fresh (T131.1).
         if app.is_idle() {
-            app.session_start = None;
-        } else if app.session_start.is_none() {
-            app.session_start = Some(app.now.get());
+            app.clock.session_start = None;
+        } else if app.clock.session_start.is_none() {
+            app.clock.session_start = Some(app.clock.now.get());
         }
         app.focus = app.state_focus();
         app
@@ -695,7 +835,7 @@ impl App {
     }
 
     /// A shell-side notice line in the main pane (e.g. a config reload warning).
-    pub fn shell_notice(&mut self, text: impl Into<String>) {
+    pub(crate) fn shell_notice(&mut self, text: impl Into<String>) {
         self.push(LineKind::Notice, text.into());
     }
 
@@ -704,15 +844,15 @@ impl App {
             EngineEvent::PhaseChanged { phase } => {
                 let was_idle = self.is_idle();
                 if phase == Phase::Running {
-                    self.new_tasks.clear();
+                    self.run.new_tasks.clear();
                 }
-                self.phase = phase;
+                self.run.phase = phase;
                 // Leaving the idle state points the view at the run's output.
                 self.sync_focus(was_idle);
                 self.sync_session(was_idle);
             }
             EngineEvent::TaskStarted { id, description } => {
-                self.current_task = Some(id.clone());
+                self.run.current_task = Some(id.clone());
                 self.push(LineKind::Heading, format!("── {id}: {description}"));
             }
             EngineEvent::Agent { event } => self.apply_agent(event),
@@ -726,9 +866,9 @@ impl App {
             // handled by `session_elapsed`'s `is_idle` gate (T131.1). A
             // `started_ms` of 0 means unknown and is skipped.
             EngineEvent::AgentChanged { agent, started_ms } => {
-                self.agent = agent;
+                self.run.agent = agent;
                 if started_ms > 0 {
-                    self.session_start = Some(self.anchored(started_ms));
+                    self.clock.session_start = Some(self.clock.anchored(started_ms));
                 }
             }
             // One agent session began: one line naming the agent type, the
@@ -746,8 +886,8 @@ impl App {
             } => {
                 let text = started_line(&agent, &provider, model.as_deref());
                 self.push(LineKind::Status, text);
-                self.provider = provider;
-                self.model = model.unwrap_or_default();
+                self.run.provider = provider;
+                self.run.model = model.unwrap_or_default();
             }
             // One agent session ended: one line naming the agent type and the
             // session's total duration lands at the end of the pane (T42.1). The
@@ -760,33 +900,33 @@ impl App {
             } => {
                 let text = finished_line(&agent, outcome, Duration::from_millis(duration_ms));
                 self.push(LineKind::Status, text);
-                self.provider = self.config_provider.clone();
-                self.model = self.config_model.clone();
+                self.run.provider = self.run.config_provider.clone();
+                self.run.model = self.run.config_model.clone();
             }
             // The running task (the pane's marker) is tracked by ID, so a replaced list keeps it.
             EngineEvent::TasksChanged { tasks } => {
                 for task in &tasks {
-                    if !self.tasks.iter().any(|t| t.id == task.id) {
-                        self.new_tasks.push(task.id.clone());
+                    if !self.run.tasks.iter().any(|t| t.id == task.id) {
+                        self.run.new_tasks.push(task.id.clone());
                     }
                 }
-                self.tasks = tasks;
+                self.run.tasks = tasks;
             }
             EngineEvent::PlanningChanged { planning } => {
                 let was_idle = self.is_idle();
                 // A status message set during the run (a busy refusal)
                 // clears with it; the run's own outcome is the notice line
                 // in the output pane, not the status bar (T29.1).
-                if !planning && self.planning {
+                if !planning && self.run.planning {
                     self.status = None;
                 }
-                self.planning = planning;
+                self.run.planning = planning;
                 self.sync_focus(was_idle);
                 self.sync_session(was_idle);
             }
             EngineEvent::DiscoveryChanged { discovering } => {
                 let was_idle = self.is_idle();
-                self.discovering = discovering;
+                self.run.discovering = discovering;
                 self.sync_focus(was_idle);
                 self.sync_session(was_idle);
             }
@@ -795,11 +935,11 @@ impl App {
                 outcome,
                 commit,
             } => {
-                self.current_task = None;
+                self.run.current_task = None;
                 let sha = commit.map(|c| format!(" ({c})")).unwrap_or_default();
                 let (kind, text) = match outcome {
                     TaskOutcome::Done => {
-                        self.completed += 1;
+                        self.run.completed += 1;
                         (LineKind::Notice, format!("✔ {id} done{sha}"))
                     }
                     TaskOutcome::Failed => (LineKind::Error, format!("✘ {id} failed{sha}")),
@@ -819,12 +959,12 @@ impl App {
                 self.settings.insert(field.clone(), value.clone());
                 match field.as_str() {
                     "provider" => {
-                        self.config_provider = value.to_string();
-                        self.provider = self.config_provider.clone();
+                        self.run.config_provider = value.to_string();
+                        self.run.provider = self.run.config_provider.clone();
                     }
                     "model" => {
-                        self.config_model = value.to_string();
-                        self.model = self.config_model.clone();
+                        self.run.config_model = value.to_string();
+                        self.run.model = self.run.config_model.clone();
                     }
                     _ => {
                         let mut text = format!("Setting `{field}` changed to `{value}`");
@@ -868,21 +1008,21 @@ impl App {
                     self.push(LineKind::Result, format!("result: {text}"));
                 }
             }
-            AgentEvent::Usage(usage) if !self.planning => self.usage = Some(usage),
+            AgentEvent::Usage(usage) if !self.run.planning => self.run.usage = Some(usage),
             AgentEvent::Usage(_) => {}
         }
     }
 
     fn push(&mut self, kind: LineKind, text: String) {
-        self.output.push(kind, text);
+        self.run.output.push(kind, text);
     }
 
     fn append(&mut self, chunk: &str) {
-        self.output.append(chunk);
+        self.run.output.append(chunk);
     }
 
     pub fn is_new_task(&self, id: &str) -> bool {
-        self.new_tasks.iter().any(|t| t == id)
+        self.run.new_tasks.iter().any(|t| t == id)
     }
 
     /// The engine-reported run mode shown as the status line's second chip; "sprint"
@@ -914,7 +1054,7 @@ impl App {
     /// The engine is idle: no build, planner or discovery run is active. The scenario
     /// is re-derived and the task list takes the default focus in this state.
     pub fn is_idle(&self) -> bool {
-        self.phase == Phase::Startup && !self.planning && !self.discovering
+        self.run.phase == Phase::Startup && !self.run.planning && !self.run.discovering
     }
 
     /// The frame focus the engine state implies: the task list while idle, the agent
@@ -944,28 +1084,12 @@ impl App {
     fn sync_session(&mut self, was_idle: bool) {
         if was_idle != self.is_idle() {
             if was_idle {
-                self.session_start.get_or_insert_with(|| self.now.get());
+                self.clock
+                    .session_start
+                    .get_or_insert_with(|| self.clock.now.get());
             } else {
-                self.session_start = None;
+                self.clock.session_start = None;
             }
-        }
-    }
-
-    /// The instant the engine's epoch-millisecond timestamp falls on, mapped
-    /// through the construction-time anchor (T42.1). A session that started
-    /// before this shell attached maps to the instant before it, clamped to
-    /// the anchor when the clock cannot reach back that far.
-    fn anchored(&self, started_ms: u64) -> Instant {
-        let (epoch, at) = self.epoch_anchor;
-        let epoch_ms = epoch
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(started_ms);
-        let delta = Duration::from_millis(epoch_ms.abs_diff(started_ms));
-        if epoch_ms >= started_ms {
-            at.checked_sub(delta).unwrap_or(at)
-        } else {
-            at + delta
         }
     }
 
@@ -975,26 +1099,19 @@ impl App {
         if self.is_idle() {
             return None;
         }
-        self.session_start.map(|start| {
-            let now = self.now.get();
-            if now >= start {
-                now - start
-            } else {
-                Duration::ZERO
-            }
-        })
+        self.clock.elapsed()
     }
 
     /// The live startup scenario: the scanned file facts
     /// combined with the engine-reported task counts, so every queue change re-derives
     /// it without a rescan.
     pub fn scenario(&self) -> Scenario {
-        let pending = self.tasks.iter().filter(|t| !t.done).count();
+        let pending = self.run.tasks.iter().filter(|t| !t.done).count();
         patok_core::scenario::classify(
             self.project_status.has_code,
             self.project_status.task_file,
             pending,
-            self.tasks.len(),
+            self.run.tasks.len(),
         )
     }
 
@@ -1003,10 +1120,10 @@ impl App {
     /// ready and the input is empty, "Scan" when the queue is complete and the
     /// input is empty, "Submit" otherwise.
     pub fn primary_label(&self) -> &'static str {
-        if self.dialog_kind == DialogKind::Inject {
+        if self.dialog.kind == DialogKind::Inject {
             return "Inject";
         }
-        let empty = self.dialog.text().trim().is_empty();
+        let empty = self.dialog.editor.text().trim().is_empty();
         match (self.scenario(), empty) {
             (Scenario::QueueReady, true) => "Start",
             (Scenario::QueueComplete, true) => "Scan",
@@ -1036,7 +1153,7 @@ impl App {
         if key.kind == KeyEventKind::Release {
             return Action::None;
         }
-        self.new_tasks.clear();
+        self.run.new_tasks.clear();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         // Ctrl+C detaches from anywhere, overlay and dialog included.
         if key.code == KeyCode::Char('c') && ctrl {
@@ -1074,8 +1191,8 @@ impl App {
             // the running Esc stop dialog) live behind one chip instead.
             KeyCode::Char('m') if !ctrl => {
                 self.status = None;
-                self.menu_open = true;
-                self.menu_selected = 0;
+                self.menu.open = true;
+                self.menu.selected = 0;
                 Action::None
             }
             // S-Tab flips the run mode between `sprint` and `continuous`
@@ -1095,14 +1212,14 @@ impl App {
                 };
                 Action::None
             }
-            _ if self.stopping => match key.code {
+            _ if self.run.stopping => match key.code {
                 // A second q interrupts: the current task is cancelled and the
                 // loop stops, but the app keeps running.
                 KeyCode::Char('q') => Action::Interrupt,
                 // Esc cancels a pending soft stop: the loop continues with the
                 // next task once the running one finishes.
                 KeyCode::Esc => {
-                    self.stopping = false;
+                    self.run.stopping = false;
                     self.status = Some("Soft stop cancelled -- the build continues.".into());
                     Action::CancelSoftStop
                 }
@@ -1110,7 +1227,7 @@ impl App {
             },
             KeyCode::Char('q') => self.quit_action(),
             KeyCode::Char('r') if self.version_mismatch => {
-                self.stopping = true;
+                self.run.stopping = true;
                 self.status = Some(
                     "Restarting the engine -- it finishes the current task first. [d] detach instead"
                         .into(),
@@ -1122,10 +1239,14 @@ impl App {
             // extended to these runs in T142.1); the m menu's stop entry
             // keeps its build-only scope. The stopping guard above keeps a
             // pending soft stop's Esc.
-            KeyCode::Esc if self.phase == Phase::Running || self.planning || self.discovering => {
+            KeyCode::Esc
+                if self.run.phase == Phase::Running
+                    || self.run.planning
+                    || self.run.discovering =>
+            {
                 self.status = None;
-                self.stop_open = true;
-                self.stop_selected = 0;
+                self.stop.open = true;
+                self.stop.selected = 0;
                 Action::None
             }
             // The add-task dialog's key (T74.1): it belongs to the task list
@@ -1169,11 +1290,11 @@ impl App {
     /// main match's stopping guard reaches the `q` key before this helper,
     /// so that branch serves the menu's path, where no guard runs first.
     fn quit_action(&mut self) -> Action {
-        if self.stopping {
+        if self.run.stopping {
             return Action::Interrupt;
         }
-        self.stopping = true;
-        if self.phase == Phase::Running || self.planning || self.discovering {
+        self.run.stopping = true;
+        if self.run.phase == Phase::Running || self.run.planning || self.run.discovering {
             self.status = Some(SOFT_STOP_PENDING.into());
             Action::Quit
         } else {
@@ -1203,18 +1324,18 @@ impl App {
     /// choice-dialog key handling moves the selection (finding 6); this owns
     /// only the Enter dispatch.
     fn on_stop_key(&mut self, key: KeyEvent) -> Action {
-        match choice_key(key.code, false, STOP_CHOICES.len(), &mut self.stop_selected) {
-            ChoiceKey::Close => self.stop_open = false,
+        match choice_key(key.code, false, STOP_CHOICES.len(), &mut self.stop.selected) {
+            ChoiceKey::Close => self.stop.open = false,
             ChoiceKey::Enter(index) => {
-                self.stop_open = false;
+                self.stop.open = false;
                 return match STOP_CHOICES[index] {
                     StopChoice::SoftStop => {
-                        self.stopping = true;
+                        self.run.stopping = true;
                         self.status = Some(SOFT_STOP_PENDING.into());
                         Action::Quit
                     }
                     StopChoice::Interrupt => {
-                        self.stopping = true;
+                        self.run.stopping = true;
                         self.status = Some(
                             "Interrupting -- the current task is cancelled and the app keeps running."
                                 .into(),
@@ -1235,18 +1356,18 @@ impl App {
     /// closes with no effect, and everything else is swallowed. Ctrl+C is
     /// handled before this runs (it detaches from anywhere).
     fn on_menu_key(&mut self, key: KeyEvent) -> Action {
-        let entries = menu_entries(self.phase == Phase::Running);
+        let entries = menu_entries(self.run.phase == Phase::Running);
         match key.code {
-            KeyCode::Esc => self.menu_open = false,
+            KeyCode::Esc => self.menu.open = false,
             KeyCode::Up | KeyCode::Char('k') => {
-                self.menu_selected = self.menu_selected.saturating_sub(1);
+                self.menu.selected = self.menu.selected.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.menu_selected = (self.menu_selected + 1).min(entries.len() - 1);
+                self.menu.selected = (self.menu.selected + 1).min(entries.len() - 1);
             }
             KeyCode::Enter => {
-                self.menu_open = false;
-                return match entries[self.menu_selected.min(entries.len() - 1)] {
+                self.menu.open = false;
+                return match entries[self.menu.selected.min(entries.len() - 1)] {
                     MenuChoice::Settings => {
                         self.status = None;
                         self.overlay.open();
@@ -1261,8 +1382,8 @@ impl App {
                     MenuChoice::Quit => self.quit_action(),
                     MenuChoice::StopBuild => {
                         self.status = None;
-                        self.stop_open = true;
-                        self.stop_selected = 0;
+                        self.stop.open = true;
+                        self.stop.selected = 0;
                         Action::None
                     }
                 };
@@ -1449,10 +1570,10 @@ impl App {
     /// runs the dialog's Esc key the same way (T66.1). Everything else is
     /// swallowed, as before.
     fn on_dialog_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if close_clicked(&mouse, self.dialog_close.get()) {
+        if close_clicked(&mouse, self.dialog.close.get()) {
             return self.on_dialog_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false);
         }
-        let code = footer_button_code(&mouse, self.dialog_footer.get(), &self.dialog_buttons());
+        let code = footer_button_code(&mouse, self.dialog.footer.get(), &self.dialog_buttons());
         match code {
             Some(code) => self.on_dialog_key(KeyEvent::new(code, KeyModifiers::NONE), false),
             None => Action::None,
@@ -1475,23 +1596,23 @@ impl App {
     fn on_stop_mouse(&mut self, mouse: MouseEvent) -> Action {
         match choice_mouse(
             &mouse,
-            self.stop_close.get(),
-            self.stop_footer.get(),
+            self.stop.close.get(),
+            self.stop.footer.get(),
             STOP_ESC_LABEL,
-            self.stop_body.get(),
+            self.stop.body.get(),
             STOP_CHOICES.len(),
         ) {
             ChoiceMouse::Key(code) => self.on_stop_key(KeyEvent::new(code, KeyModifiers::NONE)),
             // The move moves only the highlight, never the dispatch.
             ChoiceMouse::Hover(index) => {
-                self.stop_selected = index;
+                self.stop.selected = index;
                 Action::None
             }
             // The click is the row's Enter key verbatim: it moves the
             // selection to the row, then runs the Enter dispatch, so a
             // click and Enter on the same row are indistinguishable.
             ChoiceMouse::Click(index) => {
-                self.stop_selected = index;
+                self.stop.selected = index;
                 self.on_stop_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
             ChoiceMouse::None => Action::None,
@@ -1513,19 +1634,19 @@ impl App {
     /// -- the border, the title, the footer's non-button columns, the shell
     /// behind the modal -- is swallowed, as before.
     fn on_menu_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if chip_clicked(&mouse, self.menu_chip.get()) {
-            self.menu_open = false;
+        if chip_clicked(&mouse, self.layout.menu_chip.get()) {
+            self.menu.open = false;
             return Action::None;
         }
-        if close_clicked(&mouse, self.menu_close.get()) {
+        if close_clicked(&mouse, self.menu.close.get()) {
             return self.on_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
-        if let Some(code) = footer_button_code(&mouse, self.menu_footer.get(), &MENU_BUTTONS) {
+        if let Some(code) = footer_button_code(&mouse, self.menu.footer.get(), &MENU_BUTTONS) {
             return self.on_menu_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let body = self.menu_body.get();
-        let entries = menu_entries(self.phase == Phase::Running);
+        let body = self.menu.body.get();
+        let entries = menu_entries(self.run.phase == Phase::Running);
         let visible = entries.len().min(usize::from(body.height));
         let row = menu_row_at(position, body, visible);
         match mouse.kind {
@@ -1536,7 +1657,7 @@ impl App {
                 // modal, the running-only stop row's absent slot -- leaves
                 // the selection alone.
                 if let Some(index) = row {
-                    self.menu_selected = index;
+                    self.menu.selected = index;
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -1545,7 +1666,7 @@ impl App {
                     // highlight to the row, then runs the Enter dispatch -- so a
                     // click and `m` plus Enter on the same row are
                     // indistinguishable.
-                    self.menu_selected = index;
+                    self.menu.selected = index;
                     return self.on_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 }
             }
@@ -1664,11 +1785,11 @@ impl App {
     /// The short inline refusal for a busy engine, shared by every key that
     /// starts something (Enter, `a`): `None` while the engine is idle.
     fn busy_status(&self) -> Option<&'static str> {
-        if self.phase == Phase::Running {
+        if self.run.phase == Phase::Running {
             Some("A build is running; wait for it to finish.")
-        } else if self.planning {
+        } else if self.run.planning {
             Some("The planner is already running.")
-        } else if self.discovering {
+        } else if self.run.discovering {
             Some("A discovery round is running; wait for it to finish.")
         } else {
             None
@@ -1679,12 +1800,12 @@ impl App {
     /// short inline message (the same message the Enter key shows).
     fn open_dialog(&mut self) -> Action {
         self.status = None;
-        self.dialog_kind = DialogKind::Add;
+        self.dialog.kind = DialogKind::Add;
         match self.busy_status() {
             Some(message) => self.status = Some(message.into()),
             None => {
-                self.dialog_open = true;
-                self.dialog_status = None;
+                self.dialog.open = true;
+                self.dialog.status = None;
             }
         }
         Action::None
@@ -1698,9 +1819,9 @@ impl App {
     /// line even while a run is active.
     fn open_inject(&mut self) -> Action {
         self.status = None;
-        self.dialog_open = true;
-        self.dialog_kind = DialogKind::Inject;
-        self.dialog_status = None;
+        self.dialog.open = true;
+        self.dialog.kind = DialogKind::Inject;
+        self.dialog.status = None;
         Action::None
     }
 
@@ -1716,7 +1837,7 @@ impl App {
                 Action::None
             }
             None => {
-                if self.tasks.iter().any(|t| !t.done) {
+                if self.run.tasks.iter().any(|t| !t.done) {
                     Action::StartBuild
                 } else {
                     Action::RunDiscovery
@@ -1731,30 +1852,30 @@ impl App {
     /// editor (`DialogEditor`) owns the buffer, the cursor and their motion.
     fn on_dialog_key(&mut self, key: KeyEvent, ctrl: bool) -> Action {
         if key.code == KeyCode::Esc {
-            self.dialog_open = false;
+            self.dialog.open = false;
             return Action::None;
         }
         if key.code == KeyCode::Char('c') && ctrl {
             return Action::Detach;
         }
-        self.dialog_status = None;
+        self.dialog.status = None;
         if !matches!(key.code, KeyCode::Up | KeyCode::Down) {
-            self.dialog.reset_goal();
+            self.dialog.editor.reset_goal();
         }
         match key.code {
             KeyCode::Char('s') if ctrl => return self.submit_dialog(),
-            KeyCode::Char('u') if ctrl => self.dialog.clear(),
+            KeyCode::Char('u') if ctrl => self.dialog.editor.clear(),
             // Enter submits through the same path as the Submit button;
             // an empty input is refused inline. A submit that
             // launches a run closes the dialog; a command error keeps it open.
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
-                if self.dialog.text().trim().is_empty() {
-                    self.dialog_status = Some(self.empty_input_message().into());
+                if self.dialog.editor.text().trim().is_empty() {
+                    self.dialog.status = Some(self.empty_input_message().into());
                 } else {
                     return self.submit_dialog();
                 }
             }
-            _ => self.dialog.on_key(key, ctrl),
+            _ => self.dialog.editor.on_key(key, ctrl),
         }
         Action::None
     }
@@ -1762,7 +1883,7 @@ impl App {
     /// The inline refusal for an empty input on the dialog's primary key:
     /// kind-dependent (T76.1), because the two modals submit different things.
     fn empty_input_message(&self) -> &'static str {
-        match self.dialog_kind {
+        match self.dialog.kind {
             DialogKind::Add => "Nothing to submit -- type a request first.",
             DialogKind::Inject => "Nothing to inject -- type a task line first.",
         }
@@ -1779,18 +1900,20 @@ impl App {
         // session; the modal closes once the driver confirms the append
         // (`on_task_injected`). An empty input is refused inline, and the
         // add-task dialog's whole scenario flow below stays untouched.
-        if self.dialog_kind == DialogKind::Inject {
-            if self.dialog.text().trim().is_empty() {
-                self.dialog_status = Some(self.empty_input_message().into());
+        if self.dialog.kind == DialogKind::Inject {
+            if self.dialog.editor.text().trim().is_empty() {
+                self.dialog.status = Some(self.empty_input_message().into());
                 return Action::None;
             }
-            return Action::InjectTask(self.dialog.text().to_owned());
+            return Action::InjectTask(self.dialog.editor.text().to_owned());
         }
-        let empty = self.dialog.text().trim().is_empty();
+        let empty = self.dialog.editor.text().trim().is_empty();
         match (self.scenario(), empty) {
-            (Scenario::EmptyProject, false) => Action::SaveBrief(self.dialog.text().to_owned()),
+            (Scenario::EmptyProject, false) => {
+                Action::SaveBrief(self.dialog.editor.text().to_owned())
+            }
             (Scenario::EmptyProject, true) => {
-                self.dialog_status = Some(
+                self.dialog.status = Some(
                     "Describe what you want to build -- an empty project needs direction.".into(),
                 );
                 Action::None
@@ -1799,27 +1922,27 @@ impl App {
                 if self.project_status.spec == SpecState::Content {
                     Action::ResearchQueue(QueueRun::Bootstrap)
                 } else {
-                    self.dialog_status =
+                    self.dialog.status =
                         Some("SPEC.md is empty -- describe what you want to build first.".into());
                     Action::None
                 }
             }
             (Scenario::QueueReady, true) => {
-                self.dialog_open = false;
+                self.dialog.open = false;
                 self.focus = FrameFocus::Output;
                 Action::StartBuild
             }
             (Scenario::QueueComplete, true) => Action::ResearchQueue(QueueRun::Scan),
-            (_, false) => Action::SubmitTasks(self.dialog.text().to_owned()),
+            (_, false) => Action::SubmitTasks(self.dialog.editor.text().to_owned()),
         }
     }
 
     /// The engine accepted the request: the dialog closes immediately and the output
     /// frame takes the focus, where the planner's output streams (T24.1).
     pub fn on_tasks_submitted(&mut self) {
-        self.dialog_open = false;
-        self.dialog.clear();
-        self.dialog_status = None;
+        self.dialog.open = false;
+        self.dialog.editor.clear();
+        self.dialog.status = None;
         self.focus = FrameFocus::Output;
     }
 
@@ -1827,30 +1950,30 @@ impl App {
     /// closes and the task list frame keeps the focus, where the engine's
     /// task-file poll brings the new line in as a TasksChanged event.
     pub fn on_task_injected(&mut self) {
-        self.dialog_open = false;
-        self.dialog.clear();
-        self.dialog_status = None;
+        self.dialog.open = false;
+        self.dialog.editor.clear();
+        self.dialog.status = None;
         self.focus = FrameFocus::Tasks;
     }
 
     /// The command failed: the dialog stays open on the input with the error.
     pub fn on_submit_failed(&mut self, error: String) {
-        self.dialog_status = Some(error);
+        self.dialog.status = Some(error);
     }
 
     /// The brief was written to SPEC.md (EmptyProject submit): the text moved into the
     /// file, so the input clears and the dialog stays open with the created message;
     /// with the spec file now present the scenario re-detects as NeedsQueue.
     pub fn on_brief_saved(&mut self) {
-        self.dialog.clear();
-        self.dialog_status =
+        self.dialog.editor.clear();
+        self.dialog.status =
             Some("SPEC.md created -- review it, then press Enter to start.".into());
     }
 
     /// Pasted text appends to the dialog's input; ignored while the dialog is closed.
     pub fn on_paste(&mut self, text: &str) {
-        if self.dialog_open {
-            self.dialog.insert_paste(text);
+        if self.dialog.open {
+            self.dialog.editor.insert_paste(text);
         }
     }
 
@@ -1932,13 +2055,13 @@ impl App {
                 self.scroll = self
                     .scroll
                     .saturating_add_signed(delta)
-                    .min(self.max_scroll.get());
+                    .min(self.layout.max_scroll.get());
             }
             FrameFocus::Tasks => {
                 self.task_scroll = self
                     .task_scroll
                     .saturating_add_signed(delta)
-                    .min(self.task_max_scroll.get());
+                    .min(self.layout.task_max_scroll.get());
             }
         }
     }
@@ -1980,24 +2103,30 @@ impl App {
             None => {}
         }
         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let frame = frame_at(position, self.output_area.get(), self.tasks_area.get());
+        let frame = frame_at(
+            position,
+            self.layout.output_area.get(),
+            self.layout.tasks_area.get(),
+        );
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if chip_clicked(&mouse, self.menu_chip.get()) {
+                if chip_clicked(&mouse, self.layout.menu_chip.get()) {
                     // The m key's open path, verbatim: the chip is its
                     // mouse alias (T133.1).
                     self.status = None;
-                    self.menu_open = true;
-                    self.menu_selected = 0;
+                    self.menu.open = true;
+                    self.menu.selected = 0;
                     Action::None
-                } else if chip_clicked(&mouse, self.enter_chip.get()) {
+                } else if chip_clicked(&mouse, self.layout.enter_chip.get()) {
                     // The Enter chip is the Enter key's mouse alias
                     // (T134.1): start the build loop or run a discovery
                     // round, exactly the key's action -- `enter_key` carries
                     // the key's busy guard too.
                     self.enter_key()
-                } else if chip_clicked(&mouse, self.stop_chip.get())
-                    && (self.phase == Phase::Running || self.planning || self.discovering)
+                } else if chip_clicked(&mouse, self.layout.stop_chip.get())
+                    && (self.run.phase == Phase::Running
+                        || self.run.planning
+                        || self.run.discovering)
                 {
                     // The Esc chip is the Esc key's mouse alias (T134.1):
                     // it opens the stop dialog, the key's action while a
@@ -2006,8 +2135,8 @@ impl App {
                     // (T142.1), so the chip stays inert in any other state
                     // -- the zero rect makes those miss naturally.
                     self.status = None;
-                    self.stop_open = true;
-                    self.stop_selected = 0;
+                    self.stop.open = true;
+                    self.stop.selected = 0;
                     Action::None
                 } else {
                     if let Some(frame) = frame {
@@ -2032,22 +2161,6 @@ impl App {
             _ => Action::None,
         }
     }
-}
-
-/// Whether a left click lands on one of the status bar's interactive chips
-/// (T133.1, T134.1): the click must be a press inside the chip's rectangle,
-/// which the renderer recorded at the last render through
-/// [`crate::ui::status_widget`] -- the m menu chip, the idle Enter chip and
-/// the running Esc stop chip are mouse aliases of their keys. The zero rect a
-/// chip-less render records contains no real position, so the click misses
-/// there naturally, like [`close_clicked`] for close buttons.
-/// Every other mouse event misses too.
-fn chip_clicked(mouse: &MouseEvent, chip: Rect) -> bool {
-    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-        return false;
-    }
-    let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-    chip.contains(position)
 }
 
 /// Turns a drafted value into what the overlay renders and cycles: `truecolor` is

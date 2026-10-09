@@ -10,13 +10,14 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear};
 
-use super::common::{base_style, close_button_line, close_button_rect};
+use super::common::base_style;
+use crate::hit::{close_button_line, close_button_rect};
 use crate::theme::Theme;
 
 /// A modal's centred rect: the one area computation every modal's `*_area`
 /// function repeated (finding 20). The caller computes and clamps the width
 /// and height first, exactly as before.
-pub(super) fn centered(screen: Rect, width: u16, height: u16) -> Rect {
+pub(crate) fn centered(screen: Rect, width: u16, height: u16) -> Rect {
     Rect::new(
         screen.x + (screen.width - width) / 2,
         screen.y + (screen.height - height) / 2,

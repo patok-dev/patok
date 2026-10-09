@@ -82,13 +82,13 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
 fn open() -> App {
     let mut app = app();
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
-    assert!(app.menu_open);
+    assert!(app.menu.open);
     app
 }
 
 /// Runs the menu's selected entry: `index` Down presses then Enter.
 fn confirm_entry(app: &mut App, index: usize) -> Action {
-    assert!(app.menu_open);
+    assert!(app.menu.open);
     for _ in 0..index {
         assert_eq!(press(app, KeyCode::Down), Action::None);
     }
@@ -147,7 +147,7 @@ fn the_menu_keys_run_the_entries_actions() {
     // Esc closes without acting.
     let mut app = open();
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
     assert!(!app.overlay.open);
     assert!(!app.theme_modal.open);
 
@@ -155,13 +155,13 @@ fn the_menu_keys_run_the_entries_actions() {
     // (the settings overlay and the theme picker both stay closed).
     let mut app = open();
     assert_eq!(press(&mut app, KeyCode::Up), Action::None);
-    assert_eq!(app.menu_selected, 0);
+    assert_eq!(app.menu.selected, 0);
     for expected in 1..=3 {
         assert_eq!(press(&mut app, KeyCode::Down), Action::None);
-        assert_eq!(app.menu_selected, expected);
+        assert_eq!(app.menu.selected, expected);
     }
     assert_eq!(press(&mut app, KeyCode::Down), Action::None);
-    assert_eq!(app.menu_selected, 3);
+    assert_eq!(app.menu.selected, 3);
     assert!(!app.overlay.open);
     assert!(!app.theme_modal.open);
 
@@ -169,42 +169,42 @@ fn the_menu_keys_run_the_entries_actions() {
     // closes.
     let mut app = open();
     assert_eq!(confirm_entry(&mut app, 0), Action::None);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
     assert!(app.settings_open());
 
     // Theme runs the `t` binding's action: the theme picker opens on the
     // active theme, the menu closes.
     let mut app = open();
     assert_eq!(confirm_entry(&mut app, 1), Action::None);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
     assert!(app.theme_modal.open);
 
     // Detach runs the `d` binding's action.
     let mut app = open();
     assert_eq!(confirm_entry(&mut app, 2), Action::Detach);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 
     // Quit while idle runs the `q` binding's idle action: the engine stops
     // now and the app exits.
     let mut app = open();
     assert_eq!(confirm_entry(&mut app, 3), Action::Interrupt);
-    assert!(!app.menu_open);
-    assert!(app.stopping);
+    assert!(!app.menu.open);
+    assert!(app.run.stopping);
     assert_eq!(app.status.as_deref(), Some("Stopping the engine..."));
 
     // Quit while a build runs runs the `q` binding's soft stop.
     let mut app = running_app();
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     assert_eq!(confirm_entry(&mut app, 3), Action::Quit);
-    assert!(!app.menu_open);
-    assert!(app.stopping);
+    assert!(!app.menu.open);
+    assert!(app.run.stopping);
     assert_eq!(app.status.as_deref(), Some(patok_tui::SOFT_STOP_PENDING));
 
     // Quit while a soft stop is already pending runs the second-`q` action:
     // the current task is cancelled and the loop stops.
     let mut app = running_app();
     assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
-    assert!(app.stopping);
+    assert!(app.run.stopping);
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     assert_eq!(confirm_entry(&mut app, 3), Action::Interrupt);
 
@@ -213,9 +213,9 @@ fn the_menu_keys_run_the_entries_actions() {
     let mut app = running_app();
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     assert_eq!(confirm_entry(&mut app, 4), Action::None);
-    assert!(!app.menu_open);
-    assert!(app.stop_open);
-    assert_eq!(app.stop_selected, 0);
+    assert!(!app.menu.open);
+    assert!(app.stop.open);
+    assert_eq!(app.stop.selected, 0);
 
     // Every other key is swallowed while the menu is open: nothing underneath
     // reacts, so the scroll and the focus stay put.
@@ -231,11 +231,11 @@ fn the_menu_keys_run_the_entries_actions() {
     ] {
         assert_eq!(press(&mut app, code), Action::None, "{code:?}");
     }
-    assert!(app.menu_open);
+    assert!(app.menu.open);
     assert!(!app.overlay.open);
     assert!(!app.theme_modal.open);
-    assert!(!app.stop_open);
-    assert!(!app.stopping);
+    assert!(!app.stop.open);
+    assert!(!app.run.stopping);
 }
 
 /// j and k alias Up and Down while the menu is open -- the theme picker's
@@ -247,23 +247,23 @@ fn the_menu_moves_with_j_and_k() {
     // k clamps at the first row, the menu staying open.
     let mut app = open();
     assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
-    assert_eq!(app.menu_selected, 0);
-    assert!(app.menu_open);
+    assert_eq!(app.menu.selected, 0);
+    assert!(app.menu.open);
 
     // j walks the idle list and clamps at the last row: four entries, so
     // the fourth press stays on Quit.
     let mut app = open();
     for expected in [1, 2, 3, 3] {
         assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
-        assert_eq!(app.menu_selected, expected);
+        assert_eq!(app.menu.selected, expected);
     }
     assert!(!app.overlay.open);
     assert!(!app.theme_modal.open);
-    assert!(!app.stop_open);
+    assert!(!app.stop.open);
 
     // k moves back up one row.
     assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
-    assert_eq!(app.menu_selected, 2);
+    assert_eq!(app.menu.selected, 2);
 
     // Enter runs the j-moved entry: two j presses land on Detach.
     let mut app = open();
@@ -271,16 +271,16 @@ fn the_menu_moves_with_j_and_k() {
         assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
     }
     assert_eq!(press(&mut app, KeyCode::Enter), Action::Detach);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 
     // Esc still closes without acting after a j press.
     let mut app = open();
     assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
     assert!(!app.overlay.open);
     assert!(!app.theme_modal.open);
-    assert!(!app.stop_open);
+    assert!(!app.stop.open);
 
     // Running: five entries, so the j clamp reaches the stop row and k
     // walks back up.
@@ -289,20 +289,20 @@ fn the_menu_moves_with_j_and_k() {
     for _ in 0..6 {
         assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
     }
-    assert_eq!(app.menu_selected, 4);
+    assert_eq!(app.menu.selected, 4);
     assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
-    assert_eq!(app.menu_selected, 3);
+    assert_eq!(app.menu.selected, 3);
     assert_eq!(press(&mut app, KeyCode::Char('k')), Action::None);
-    assert_eq!(app.menu_selected, 2);
+    assert_eq!(app.menu.selected, 2);
 
     // Enter on the running list's stop row opens the stop dialog.
     for _ in 0..2 {
         assert_eq!(press(&mut app, KeyCode::Char('j')), Action::None);
     }
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-    assert!(!app.menu_open);
-    assert!(app.stop_open);
-    assert_eq!(app.stop_selected, 0);
+    assert!(!app.menu.open);
+    assert!(app.stop.open);
+    assert_eq!(app.stop.selected, 0);
 }
 
 /// The stop entry joins only while a build runs, so the Down clamp
@@ -314,7 +314,7 @@ fn the_stop_build_entry_is_running_only() {
     for _ in 0..5 {
         assert_eq!(press(&mut idle, KeyCode::Down), Action::None);
     }
-    assert_eq!(idle.menu_selected, 3);
+    assert_eq!(idle.menu.selected, 3);
     let screen = draw(&idle, 80, 14);
     assert!(!screen.contains("Stop --"), "{screen}");
 
@@ -324,7 +324,7 @@ fn the_stop_build_entry_is_running_only() {
     for _ in 0..6 {
         assert_eq!(press(&mut running, KeyCode::Down), Action::None);
     }
-    assert_eq!(running.menu_selected, 4);
+    assert_eq!(running.menu.selected, 4);
     let screen = draw(&running, 80, 14);
     assert!(screen.contains("Stop -- open the stop dialog"), "{screen}");
     // The planning and discovery runs get no stop row either: the stop
@@ -336,7 +336,7 @@ fn the_stop_build_entry_is_running_only() {
     for _ in 0..5 {
         assert_eq!(press(&mut app, KeyCode::Down), Action::None);
     }
-    assert_eq!(app.menu_selected, 3);
+    assert_eq!(app.menu.selected, 3);
 }
 
 /// The status bar's slimmed-down strip: the Enter hint leads while the engine
@@ -392,19 +392,19 @@ fn the_status_bar_keeps_the_enter_and_menu_hints() {
 
     let mut app = running_app();
     assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
-    assert!(app.stopping);
+    assert!(app.run.stopping);
     // Esc cancels the pending soft stop, the second `q` interrupts.
     assert_eq!(press(&mut app, KeyCode::Esc), Action::CancelSoftStop);
-    assert!(!app.stopping);
+    assert!(!app.run.stopping);
     assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
     assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Interrupt);
 
     // Esc while a build runs still opens the stop dialog directly.
     let mut app = running_app();
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(app.stop_open);
+    assert!(app.stop.open);
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(!app.stop_open);
+    assert!(!app.stop.open);
 }
 
 /// The menu swallows every mouse event while it is open: a click on the title
@@ -419,9 +419,9 @@ fn the_menu_handles_its_own_mouse_events() {
         app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2)),
         Action::None
     );
-    assert!(app.menu_open);
+    assert!(app.menu.open);
     // The close button runs the menu's Esc key.
-    let close = app.menu_close.get();
+    let close = app.menu.close.get();
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -430,14 +430,14 @@ fn the_menu_handles_its_own_mouse_events() {
         )),
         Action::None
     );
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 
     // The footer's Confirm button runs Enter, so the selected entry acts: the
     // settings entry (row 0) opens the overlay.
     let mut app = open();
     draw(&app, 80, 14);
     let rects = patok_tui::footer_button_rects(
-        app.menu_footer.get(),
+        app.menu.footer.get(),
         &[("Enter", "Confirm"), ("Esc", "Close")],
     );
     let confirm = rects[0];
@@ -449,7 +449,7 @@ fn the_menu_handles_its_own_mouse_events() {
         )),
         Action::None
     );
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
     assert!(app.settings_open());
 }
 
@@ -466,7 +466,7 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
     // the m button is the twelve columns at x = 68.
     let mut app = app();
     draw(&app, 80, 14);
-    let chip = app.menu_chip.get();
+    let chip = app.layout.menu_chip.get();
     assert_eq!(chip, ratatui::layout::Rect::new(68, 13, 12, 1));
 
     // A click inside the chip opens the menu, the m key's action verbatim.
@@ -478,13 +478,13 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
         )),
         Action::None
     );
-    assert!(app.menu_open);
-    assert_eq!(app.menu_selected, 0);
+    assert!(app.menu.open);
+    assert_eq!(app.menu.selected, 0);
 
     // The status bar renders behind the modal and re-records the chip, so
     // the same click closes it: the toggle.
     draw(&app, 80, 14);
-    assert_eq!(app.menu_chip.get(), chip);
+    assert_eq!(app.layout.menu_chip.get(), chip);
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -493,7 +493,7 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
         )),
         Action::None
     );
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 
     // Reopened by a click, the menu still closes with Esc.
     draw(&app, 80, 14);
@@ -505,9 +505,9 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
         )),
         Action::None
     );
-    assert!(app.menu_open);
+    assert!(app.menu.open);
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 
     // Clicks outside the chip rect do not open the menu: the status row left
     // of the strip, and the column past the rect's right edge -- the strip's
@@ -519,7 +519,7 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
             Action::None
         );
         assert!(
-            !app.menu_open,
+            !app.menu.open,
             "a click at ({column}, {row}) must not open the menu"
         );
     }
@@ -533,23 +533,23 @@ fn the_menu_chip_is_inert_while_a_status_message_shows() {
     let mut app = app();
     app.status = Some("The planner is already running.".into());
     draw(&app, 80, 14);
-    assert_eq!(app.menu_chip.get(), ratatui::layout::Rect::default());
+    assert_eq!(app.layout.menu_chip.get(), ratatui::layout::Rect::default());
     assert_eq!(
         app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 72, 13)),
         Action::None
     );
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 
     // A narrow terminal fits no hint pair (" STOPPED  sprint" only), so the
     // dropped chip leaves the zero rect too.
     app.status = None;
     draw(&app, 18, 10);
-    assert_eq!(app.menu_chip.get(), ratatui::layout::Rect::default());
+    assert_eq!(app.layout.menu_chip.get(), ratatui::layout::Rect::default());
     assert_eq!(
         app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 17, 9)),
         Action::None
     );
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 }
 
 /// Each rendered row is a real button (T137.1): a left click inside a
@@ -563,7 +563,7 @@ fn a_menu_row_click_runs_that_entry() {
     let probe = open();
     draw(&probe, 80, 14);
     assert_eq!(
-        probe.menu_body.get(),
+        probe.menu.body.get(),
         ratatui::layout::Rect::new(14, 4, 52, 4)
     );
 
@@ -571,7 +571,7 @@ fn a_menu_row_click_runs_that_entry() {
     // the menu closes.
     let mut app = open();
     draw(&app, 80, 14);
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -580,15 +580,15 @@ fn a_menu_row_click_runs_that_entry() {
         )),
         Action::None
     );
-    assert_eq!(app.menu_selected, 0);
-    assert!(!app.menu_open);
+    assert_eq!(app.menu.selected, 0);
+    assert!(!app.menu.open);
     assert!(app.settings_open());
 
     // Row 1 (Theme) runs the `t` binding's action: the theme picker opens,
     // the menu closes.
     let mut app = open();
     draw(&app, 80, 14);
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -597,14 +597,14 @@ fn a_menu_row_click_runs_that_entry() {
         )),
         Action::None
     );
-    assert_eq!(app.menu_selected, 1);
-    assert!(!app.menu_open);
+    assert_eq!(app.menu.selected, 1);
+    assert!(!app.menu.open);
     assert!(app.theme_modal.open);
 
     // Row 2 (Detach) runs the `d` binding's action.
     let mut app = open();
     draw(&app, 80, 14);
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -613,14 +613,14 @@ fn a_menu_row_click_runs_that_entry() {
         )),
         Action::Detach
     );
-    assert_eq!(app.menu_selected, 2);
-    assert!(!app.menu_open);
+    assert_eq!(app.menu.selected, 2);
+    assert!(!app.menu.open);
 
     // Row 3 (Quit, idle) runs the `q` binding's idle action: the engine
     // stops now and the app exits.
     let mut app = open();
     draw(&app, 80, 14);
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -629,9 +629,9 @@ fn a_menu_row_click_runs_that_entry() {
         )),
         Action::Interrupt
     );
-    assert_eq!(app.menu_selected, 3);
-    assert!(!app.menu_open);
-    assert!(app.stopping);
+    assert_eq!(app.menu.selected, 3);
+    assert!(!app.menu.open);
+    assert!(app.run.stopping);
     assert_eq!(app.status.as_deref(), Some("Stopping the engine..."));
 }
 
@@ -646,7 +646,7 @@ fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
     // the same state the key path leaves.
     let mut clicked = open();
     draw(&clicked, 80, 14);
-    let body = clicked.menu_body.get();
+    let body = clicked.menu.body.get();
     assert_eq!(
         clicked.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -658,16 +658,16 @@ fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
     let mut keyed = open();
     assert_eq!(confirm_entry(&mut keyed, 2), Action::Detach);
     for app in [&mut clicked, &mut keyed] {
-        assert!(!app.menu_open);
-        assert_eq!(app.menu_selected, 2);
-        assert!(!app.stopping);
+        assert!(!app.menu.open);
+        assert_eq!(app.menu.selected, 2);
+        assert!(!app.run.stopping);
     }
 
     // Detach while a build runs: the same parity.
     let mut clicked = running_app();
     assert_eq!(press(&mut clicked, KeyCode::Char('m')), Action::None);
     draw(&clicked, 80, 14);
-    let body = clicked.menu_body.get();
+    let body = clicked.menu.body.get();
     assert_eq!(
         clicked.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -680,9 +680,9 @@ fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
     assert_eq!(press(&mut keyed, KeyCode::Char('m')), Action::None);
     assert_eq!(confirm_entry(&mut keyed, 2), Action::Detach);
     for app in [&mut clicked, &mut keyed] {
-        assert!(!app.menu_open);
-        assert_eq!(app.menu_selected, 2);
-        assert!(!app.stopping);
+        assert!(!app.menu.open);
+        assert_eq!(app.menu.selected, 2);
+        assert!(!app.run.stopping);
     }
 
     // Quit while a build runs: the soft stop, with the pending-stop status
@@ -690,7 +690,7 @@ fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
     let mut clicked = running_app();
     assert_eq!(press(&mut clicked, KeyCode::Char('m')), Action::None);
     draw(&clicked, 80, 14);
-    let body = clicked.menu_body.get();
+    let body = clicked.menu.body.get();
     assert_eq!(
         clicked.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -703,9 +703,9 @@ fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
     assert_eq!(press(&mut keyed, KeyCode::Char('m')), Action::None);
     assert_eq!(confirm_entry(&mut keyed, 3), Action::Quit);
     for app in [&mut clicked, &mut keyed] {
-        assert!(!app.menu_open);
-        assert_eq!(app.menu_selected, 3);
-        assert!(app.stopping);
+        assert!(!app.menu.open);
+        assert_eq!(app.menu.selected, 3);
+        assert!(app.run.stopping);
         assert_eq!(app.status.as_deref(), Some(patok_tui::SOFT_STOP_PENDING));
     }
 
@@ -713,7 +713,7 @@ fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
     // key path reaches.
     let mut clicked = open();
     draw(&clicked, 80, 14);
-    let body = clicked.menu_body.get();
+    let body = clicked.menu.body.get();
     assert_eq!(
         clicked.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -725,9 +725,9 @@ fn a_menu_shutdown_row_click_matches_its_key_in_every_state() {
     let mut keyed = open();
     assert_eq!(confirm_entry(&mut keyed, 3), Action::Interrupt);
     for app in [&mut clicked, &mut keyed] {
-        assert!(!app.menu_open);
-        assert_eq!(app.menu_selected, 3);
-        assert!(app.stopping);
+        assert!(!app.menu.open);
+        assert_eq!(app.menu.selected, 3);
+        assert!(app.run.stopping);
         assert_eq!(app.status.as_deref(), Some("Stopping the engine..."));
     }
 }
@@ -742,10 +742,10 @@ fn a_menu_row_click_runs_the_stop_build_entry_while_running() {
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     draw(&app, 80, 14);
     assert_eq!(
-        app.menu_body.get(),
+        app.menu.body.get(),
         ratatui::layout::Rect::new(14, 4, 52, 5)
     );
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -754,19 +754,19 @@ fn a_menu_row_click_runs_the_stop_build_entry_while_running() {
         )),
         Action::None
     );
-    assert_eq!(app.menu_selected, 4);
-    assert!(!app.menu_open);
-    assert!(app.stop_open);
-    assert_eq!(app.stop_selected, 0);
+    assert_eq!(app.menu.selected, 4);
+    assert!(!app.menu.open);
+    assert!(app.stop.open);
+    assert_eq!(app.stop.selected, 0);
 
     // The key path gives the same state: `m` plus four Downs and Enter.
     let mut keyed = running_app();
     assert_eq!(press(&mut keyed, KeyCode::Char('m')), Action::None);
     assert_eq!(confirm_entry(&mut keyed, 4), Action::None);
-    assert_eq!(keyed.menu_selected, 4);
-    assert!(!keyed.menu_open);
-    assert!(keyed.stop_open);
-    assert_eq!(keyed.stop_selected, 0);
+    assert_eq!(keyed.menu.selected, 4);
+    assert!(!keyed.menu.open);
+    assert!(keyed.stop.open);
+    assert_eq!(keyed.stop.selected, 0);
 }
 
 /// The stop entry joins only while a build runs, so the idle body ends at
@@ -777,10 +777,10 @@ fn the_stop_build_entry_is_not_clickable_when_idle() {
     let mut app = open();
     draw(&app, 80, 14);
     assert_eq!(patok_tui::menu_entries(false).len(), 4);
-    assert_eq!(app.menu_body.get().height, 4);
+    assert_eq!(app.menu.body.get().height, 4);
     // The footer line left of its buttons, where the selection hint
     // renders: outside every clickable rect.
-    let footer = app.menu_footer.get();
+    let footer = app.menu.footer.get();
     assert_eq!(
         app.on_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -789,10 +789,10 @@ fn the_stop_build_entry_is_not_clickable_when_idle() {
         )),
         Action::None
     );
-    assert!(app.menu_open);
-    assert_eq!(app.menu_selected, 0);
-    assert!(!app.stop_open);
-    assert!(!app.stopping);
+    assert!(app.menu.open);
+    assert_eq!(app.menu.selected, 0);
+    assert!(!app.stop.open);
+    assert!(!app.run.stopping);
 }
 
 /// A click inside the modal but outside any entry rect does nothing: the
@@ -810,23 +810,23 @@ fn a_click_in_the_modal_padding_does_nothing() {
         app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 17, 5)),
         Action::None
     );
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 
     // Open, then click the top border line and the title row: both outside
     // the body, the close button and the footer buttons.
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     draw(&app, 80, 14);
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     for (column, row) in [(body.x + 3, body.y - 1), (body.x + 10, body.y - 1), (2, 2)] {
         assert_eq!(
             app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), column, row)),
             Action::None
         );
-        assert!(app.menu_open);
-        assert_eq!(app.menu_selected, 0);
+        assert!(app.menu.open);
+        assert_eq!(app.menu.selected, 0);
         assert!(!app.overlay.open);
         assert!(!app.theme_modal.open);
-        assert!(!app.stop_open);
+        assert!(!app.stop.open);
     }
 
     // The key path is intact after the swallowed clicks: two Downs then
@@ -834,7 +834,7 @@ fn a_click_in_the_modal_padding_does_nothing() {
     assert_eq!(press(&mut app, KeyCode::Down), Action::None);
     assert_eq!(press(&mut app, KeyCode::Down), Action::None);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::Detach);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
 }
 
 /// The pointer moving onto a rendered row moves only the highlight (T140.1):
@@ -847,7 +847,7 @@ fn hovering_a_menu_row_moves_the_highlight_without_running_it() {
     let probe = open();
     draw(&probe, 80, 14);
     assert_eq!(
-        probe.menu_body.get(),
+        probe.menu.body.get(),
         ratatui::layout::Rect::new(14, 4, 52, 4)
     );
 
@@ -856,17 +856,17 @@ fn hovering_a_menu_row_moves_the_highlight_without_running_it() {
     // a row would open stays closed.
     let mut app = open();
     draw(&app, 80, 14);
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     for (i, offset) in (0u16..4).enumerate() {
         assert_eq!(
             app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + offset)),
             Action::None
         );
-        assert_eq!(app.menu_selected, i);
-        assert!(app.menu_open);
+        assert_eq!(app.menu.selected, i);
+        assert!(app.menu.open);
         assert!(!app.settings_open());
         assert!(!app.theme_modal.open);
-        assert!(!app.stop_open);
+        assert!(!app.stop.open);
     }
 
     // A subsequent Enter runs the hovered row: hover row 1 (Theme), then
@@ -875,9 +875,9 @@ fn hovering_a_menu_row_moves_the_highlight_without_running_it() {
         app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 1)),
         Action::None
     );
-    assert_eq!(app.menu_selected, 1);
+    assert_eq!(app.menu.selected, 1);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-    assert!(!app.menu_open);
+    assert!(!app.menu.open);
     assert!(app.theme_modal.open);
 }
 
@@ -888,15 +888,15 @@ fn hovering_a_menu_row_moves_the_highlight_without_running_it() {
 fn hovering_the_menu_padding_or_outside_changes_nothing() {
     let mut app = open();
     draw(&app, 80, 14);
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
     // Hover row 2 (Detach) first, so every later miss is observable.
     assert_eq!(
         app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 2)),
         Action::None
     );
-    assert_eq!(app.menu_selected, 2);
+    assert_eq!(app.menu.selected, 2);
 
-    let chip = app.menu_chip.get();
+    let chip = app.layout.menu_chip.get();
     for (column, row) in [
         (body.x + 3, body.y - 1),
         (body.x + 10, body.y + body.height),
@@ -907,11 +907,11 @@ fn hovering_the_menu_padding_or_outside_changes_nothing() {
             app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
             Action::None
         );
-        assert_eq!(app.menu_selected, 2, "a move at ({column}, {row})");
-        assert!(app.menu_open);
+        assert_eq!(app.menu.selected, 2, "a move at ({column}, {row})");
+        assert!(app.menu.open);
         assert!(!app.overlay.open);
         assert!(!app.theme_modal.open);
-        assert!(!app.stop_open);
+        assert!(!app.stop.open);
     }
 }
 
@@ -926,10 +926,10 @@ fn hovering_the_stop_build_row_selects_it_without_running_it() {
     assert_eq!(press(&mut app, KeyCode::Char('m')), Action::None);
     draw(&app, 80, 14);
     assert_eq!(
-        app.menu_body.get(),
+        app.menu.body.get(),
         ratatui::layout::Rect::new(14, 4, 52, 5)
     );
-    let body = app.menu_body.get();
+    let body = app.menu.body.get();
 
     // The hover selects the stop row but never runs it: the menu stays
     // open, the stop dialog stays closed.
@@ -937,15 +937,15 @@ fn hovering_the_stop_build_row_selects_it_without_running_it() {
         app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 4)),
         Action::None
     );
-    assert_eq!(app.menu_selected, 4);
-    assert!(app.menu_open);
-    assert!(!app.stop_open);
+    assert_eq!(app.menu.selected, 4);
+    assert!(app.menu.open);
+    assert!(!app.stop.open);
 
     // Enter on the hovered row opens the stop dialog, the key path's state.
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-    assert!(!app.menu_open);
-    assert!(app.stop_open);
-    assert_eq!(app.stop_selected, 0);
+    assert!(!app.menu.open);
+    assert!(app.stop.open);
+    assert_eq!(app.stop.selected, 0);
 }
 
 /// Pointer moves never open the closed menu or disturb any other
@@ -960,13 +960,13 @@ fn pointer_moves_while_the_menu_is_closed_change_nothing() {
     // the menu is open.
     let mut app = app();
     draw(&app, 80, 14);
-    let chip = app.menu_chip.get();
+    let chip = app.layout.menu_chip.get();
     for (column, row) in [(17, 5), (chip.x + 1, chip.y)] {
         assert_eq!(
             app.on_mouse(mouse(MouseEventKind::Moved, column, row)),
             Action::None
         );
-        assert!(!app.menu_open);
+        assert!(!app.menu.open);
     }
 
     // The same moves while the settings overlay is open land outside its
@@ -985,7 +985,7 @@ fn pointer_moves_while_the_menu_is_closed_change_nothing() {
             Action::None
         );
         assert_eq!(app.overlay.focus, 1);
-        assert!(!app.menu_open);
+        assert!(!app.menu.open);
     }
 
     // A move onto the list's first row moves the overlay's own highlight
@@ -995,6 +995,6 @@ fn pointer_moves_while_the_menu_is_closed_change_nothing() {
         Action::None
     );
     assert_eq!(app.overlay.focus, 0);
-    assert!(!app.menu_open);
-    assert_eq!(app.menu_selected, 0);
+    assert!(!app.menu.open);
+    assert_eq!(app.menu.selected, 0);
 }

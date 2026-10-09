@@ -2,7 +2,7 @@
 
 use patok_core::config::SettingValue;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
@@ -155,7 +155,7 @@ pub(super) fn render_settings_help(frame: &mut Frame, help: Rect, app: &App, the
 /// wide and 9 rows tall, clamped to the screen -- the shared choice-dialog
 /// rect (finding 6).
 pub fn settings_confirm_area(screen: Rect) -> Rect {
-    super::choice::choice_area(screen)
+    crate::choice::choice_area(screen)
 }
 
 /// The unsaved-changes dialog (Esc or q on a dirty overlay): a centered
@@ -306,21 +306,4 @@ pub(super) fn enum_display(app: &App, key: &str, values: &[&str]) -> String {
         Some(choice) if values.contains(&choice.as_str()) => choice,
         _ => values.first().copied().unwrap_or_default().to_string(),
     }
-}
-
-/// The settings list's entry the pointer sits on: the visible entry index
-/// when the position is on one of the list's rendered rows (offset by the
-/// current scroll), `None` outside the list rect or on a viewport row past
-/// the last visible entry. A pure hit-test like [`super::theme_row_at`].
-pub fn settings_row_at(
-    position: Position,
-    list: Rect,
-    scroll: usize,
-    visible_len: usize,
-) -> Option<usize> {
-    if !list.contains(position) {
-        return None;
-    }
-    let index = scroll + usize::from(position.y - list.y);
-    (index < visible_len).then_some(index)
 }

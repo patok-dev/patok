@@ -849,7 +849,7 @@ fn a_config_changed_event_updates_the_open_overlay() {
 fn overlay_keys_do_not_leak_and_ctrl_c_detaches() {
     let mut app = open();
     // q is the overlay's close, not the shell's quit.
-    assert!(!app.stopping);
+    assert!(!app.run.stopping);
     // Ctrl+C still detaches from inside the overlay.
     assert_eq!(ctrl(&mut app, 'c'), Action::Detach);
 }

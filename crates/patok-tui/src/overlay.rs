@@ -19,7 +19,7 @@ use patok_core::config::{
 use ratatui::layout::Rect;
 
 use crate::app::Action;
-use crate::ui::choice::{Choice, ChoiceKey, choice_key};
+use crate::choice::{Choice, ChoiceKey, choice_key};
 
 /// Which schema a field belongs to, and so who applies a change to it: daemon fields go through the engine, tui fields are the shell's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

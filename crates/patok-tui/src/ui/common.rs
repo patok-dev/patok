@@ -1,13 +1,15 @@
 //! Building blocks shared by every pane and modal: theme styles, buttons, key
-//! hints, modal footers, group headers and the scrollbar.
+//! hints, modal footers, group headers and the scrollbar. The pure button
+//! geometry and click tests they share with the shell's mouse dispatch live in
+//! [`crate::hit`].
 
-use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::hit::{button_line, footer_button_rects};
 use crate::theme::Theme;
 
 /// Entry rows indent this many spaces past the focus marker, nesting them under
@@ -28,74 +30,6 @@ pub(super) fn selected_row_style(theme: Theme) -> Style {
     base_style(theme)
         .fg(theme.highlighted_text)
         .add_modifier(Modifier::BOLD)
-}
-
-/// One modal button's display text (T44.1, extended by T59.1): ` [ Key ] Label `
-/// -- the key bracketed in the button style, a one-word label, one space of
-/// padding inside the brackets and one either side -- or ` [ Key ] ` when the
-/// button has no label. Shared by the renderer, the hit-test and the tests, so
-/// every button's rectangle is agreed on by construction.
-pub fn button_text(key: &str, label: &str) -> String {
-    if label.is_empty() {
-        format!(" [ {key} ] ")
-    } else {
-        format!(" [ {key} ] {label} ")
-    }
-}
-
-/// Every modal's close button (T66.1): the display width of [`button_text`]
-/// with the bare `x` key -- the seven columns of ` [ x ] `, shared by the
-/// renderer and the mouse hit-test so the drawn button and its rectangle
-/// agree by construction.
-pub const CLOSE_BUTTON_WIDTH: u16 = 7;
-
-/// A modal's top-right close button (T66.1): the bracketed ` [ x ] ` in the
-/// theme's button accent colour, foreground only -- drawn through the shared
-/// [`button_line`] on every modal's title row, so it recolours with the
-/// active theme like every other button and no colour literal exists here.
-/// A click on its rectangle ([`close_button_rect`]) runs the modal's Esc key.
-pub fn close_button_line(theme: Theme) -> Line<'static> {
-    button_line("x", "", theme)
-}
-
-/// The close button's hit-test rectangle on a modal's title row (T66.1): the
-/// seven columns its right-aligned [`close_button_line`] occupies on the top
-/// border, ending one column short of the modal's top-right corner -- so the
-/// button stays inside the modal with its border corners intact. The zero
-/// rect when the modal is too narrow to hold the button inside its borders:
-/// nothing renders there and no real position ever falls inside a zero rect,
-/// so the click test misses naturally.
-pub fn close_button_rect(area: Rect) -> Rect {
-    if area.width < CLOSE_BUTTON_WIDTH + 2 {
-        return Rect::default();
-    }
-    Rect::new(
-        area.right() - 1 - CLOSE_BUTTON_WIDTH,
-        area.y,
-        CLOSE_BUTTON_WIDTH,
-        1,
-    )
-}
-
-/// A modal button (T44.1, extended by T59.1, split by T64.1): the bracketed
-/// ` [ Key ] Label ` style -- the brackets and the key in the theme's button
-/// accent colour, the label after them in the theme's regular foreground
-/// colour, foreground only (no background, no bold) -- shared by every modal's
-/// bottom-line buttons and close buttons, so every modal draws the same
-/// buttons and they recolour with the active theme. The two spans' text joins
-/// into exactly [`button_text`], whose width sizes the hit-tested rectangles.
-pub(super) fn button_line(key: &str, label: &str, theme: Theme) -> Line<'static> {
-    let mut spans = vec![Span::styled(
-        format!(" [ {key} ] "),
-        Style::new().fg(theme.highlighted_text),
-    )];
-    if !label.is_empty() {
-        spans.push(Span::styled(
-            format!("{label} "),
-            Style::new().fg(theme.normal_text),
-        ));
-    }
-    Line::from(spans)
 }
 
 /// A modal bottom line's key-hint zone (T59.1): the hints joined with ` · `,
@@ -164,23 +98,6 @@ pub(super) fn render_hints_strip(
 /// occupy one right-hand zone sized to their total width, laid out right to
 /// left in the order given, so the renderer and the mouse hit-test agree on
 /// every rectangle by construction. A pure companion of `rail_tile_rects`.
-pub fn footer_button_rects(footer: Rect, buttons: &[(&str, &str)]) -> Vec<Rect> {
-    let widths: Vec<u16> = buttons
-        .iter()
-        .map(|(key, label)| u16::try_from(button_text(key, label).chars().count()).unwrap_or(0))
-        .collect();
-    let total: u16 = widths.iter().sum();
-    let mut x = footer.x + footer.width.saturating_sub(total);
-    widths
-        .into_iter()
-        .map(|width| {
-            let rect = Rect::new(x, footer.y, width, 1);
-            x = x.saturating_add(width);
-            rect
-        })
-        .collect()
-}
-
 /// A modal's bottom line (T59.1): one line in two zones -- the key hints that
 /// act on the modal's content left-aligned in a left-hand zone, the
 /// modal-level action buttons right-aligned in a fixed right-hand zone, the
@@ -218,43 +135,6 @@ pub(super) fn group_header_line(marker: &str, expanded: bool, title: &str) -> Li
         format!("{marker}{} {title}", if expanded { '▾' } else { '▸' }),
         Style::new().add_modifier(Modifier::BOLD),
     )
-}
-
-/// Whether a left click lands on a modal's close button (T66.1): the click
-/// must be a press inside the button's rectangle, which the renderer recorded
-/// at the last render through [`crate::ui::close_button_rect`]. The zero rect
-/// a too-narrow modal records contains no real position, so the click misses
-/// there naturally. Every other mouse event misses too.
-pub fn close_clicked(mouse: &MouseEvent, close: Rect) -> bool {
-    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-        return false;
-    }
-    let position = Position::new(mouse.column, mouse.row);
-    close.contains(position)
-}
-
-/// The key a left click on a modal's bottom-line button stands for (T59.1):
-/// the button whose rectangle (computed by [`footer_button_rects`] from the
-/// same button list the renderer drew) contains the click. `None` for hint
-/// clicks, clicks elsewhere and every other mouse event -- hints stay
-/// non-interactive.
-pub fn footer_button_code(
-    mouse: &MouseEvent,
-    footer: Rect,
-    buttons: &[(&str, &str)],
-) -> Option<KeyCode> {
-    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-        return None;
-    }
-    let position = Position::new(mouse.column, mouse.row);
-    let index = footer_button_rects(footer, buttons)
-        .iter()
-        .position(|rect| rect.contains(position))?;
-    match buttons[index].0 {
-        "Enter" => Some(KeyCode::Enter),
-        "Esc" => Some(KeyCode::Esc),
-        _ => None,
-    }
 }
 
 /// A hand-rendered scrollbar on the body's right edge when the rows overflow.
