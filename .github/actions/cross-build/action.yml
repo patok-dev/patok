@@ -1,0 +1,22 @@
+name: Cross-build
+description: Install the musl tools and target, then build the release binary for one target triple.
+inputs:
+  target:
+    description: Rust target triple to build for.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install musl tools
+      if: contains(inputs.target, 'musl')
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y musl-tools
+    - name: Add target
+      shell: bash
+      run: rustup target add ${{ inputs.target }}
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.target }}
+    - name: Build
+      shell: bash
+      run: cargo build --release -p patok --target ${{ inputs.target }}
