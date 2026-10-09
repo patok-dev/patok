@@ -2,19 +2,21 @@
 //! overlay in its states (fresh, editing, validation error, drafted changes, the
 //! unsaved-changes dialog).
 
+mod support;
+
 use std::collections::BTreeMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 use patok_core::config::{ApplyTiming, SettingValue};
-use patok_core::event::{EngineEvent, Phase, Snapshot};
-use patok_core::pipeline::PipelineState;
-use patok_core::task;
+use patok_core::event::EngineEvent;
 use patok_tui::{
     Action, App, Entry, FieldKind, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
     SETTINGS_HELP_PANEL_WIDTH, settings_area, settings_body_areas,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+
+use support::{ctrl, draw, mouse, press};
 
 const TASKS: &str = "## Phase 1\n- [ ] T1.1: scaffold the workspace\n";
 
@@ -55,57 +57,7 @@ fn readout() -> BTreeMap<String, SettingValue> {
 }
 
 fn app() -> App {
-    App::new(
-        Snapshot {
-            project_dir: "/home/user/demo".into(),
-            phase: Phase::Startup,
-            tasks: task::parse(TASKS),
-            current_task: None,
-            planning: false,
-            discovering: false,
-            provider: "claude".into(),
-            model: String::new(),
-            settings: readout(),
-            pipeline: PipelineState::today(),
-            recent: vec![],
-        },
-        "0.1.0".into(),
-    )
-}
-
-fn draw(app: &App, width: u16, height: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal
-        .draw(|frame| patok_tui::render(frame, app))
-        .unwrap();
-    let buffer = terminal.backend().buffer().clone();
-    (0..height)
-        .map(|y| {
-            (0..width)
-                .map(|x| buffer[(x, y)].symbol())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn press(app: &mut App, code: KeyCode) -> Action {
-    app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-}
-
-fn ctrl(app: &mut App, c: char) -> Action {
-    app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
-}
-
-fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
-    MouseEvent {
-        kind,
-        column,
-        row,
-        modifiers: KeyModifiers::NONE,
-    }
+    support::app(TASKS, "claude", readout(), None)
 }
 
 fn open() -> App {
@@ -2258,10 +2210,6 @@ mod selected_row_colours {
     use patok_tui::{SETTINGS_CHOICES, settings_confirm_area};
     use ratatui::layout::{Constraint, Layout, Rect};
     use ratatui::style::Modifier;
-
-    fn press(app: &mut App, code: KeyCode) -> Action {
-        app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-    }
 
     fn buffer(app: &App) -> ratatui::buffer::Buffer {
         let mut terminal = Terminal::new(TestBackend::new(W, H)).unwrap();

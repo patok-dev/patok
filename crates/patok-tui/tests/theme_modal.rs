@@ -4,78 +4,22 @@
 //! picker's list is two foldable groups, Dark then Light (T116.1), mirroring
 //! the settings overlay's grouped entries.
 
+mod support;
+
 use std::collections::BTreeMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use patok_core::config::{ConfigFiles, Theme as ThemeKey};
-use patok_core::event::{EngineEvent, Phase, Snapshot};
-use patok_core::pipeline::PipelineState;
-use patok_core::task;
-use patok_tui::{
-    Action, App, FrameFocus, ShellSettings, Theme, render, theme_modal_groups, theme_row_at,
-};
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
+use patok_core::event::{EngineEvent, Phase};
+use patok_tui::{Action, App, FrameFocus, ShellSettings, Theme, theme_modal_groups, theme_row_at};
+
+use support::{draw, draw_buffer, mouse, press};
 
 const TASKS: &str = "## Phase 1\n- [ ] T1.1: scaffold the workspace\n";
 
 fn app() -> App {
-    let mut app = App::new(
-        Snapshot {
-            project_dir: "/home/user/demo".into(),
-            phase: Phase::Startup,
-            tasks: task::parse(TASKS),
-            current_task: None,
-            planning: false,
-            discovering: false,
-            provider: "claude".into(),
-            model: String::new(),
-            settings: BTreeMap::new(),
-            pipeline: PipelineState::today(),
-            recent: vec![],
-        },
-        "0.1.0".into(),
-    );
     // Deterministic colours: no COLORTERM auto-detection in tests.
-    app.tui.truecolor = Some(true);
-    app
-}
-
-fn draw(app: &App, width: u16, height: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| render(frame, app)).unwrap();
-    let buffer = terminal.backend().buffer();
-    (0..height)
-        .map(|y| {
-            (0..width)
-                .map(|x| buffer[(x, y)].symbol())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Renders into an 80x24 TestBackend and returns the buffer, for cell-level
-/// symbol and style assertions.
-fn draw_buffer(app: &App) -> ratatui::buffer::Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| render(frame, app)).unwrap();
-    terminal.backend().buffer().clone()
-}
-
-fn press(app: &mut App, code: KeyCode) -> Action {
-    app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-}
-
-fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
-    MouseEvent {
-        kind,
-        column,
-        row,
-        modifiers: KeyModifiers::NONE,
-    }
+    support::app(TASKS, "claude", BTreeMap::new(), Some(true))
 }
 
 fn open() -> App {

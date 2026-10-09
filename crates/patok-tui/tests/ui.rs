@@ -1,5 +1,7 @@
 //! Screen snapshots rendered with ratatui's `TestBackend`.
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,53 +17,16 @@ use patok_tui::{
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+use support::{ctrl, draw, draw_buffer, mouse, press};
+
 const TASKS: &str = "## Phase 1\n- [x] T1.1: scaffold the workspace\n- [ ] T1.2: add the parser for task files\n- [ ] T1.3: wire the engine to the shell\n";
 
 fn app() -> App {
-    App::new(
-        Snapshot {
-            project_dir: "/home/user/demo".into(),
-            phase: Phase::Startup,
-            tasks: task::parse(TASKS),
-            current_task: None,
-            planning: false,
-            discovering: false,
-            provider: String::new(),
-            model: String::new(),
-            settings: BTreeMap::new(),
-            pipeline: PipelineState::today(),
-            recent: vec![],
-        },
-        "0.1.0".into(),
-    )
-}
-
-fn draw(app: &App, width: u16, height: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| render(frame, app)).unwrap();
-    let buffer = terminal.backend().buffer();
-    (0..height)
-        .map(|y| {
-            (0..width)
-                .map(|x| buffer[(x, y)].symbol())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    support::app(TASKS, "", BTreeMap::new(), None)
 }
 
 fn agent(event: AgentEvent) -> EngineEvent {
     EngineEvent::Agent { event }
-}
-
-/// Renders into an 80x24 TestBackend and returns the buffer, for cell-level
-/// symbol and style assertions.
-fn draw_buffer(app: &App) -> ratatui::buffer::Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| render(frame, app)).unwrap();
-    terminal.backend().buffer().clone()
 }
 
 #[test]
@@ -2204,14 +2169,6 @@ mod dialog {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use patok_core::event::NoticeLevel;
     use patok_tui::{Action, DialogKind};
-
-    fn press(app: &mut App, code: KeyCode) -> Action {
-        app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-    }
-
-    fn ctrl(app: &mut App, c: char) -> Action {
-        app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
-    }
 
     /// Shift-Enter: the line-break key of the multi-line input (T41.1).
     fn shift_enter(app: &mut App) -> Action {
@@ -4729,18 +4686,8 @@ mod hints {
 /// and its three choices map to the soft stop, the interrupt and a plain close.
 mod stop_dialog {
     use super::*;
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
+    use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
     use patok_tui::Action;
-
-    fn press(app: &mut App, code: KeyCode) -> Action {
-        app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-    }
-
-    fn ctrl(app: &mut App, c: char) -> Action {
-        app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
-    }
 
     /// A running build with a started task, the state Esc opens the dialog from.
     fn running() -> App {
@@ -4995,17 +4942,6 @@ mod stop_dialog {
         assert_eq!(app.stop.selected, 2);
     }
 
-    /// A mouse event of the given kind at a screen position, for the
-    /// dialog's hover and click handling (T148.1).
-    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
-            kind,
-            column,
-            row,
-            modifiers: KeyModifiers::NONE,
-        }
-    }
-
     /// A pointer move over a choice row moves only the selection highlight
     /// there, without running it (T148.1): the dialog stays open, the
     /// build keeps running, and a later Enter confirms the hovered row --
@@ -5193,9 +5129,7 @@ mod stop_dialog {
 /// exactly its key's action, while hints stay non-interactive.
 mod modal_footer {
     use super::*;
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
+    use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use patok_core::config::Theme as ThemeKey;
     use patok_tui::{Action, Theme, button_text, footer_button_rects};
     use ratatui::style::Color;
@@ -5203,10 +5137,6 @@ mod modal_footer {
 
     const W: u16 = 80;
     const H: u16 = 24;
-
-    fn press(app: &mut App, code: KeyCode) -> Action {
-        app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-    }
 
     fn type_text(app: &mut App, text: &str) {
         for c in text.chars() {
@@ -5629,9 +5559,7 @@ mod modal_footer {
 /// in every theme, while Esc itself behaves exactly as before.
 mod close_button {
     use super::*;
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
+    use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use patok_core::config::Theme as ThemeKey;
     use patok_tui::{
         Action, CLOSE_BUTTON_WIDTH, Theme, button_text, close_button_rect, dialog_area, stop_area,
@@ -5641,10 +5569,6 @@ mod close_button {
 
     const W: u16 = 80;
     const H: u16 = 24;
-
-    fn press(app: &mut App, code: KeyCode) -> Action {
-        app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-    }
 
     fn type_text(app: &mut App, text: &str) {
         for c in text.chars() {

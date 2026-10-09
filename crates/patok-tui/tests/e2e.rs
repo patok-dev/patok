@@ -1,10 +1,12 @@
 //! The real gRPC protocol over a Unix socket: client from this crate, engine with a mock provider.
 
+mod support;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use patok_core::event::{AgentEvent, EngineEvent, Phase, Snapshot, TaskOutcome};
-use patok_engine::{Engine, EngineConfig};
+use patok_engine::Engine;
 use patok_proto::{
     AttachRequest, CancelSoftStop, CommandRequest, InjectTask, RoleModel, SettingsChange,
     ShutdownRequest, StartBuild, command_request, engine_update, settings_change,
@@ -12,48 +14,16 @@ use patok_proto::{
 };
 use patok_providers::mock::{MockProvider, Step};
 
-struct Setup {
-    _dirs: Vec<tempfile::TempDir>,
-    config: EngineConfig,
-}
+use support::{Setup, connect_retrying};
 
 fn setup() -> Setup {
-    let project = tempfile::tempdir().unwrap();
-    let runtime = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("TASKS.md"), "- [ ] T1.1: add hello\n").unwrap();
-    let config = EngineConfig {
-        project_dir: project.path().to_path_buf(),
-        runtime_dir: runtime.path().join("e"),
-        data_dir: data.path().to_path_buf(),
-        agent_timeout: Duration::from_secs(30),
-        idle_shutdown: Duration::from_secs(3600),
-        discovery_cooldown: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN,
-        discovery_cooldown_cap: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN_CAP,
-        plan_enabled: false,
-        run_mode: patok_core::config::RunMode::Sprint,
-        skip_research_for_simple: true,
-        review_in_loop: false,
-        review_history: data.path().join("review-history.json"),
-        open_group: data.path().join("open-group.json"),
-        config_files: patok_core::config::ConfigFiles::default(),
-    };
-    Setup {
-        _dirs: vec![project, runtime, data],
-        config,
-    }
-}
-
-async fn connect_retrying(
-    socket: &std::path::Path,
-) -> patok_proto::engine_client::EngineClient<tonic::transport::Channel> {
-    for _ in 0..100 {
-        if let Ok(client) = patok_proto::client::connect(socket).await {
-            return client;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("engine never became reachable");
+    let setup = support::setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
+    setup
 }
 
 fn snapshot_of(update: patok_proto::EngineUpdate) -> (String, Snapshot) {
