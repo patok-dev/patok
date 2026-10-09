@@ -1,5 +1,6 @@
 //! Rendering. Reads the [`App`], draws a frame, never blocks on I/O.
 
+pub(crate) mod choice;
 mod common;
 mod dialogs;
 mod output;
@@ -15,7 +16,8 @@ use crate::app::{App, FrameFocus};
 use crate::pipeline::{rail_width, render_rail};
 
 pub use common::{
-    CLOSE_BUTTON_WIDTH, button_text, close_button_rect, fitted_hints, footer_button_rects,
+    CLOSE_BUTTON_WIDTH, button_text, close_button_rect, close_clicked, fitted_hints,
+    footer_button_code, footer_button_rects,
 };
 pub use dialogs::{
     DIALOG_WATERMARK, INJECT_WATERMARK, confirm_row_at, dialog_area, menu_area, menu_row_at,

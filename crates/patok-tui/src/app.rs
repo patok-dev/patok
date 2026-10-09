@@ -17,12 +17,14 @@ use patok_core::task::Task;
 use ratatui::layout::Rect;
 
 use crate::overlay::{
-    Entry, Row, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries, header_fold,
+    Entry, Row, SETTINGS_CHOICES, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries,
+    header_fold,
 };
 use crate::theme::{Theme, theme_modal_groups};
+use crate::ui::choice::{Choice, ChoiceKey, ChoiceMouse, choice_key, choice_mouse};
 use crate::ui::{
-    confirm_row_at, finished_line, footer_button_rects, frame_at, menu_row_at, settings_row_at,
-    started_line, stop_row_at, theme_row_at,
+    close_clicked, finished_line, footer_button_code, frame_at, menu_row_at, settings_row_at,
+    started_line, theme_row_at,
 };
 
 /// Output lines kept; older ones scroll off for good.
@@ -206,6 +208,19 @@ impl StopChoice {
             StopChoice::Interrupt => "cancel the current task, stay open",
             StopChoice::Cancel => "keep the build running",
         }
+    }
+}
+
+/// The stop dialog's rows through the shared choice-dialog component
+/// (finding 6): the inherent `label` and `detail` above stay the public
+/// surface; the trait only forwards to them.
+impl Choice for StopChoice {
+    fn label(&self) -> &'static str {
+        (*self).label()
+    }
+
+    fn detail(&self) -> &'static str {
+        (*self).detail()
     }
 }
 
@@ -1115,17 +1130,15 @@ impl App {
 
     /// The stop dialog's keys: Up/Down move the selection, Enter confirms it,
     /// Esc closes with no effect, and everything else is swallowed. Ctrl+C is
-    /// handled before this runs (it detaches from anywhere).
+    /// handled before this runs (it detaches from anywhere). The shared
+    /// choice-dialog key handling moves the selection (finding 6); this owns
+    /// only the Enter dispatch.
     fn on_stop_key(&mut self, key: KeyEvent) -> Action {
-        match key.code {
-            KeyCode::Esc => self.stop_open = false,
-            KeyCode::Up => self.stop_selected = self.stop_selected.saturating_sub(1),
-            KeyCode::Down => {
-                self.stop_selected = (self.stop_selected + 1).min(STOP_CHOICES.len() - 1);
-            }
-            KeyCode::Enter => {
+        match choice_key(key.code, false, STOP_CHOICES.len(), &mut self.stop_selected) {
+            ChoiceKey::Close => self.stop_open = false,
+            ChoiceKey::Enter(index) => {
                 self.stop_open = false;
-                return match STOP_CHOICES[self.stop_selected.min(STOP_CHOICES.len() - 1)] {
+                return match STOP_CHOICES[index] {
                     StopChoice::SoftStop => {
                         self.stopping = true;
                         self.status = Some(SOFT_STOP_PENDING.into());
@@ -1142,7 +1155,7 @@ impl App {
                     StopChoice::Cancel => Action::None,
                 };
             }
-            _ => {}
+            ChoiceKey::Swallowed => {}
         }
         Action::None
     }
@@ -1397,38 +1410,29 @@ impl App {
     /// or lands outside it does nothing. Everything else is swallowed,
     /// as before.
     fn on_stop_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if close_clicked(&mouse, self.stop_close.get()) {
-            return self.on_stop_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        }
-        if let Some(code) = footer_button_code(
+        match choice_mouse(
             &mouse,
+            self.stop_close.get(),
             self.stop_footer.get(),
-            &[("Enter", "Confirm"), ("Esc", "Close")],
+            "Close",
+            self.stop_body.get(),
+            STOP_CHOICES.len(),
         ) {
-            return self.on_stop_key(KeyEvent::new(code, KeyModifiers::NONE));
-        }
-        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let row = stop_row_at(position, self.stop_body.get());
-        match mouse.kind {
-            MouseEventKind::Moved => {
-                // The move moves only the highlight, never the dispatch:
-                // a move that misses every row leaves the selection alone.
-                if let Some(index) = row {
-                    self.stop_selected = index;
-                }
+            ChoiceMouse::Key(code) => self.on_stop_key(KeyEvent::new(code, KeyModifiers::NONE)),
+            // The move moves only the highlight, never the dispatch.
+            ChoiceMouse::Hover(index) => {
+                self.stop_selected = index;
+                Action::None
             }
-            MouseEventKind::Down(MouseButton::Left) => {
-                // The click is the row's Enter key verbatim: it moves the
-                // selection to the row, then runs the Enter dispatch, so a
-                // click and Enter on the same row are indistinguishable.
-                if let Some(index) = row {
-                    self.stop_selected = index;
-                    return self.on_stop_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                }
+            // The click is the row's Enter key verbatim: it moves the
+            // selection to the row, then runs the Enter dispatch, so a
+            // click and Enter on the same row are indistinguishable.
+            ChoiceMouse::Click(index) => {
+                self.stop_selected = index;
+                self.on_stop_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
-            _ => {}
+            ChoiceMouse::None => Action::None,
         }
-        Action::None
     }
 
     /// The m menu's mouse handling (T59.1): a click on one of the bottom
@@ -1574,38 +1578,29 @@ impl App {
     /// below the choices, the border, the title -- or lands outside it does
     /// nothing. Everything else is swallowed, as before.
     fn on_confirm_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if close_clicked(&mouse, self.overlay.confirm_close.get()) {
-            return self.on_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        }
-        if let Some(code) = footer_button_code(
+        match choice_mouse(
             &mouse,
+            self.overlay.confirm_close.get(),
             self.overlay.confirm_footer.get(),
-            &[("Enter", "Confirm"), ("Esc", "Cancel")],
+            "Cancel",
+            self.overlay.confirm_body.get(),
+            SETTINGS_CHOICES.len(),
         ) {
-            return self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE));
-        }
-        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let row = confirm_row_at(position, self.overlay.confirm_body.get());
-        match mouse.kind {
-            MouseEventKind::Moved => {
-                // The move moves only the highlight, never the dispatch:
-                // a move that misses every row leaves the selection alone.
-                if let Some(index) = row {
-                    self.overlay.confirm_selected = index;
-                }
+            ChoiceMouse::Key(code) => self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE)),
+            // The move moves only the highlight, never the dispatch.
+            ChoiceMouse::Hover(index) => {
+                self.overlay.confirm_selected = index;
+                Action::None
             }
-            MouseEventKind::Down(MouseButton::Left) => {
-                // The click is the row's Enter key verbatim: it moves the
-                // selection to the row, then runs the Enter dispatch, so a
-                // click and Enter on the same row are indistinguishable.
-                if let Some(index) = row {
-                    self.overlay.confirm_selected = index;
-                    return self.on_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                }
+            // The click is the row's Enter key verbatim: it moves the
+            // selection to the row, then runs the Enter dispatch, so a
+            // click and Enter on the same row are indistinguishable.
+            ChoiceMouse::Click(index) => {
+                self.overlay.confirm_selected = index;
+                self.on_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             }
-            _ => {}
+            ChoiceMouse::None => Action::None,
         }
-        Action::None
     }
 
     /// The short inline refusal for a busy engine, shared by every key that
@@ -2131,19 +2126,6 @@ impl App {
     }
 }
 
-/// Whether a left click lands on a modal's close button (T66.1): the click
-/// must be a press inside the button's rectangle, which the renderer recorded
-/// at the last render through [`crate::ui::close_button_rect`]. The zero rect
-/// a too-narrow modal records contains no real position, so the click misses
-/// there naturally. Every other mouse event misses too.
-fn close_clicked(mouse: &MouseEvent, close: Rect) -> bool {
-    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-        return false;
-    }
-    let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-    close.contains(position)
-}
-
 /// Whether a left click lands on one of the status bar's interactive chips
 /// (T133.1, T134.1): the click must be a press inside the chip's rectangle,
 /// which the renderer recorded at the last render through
@@ -2158,30 +2140,6 @@ fn chip_clicked(mouse: &MouseEvent, chip: Rect) -> bool {
     }
     let position = ratatui::layout::Position::new(mouse.column, mouse.row);
     chip.contains(position)
-}
-
-/// The key a left click on a modal's bottom-line button stands for (T59.1):
-/// the button whose rectangle (computed by [`footer_button_rects`] from the
-/// same button list the renderer drew) contains the click. `None` for hint
-/// clicks, clicks elsewhere and every other mouse event -- hints stay
-/// non-interactive.
-fn footer_button_code(
-    mouse: &MouseEvent,
-    footer: Rect,
-    buttons: &[(&str, &str)],
-) -> Option<KeyCode> {
-    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-        return None;
-    }
-    let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-    let index = footer_button_rects(footer, buttons)
-        .iter()
-        .position(|rect| rect.contains(position))?;
-    match buttons[index].0 {
-        "Enter" => Some(KeyCode::Enter),
-        "Esc" => Some(KeyCode::Esc),
-        _ => None,
-    }
 }
 
 /// Turns a drafted value into what the overlay renders and cycles: `truecolor` is

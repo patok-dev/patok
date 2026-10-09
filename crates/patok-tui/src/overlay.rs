@@ -19,6 +19,7 @@ use patok_core::config::{
 use ratatui::layout::Rect;
 
 use crate::app::Action;
+use crate::ui::choice::{Choice, ChoiceKey, choice_key};
 
 /// Which schema a field belongs to, and so who applies a change to it: daemon fields go through the engine, tui fields are the shell's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -628,6 +629,19 @@ impl SettingsChoice {
     }
 }
 
+/// The dialog's rows through the shared choice-dialog component
+/// (finding 6): the inherent `label` and `detail` above stay the public
+/// surface; the trait only forwards to them.
+impl Choice for SettingsChoice {
+    fn label(&self) -> &'static str {
+        (*self).label()
+    }
+
+    fn detail(&self) -> &'static str {
+        (*self).detail()
+    }
+}
+
 /// The dialog's rows, top to bottom; `confirm_selected` indexes this list.
 pub const SETTINGS_CHOICES: [SettingsChoice; 3] = [
     SettingsChoice::Save,
@@ -910,20 +924,20 @@ impl SettingsOverlay {
     /// The unsaved-changes dialog's keys: Up and k move the selection up,
     /// Down and j move it down, Enter confirms it, Esc cancels back to the
     /// overlay, and everything else is swallowed. Ctrl+C is handled before this
-    /// runs (it detaches from anywhere).
+    /// runs (it detaches from anywhere). The shared choice-dialog key
+    /// handling moves the selection (finding 6); this owns only the Enter
+    /// dispatch.
     fn on_confirm_key(&mut self, code: KeyCode) -> Action {
-        match code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.confirm_selected = self.confirm_selected.saturating_sub(1)
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.confirm_selected = (self.confirm_selected + 1).min(SETTINGS_CHOICES.len() - 1);
-            }
-            KeyCode::Esc => self.confirm_open = false,
-            KeyCode::Enter => {
+        match choice_key(
+            code,
+            true,
+            SETTINGS_CHOICES.len(),
+            &mut self.confirm_selected,
+        ) {
+            ChoiceKey::Close => self.confirm_open = false,
+            ChoiceKey::Enter(index) => {
                 self.confirm_open = false;
-                return match SETTINGS_CHOICES[self.confirm_selected.min(SETTINGS_CHOICES.len() - 1)]
-                {
+                return match SETTINGS_CHOICES[index] {
                     // Save: the driver applies and persists every drafted change
                     // through the settings-change flow, then closes the overlay.
                     SettingsChoice::Save => Action::SaveSettings,
@@ -935,7 +949,7 @@ impl SettingsOverlay {
                     SettingsChoice::Cancel => Action::None,
                 };
             }
-            _ => {}
+            ChoiceKey::Swallowed => {}
         }
         Action::None
     }

@@ -33,8 +33,9 @@ pub use theme::{AgentText, Theme, theme_modal_groups};
 pub use ui::{
     CLOSE_BUTTON_WIDTH, DIALOG_WATERMARK, INJECT_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH,
     SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH, button_text, close_button_rect,
-    dialog_area, finished_line, fitted_hints, footer_button_rects, format_elapsed, frame_at,
-    frame_constraints, human_duration, menu_area, menu_row_at, output_title, output_title_parts,
-    output_title_spans, render, settings_area, settings_body_areas, settings_confirm_area,
-    settings_row_at, started_line, stop_area, theme_area, theme_row_at,
+    confirm_row_at, dialog_area, finished_line, fitted_hints, footer_button_rects, format_elapsed,
+    frame_at, frame_constraints, human_duration, menu_area, menu_row_at, output_title,
+    output_title_parts, output_title_spans, render, settings_area, settings_body_areas,
+    settings_confirm_area, settings_row_at, started_line, stop_area, stop_row_at, theme_area,
+    theme_row_at,
 };

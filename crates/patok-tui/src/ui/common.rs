@@ -1,8 +1,9 @@
 //! Building blocks shared by every pane and modal: theme styles, buttons, key
 //! hints, modal footers, group headers and the scrollbar.
 
+use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -217,6 +218,43 @@ pub(super) fn group_header_line(marker: &str, expanded: bool, title: &str) -> Li
         format!("{marker}{} {title}", if expanded { '▾' } else { '▸' }),
         Style::new().add_modifier(Modifier::BOLD),
     )
+}
+
+/// Whether a left click lands on a modal's close button (T66.1): the click
+/// must be a press inside the button's rectangle, which the renderer recorded
+/// at the last render through [`crate::ui::close_button_rect`]. The zero rect
+/// a too-narrow modal records contains no real position, so the click misses
+/// there naturally. Every other mouse event misses too.
+pub fn close_clicked(mouse: &MouseEvent, close: Rect) -> bool {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return false;
+    }
+    let position = Position::new(mouse.column, mouse.row);
+    close.contains(position)
+}
+
+/// The key a left click on a modal's bottom-line button stands for (T59.1):
+/// the button whose rectangle (computed by [`footer_button_rects`] from the
+/// same button list the renderer drew) contains the click. `None` for hint
+/// clicks, clicks elsewhere and every other mouse event -- hints stay
+/// non-interactive.
+pub fn footer_button_code(
+    mouse: &MouseEvent,
+    footer: Rect,
+    buttons: &[(&str, &str)],
+) -> Option<KeyCode> {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return None;
+    }
+    let position = Position::new(mouse.column, mouse.row);
+    let index = footer_button_rects(footer, buttons)
+        .iter()
+        .position(|rect| rect.contains(position))?;
+    match buttons[index].0 {
+        "Enter" => Some(KeyCode::Enter),
+        "Esc" => Some(KeyCode::Esc),
+        _ => None,
+    }
 }
 
 /// A hand-rendered scrollbar on the body's right edge when the rows overflow.

@@ -142,71 +142,30 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
 }
 
 /// The stop dialog's rect: a small centered modal, at least 54 columns wide and
-/// 9 rows tall, clamped to the screen.
+/// 9 rows tall, clamped to the screen -- the shared choice-dialog rect
+/// (finding 6).
 pub fn stop_area(screen: Rect) -> Rect {
-    let width = (screen.width * 3 / 5).max(54).min(screen.width);
-    let height = 9.min(screen.height);
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
+    super::choice::choice_area(screen)
 }
 
-/// The stop dialog (Esc while a build runs, T46.1): a centered " Stop build " modal
-/// with the three choices as a vertical list -- the selected choice in the shared
-/// selected-row style (T118.1) -- and a two-zone bottom line of hints
-/// left, buttons right (T59.1). Rendered on top of everything else.
+/// The stop dialog (Esc while a build runs, T46.1): a centered " Stop build "
+/// modal with the three choices as a vertical list -- the selected choice in
+/// the shared selected-row style (T118.1) -- and a two-zone bottom line of
+/// hints left, buttons right (T59.1). Rendered on top of everything else.
+/// The shared choice-dialog renderer draws it (finding 6); this records the
+/// rects its mouse hit-testing reads.
 pub(super) fn render_stop_dialog(frame: &mut Frame, app: &App) {
-    let theme = app.theme();
-    let area = stop_area(frame.area());
-    frame.render_widget(Clear, area);
-    app.stop_close.set(close_button_rect(area));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(base_style(theme))
-        .title_top(Line::from(" Stop build ").centered())
-        .title_top(close_button_line(theme).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
-    app.stop_body.set(body);
-    let lines: Vec<Line> = STOP_CHOICES
-        .iter()
-        .enumerate()
-        .map(|(index, choice)| {
-            let focused = index == app.stop_selected;
-            let marker = if focused { "▶ " } else { "  " };
-            let mut line = Line::from(vec![
-                Span::raw(marker),
-                Span::raw(choice.label()),
-                Span::styled(
-                    format!(" -- {}", choice.detail()),
-                    Style::new().fg(if focused {
-                        theme.highlighted_text
-                    } else {
-                        theme.muted_text
-                    }),
-                ),
-            ]);
-            if focused {
-                line = line.style(selected_row_style(theme));
-            }
-            line
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), body);
-    // The bottom line's two zones (T59.1): the selection hint on the left, the
-    // Confirm and Close buttons on the right.
-    app.stop_footer.set(footer);
-    render_modal_footer(
+    let rects = super::choice::render_choice_dialog(
         frame,
-        footer,
-        &["↑↓ move"],
-        &[("Enter", "Confirm"), ("Esc", "Close")],
-        theme,
+        app.theme(),
+        " Stop build ",
+        &STOP_CHOICES,
+        app.stop_selected,
+        "Close",
     );
+    app.stop_close.set(rects.close);
+    app.stop_body.set(rects.body);
+    app.stop_footer.set(rects.footer);
 }
 
 /// The m menu's rect: a small centered modal, at least 54 columns wide and
@@ -328,25 +287,19 @@ pub fn menu_row_at(position: Position, body: Rect, visible_len: usize) -> Option
 /// The unsaved-changes dialog's choice the pointer sits on (T146.1): the row
 /// index when the position is on one of the dialog's three choice rows, `None`
 /// on the dialog's blank body padding below them, the border, the title, the
-/// footer or the shell outside. A pure hit-test like [`menu_row_at`].
+/// footer or the shell outside. A pure hit-test like [`menu_row_at`], over
+/// the shared choice-dialog rows (finding 6).
 pub fn confirm_row_at(position: Position, body: Rect) -> Option<usize> {
-    if !body.contains(position) {
-        return None;
-    }
-    let row = usize::from(position.y - body.y);
-    (row < SETTINGS_CHOICES.len()).then_some(row)
+    super::choice::choice_row_at(position, body, SETTINGS_CHOICES.len())
 }
 
 /// The stop dialog's choice the pointer sits on (T148.1): the row index
 /// when the position is on one of the dialog's three choice rows, `None`
 /// on the dialog's blank body padding below them, the border, the title,
-/// the footer or the shell outside. A pure hit-test like [`menu_row_at`].
+/// the footer or the shell outside. A pure hit-test like [`menu_row_at`],
+/// over the shared choice-dialog rows (finding 6).
 pub fn stop_row_at(position: Position, body: Rect) -> Option<usize> {
-    if !body.contains(position) {
-        return None;
-    }
-    let row = usize::from(position.y - body.y);
-    (row < STOP_CHOICES.len()).then_some(row)
+    super::choice::choice_row_at(position, body, STOP_CHOICES.len())
 }
 
 /// The theme picker (the `t` key, T43.1, T116.1): a centered " Theme " modal
