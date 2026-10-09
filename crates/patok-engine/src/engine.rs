@@ -141,24 +141,190 @@ impl EngineConfig {
     }
 }
 
+/// The engine's run state: which unit of work owns the engine. At most one
+/// unit runs, and the scheduled round inside a build session's empty-queue
+/// gap is its own variant, so the invalid combinations of five loose flags
+/// are unrepresentable.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RunState {
+    #[default]
+    Idle,
+    /// The build session loop runs.
+    Running,
+    /// A planner or queue-creation session runs.
+    Planning,
+    /// A discovery round runs on an otherwise idle engine.
+    Discovering,
+    /// A scheduled discovery round runs in a build session's empty-queue
+    /// gap; the session resumes with the appended tasks when it ends.
+    SessionDiscovery,
+}
+
+impl RunState {
+    /// The wire phase this state reports: planning and discovery runs never
+    /// touched the old phase flag, so they keep the startup phase.
+    fn phase(self) -> Phase {
+        match self {
+            Self::Idle | Self::Planning | Self::Discovering => Phase::Startup,
+            Self::Running | Self::SessionDiscovery => Phase::Running,
+        }
+    }
+
+    /// Whether a planner session is active.
+    fn is_planning(self) -> bool {
+        self == Self::Planning
+    }
+
+    /// Whether a discovery round is active, standalone or inside a session's
+    /// empty-queue gap.
+    fn is_discovering(self) -> bool {
+        matches!(self, Self::Discovering | Self::SessionDiscovery)
+    }
+
+    /// Whether a build session is active (the old `phase == Running` read,
+    /// true also while the session's gap round runs).
+    fn is_build_session(self) -> bool {
+        matches!(self, Self::Running | Self::SessionDiscovery)
+    }
+
+    /// The build session starts. The guards of `start_build` guarantee the
+    /// idle source.
+    fn build_started(self) -> Self {
+        debug_assert_eq!(self, Self::Idle);
+        Self::Running
+    }
+
+    /// The build session ends. `end_session` guarantees the source.
+    fn build_ended(self) -> Self {
+        debug_assert_eq!(self, Self::Running);
+        Self::Idle
+    }
+
+    /// A planner or queue-creation run starts. The `start_*` guards
+    /// guarantee the idle source.
+    fn planning_started(self) -> Self {
+        debug_assert_eq!(self, Self::Idle);
+        Self::Planning
+    }
+
+    /// A planner or queue-creation run ends; the engine is idle again.
+    fn planning_ended(self) -> Self {
+        debug_assert_eq!(self, Self::Planning);
+        Self::Idle
+    }
+
+    /// A standalone discovery round starts. The guards of `start_discovery`
+    /// guarantee the idle source.
+    fn discovery_started(self) -> Self {
+        debug_assert_eq!(self, Self::Idle);
+        Self::Discovering
+    }
+
+    /// The session's scheduled round starts in the empty-queue gap; the
+    /// phase stays running.
+    fn gap_discovery_started(self) -> Self {
+        debug_assert_eq!(self, Self::Running);
+        Self::SessionDiscovery
+    }
+
+    /// A discovery round ends: a standalone one leaves the engine idle, and
+    /// the session's gap round returns to the still-running session.
+    fn discovery_ended(self) -> Self {
+        match self {
+            Self::Discovering => Self::Idle,
+            Self::SessionDiscovery => Self::Running,
+            other => other,
+        }
+    }
+}
+
+/// A pending stop: no new unit of work starts. A soft stop (`Soft`) is
+/// cancellable by [`Engine::cancel_soft_stop`]; a NOW stop (`Now`) already
+/// cancelled the running agent and is not. Both are released by
+/// [`Engine::end_stop`] once the loop has wound down; the process exits only
+/// for a NOW stop requested while idle (the plain quit), a signal, or the
+/// idle timeout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Stop {
+    #[default]
+    None,
+    /// A soft stop is pending.
+    Soft,
+    /// A NOW stop is pending.
+    Now,
+}
+
+impl Stop {
+    /// The stop a request marks: a later request overwrites an earlier one,
+    /// so a soft request after a NOW stop makes the stop cancellable again.
+    fn requested(now: bool) -> Self {
+        if now { Self::Now } else { Self::Soft }
+    }
+
+    /// Whether a stop is pending: no new unit of work starts.
+    fn is_pending(self) -> bool {
+        self != Self::None
+    }
+
+    /// Whether the pending stop is a cancellable soft stop.
+    fn is_soft(self) -> bool {
+        self == Self::Soft
+    }
+}
+
+/// The per-task stage tiles within the running task, grouped so every update
+/// goes through [`Tiles::set`] or [`Tiles::set_all`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Tiles {
+    /// The research stage tile (T68.1).
+    research: TileStatus,
+    /// The plan stage tile.
+    plan: TileStatus,
+    /// The build stage tile.
+    build: TileStatus,
+    /// The review stage tile (T70.1).
+    review: TileStatus,
+}
+
+impl Tiles {
+    /// One stage's status.
+    fn get(self, stage: Stage) -> TileStatus {
+        match stage {
+            Stage::Research => self.research,
+            Stage::Plan => self.plan,
+            Stage::Build => self.build,
+            Stage::Review => self.review,
+        }
+    }
+
+    /// The single per-stage update primitive.
+    fn set(&mut self, stage: Stage, status: TileStatus) {
+        match stage {
+            Stage::Research => self.research = status,
+            Stage::Plan => self.plan = status,
+            Stage::Build => self.build = status,
+            Stage::Review => self.review = status,
+        }
+    }
+
+    /// All four stages at once: a task's tiles start over as pending and end
+    /// muted, whatever the outcome.
+    fn set_all(&mut self, status: TileStatus) {
+        self.research = status;
+        self.plan = status;
+        self.build = status;
+        self.review = status;
+    }
+}
+
 struct State {
-    phase: Phase,
+    /// The engine's run state, the single owner of which unit of work runs.
+    run: RunState,
     current_task: Option<String>,
     recent: VecDeque<EngineEvent>,
     attached: bool,
-    /// A stop was requested: no new unit of work starts. Both scopes are
-    /// released by [`Engine::end_stop`] once the loop has wound down; the
-    /// process exits only for a NOW stop requested while idle (the plain
-    /// quit), a signal, or the idle timeout.
-    stopping: bool,
-    /// A soft stop is pending: `stopping` was requested with `now` false and
-    /// not yet released or cancelled. Distinguishes a cancellable soft stop
-    /// from a NOW stop or the restart flow, which share only `stopping`.
-    soft_stop: bool,
-    /// An append-tasks planner session is active.
-    planning: bool,
-    /// A discovery session is active.
-    discovering: bool,
+    /// The pending stop, if any.
+    stop: Stop,
     /// The in-memory task queue, kept in step with the task file by `reconcile_locked`.
     tasks: Vec<Task>,
     /// The IDs this engine appended through the append-tasks flow during the session.
@@ -176,14 +342,8 @@ struct State {
     /// The pipeline rail as last broadcast, with the
     /// stage list the engine runs today; recomputed by `refresh_pipeline_locked`.
     pipeline: PipelineState,
-    /// The plan stage tile's status within the running task.
-    plan: TileStatus,
-    /// The research stage tile's status within the running task (T68.1).
-    research: TileStatus,
-    /// The build stage tile's status within the running task.
-    build: TileStatus,
-    /// The review stage tile's status within the running task (T70.1).
-    review: TileStatus,
+    /// The per-task stage tiles within the running task.
+    tiles: Tiles,
     /// The leading task-ID number of the current batch-review group: a contiguous run of same-numbered tasks.
     group_number: Option<String>,
     /// The full HEAD SHA the current batch-review group started at (or the
@@ -518,24 +678,18 @@ impl Engine {
                 resolver,
                 central: Mutex::new(central),
                 state: Mutex::new(State {
-                    phase: Phase::Startup,
+                    run: RunState::default(),
                     current_task: None,
                     recent: VecDeque::new(),
                     attached: false,
-                    stopping: false,
-                    soft_stop: false,
-                    planning: false,
-                    discovering: false,
+                    stop: Stop::default(),
                     tasks: Vec::new(),
                     ui_added_ids: Vec::new(),
                     injected: Vec::new(),
                     schedule,
                     cancel: CancellationToken::new(),
                     pipeline: PipelineState::today(),
-                    research: TileStatus::Muted,
-                    plan: TileStatus::Muted,
-                    build: TileStatus::Muted,
-                    review: TileStatus::Muted,
+                    tiles: Tiles::default(),
                     group_number: None,
                     group_base: None,
                     discovery_ran: false,
@@ -662,10 +816,16 @@ impl Engine {
         }
     }
 
-    fn set_phase(&self, state: &mut State, phase: Phase) {
-        state.phase = phase;
-        self.inner.phase.send_replace(phase);
-        self.emit_locked(state, EngineEvent::PhaseChanged { phase });
+    /// Applies `run`: when the wire phase it reports changed, updates the
+    /// phase watch and emits PhaseChanged. The behaviour of the old
+    /// `set_phase`, driven by the run-state enum instead of a loose flag.
+    fn apply_run_state(&self, state: &mut State, run: RunState) {
+        let phase = run.phase();
+        if state.run.phase() != phase {
+            self.inner.phase.send_replace(phase);
+            self.emit_locked(state, EngineEvent::PhaseChanged { phase });
+        }
+        state.run = run;
     }
 
     /// Re-reads the task file and merges it into the queue; broadcasts the new list when it
@@ -697,7 +857,7 @@ impl Engine {
         let sprint = self.central().settings.run_mode == RunMode::Sprint;
         let discover = if sprint {
             TileStatus::Muted
-        } else if state.discovering {
+        } else if state.run.is_discovering() {
             TileStatus::Active
         } else if state.discovery_ran {
             TileStatus::Done
@@ -711,12 +871,7 @@ impl Engine {
                 .iter()
                 .map(|tile| Tile {
                     stage: tile.stage,
-                    status: match tile.stage {
-                        Stage::Research => state.research,
-                        Stage::Plan => state.plan,
-                        Stage::Build => state.build,
-                        Stage::Review => state.review,
-                    },
+                    status: state.tiles.get(tile.stage),
                 })
                 .collect(),
             discover,
@@ -727,24 +882,31 @@ impl Engine {
         }
     }
 
+    /// One stage-tile update under an already-held state lock, followed by
+    /// the rail refresh.
+    fn set_tiles_locked(&self, state: &mut State, update: impl FnOnce(&mut Tiles)) {
+        update(&mut state.tiles);
+        self.refresh_pipeline_locked(state);
+    }
+
+    /// One stage-tile update: locks the state, applies `update` and
+    /// refreshes the rail -- the single update path every tile change goes
+    /// through.
+    fn update_tiles(&self, update: impl FnOnce(&mut Tiles)) {
+        let mut state = self.state();
+        self.set_tiles_locked(&mut state, update);
+    }
+
     /// A task's tiles start over: both stages pending (the statuses
     /// reset per task).
     fn task_tiles_started_locked(&self, state: &mut State) {
-        state.research = TileStatus::Pending;
-        state.plan = TileStatus::Pending;
-        state.build = TileStatus::Pending;
-        state.review = TileStatus::Pending;
-        self.refresh_pipeline_locked(state);
+        self.set_tiles_locked(state, |tiles| tiles.set_all(TileStatus::Pending));
     }
 
     /// A task ended: its stage tiles are muted again, whatever the
     /// outcome.
     fn task_tiles_finished_locked(&self, state: &mut State) {
-        state.research = TileStatus::Muted;
-        state.plan = TileStatus::Muted;
-        state.build = TileStatus::Muted;
-        state.review = TileStatus::Muted;
-        self.refresh_pipeline_locked(state);
+        self.set_tiles_locked(state, |tiles| tiles.set_all(TileStatus::Muted));
     }
 
     /// The startup cleanup (T72.1): prunes old completed task lines from the
@@ -1008,11 +1170,11 @@ impl Engine {
         self.reconcile_locked(&mut state);
         let snapshot = Snapshot {
             project_dir: self.inner.config.project_dir.display().to_string(),
-            phase: state.phase,
+            phase: state.run.phase(),
             tasks: state.tasks.clone(),
             current_task: state.current_task.clone(),
-            planning: state.planning,
-            discovering: state.discovering,
+            planning: state.run.is_planning(),
+            discovering: state.run.is_discovering(),
             provider,
             model: model.unwrap_or_default(),
             settings,
@@ -1038,17 +1200,20 @@ impl Engine {
         let tasks =
             taskfile::load(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let mut state = self.state();
-        if state.stopping {
+        if state.stop.is_pending() {
             return Err("the engine is shutting down".into());
         }
-        if state.phase == Phase::Running {
-            return Err("a build is already running".into());
-        }
-        if state.planning {
-            return Err("tasks are being planned; wait for the planner to finish".into());
-        }
-        if state.discovering {
-            return Err("a discovery round is running; wait for it to finish".into());
+        match state.run {
+            RunState::Running | RunState::SessionDiscovery => {
+                return Err("a build is already running".into());
+            }
+            RunState::Planning => {
+                return Err("tasks are being planned; wait for the planner to finish".into());
+            }
+            RunState::Discovering => {
+                return Err("a discovery round is running; wait for it to finish".into());
+            }
+            RunState::Idle => {}
         }
         let task = task::next_pending(&tasks)
             .ok_or_else(|| format!("no pending tasks in {TASK_FILE}"))?
@@ -1061,7 +1226,8 @@ impl Engine {
         state.group_number = None;
         state.group_base = None;
         state.current_task = Some(task.id.clone());
-        self.set_phase(&mut state, Phase::Running);
+        let run = state.run.build_started();
+        self.apply_run_state(&mut state, run);
         self.emit_locked(
             &mut state,
             EngineEvent::TaskStarted {
@@ -1093,7 +1259,7 @@ impl Engine {
             return;
         }
         loop {
-            while !self.state().stopping {
+            while !self.state().stop.is_pending() {
                 let Some(task) = self.begin_next_task() else {
                     break;
                 };
@@ -1104,7 +1270,7 @@ impl Engine {
             }
             // The queue is empty: sprint mode stops here; in continuous mode one
             // discovery round runs, but only past the cooldown.
-            if self.state().stopping
+            if self.state().stop.is_pending()
                 || unit.run_mode != RunMode::Continuous
                 || !self.discovery_due()
             {
@@ -1141,7 +1307,8 @@ impl Engine {
     fn end_session(&self) {
         let mut state = self.state();
         state.current_task = None;
-        self.set_phase(&mut state, Phase::Startup);
+        let run = state.run.build_ended();
+        self.apply_run_state(&mut state, run);
         // A safety refresh: the task end already muted its tiles, so this
         // normally emits nothing, but keeps the rail correct even if a path
         // above ever skips `finish_task`.
@@ -1171,7 +1338,7 @@ impl Engine {
         };
         {
             let mut state = self.state();
-            state.discovering = true;
+            state.run = state.run.gap_discovery_started();
             self.emit_locked(
                 &mut state,
                 EngineEvent::DiscoveryChanged { discovering: true },
@@ -1201,17 +1368,20 @@ impl Engine {
         }
         let unit = self.unit()?;
         let mut state = self.state();
-        if state.stopping {
+        if state.stop.is_pending() {
             return Err("the engine is shutting down".into());
         }
-        if state.phase == Phase::Running {
-            return Err("a build is running; wait for it to finish".into());
-        }
-        if state.planning {
-            return Err("the planner is already running".into());
-        }
-        if state.discovering {
-            return Err("a discovery round is running; wait for it to finish".into());
+        match state.run {
+            RunState::Running | RunState::SessionDiscovery => {
+                return Err("a build is running; wait for it to finish".into());
+            }
+            RunState::Planning => {
+                return Err("the planner is already running".into());
+            }
+            RunState::Discovering => {
+                return Err("a discovery round is running; wait for it to finish".into());
+            }
+            RunState::Idle => {}
         }
         // Record the task list as it is before the planner touches it (validated in T3.6).
         // A missing file is created with a minimal header first. The lock is held only for
@@ -1235,7 +1405,7 @@ impl Engine {
             unit.provider.slug(),
             unit.model.as_deref(),
         );
-        state.planning = true;
+        state.run = state.run.planning_started();
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });
         drop(state);
 
@@ -1257,17 +1427,20 @@ impl Engine {
     pub fn start_queue_creation(&self, kind: QueueCreation) -> Result<(), String> {
         let unit = self.unit()?;
         let mut state = self.state();
-        if state.stopping {
+        if state.stop.is_pending() {
             return Err("the engine is shutting down".into());
         }
-        if state.phase == Phase::Running {
-            return Err("a build is running; wait for it to finish".into());
-        }
-        if state.planning {
-            return Err("tasks are being planned; wait for the planner to finish".into());
-        }
-        if state.discovering {
-            return Err("a discovery round is running; wait for it to finish".into());
+        match state.run {
+            RunState::Running | RunState::SessionDiscovery => {
+                return Err("a build is running; wait for it to finish".into());
+            }
+            RunState::Planning => {
+                return Err("tasks are being planned; wait for the planner to finish".into());
+            }
+            RunState::Discovering => {
+                return Err("a discovery round is running; wait for it to finish".into());
+            }
+            RunState::Idle => {}
         }
         // A fresh same-kind research report is reused: no session (the T68.1
         // reuse window covers the queue-creation reports).
@@ -1301,7 +1474,7 @@ impl Engine {
             unit.provider.slug(),
             unit.model.as_deref(),
         );
-        state.planning = true;
+        state.run = state.run.planning_started();
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });
         drop(state);
 
@@ -1320,17 +1493,20 @@ impl Engine {
     pub fn start_discovery(&self) -> Result<(), String> {
         let unit = self.unit()?;
         let mut state = self.state();
-        if state.stopping {
+        if state.stop.is_pending() {
             return Err("the engine is shutting down".into());
         }
-        if state.phase == Phase::Running {
-            return Err("a build is running; wait for it to finish".into());
-        }
-        if state.planning {
-            return Err("tasks are being planned; wait for the planner to finish".into());
-        }
-        if state.discovering {
-            return Err("a discovery round is running; wait for it to finish".into());
+        match state.run {
+            RunState::Running | RunState::SessionDiscovery => {
+                return Err("a build is running; wait for it to finish".into());
+            }
+            RunState::Planning => {
+                return Err("tasks are being planned; wait for the planner to finish".into());
+            }
+            RunState::Discovering => {
+                return Err("a discovery round is running; wait for it to finish".into());
+            }
+            RunState::Idle => {}
         }
         // Like the planner run: the file is recorded first under a briefly held
         // lock, released before the session runs (T77.1).
@@ -1343,7 +1519,7 @@ impl Engine {
         drop(guard);
         let cancel = CancellationToken::new();
         state.cancel = cancel.clone();
-        state.discovering = true;
+        state.run = state.run.discovery_started();
         self.emit_locked(
             &mut state,
             EngineEvent::DiscoveryChanged { discovering: true },
@@ -1462,8 +1638,7 @@ impl Engine {
     /// timeout, which cancel the shutdown token directly.
     pub fn request_stop(&self, now: bool) {
         let mut state = self.state();
-        state.stopping = true;
-        state.soft_stop = !now;
+        state.stop = Stop::requested(now);
         if now {
             state.cancel.cancel();
         }
@@ -1472,13 +1647,12 @@ impl Engine {
     /// Releases a stop once the loop has wound down (the running task finished
     /// or was cancelled, and nothing new started): new units of work --
     /// StartBuild, AddTasks, RunDiscovery -- are accepted again. Both scopes
-    /// end here; only the shutdown handshake calls this. `stopping` stays set
+    /// end here; only the shutdown handshake calls this. The stop stays set
     /// until the engine has actually gone idle, otherwise a command could
     /// sneak a new run in mid-wind-down.
     pub fn end_stop(&self) {
         let mut state = self.state();
-        state.stopping = false;
-        state.soft_stop = false;
+        state.stop = Stop::None;
     }
 
     /// Notified when a pending soft stop is cancelled; the shutdown handshake
@@ -1495,11 +1669,10 @@ impl Engine {
     /// the `CancelSoftStop` command with no soft stop pending.
     pub fn cancel_soft_stop(&self) -> Result<(), String> {
         let mut state = self.state();
-        if !state.stopping || !state.soft_stop {
+        if !state.stop.is_soft() {
             return Err("no soft stop is pending".into());
         }
-        state.stopping = false;
-        state.soft_stop = false;
+        state.stop = Stop::None;
         self.emit_locked(
             &mut state,
             EngineEvent::Notice {
@@ -1512,18 +1685,23 @@ impl Engine {
         Ok(())
     }
 
+    /// The engine's run state: which unit of work, if any, owns it.
+    pub(crate) fn run_state(&self) -> RunState {
+        self.state().run
+    }
+
     pub fn is_running(&self) -> bool {
-        self.state().phase == Phase::Running
+        self.run_state().is_build_session()
     }
 
     /// Whether a planner session is currently active.
     pub fn is_planning(&self) -> bool {
-        self.state().planning
+        self.run_state().is_planning()
     }
 
     /// Whether a discovery round is currently active.
     pub fn is_discovering(&self) -> bool {
-        self.state().discovering
+        self.run_state().is_discovering()
     }
 
     /// Resolves once no build, no planning run and no discovery round is active.
@@ -1541,7 +1719,7 @@ impl Engine {
             discovery.as_mut().enable();
             let (planning_active, discovery_active) = {
                 let state = self.state();
-                (state.planning, state.discovering)
+                (state.run.is_planning(), state.run.is_discovering())
             };
             if !planning_active && !discovery_active {
                 return;
@@ -1559,11 +1737,7 @@ impl Engine {
         let pending = taskfile::load(&self.inner.config.task_file())
             .is_ok_and(|tasks| task::next_pending(&tasks).is_some());
         let state = self.state();
-        !state.attached
-            && state.phase == Phase::Startup
-            && !state.planning
-            && !state.discovering
-            && !pending
+        !state.attached && state.run == RunState::Idle && !pending
     }
 
     /// Adds `ids` to the session's UI-added task IDs (append-tasks flow).
@@ -1686,7 +1860,7 @@ impl Engine {
 
         {
             let mut state = self.state();
-            state.planning = false;
+            state.run = state.run.planning_ended();
             self.reconcile_locked(&mut state);
             self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: false });
         }
@@ -1769,7 +1943,7 @@ impl Engine {
 
         {
             let mut state = self.state();
-            state.planning = false;
+            state.run = state.run.planning_ended();
             self.reconcile_locked(&mut state);
             self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: false });
         }
@@ -1831,7 +2005,7 @@ impl Engine {
 
         {
             let mut state = self.state();
-            state.discovering = false;
+            state.run = state.run.discovery_ended();
             // Only a round that ran to completion marks the DISCOVER tile done
             //; a cancelled or failed one does not.
             state.discovery_ran |= added.is_some();
@@ -1994,13 +2168,11 @@ impl Engine {
         // stage is disabled, so the shell never shows a stale agent. The research and
         // plan tiles are done and the build tile active from here on -- also when a
         // stage was skipped, so the stages before the running one are always done.
-        {
-            let mut state = self.state();
-            state.research = TileStatus::Done;
-            state.plan = TileStatus::Done;
-            state.build = TileStatus::Active;
-            self.refresh_pipeline_locked(&mut state);
-        }
+        self.update_tiles(|tiles| {
+            tiles.set(Stage::Research, TileStatus::Done);
+            tiles.set(Stage::Plan, TileStatus::Done);
+            tiles.set(Stage::Build, TileStatus::Active);
+        });
         let session_start = self.announce_session(
             AgentRole::Builder,
             unit.provider.slug(),
@@ -2048,11 +2220,7 @@ impl Engine {
                 // The build tile is done once the builder session completed: the
                 // stages before the running one are always done, so review never renders with the build
                 // still in-progress.
-                {
-                    let mut state = self.state();
-                    state.build = TileStatus::Done;
-                    self.refresh_pipeline_locked(&mut state);
-                }
+                self.update_tiles(|tiles| tiles.set(Stage::Build, TileStatus::Done));
                 // The review stage: the review pipeline
                 // slot between the builder and the commit finalization.
                 let review = self
@@ -2313,9 +2481,7 @@ impl Engine {
             if !deferred {
                 self.close_group(&task.id);
             }
-            let mut state = self.state();
-            state.review = TileStatus::Done;
-            self.refresh_pipeline_locked(&mut state);
+            self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
             return ReviewStage::Skipped;
         }
 
@@ -2333,11 +2499,7 @@ impl Engine {
                 NoticeLevel::Error,
                 format!("{}: no changed files to review", task.id),
             );
-            {
-                let mut state = self.state();
-                state.review = TileStatus::Done;
-                self.refresh_pipeline_locked(&mut state);
-            }
+            self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
             return ReviewStage::Failed;
         }
         // The reviewer receives the diff when it is non-empty and at most
@@ -2346,11 +2508,7 @@ impl Engine {
         let diff = (!diff.trim().is_empty() && diff.len() <= DIFF_LIMIT_BYTES).then_some(diff);
 
         // The review tile is active while the reviewer sessions run (T49.1).
-        {
-            let mut state = self.state();
-            state.review = TileStatus::Active;
-            self.refresh_pipeline_locked(&mut state);
-        }
+        self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Active));
 
         // Applied fixes are inferred from per-file content hashes taken before
         // and after the reviewer, over the same changed-file set.
@@ -2394,11 +2552,7 @@ impl Engine {
         let result = match run {
             ReviewRun::Cancelled => {
                 self.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
-                {
-                    let mut state = self.state();
-                    state.review = TileStatus::Done;
-                    self.refresh_pipeline_locked(&mut state);
-                }
+                self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
                 return ReviewStage::Cancelled;
             }
             ReviewRun::Report(report) => (report, true),
@@ -2430,11 +2584,7 @@ impl Engine {
         // history in the background.
         self.record_review_outcome(task, complexity, verdict.passed);
 
-        {
-            let mut state = self.state();
-            state.review = TileStatus::Done;
-            self.refresh_pipeline_locked(&mut state);
-        }
+        self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
         if verdict.passed {
             self.notice(NoticeLevel::Info, format!("Review passed for {}.", task.id));
             // The group's last task completed its review validated: the
@@ -2742,11 +2892,7 @@ impl Engine {
         }
         // The research session is the running stage: its tile is active with the
         // later stages still pending.
-        {
-            let mut state = self.state();
-            state.research = TileStatus::Active;
-            self.refresh_pipeline_locked(&mut state);
-        }
+        self.update_tiles(|tiles| tiles.set(Stage::Research, TileStatus::Active));
         let start = self.announce_session(
             AgentRole::Research,
             unit.provider.slug(),
@@ -2851,12 +2997,10 @@ impl Engine {
     ) -> PlanStage {
         // The plan session is the running stage: its tile is active with the
         // build tile still pending.
-        {
-            let mut state = self.state();
-            state.research = TileStatus::Done;
-            state.plan = TileStatus::Active;
-            self.refresh_pipeline_locked(&mut state);
-        }
+        self.update_tiles(|tiles| {
+            tiles.set(Stage::Research, TileStatus::Done);
+            tiles.set(Stage::Plan, TileStatus::Active);
+        });
         let mut prompt_text = prompt::plan(task, research);
         for attempt in 1..=2 {
             // Every attempt is one planner session with its own timing, so a retried
@@ -2958,6 +3102,117 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_state_derives_the_wire_views() {
+        // Planning and standalone discovery never touched the old phase flag,
+        // so they keep the startup phase; the session's gap round reports a
+        // running session and active discovery at once.
+        let views = |run: RunState| {
+            (
+                run.phase(),
+                run.is_planning(),
+                run.is_discovering(),
+                run.is_build_session(),
+            )
+        };
+        assert_eq!(views(RunState::Idle), (Phase::Startup, false, false, false));
+        assert_eq!(
+            views(RunState::Running),
+            (Phase::Running, false, false, true)
+        );
+        assert_eq!(
+            views(RunState::Planning),
+            (Phase::Startup, true, false, false)
+        );
+        assert_eq!(
+            views(RunState::Discovering),
+            (Phase::Startup, false, true, false)
+        );
+        assert_eq!(
+            views(RunState::SessionDiscovery),
+            (Phase::Running, false, true, true)
+        );
+    }
+
+    #[test]
+    fn state_transitions_walk_idle_running_and_idle_planning() {
+        assert_eq!(RunState::Idle.build_started(), RunState::Running);
+        assert_eq!(RunState::Running.build_ended(), RunState::Idle);
+        assert_eq!(RunState::Idle.planning_started(), RunState::Planning);
+        assert_eq!(RunState::Planning.planning_ended(), RunState::Idle);
+    }
+
+    #[test]
+    fn a_discovery_round_returns_to_its_hosting_state() {
+        // A standalone round leaves the engine idle.
+        assert_eq!(RunState::Idle.discovery_started(), RunState::Discovering);
+        assert_eq!(RunState::Discovering.discovery_ended(), RunState::Idle);
+        // The session's gap round returns to the still-running session.
+        assert_eq!(
+            RunState::Running.gap_discovery_started(),
+            RunState::SessionDiscovery
+        );
+        assert_eq!(
+            RunState::SessionDiscovery.discovery_ended(),
+            RunState::Running
+        );
+    }
+
+    #[test]
+    fn stops_distinguish_a_soft_stop_from_an_interrupt() {
+        // A soft stop is pending and cancellable.
+        assert!(Stop::requested(false).is_pending());
+        assert!(Stop::requested(false).is_soft());
+        // A NOW stop is pending but not cancellable.
+        assert!(Stop::requested(true).is_pending());
+        assert!(!Stop::requested(true).is_soft());
+        // No stop is neither.
+        assert!(!Stop::None.is_pending());
+        assert!(!Stop::None.is_soft());
+        // The last request wins: a soft request after a NOW stop makes the
+        // stop cancellable again, like the old `soft_stop = !now` overwrite.
+        let mut stop = Stop::requested(true);
+        assert_eq!(stop, Stop::Now);
+        stop = Stop::requested(false);
+        assert_eq!(stop, Stop::Soft);
+        assert!(stop.is_soft());
+    }
+
+    #[test]
+    fn tiles_update_through_the_single_method() {
+        let mut tiles = Tiles::default();
+        assert_eq!(
+            tiles,
+            Tiles {
+                research: TileStatus::Muted,
+                plan: TileStatus::Muted,
+                build: TileStatus::Muted,
+                review: TileStatus::Muted,
+            }
+        );
+        // `set` changes only its stage.
+        tiles.set(Stage::Research, TileStatus::Active);
+        assert_eq!(tiles.get(Stage::Research), TileStatus::Active);
+        assert_eq!(tiles.get(Stage::Plan), TileStatus::Muted);
+        assert_eq!(tiles.get(Stage::Build), TileStatus::Muted);
+        assert_eq!(tiles.get(Stage::Review), TileStatus::Muted);
+        tiles.set(Stage::Plan, TileStatus::Done);
+        assert_eq!(tiles.get(Stage::Plan), TileStatus::Done);
+        tiles.set(Stage::Build, TileStatus::Pending);
+        assert_eq!(tiles.get(Stage::Build), TileStatus::Pending);
+        tiles.set(Stage::Review, TileStatus::Active);
+        assert_eq!(tiles.get(Stage::Review), TileStatus::Active);
+        assert_eq!(tiles.research, TileStatus::Active);
+        // `set_all` changes all four at once.
+        tiles.set_all(TileStatus::Pending);
+        assert_eq!(tiles.get(Stage::Research), TileStatus::Pending);
+        assert_eq!(tiles.get(Stage::Plan), TileStatus::Pending);
+        assert_eq!(tiles.get(Stage::Build), TileStatus::Pending);
+        assert_eq!(tiles.get(Stage::Review), TileStatus::Pending);
+        tiles.set_all(TileStatus::Muted);
+        assert_eq!(tiles, Tiles::default());
+    }
 
     #[test]
     fn multipass_findings_merge_and_de_duplicate_by_file_and_issue() {

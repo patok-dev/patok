@@ -21,7 +21,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
 use tonic::{Request, Response, Status};
 
-use crate::engine::{Attachment, Engine, QueueCreation};
+use crate::engine::{Attachment, Engine, QueueCreation, RunState as EngineRunState};
 
 type Stream<T> = ReceiverStream<Result<T, Status>>;
 
@@ -186,8 +186,7 @@ impl EngineApi for Service {
         // stop on an idle engine quits the process, so only that case labels the
         // exit -- leaving the reason set on an interrupt would mislabel a later
         // signal-driven exit.
-        let busy =
-            self.engine.is_running() || self.engine.is_planning() || self.engine.is_discovering();
+        let busy = self.engine.run_state() != EngineRunState::Idle;
         let (tx, rx) = mpsc::channel(8);
         let engine = self.engine.clone();
         if now && !busy {
@@ -298,18 +297,20 @@ fn rejected(error: String) -> CommandResponse {
     }
 }
 
-/// The engine's current run state for the wire protocol: the planner or a discovery round
-/// first (a scheduled round runs in a session's empty-queue gap, while the phase is still
-/// `Running`), else the build loop, else idle.
+/// The engine's current run state for the wire protocol.
 fn run_state(engine: &Engine) -> RunState {
-    if engine.is_planning() {
-        RunState::Planning
-    } else if engine.is_discovering() {
-        RunState::Discovering
-    } else if engine.is_running() {
-        RunState::Running
-    } else {
-        RunState::Idle
+    run_state_proto(engine.run_state())
+}
+
+/// The wire run state of an engine run state: the planner or a discovery round
+/// first (a scheduled round runs in a session's empty-queue gap, while the
+/// phase is still `Running`), else the build loop, else idle.
+fn run_state_proto(run: EngineRunState) -> RunState {
+    match run {
+        EngineRunState::Planning => RunState::Planning,
+        EngineRunState::Discovering | EngineRunState::SessionDiscovery => RunState::Discovering,
+        EngineRunState::Running => RunState::Running,
+        EngineRunState::Idle => RunState::Idle,
     }
 }
 
@@ -542,4 +543,30 @@ fn spawn_signal_handlers(engine: Engine) -> anyhow::Result<()> {
         engine.shutdown_token().cancel();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_state_proto_maps_every_engine_variant() {
+        assert_eq!(run_state_proto(EngineRunState::Idle), RunState::Idle);
+        assert_eq!(run_state_proto(EngineRunState::Running), RunState::Running);
+        assert_eq!(
+            run_state_proto(EngineRunState::Planning),
+            RunState::Planning
+        );
+        assert_eq!(
+            run_state_proto(EngineRunState::Discovering),
+            RunState::Discovering
+        );
+        // The session's gap round reports discovery even though the phase is
+        // still running -- the documented priority of the old three-flag
+        // re-derivation.
+        assert_eq!(
+            run_state_proto(EngineRunState::SessionDiscovery),
+            RunState::Discovering
+        );
+    }
 }
