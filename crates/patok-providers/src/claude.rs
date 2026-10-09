@@ -6,11 +6,10 @@ use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, Usage, preview};
 use serde_json::Value;
 
-use crate::process::{self, LineParser, Parsed, ProcessSpec};
+use crate::cli;
+use crate::process::{self, Parsed, ProcessSpec};
 use crate::{Provider, ProviderError, SessionRequest, SessionResult};
 
-const TOOL_PREVIEW: usize = 120;
-const RESULT_PREVIEW: usize = 200;
 const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 
 pub struct Claude;
@@ -64,11 +63,7 @@ pub struct StreamParser {
     last_turn_input: Option<u64>,
 }
 
-impl LineParser for StreamParser {
-    fn parse_line(&mut self, line: &str) -> Parsed {
-        self.parse(line)
-    }
-}
+crate::cli::forward_line_parser!(StreamParser);
 
 impl StreamParser {
     pub fn parse(&mut self, line: &str) -> Parsed {
@@ -225,15 +220,15 @@ fn user(value: &Value) -> Vec<AgentEvent> {
         let failed = block["is_error"].as_bool().unwrap_or(false);
         events.push(if failed {
             AgentEvent::Stderr {
-                text: preview(&text, RESULT_PREVIEW),
+                text: preview(&text, cli::RESULT_PREVIEW),
             }
         } else if !stderr.is_empty() {
             AgentEvent::Stderr {
-                text: preview(stderr, RESULT_PREVIEW),
+                text: preview(stderr, cli::RESULT_PREVIEW),
             }
         } else {
             AgentEvent::ToolResult {
-                output: preview(&text, RESULT_PREVIEW),
+                output: preview(&text, cli::RESULT_PREVIEW),
             }
         });
     }
@@ -270,9 +265,7 @@ fn rate_limit(value: &Value) -> Vec<AgentEvent> {
 }
 
 fn error_text(value: &Value) -> String {
-    ["message", "error", "output", "subtype"]
-        .iter()
-        .find_map(|k| value[*k].as_str().filter(|s| !s.is_empty()))
+    cli::first_non_empty(value, &["message", "error", "output", "subtype"])
         .unwrap_or("unknown error")
         .to_string()
 }
@@ -305,11 +298,7 @@ fn tool_preview(name: &str, input: &Value) -> String {
             "prompt",
         ],
     };
-    let text = keys
-        .iter()
-        .find_map(|k| input[*k].as_str())
-        .map_or_else(|| input.to_string(), str::to_string);
-    preview(&text, TOOL_PREVIEW)
+    cli::preview_input(input, keys)
 }
 
 fn field(usage: &Value, key: &str) -> u64 {

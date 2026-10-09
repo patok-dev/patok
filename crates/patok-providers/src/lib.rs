@@ -10,6 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 pub mod claude;
+mod cli;
 pub mod codex;
 pub mod mock;
 mod process;

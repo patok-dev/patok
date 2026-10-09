@@ -6,11 +6,9 @@ use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
-use crate::process::{self, LineParser, Parsed, ProcessSpec};
-use crate::{Provider, ProviderError, SessionRequest, SessionResult, cli_in};
-
-const TOOL_PREVIEW: usize = 120;
-const RESULT_PREVIEW: usize = 200;
+use crate::cli::{self, CliSpec};
+use crate::process::Parsed;
+use crate::{Provider, ProviderError, SessionRequest, SessionResult};
 
 /// Name of the CLI binary this provider needs.
 pub const CLI: &str = "vibe";
@@ -21,16 +19,23 @@ impl Vibe {
     /// Fails with a clear error naming the CLI when `vibe` is not on `PATH`. Run before a
     /// session starts.
     pub fn check_available() -> Result<(), ProviderError> {
-        Self::check_available_in(std::env::var_os("PATH").as_deref())
+        cli::check_available::<Vibe>()
     }
 
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        if cli_in(CLI, path) {
-            Ok(())
-        } else {
-            Err(ProviderError::CliNotFound { cli: CLI.into() })
-        }
+        cli::check_available_in::<Vibe>(path)
+    }
+}
+
+impl CliSpec for Vibe {
+    const CLI: &'static str = CLI;
+    type Parser = StreamParser;
+    fn slug() -> &'static str {
+        ProviderKind::Mistral.as_str()
+    }
+    fn build_args(request: &SessionRequest) -> Vec<String> {
+        build_args(request)
     }
 }
 
@@ -41,25 +46,14 @@ impl Provider for Vibe {
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
-        Self::check_available()?;
-        let spec = ProcessSpec {
-            program: CLI.into(),
-            args: build_args(&request),
-            env: vec![],
-            stdin: String::new(),
-        };
-        let model = request.model.clone().unwrap_or_default();
-        process::run(spec, &request, StreamParser, self.slug(), &model).await
+        cli::run_session::<Vibe>(request).await
     }
 }
 
 /// Vibe has no system-prompt flag and takes the prompt as the `-p` argument, so the system
 /// prompt is prepended to it.
 fn build_args(request: &SessionRequest) -> Vec<String> {
-    let prompt = match request.system_prompt.as_deref().filter(|s| !s.is_empty()) {
-        Some(system) => format!("{system}\n\n{}", request.prompt),
-        None => request.prompt.clone(),
-    };
+    let prompt = cli::prepend_system_prompt(request);
     let mut args: Vec<String> = vec![
         "-p".into(),
         prompt,
@@ -78,55 +72,28 @@ fn build_args(request: &SessionRequest) -> Vec<String> {
 
 /// Maps role allowlist names (Claude tool names) to Vibe's built-in tool names.
 fn vibe_tools(allowed: &[String]) -> Vec<&'static str> {
-    let mut tools: Vec<&'static str> = vec![];
-    for name in allowed {
-        let mapped: &[&'static str] = match name.as_str() {
-            "Bash" => &["bash"],
-            "Edit" => &["edit", "search_replace"],
-            "Write" => &["write_file"],
-            "Read" => &["read_file"],
-            "Glob" | "Grep" => &["grep"],
-            "WebFetch" => &["web_fetch"],
-            "WebSearch" => &["web_search"],
-            // NotebookEdit and unknown names have no Vibe equivalent.
-            _ => &[],
-        };
-        for tool in mapped {
-            if !tools.contains(tool) {
-                tools.push(tool);
-            }
-        }
-    }
-    tools
+    cli::map_tools(allowed, |name| match name {
+        "Bash" => &["bash"],
+        "Edit" => &["edit", "search_replace"],
+        "Write" => &["write_file"],
+        "Read" => &["read_file"],
+        "Glob" | "Grep" => &["grep"],
+        "WebFetch" => &["web_fetch"],
+        "WebSearch" => &["web_search"],
+        // NotebookEdit and unknown names have no Vibe equivalent.
+        _ => &[],
+    })
 }
 
 /// Translates Vibe's streaming JSON entries into normalised events.
 #[derive(Default)]
 pub struct StreamParser;
 
-impl LineParser for StreamParser {
-    fn parse_line(&mut self, line: &str) -> Parsed {
-        self.parse(line)
-    }
-}
+crate::cli::forward_line_parser!(StreamParser);
 
 impl StreamParser {
     pub fn parse(&mut self, line: &str) -> Parsed {
-        let line = line.trim();
-        match serde_json::from_str::<Value>(line) {
-            Ok(value) if value.is_object() => Parsed {
-                events: events_for(&value),
-                json: true,
-            },
-            _ if line.is_empty() => Parsed {
-                events: vec![],
-                json: false,
-            },
-            _ => Parsed {
-                events: vec![AgentEvent::Stderr { text: line.into() }],
-                json: false,
-            },
-        }
+        cli::parse_line(line, events_for)
     }
 }
 
@@ -142,9 +109,7 @@ fn events_for(value: &Value) -> Vec<AgentEvent> {
         }
         "effect" => effect(value),
         "error" => vec![AgentEvent::Stderr {
-            text: ["message", "error", "text"]
-                .iter()
-                .find_map(|k| value[*k].as_str().filter(|s| !s.is_empty()))
+            text: cli::first_non_empty(value, &["message", "error", "text"])
                 .unwrap_or("unknown error")
                 .to_string(),
         }],
@@ -197,19 +162,10 @@ fn effect(value: &Value) -> Vec<AgentEvent> {
         .unwrap_or_default();
     let result = if status == "completed" {
         AgentEvent::ToolResult {
-            output: preview(&output, RESULT_PREVIEW),
+            output: preview(&output, cli::RESULT_PREVIEW),
         }
     } else {
-        AgentEvent::Stderr {
-            text: preview(
-                &if output.is_empty() {
-                    format!("{name} {status}")
-                } else {
-                    output
-                },
-                RESULT_PREVIEW,
-            ),
-        }
+        cli::failed_tool_stderr(name, status, &output)
     };
     vec![
         AgentEvent::ToolUse {
@@ -221,19 +177,18 @@ fn effect(value: &Value) -> Vec<AgentEvent> {
 }
 
 fn tool_preview(input: &Value) -> String {
-    let text = [
-        "filePath",
-        "file_path",
-        "path",
-        "command",
-        "pattern",
-        "url",
-        "query",
-    ]
-    .iter()
-    .find_map(|k| input[*k].as_str())
-    .map_or_else(|| input.to_string(), str::to_string);
-    preview(&text, TOOL_PREVIEW)
+    cli::preview_input(
+        input,
+        &[
+            "filePath",
+            "file_path",
+            "path",
+            "command",
+            "pattern",
+            "url",
+            "query",
+        ],
+    )
 }
 
 #[cfg(test)]
