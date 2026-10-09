@@ -143,14 +143,29 @@ fn select_release(releases: Vec<RawRelease>, channel: UpdateChannel) -> Option<R
     })
 }
 
+/// (os, arch, target triple) for every platform a release archive is
+/// published for. This table is the single source of truth for the release
+/// target set: [`platform_target`] and [`supported_targets`] read it, and the
+/// release-contract integration test cross-checks `install.sh` and the
+/// release workflow against it.
+const PLATFORM_TARGETS: [(&str, &str, &str); 3] = [
+    ("linux", "x86_64", "x86_64-unknown-linux-musl"),
+    ("macos", "aarch64", "aarch64-apple-darwin"),
+    ("macos", "x86_64", "x86_64-apple-darwin"),
+];
+
 /// The release target triple for a platform, or `None` when no release is published for it.
 pub fn platform_target(os: &str, arch: &str) -> Option<&'static str> {
-    match (os, arch) {
-        ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
-        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
-        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
-        _ => None,
-    }
+    PLATFORM_TARGETS
+        .iter()
+        .find_map(|(row_os, row_arch, target)| {
+            (*row_os == os && *row_arch == arch).then_some(*target)
+        })
+}
+
+/// Every target triple a release archive is published for, in table order.
+pub fn supported_targets() -> impl Iterator<Item = &'static str> {
+    PLATFORM_TARGETS.iter().map(|(_, _, target)| *target)
 }
 
 /// Name of the release archive for a target (`patok-<target>.tar.gz`).
@@ -158,7 +173,8 @@ pub fn archive_name(target: &str) -> String {
     format!("patok-{target}.tar.gz")
 }
 
-const CHECKSUMS_ASSET: &str = "checksums";
+/// Name of the release asset holding the `<sha256>  <filename>` checksum lines.
+pub const CHECKSUMS_ASSET: &str = "checksums";
 
 /// The expected hash from the `<sha256>  <filename>` line whose filename equals `archive` exactly.
 pub fn expected_checksum(checksums: &str, archive: &str) -> Option<String> {
