@@ -11,6 +11,8 @@ use super::{
     ConfigFiles, EnumSpelling, Fields, migrate_project_file, project_file, read_layer_table,
 };
 
+use crate::update::UpdateChannel;
+
 config_enum! {
     /// The shell theme.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
@@ -50,17 +52,6 @@ impl Theme {
                 | Self::SolarizedDark
                 | Self::GruvboxDark
         )
-    }
-}
-
-config_enum! {
-    /// Which releases self-update considers.
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-    #[schemars(rename_all = "lowercase")]
-    pub enum UpdateChannel {
-        #[default]
-        Stable => "stable",
-        Dev => "dev",
     }
 }
 
@@ -171,7 +162,9 @@ pub fn tui_help(key: &str) -> Option<&'static str> {
             "auto detects the terminal's colour depth; on forces RGB, off forces the nearest 256-colour. Default auto."
         }
         "preview_wrap" => "Wrap long lines in the output preview (default on).",
-        "update_channel" => "Which GitHub releases self-update considers: stable (default) or dev.",
+        "update_channel" => {
+            "Which GitHub releases self-update considers: stable (default) or dev. patok update uses this unless --channel is given."
+        }
         "rail_mode" => "The pipeline rail's density: compact, normal or detailed.",
         _ => return None,
     })

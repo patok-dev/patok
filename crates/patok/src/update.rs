@@ -5,8 +5,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use patok_core::config::{ConfigFiles, load_tui};
 use patok_core::update::{
-    Channel, HttpClient, HttpError, UpdateOutcome, check_update, download_verified,
+    HttpClient, HttpError, UpdateChannel, UpdateOutcome, check_update, download_verified,
     replace_executable, update_temp_dir,
 };
 
@@ -57,16 +58,36 @@ pub enum ChannelArg {
     Dev,
 }
 
-impl From<ChannelArg> for Channel {
+impl From<ChannelArg> for UpdateChannel {
     fn from(arg: ChannelArg) -> Self {
         match arg {
-            ChannelArg::Stable => Channel::Stable,
-            ChannelArg::Dev => Channel::Dev,
+            ChannelArg::Stable => UpdateChannel::Stable,
+            ChannelArg::Dev => UpdateChannel::Dev,
         }
     }
 }
 
-pub fn run(channel: Channel) -> anyhow::Result<()> {
+/// The channel `patok update` uses: an explicit `--channel` flag wins over the
+/// `tui.update_channel` setting, which in turn wins over the stable default when
+/// neither is present.
+fn resolve_channel(
+    flag: Option<ChannelArg>,
+    files: &ConfigFiles,
+    project_dir: &Path,
+    data_dir: Option<&Path>,
+) -> (UpdateChannel, Vec<String>) {
+    let flag = flag.map(UpdateChannel::from);
+    let (settings, warnings) = load_tui(files, project_dir, data_dir);
+    (flag.unwrap_or(settings.update_channel), warnings)
+}
+
+pub fn run(flag: Option<ChannelArg>, project: &Path) -> anyhow::Result<()> {
+    let files = ConfigFiles::from_env();
+    let data_dir = patok_core::paths::project_data_dir_from_env(project);
+    let (channel, warnings) = resolve_channel(flag, &files, project, data_dir.as_deref());
+    for warning in warnings {
+        eprintln!("patok: {warning}");
+    }
     let exe = std::env::current_exe().unwrap_or_default();
     run_with(
         &mut std::io::stdout(),
@@ -83,7 +104,7 @@ pub fn run(channel: Channel) -> anyhow::Result<()> {
 fn run_with(
     out: &mut dyn std::io::Write,
     client: &dyn HttpClient,
-    channel: Channel,
+    channel: UpdateChannel,
     current: &str,
     exe: &Path,
     os: &str,
@@ -226,7 +247,7 @@ mod tests {
         let result = run_with(
             &mut out,
             source,
-            Channel::Stable,
+            UpdateChannel::Stable,
             "1.0.0",
             exe,
             "linux",
@@ -270,5 +291,72 @@ mod tests {
         result.unwrap();
         assert!(out.contains("up to date"), "{out}");
         assert_eq!(std::fs::read_to_string(&exe).unwrap(), "old binary");
+    }
+
+    /// A user config layer whose `tui.update_channel` is `dev`, with the project
+    /// layer skipped (`None` data dir).
+    fn dev_channel_files() -> (tempfile::TempDir, ConfigFiles) {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("config.toml");
+        std::fs::write(&user, "[tui]\nupdate_channel = \"dev\"\n").unwrap();
+        let files = ConfigFiles {
+            user_global: Some(user),
+            user_local: None,
+        };
+        (dir, files)
+    }
+
+    #[test]
+    fn the_channel_flag_wins_over_the_config() {
+        let (dir, files) = dev_channel_files();
+        let (channel, warnings) =
+            resolve_channel(Some(ChannelArg::Stable), &files, dir.path(), None);
+        assert_eq!(channel, UpdateChannel::Stable);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // And the other direction: a dev flag over a stable config.
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("config.toml");
+        std::fs::write(&user, "[tui]\nupdate_channel = \"stable\"\n").unwrap();
+        let files = ConfigFiles {
+            user_global: Some(user),
+            user_local: None,
+        };
+        let (channel, _) = resolve_channel(Some(ChannelArg::Dev), &files, dir.path(), None);
+        assert_eq!(channel, UpdateChannel::Dev);
+    }
+
+    #[test]
+    fn the_configured_channel_applies_without_the_flag() {
+        let (dir, files) = dev_channel_files();
+        let (channel, warnings) = resolve_channel(None, &files, dir.path(), None);
+        assert_eq!(channel, UpdateChannel::Dev);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn the_default_channel_applies_without_flag_or_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let (channel, warnings) = resolve_channel(None, &ConfigFiles::default(), dir.path(), None);
+        assert_eq!(channel, UpdateChannel::Stable);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn the_cli_channel_spellings_stay_stable_and_dev() {
+        use clap::ValueEnum;
+        assert_eq!(
+            ChannelArg::Stable.to_possible_value().unwrap().get_name(),
+            "stable"
+        );
+        assert_eq!(
+            ChannelArg::Dev.to_possible_value().unwrap().get_name(),
+            "dev"
+        );
+        assert_eq!(
+            UpdateChannel::from(ChannelArg::Stable),
+            UpdateChannel::Stable
+        );
+        assert_eq!(UpdateChannel::from(ChannelArg::Dev), UpdateChannel::Dev);
     }
 }

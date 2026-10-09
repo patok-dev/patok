@@ -18,8 +18,9 @@ use super::daemon::{
     DAEMON_FIELDS, DaemonSettings, FieldKind, IMMEDIATE_DAEMON_FIELDS, ProviderName, daemon_field,
     daemon_field_value,
 };
-use super::tui::{RailMode, Theme, UpdateChannel};
+use super::tui::{RailMode, Theme};
 use super::{ConfigFiles, EnumSpelling, project_file};
+use crate::update::UpdateChannel;
 
 /// A settings value as submitted by a settings change, mapped onto the field's expected
 /// type by the per-schema field registry.

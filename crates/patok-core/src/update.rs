@@ -5,8 +5,22 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+use crate::config::config_enum;
+
+config_enum! {
+    /// Which releases self-update considers.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "lowercase")]
+    pub enum UpdateChannel {
+        #[default]
+        Stable => "stable",
+        Dev => "dev",
+    }
+}
 
 /// GitHub API endpoint listing the 20 most recent releases.
 pub const RELEASES_URL: &str = "https://api.github.com/repos/patok-dev/patok/releases?per_page=20";
@@ -18,13 +32,6 @@ pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 const CHECKSUMS_ASSET: &str = "checksums";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Channel {
-    #[default]
-    Stable,
-    Dev,
-}
 
 /// Minimal HTTP client abstraction so tests can substitute a fake.
 pub trait HttpClient {
@@ -102,7 +109,7 @@ fn is_patok_archive(name: &str) -> bool {
 /// Query the most recent releases and return the first qualifying one, if any.
 pub fn discover_release(
     client: &dyn HttpClient,
-    channel: Channel,
+    channel: UpdateChannel,
 ) -> Result<Option<Release>, DiscoveryError> {
     let body = client
         .get(RELEASES_URL, LOOKUP_TIMEOUT)
@@ -112,9 +119,9 @@ pub fn discover_release(
     Ok(select_release(releases, channel))
 }
 
-fn select_release(releases: Vec<RawRelease>, channel: Channel) -> Option<Release> {
+fn select_release(releases: Vec<RawRelease>, channel: UpdateChannel) -> Option<Release> {
     releases.into_iter().find_map(|r| {
-        if r.draft || (r.prerelease && channel != Channel::Dev) {
+        if r.draft || (r.prerelease && channel != UpdateChannel::Dev) {
             return None;
         }
         let checksums = r.assets.iter().find(|a| a.name == CHECKSUMS_ASSET)?;
@@ -323,7 +330,7 @@ pub enum UpdateOutcome {
 pub fn check_update(
     out: &mut dyn std::io::Write,
     client: &dyn HttpClient,
-    channel: Channel,
+    channel: UpdateChannel,
     current: &str,
     exe: &std::path::Path,
     os: &str,
@@ -421,10 +428,27 @@ mod tests {
 
     const GOOD: [&str; 2] = ["patok-linux-x86_64.tar.gz", "checksums"];
 
+    /// The one channel enum the config's `tui.update_channel` and the updater share:
+    /// stable is the default and both spellings parse (trimmed, case-insensitive).
+    #[test]
+    fn the_update_channel_spells_stable_and_dev() {
+        assert_eq!(UpdateChannel::default(), UpdateChannel::Stable);
+        assert_eq!(
+            UpdateChannel::parse("  STABLE "),
+            Some(UpdateChannel::Stable)
+        );
+        assert_eq!(UpdateChannel::parse("dev"), Some(UpdateChannel::Dev));
+        assert_eq!(UpdateChannel::Dev.as_str(), "dev");
+        assert_eq!(UpdateChannel::Dev.to_string(), "dev");
+    }
+
     #[test]
     fn uses_limit_and_timeout() {
         let fake = Fake::ok(json!([]));
-        assert_eq!(discover_release(&fake, Channel::Stable).unwrap(), None);
+        assert_eq!(
+            discover_release(&fake, UpdateChannel::Stable).unwrap(),
+            None
+        );
         let calls = fake.calls.borrow();
         assert!(calls[0].0.contains("per_page=20"));
         assert_eq!(calls[0].1, Duration::from_secs(10));
@@ -437,7 +461,9 @@ mod tests {
             rel("v2", false, true, &GOOD),
             rel("v1", false, false, &GOOD),
         ]));
-        let r = discover_release(&fake, Channel::Stable).unwrap().unwrap();
+        let r = discover_release(&fake, UpdateChannel::Stable)
+            .unwrap()
+            .unwrap();
         assert_eq!(r.tag, "v1");
     }
 
@@ -448,7 +474,9 @@ mod tests {
             rel("v2", false, true, &GOOD),
             rel("v1", false, false, &GOOD),
         ]));
-        let r = discover_release(&fake, Channel::Dev).unwrap().unwrap();
+        let r = discover_release(&fake, UpdateChannel::Dev)
+            .unwrap()
+            .unwrap();
         assert_eq!(r.tag, "v2");
     }
 
@@ -459,7 +487,9 @@ mod tests {
             rel("v2", false, false, &["checksums", "other.zip"]),
             rel("v1", false, false, &GOOD),
         ]));
-        let r = discover_release(&fake, Channel::Stable).unwrap().unwrap();
+        let r = discover_release(&fake, UpdateChannel::Stable)
+            .unwrap()
+            .unwrap();
         assert_eq!(r.tag, "v1");
         assert_eq!(r.checksums_url, "https://x/v1/checksums");
         assert_eq!(r.archives[0].name, "patok-linux-x86_64.tar.gz");
@@ -468,7 +498,7 @@ mod tests {
     #[test]
     fn none_when_nothing_qualifies() {
         let fake = Fake::ok(json!([rel("v1", true, false, &GOOD)]));
-        assert_eq!(discover_release(&fake, Channel::Dev).unwrap(), None);
+        assert_eq!(discover_release(&fake, UpdateChannel::Dev).unwrap(), None);
     }
 
     #[test]
@@ -479,7 +509,7 @@ mod tests {
             files: Default::default(),
         };
         assert!(matches!(
-            discover_release(&fake, Channel::Stable),
+            discover_release(&fake, UpdateChannel::Stable),
             Err(DiscoveryError::Http(_))
         ));
         let fake = Fake {
@@ -488,7 +518,7 @@ mod tests {
             files: Default::default(),
         };
         assert!(matches!(
-            discover_release(&fake, Channel::Stable),
+            discover_release(&fake, UpdateChannel::Stable),
             Err(DiscoveryError::Parse(_))
         ));
     }
@@ -498,7 +528,7 @@ mod tests {
         let o = check_update(
             &mut out,
             fake,
-            Channel::Stable,
+            UpdateChannel::Stable,
             current,
             std::path::Path::new(exe),
             os,

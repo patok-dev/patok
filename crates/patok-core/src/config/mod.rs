@@ -30,7 +30,10 @@ pub use spelling::EnumSpelling;
 // Reachable crate-wide, so the enums outside the config tree (the agent role,
 // the review severity and the pipeline stage) share the same spelling macro.
 pub(crate) use spelling::config_enum;
-pub use tui::{RailMode, THEME_KEYS, Theme, TuiSettings, UpdateChannel, load_tui, tui_help};
+pub use tui::{RailMode, THEME_KEYS, Theme, TuiSettings, load_tui, tui_help};
+// The update channel is an updater concept the config schema also exposes; the single
+// definition lives with the updater and is re-exported here for the config consumers.
+pub use crate::update::UpdateChannel;
 
 use std::path::{Path, PathBuf};
 
