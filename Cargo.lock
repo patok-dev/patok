@@ -1307,11 +1307,14 @@ dependencies = [
 name = "patok-proto"
 version = "0.0.0"
 dependencies = [
+ "hyper-util",
  "prost",
  "protoc-bin-vendored",
+ "tokio",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+ "tower",
 ]
 
 [[package]]
@@ -1335,7 +1338,6 @@ dependencies = [
  "anyhow",
  "crossterm",
  "futures",
- "hyper-util",
  "insta",
  "patok-core",
  "patok-engine",
@@ -1346,7 +1348,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tonic",
- "tower",
 ]
 
 [[package]]

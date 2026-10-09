@@ -84,7 +84,7 @@ async fn connect_retrying(
     socket: &std::path::Path,
 ) -> patok_proto::engine_client::EngineClient<tonic::transport::Channel> {
     for _ in 0..100 {
-        if let Ok(client) = patok_tui::client::connect(socket).await {
+        if let Ok(client) = patok_proto::client::connect(socket).await {
             return client;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;

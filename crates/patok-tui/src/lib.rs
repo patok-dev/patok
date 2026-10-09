@@ -1,9 +1,8 @@
-//! The shell: ratatui UI and gRPC client. Render-only; it holds no pipeline state
+//! The shell: ratatui UI. Render-only; it holds no pipeline state
 //!.
 
 mod app;
 mod choice;
-pub mod client;
 mod dialog_editor;
 mod driver;
 mod headless;

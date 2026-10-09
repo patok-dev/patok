@@ -33,7 +33,7 @@ fn socket(dir: &Path) -> PathBuf {
 
 /// One probe of the engine over the same channel the TUI client connects through.
 async fn reachable(dir: &Path) -> bool {
-    patok_tui::client::connect(&socket(dir)).await.is_ok()
+    patok_proto::client::connect(&socket(dir)).await.is_ok()
 }
 
 fn read_log(logs: &Path, name: &str) -> String {

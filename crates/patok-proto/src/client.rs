@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::engine_client::EngineClient;
 use hyper_util::rt::TokioIo;
-use patok_proto::engine_client::EngineClient;
 use tokio::net::UnixStream;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
