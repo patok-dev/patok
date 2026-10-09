@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::git::{CommitKind, Git};
 use crate::schedule::DiscoverySchedule;
-use crate::{TASK_FILE, plan, prompt, review, taskfile};
+use crate::{TASK_FILE, artifact, plan, prompt, review, taskfile};
 
 /// Events kept for replay to a reattaching shell.
 const RECENT_LIMIT: usize = 2000;
@@ -628,9 +628,7 @@ impl Engine {
                 model: model.map(str::to_string),
             },
         );
-        let started_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+        let started_ms = artifact::unix_now().as_millis() as u64;
         self.emit_locked(
             state,
             EngineEvent::AgentChanged {
@@ -2218,19 +2216,14 @@ impl Engine {
     /// the plans and research folders.
     fn write_claims_file(&self, task_id: &str, claims: &str) {
         let dir = self.inner.config.data_dir.join("claims");
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let path = dir.join(format!("{task_id}-{timestamp}.md"));
-        let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, claims));
-        match written {
-            Ok(()) => self.notice(
+        match artifact::write_artifact(&dir, task_id, claims) {
+            Ok(path) => self.notice(
                 NoticeLevel::Info,
                 format!("Build claims written to {}", path.display()),
             ),
             Err(e) => self.notice(
                 NoticeLevel::Warning,
-                format!("cannot write {}: {e}", path.display()),
+                format!("cannot write {}: {}", e.path.display(), e.error),
             ),
         }
     }
@@ -2241,17 +2234,8 @@ impl Engine {
     /// plan and the changed-file list.
     fn claims_file(&self, task_id: &str) -> Option<String> {
         let dir = self.inner.config.data_dir.join("claims");
-        let newest = std::fs::read_dir(&dir).ok().and_then(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .filter(|name| {
-                    name.strip_prefix(&format!("{task_id}-"))
-                        .is_some_and(|rest| rest.strip_suffix(".md").is_some())
-                })
-                .max()
-        });
-        let found = newest.map(|name| dir.join(name)).and_then(|path| {
+        let newest = artifact::newest_artifact(&dir, task_id, None);
+        let found = newest.and_then(|path| {
             std::fs::read_to_string(&path)
                 .ok()
                 .map(|claims| (path, claims))
@@ -2619,13 +2603,8 @@ impl Engine {
     /// its path for the failure notice.
     fn write_review_file(&self, task_id: &str, report: &str) -> Option<std::path::PathBuf> {
         let dir = self.inner.config.data_dir.join("reviews");
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let path = dir.join(format!("{task_id}-{timestamp}.md"));
-        let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, report));
-        match written {
-            Ok(()) => {
+        match artifact::write_artifact(&dir, task_id, report) {
+            Ok(path) => {
                 self.notice(
                     NoticeLevel::Info,
                     format!("Review report written to {}", path.display()),
@@ -2635,7 +2614,7 @@ impl Engine {
             Err(e) => {
                 self.notice(
                     NoticeLevel::Warning,
-                    format!("cannot write {}: {e}", path.display()),
+                    format!("cannot write {}: {}", e.path.display(), e.error),
                 );
                 None
             }
@@ -2651,10 +2630,7 @@ impl Engine {
         }
         let description = task.description.clone();
         let path = self.inner.config.review_history.clone();
-        let date = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
-            .to_string();
+        let date = artifact::unix_now().as_secs().to_string();
         tokio::spawn(async move {
             let mut history = review::ReviewHistory::load(&path);
             history.record(&description, complexity, passed, &date);
@@ -2840,23 +2816,8 @@ impl Engine {
     /// `scan` for the queue-creation runs (T69.1).
     fn reusable_research_report(&self, stem: &str) -> Option<String> {
         let dir = self.inner.config.data_dir.join("research");
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let newest = std::fs::read_dir(&dir)
-            .ok()?
-            .flatten()
-            .filter_map(|entry| {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let timestamp = name
-                    .strip_prefix(&format!("{stem}-"))
-                    .and_then(|rest| rest.strip_suffix(".md"))
-                    .and_then(|secs| secs.parse::<u64>().ok())?;
-                Some((timestamp, name))
-            })
-            .filter(|(timestamp, _)| now.saturating_sub(*timestamp) < RESEARCH_REUSE_SECS)
-            .max_by_key(|(timestamp, _)| *timestamp)?;
-        std::fs::read_to_string(dir.join(newest.1)).ok()
+        let path = artifact::newest_artifact(&dir, stem, Some(RESEARCH_REUSE_SECS))?;
+        std::fs::read_to_string(path).ok()
     }
 
     /// Writes the research report to the project data directory as
@@ -2864,19 +2825,14 @@ impl Engine {
     /// their kind's stem, T69.1).
     fn write_research_report(&self, stem: &str, report: &str) {
         let dir = self.inner.config.data_dir.join("research");
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let path = dir.join(format!("{stem}-{timestamp}.md"));
-        let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, report));
-        match written {
-            Ok(()) => self.notice(
+        match artifact::write_artifact(&dir, stem, report) {
+            Ok(path) => self.notice(
                 NoticeLevel::Info,
                 format!("Research report written to {}", path.display()),
             ),
             Err(e) => self.notice(
                 NoticeLevel::Warning,
-                format!("cannot write {}: {e}", path.display()),
+                format!("cannot write {}: {}", e.path.display(), e.error),
             ),
         }
     }
@@ -2972,19 +2928,14 @@ impl Engine {
     /// `plans/<task id>-<timestamp>.md` (T10.1).
     fn write_plan_file(&self, task_id: &str, plan: &str) {
         let dir = self.inner.config.data_dir.join("plans");
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let path = dir.join(format!("{task_id}-{timestamp}.md"));
-        let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, plan));
-        match written {
-            Ok(()) => self.notice(
+        match artifact::write_artifact(&dir, task_id, plan) {
+            Ok(path) => self.notice(
                 NoticeLevel::Info,
                 format!("Plan written to {}", path.display()),
             ),
             Err(e) => self.notice(
                 NoticeLevel::Warning,
-                format!("cannot write {}: {e}", path.display()),
+                format!("cannot write {}: {}", e.path.display(), e.error),
             ),
         }
     }
