@@ -16,6 +16,7 @@ use patok_core::scenario::{ProjectScan, Scenario, SpecState};
 use patok_core::task::Task;
 use ratatui::layout::Rect;
 
+use crate::dialog_editor::DialogEditor;
 use crate::overlay::{
     Entry, Row, SETTINGS_CHOICES, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries,
     header_fold,
@@ -574,14 +575,10 @@ pub struct App {
     /// other engine state -- contains no real position, so a click misses
     /// naturally.
     pub stop_chip: Cell<Rect>,
-    /// Text typed into the add-task dialog; kept when the dialog is closed.
-    pub dialog_text: String,
-    /// Cursor in `dialog_text` as a character index; read it through [`App::cursor`].
-    pub dialog_cursor: usize,
-    /// Column Up/Down try to return to across rows of different lengths.
-    dialog_goal_col: Option<usize>,
-    /// Wrap width of the dialog input at the last render (0 before the first).
-    pub dialog_width: Cell<usize>,
+    /// The add-task dialog's multi-line text editor: the buffer, its cursor,
+    /// the Up/Down goal column and the wrap width the renderer reports
+    /// (T154.2). The buffer is kept when the dialog is closed.
+    pub dialog: DialogEditor,
     /// The dialog's bottom line rect at the last render; its buttons' mouse
     /// hit-testing reads it (T59.1).
     pub dialog_footer: Cell<Rect>,
@@ -609,15 +606,6 @@ pub struct App {
     pub pipeline: PipelineState,
     /// The rail's rect at the last render.
     pub pipeline_area: Cell<Rect>,
-}
-
-/// One visual row of the dialog input: a character range of `dialog_text`.
-/// `last` marks the final row of a logical line (the cursor may sit at its end).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DialogRow {
-    pub start: usize,
-    pub end: usize,
-    pub last: bool,
 }
 
 impl App {
@@ -667,10 +655,7 @@ impl App {
             menu_chip: Cell::new(Rect::default()),
             enter_chip: Cell::new(Rect::default()),
             stop_chip: Cell::new(Rect::default()),
-            dialog_text: String::new(),
-            dialog_cursor: 0,
-            dialog_goal_col: None,
-            dialog_width: Cell::new(0),
+            dialog: DialogEditor::default(),
             dialog_footer: Cell::new(Rect::default()),
             dialog_close: Cell::new(Rect::default()),
             dialog_status: None,
@@ -1021,7 +1006,7 @@ impl App {
         if self.dialog_kind == DialogKind::Inject {
             return "Inject";
         }
-        let empty = self.dialog_text.trim().is_empty();
+        let empty = self.dialog.text().trim().is_empty();
         match (self.scenario(), empty) {
             (Scenario::QueueReady, true) => "Start",
             (Scenario::QueueComplete, true) => "Scan",
@@ -1740,6 +1725,10 @@ impl App {
         }
     }
 
+    /// The dialog's key path (T154.2): App owns the modal chrome -- Esc
+    /// closes keeping the text, Ctrl+C detaches, the status line clears and
+    /// the goal column is forgotten on every key but Up/Down -- and the
+    /// editor (`DialogEditor`) owns the buffer, the cursor and their motion.
     fn on_dialog_key(&mut self, key: KeyEvent, ctrl: bool) -> Action {
         if key.code == KeyCode::Esc {
             self.dialog_open = false;
@@ -1750,173 +1739,24 @@ impl App {
         }
         self.dialog_status = None;
         if !matches!(key.code, KeyCode::Up | KeyCode::Down) {
-            self.dialog_goal_col = None;
+            self.dialog.reset_goal();
         }
-        let word = ctrl || key.modifiers.contains(KeyModifiers::ALT);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
             KeyCode::Char('s') if ctrl => return self.submit_dialog(),
-            KeyCode::Char('u') if ctrl => {
-                self.dialog_text.clear();
-                self.dialog_cursor = 0;
-            }
-            KeyCode::Char(c) if !ctrl => self.insert_at_cursor(c.encode_utf8(&mut [0; 4])),
-            // Shift-Enter breaks the line at the cursor (T41.1): multi-line
-            // requests are typed inside the input.
-            KeyCode::Enter if shift => self.insert_at_cursor("\n"),
+            KeyCode::Char('u') if ctrl => self.dialog.clear(),
             // Enter submits through the same path as the Submit button;
             // an empty input is refused inline. A submit that
             // launches a run closes the dialog; a command error keeps it open.
-            KeyCode::Enter => {
-                if self.dialog_text.trim().is_empty() {
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if self.dialog.text().trim().is_empty() {
                     self.dialog_status = Some(self.empty_input_message().into());
                 } else {
                     return self.submit_dialog();
                 }
             }
-            KeyCode::Backspace => {
-                let cursor = self.cursor();
-                if cursor > 0 {
-                    let start = self.byte_index(cursor - 1);
-                    let end = self.byte_index(cursor);
-                    self.dialog_text.replace_range(start..end, "");
-                    self.dialog_cursor = cursor - 1;
-                }
-            }
-            KeyCode::Delete => {
-                let cursor = self.cursor();
-                if cursor < self.dialog_text.chars().count() {
-                    let start = self.byte_index(cursor);
-                    let end = self.byte_index(cursor + 1);
-                    self.dialog_text.replace_range(start..end, "");
-                }
-            }
-            KeyCode::Left if word => self.dialog_cursor = self.word_left(),
-            KeyCode::Right if word => self.dialog_cursor = self.word_right(),
-            KeyCode::Left => self.dialog_cursor = self.cursor().saturating_sub(1),
-            KeyCode::Right => {
-                self.dialog_cursor = (self.cursor() + 1).min(self.dialog_text.chars().count());
-            }
-            KeyCode::Home => self.dialog_cursor = self.line_bounds().0,
-            KeyCode::End => self.dialog_cursor = self.line_bounds().1,
-            KeyCode::Up => self.move_vertically(-1),
-            KeyCode::Down => self.move_vertically(1),
-            _ => {}
+            _ => self.dialog.on_key(key, ctrl),
         }
         Action::None
-    }
-
-    /// The cursor as a character index into `dialog_text`, clamped to its length.
-    pub fn cursor(&self) -> usize {
-        self.dialog_cursor.min(self.dialog_text.chars().count())
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.dialog_text
-            .char_indices()
-            .nth(char_index)
-            .map_or(self.dialog_text.len(), |(b, _)| b)
-    }
-
-    fn insert_at_cursor(&mut self, text: &str) {
-        let cursor = self.cursor();
-        let at = self.byte_index(cursor);
-        self.dialog_text.insert_str(at, text);
-        self.dialog_cursor = cursor + text.chars().count();
-    }
-
-    /// Character range `(start, end)` of the logical line holding the cursor.
-    fn line_bounds(&self) -> (usize, usize) {
-        let cursor = self.cursor();
-        let (mut start, mut index) = (0, 0);
-        for c in self.dialog_text.chars() {
-            if index >= cursor && c == '\n' {
-                break;
-            }
-            index += 1;
-            if c == '\n' {
-                start = index;
-            }
-        }
-        (start, index)
-    }
-
-    fn word_left(&self) -> usize {
-        let chars: Vec<char> = self.dialog_text.chars().collect();
-        let mut i = self.cursor();
-        while i > 0 && chars[i - 1].is_whitespace() {
-            i -= 1;
-        }
-        while i > 0 && !chars[i - 1].is_whitespace() {
-            i -= 1;
-        }
-        i
-    }
-
-    fn word_right(&self) -> usize {
-        let chars: Vec<char> = self.dialog_text.chars().collect();
-        let mut i = self.cursor();
-        while i < chars.len() && chars[i].is_whitespace() {
-            i += 1;
-        }
-        while i < chars.len() && !chars[i].is_whitespace() {
-            i += 1;
-        }
-        i
-    }
-
-    /// Visual rows of the dialog text when wrapped at the last rendered width.
-    pub fn dialog_rows(&self) -> Vec<DialogRow> {
-        let width = match self.dialog_width.get() {
-            0 => usize::MAX,
-            w => w,
-        };
-        let mut rows = Vec::new();
-        let mut start = 0;
-        for line in self.dialog_text.split('\n') {
-            let len = line.chars().count();
-            let mut offset = 0usize;
-            loop {
-                let end = offset.saturating_add(width).min(len);
-                rows.push(DialogRow {
-                    start: start + offset,
-                    end: start + end,
-                    last: end == len,
-                });
-                offset = end;
-                if end == len {
-                    break;
-                }
-            }
-            start += len + 1;
-        }
-        rows
-    }
-
-    /// Index of the visual row holding the cursor.
-    pub fn cursor_row(&self, rows: &[DialogRow]) -> usize {
-        let cursor = self.cursor();
-        rows.iter()
-            .position(|r| cursor < r.end || (cursor == r.end && r.last))
-            .unwrap_or(rows.len().saturating_sub(1))
-    }
-
-    fn move_vertically(&mut self, delta: isize) {
-        let rows = self.dialog_rows();
-        let current = self.cursor_row(&rows);
-        let Some(target) = current.checked_add_signed(delta).and_then(|i| rows.get(i)) else {
-            return;
-        };
-        let col = self
-            .dialog_goal_col
-            .unwrap_or(self.cursor() - rows[current].start);
-        self.dialog_goal_col = Some(col);
-        let max = if target.last {
-            target.end - target.start
-        } else {
-            target.end - target.start - 1
-        };
-        self.dialog_cursor = target.start + col.min(max);
     }
 
     /// The inline refusal for an empty input on the dialog's primary key:
@@ -1940,15 +1780,15 @@ impl App {
         // (`on_task_injected`). An empty input is refused inline, and the
         // add-task dialog's whole scenario flow below stays untouched.
         if self.dialog_kind == DialogKind::Inject {
-            if self.dialog_text.trim().is_empty() {
+            if self.dialog.text().trim().is_empty() {
                 self.dialog_status = Some(self.empty_input_message().into());
                 return Action::None;
             }
-            return Action::InjectTask(self.dialog_text.clone());
+            return Action::InjectTask(self.dialog.text().to_owned());
         }
-        let empty = self.dialog_text.trim().is_empty();
+        let empty = self.dialog.text().trim().is_empty();
         match (self.scenario(), empty) {
-            (Scenario::EmptyProject, false) => Action::SaveBrief(self.dialog_text.clone()),
+            (Scenario::EmptyProject, false) => Action::SaveBrief(self.dialog.text().to_owned()),
             (Scenario::EmptyProject, true) => {
                 self.dialog_status = Some(
                     "Describe what you want to build -- an empty project needs direction.".into(),
@@ -1970,7 +1810,7 @@ impl App {
                 Action::StartBuild
             }
             (Scenario::QueueComplete, true) => Action::ResearchQueue(QueueRun::Scan),
-            (_, false) => Action::SubmitTasks(self.dialog_text.clone()),
+            (_, false) => Action::SubmitTasks(self.dialog.text().to_owned()),
         }
     }
 
@@ -1978,8 +1818,7 @@ impl App {
     /// frame takes the focus, where the planner's output streams (T24.1).
     pub fn on_tasks_submitted(&mut self) {
         self.dialog_open = false;
-        self.dialog_text.clear();
-        self.dialog_cursor = 0;
+        self.dialog.clear();
         self.dialog_status = None;
         self.focus = FrameFocus::Output;
     }
@@ -1989,8 +1828,7 @@ impl App {
     /// task-file poll brings the new line in as a TasksChanged event.
     pub fn on_task_injected(&mut self) {
         self.dialog_open = false;
-        self.dialog_text.clear();
-        self.dialog_cursor = 0;
+        self.dialog.clear();
         self.dialog_status = None;
         self.focus = FrameFocus::Tasks;
     }
@@ -2004,8 +1842,7 @@ impl App {
     /// file, so the input clears and the dialog stays open with the created message;
     /// with the spec file now present the scenario re-detects as NeedsQueue.
     pub fn on_brief_saved(&mut self) {
-        self.dialog_text.clear();
-        self.dialog_cursor = 0;
+        self.dialog.clear();
         self.dialog_status =
             Some("SPEC.md created -- review it, then press Enter to start.".into());
     }
@@ -2013,8 +1850,7 @@ impl App {
     /// Pasted text appends to the dialog's input; ignored while the dialog is closed.
     pub fn on_paste(&mut self, text: &str) {
         if self.dialog_open {
-            self.dialog_goal_col = None;
-            self.insert_at_cursor(&text.replace("\r\n", "\n").replace('\r', "\n"));
+            self.dialog.insert_paste(text);
         }
     }
 

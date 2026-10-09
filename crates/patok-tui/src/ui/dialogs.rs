@@ -20,7 +20,7 @@ use patok_core::event::Phase;
 /// The placeholder hint rendered in the empty input area of the add-task dialog
 /// (T41.1): a low-emphasis watermark that reads as a hint, not typed content.
 /// It disappears with the first typed or pasted character and never enters
-/// `dialog_text` or a submitted request.
+/// the input's text or a submitted request.
 pub const DIALOG_WATERMARK: &str = "Press Enter to run Discovery agent";
 
 /// The inject-task modal's empty-input watermark (T76.1), in the place of the
@@ -68,11 +68,11 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     }
 
     let width = usize::from(input.width.max(2)) - 1;
-    app.dialog_width.set(width);
-    let chars: Vec<char> = app.dialog_text.chars().collect();
-    let rows = app.dialog_rows();
-    let cursor = app.cursor();
-    let cursor_row = app.cursor_row(&rows);
+    app.dialog.set_width(width);
+    let chars: Vec<char> = app.dialog.text().chars().collect();
+    let rows = app.dialog.rows();
+    let cursor = app.dialog.cursor();
+    let cursor_row = app.dialog.cursor_row(&rows);
     // The block cursor covers the cell at the cursor: the character under it
     // on the cursor style, or a styled space at the end of a logical line or
     // on an empty one. No cell is added, so the letters around the cursor
@@ -84,7 +84,7 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     let cursor_style = Style::new()
         .fg(theme.highlighted_text)
         .add_modifier(Modifier::REVERSED);
-    let mut lines: Vec<Line> = if app.dialog_text.is_empty() {
+    let mut lines: Vec<Line> = if app.dialog.text().is_empty() {
         // The empty-input watermark (T41.1): a dim hint followed by the block
         // cursor, which keeps the focus indicator visible.
         vec![Line::from(vec![

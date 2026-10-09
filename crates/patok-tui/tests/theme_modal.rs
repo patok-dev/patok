@@ -181,7 +181,7 @@ fn t_stays_with_the_modal_that_has_the_keyboard() {
     assert!(dialog.dialog_open);
     assert_eq!(press(&mut dialog, KeyCode::Char('t')), Action::None);
     assert!(!dialog.theme_modal.open);
-    assert_eq!(dialog.dialog_text, "t");
+    assert_eq!(dialog.dialog.text(), "t");
 
     // The settings overlay ignores it.
     let mut overlay = app();

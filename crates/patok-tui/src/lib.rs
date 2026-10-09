@@ -3,6 +3,7 @@
 
 mod app;
 pub mod client;
+mod dialog_editor;
 mod headless;
 mod markdown;
 mod overlay;

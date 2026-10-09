@@ -452,8 +452,8 @@ mod tests {
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
             app.dialog_open = true;
-            app.dialog_text = "hello".into();
-            app.dialog_cursor = 3;
+            app.dialog.set_text("hello");
+            app.dialog.set_cursor(3);
             let buffer = dialog_buffer(&app);
             let under = &buffer[(x0 + 3, y0)];
             assert_eq!(under.symbol(), "l", "{key:?}");

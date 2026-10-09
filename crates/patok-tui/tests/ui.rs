@@ -2375,7 +2375,7 @@ mod dialog {
         // add flow's move to the output frame).
         app.on_task_injected();
         assert!(!app.dialog_open);
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
 
         // Enter confirms through the same path.
@@ -2542,7 +2542,7 @@ mod dialog {
         app.on_tasks_submitted();
         assert!(!app.dialog_open, "the accepted submit closes the modal");
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
     }
 
     /// Enter submits the dialog through the same path as the Submit button
@@ -2558,7 +2558,7 @@ mod dialog {
         app.on_tasks_submitted();
         assert!(!app.dialog_open, "the accepted submit closes the modal");
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
 
         // A multi-line input submits every line, not just the cursor's.
         let mut app = open();
@@ -2578,9 +2578,9 @@ mod dialog {
         type_text(&mut app, "first line");
         assert!(app.dialog_open);
         assert_eq!(shift_enter(&mut app), Action::None);
-        assert_eq!(app.cursor(), 11, "the cursor moved past the newline");
+        assert_eq!(app.dialog.cursor(), 11, "the cursor moved past the newline");
         type_text(&mut app, "second line");
-        assert_eq!(app.dialog_text, "first line\nsecond line");
+        assert_eq!(app.dialog.text(), "first line\nsecond line");
         assert!(app.dialog_open, "the dialog never submitted");
         let screen = draw(&app, 80, 24);
         assert!(screen.contains("first line"), "{screen}");
@@ -2599,15 +2599,23 @@ mod dialog {
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
-        assert_eq!(app.cursor(), 3);
+        assert_eq!(app.dialog.cursor(), 3);
         assert_eq!(shift_enter(&mut app), Action::None);
         assert!(app.dialog_open, "Shift-Enter never submits");
-        assert_eq!(app.dialog_text, "abc\ndef");
-        assert_eq!(app.cursor(), 4, "the cursor sits at the new line's start");
+        assert_eq!(app.dialog.text(), "abc\ndef");
+        assert_eq!(
+            app.dialog.cursor(),
+            4,
+            "the cursor sits at the new line's start"
+        );
         // Backspace over the newline joins the halves back to the original.
         press(&mut app, KeyCode::Backspace);
-        assert_eq!(app.dialog_text, "abcdef");
-        assert_eq!(app.cursor(), 3, "the cursor returns to the join point");
+        assert_eq!(app.dialog.text(), "abcdef");
+        assert_eq!(
+            app.dialog.cursor(),
+            3,
+            "the cursor returns to the join point"
+        );
 
         // After pasted text: the paste lands first, Shift-Enter splits at the
         // cursor, and Backspace round-trips the same way.
@@ -2615,29 +2623,29 @@ mod dialog {
         app.on_paste("one two");
         press(&mut app, KeyCode::Left);
         assert_eq!(shift_enter(&mut app), Action::None);
-        assert_eq!(app.dialog_text, "one tw\no");
+        assert_eq!(app.dialog.text(), "one tw\no");
         press(&mut app, KeyCode::Backspace);
-        assert_eq!(app.dialog_text, "one two");
-        assert_eq!(app.cursor(), 6);
+        assert_eq!(app.dialog.text(), "one two");
+        assert_eq!(app.dialog.cursor(), 6);
 
         // At the very end: the newline appends and typing continues below it.
         let mut app = open();
         type_text(&mut app, "end");
         assert_eq!(shift_enter(&mut app), Action::None);
-        assert_eq!(app.dialog_text, "end\n");
+        assert_eq!(app.dialog.text(), "end\n");
         type_text(&mut app, "tail");
-        assert_eq!(app.dialog_text, "end\ntail");
+        assert_eq!(app.dialog.text(), "end\ntail");
         press(&mut app, KeyCode::Home);
         press(&mut app, KeyCode::Backspace);
-        assert_eq!(app.dialog_text, "endtail");
-        assert_eq!(app.cursor(), 3);
+        assert_eq!(app.dialog.text(), "endtail");
+        assert_eq!(app.dialog.cursor(), 3);
     }
 
     /// Enter on an empty input refuses inline; the dialog stays open (T41.1).
     #[test]
     fn enter_on_empty_input_keeps_the_inline_refusal() {
         let mut app = open();
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
         assert!(app.dialog_open, "the dialog stays open");
         assert_eq!(
@@ -2653,21 +2661,21 @@ mod dialog {
     #[test]
     fn watermark_shows_only_while_the_input_is_empty() {
         let mut app = open();
-        assert!(app.dialog_text.is_empty());
+        assert!(app.dialog.text().is_empty());
         assert!(
             draw(&app, 80, 24).contains("Press Enter to run Discovery agent"),
             "the empty input shows the watermark"
         );
         // Typing replaces it; the typed text carries no watermark.
         type_text(&mut app, "hi");
-        assert_eq!(app.dialog_text, "hi");
+        assert_eq!(app.dialog.text(), "hi");
         assert!(
             !draw(&app, 80, 24).contains("Press Enter to run Discovery agent"),
             "the watermark is gone once text is typed"
         );
         // Clearing the input brings it back.
         ctrl(&mut app, 'u');
-        assert!(app.dialog_text.is_empty());
+        assert!(app.dialog.text().is_empty());
         assert!(
             draw(&app, 80, 24).contains("Press Enter to run Discovery agent"),
             "the watermark returns on the cleared input"
@@ -2788,7 +2796,7 @@ mod dialog {
         type_text(&mut app, "do it");
         assert!(matches!(ctrl(&mut app, 's'), Action::SubmitTasks(_)));
         app.on_submit_failed("a build is running".into());
-        assert_eq!(app.dialog_text, "do it");
+        assert_eq!(app.dialog.text(), "do it");
         insta::assert_snapshot!(draw(&app, 80, 24));
     }
 
@@ -2799,14 +2807,14 @@ mod dialog {
         press(&mut app, KeyCode::Backspace);
         shift_enter(&mut app);
         type_text(&mut app, "d");
-        assert_eq!(app.dialog_text, "ab\nd");
+        assert_eq!(app.dialog.text(), "ab\nd");
         // Dialog keys do not leak to the shell: `q` is text, not quit.
         type_text(&mut app, "q");
         assert!(!app.stopping);
         app.on_paste("x\r\ny");
-        assert_eq!(app.dialog_text, "ab\ndqx\ny");
+        assert_eq!(app.dialog.text(), "ab\ndqx\ny");
         ctrl(&mut app, 'u');
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
     }
 
     fn key_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
@@ -2819,38 +2827,38 @@ mod dialog {
         type_text(&mut app, "héllo");
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
-        assert_eq!(app.cursor(), 3);
+        assert_eq!(app.dialog.cursor(), 3);
         type_text(&mut app, "ü");
-        assert_eq!(app.dialog_text, "hélülo");
+        assert_eq!(app.dialog.text(), "hélülo");
         for _ in 0..3 {
             press(&mut app, KeyCode::Backspace);
         }
-        assert_eq!(app.dialog_text, "hlo");
+        assert_eq!(app.dialog.text(), "hlo");
         press(&mut app, KeyCode::Delete);
-        assert_eq!(app.dialog_text, "ho");
+        assert_eq!(app.dialog.text(), "ho");
         press(&mut app, KeyCode::Home);
-        assert_eq!(app.cursor(), 0);
+        assert_eq!(app.dialog.cursor(), 0);
         press(&mut app, KeyCode::Backspace);
         press(&mut app, KeyCode::Left);
-        assert_eq!(app.dialog_text, "ho");
+        assert_eq!(app.dialog.text(), "ho");
         app.on_paste("日本\n");
-        assert_eq!(app.dialog_text, "日本\nho");
-        assert_eq!(app.cursor(), 3);
+        assert_eq!(app.dialog.text(), "日本\nho");
+        assert_eq!(app.dialog.cursor(), 3);
         press(&mut app, KeyCode::End);
-        assert_eq!(app.cursor(), 5);
+        assert_eq!(app.dialog.cursor(), 5);
         press(&mut app, KeyCode::Delete);
         press(&mut app, KeyCode::Right);
-        assert_eq!(app.cursor(), 5);
+        assert_eq!(app.dialog.cursor(), 5);
         press(&mut app, KeyCode::Home);
-        assert_eq!(app.cursor(), 3);
+        assert_eq!(app.dialog.cursor(), 3);
         press(&mut app, KeyCode::End);
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::End);
-        assert_eq!(app.cursor(), 2);
+        assert_eq!(app.dialog.cursor(), 2);
         shift_enter(&mut app);
-        assert_eq!(app.dialog_text, "日本\n\nho");
+        assert_eq!(app.dialog.text(), "日本\n\nho");
         ctrl(&mut app, 'u');
-        assert_eq!((app.dialog_text.as_str(), app.cursor()), ("", 0));
+        assert_eq!((app.dialog.text(), app.dialog.cursor()), ("", 0));
     }
 
     #[test]
@@ -2858,16 +2866,16 @@ mod dialog {
         let mut app = open();
         type_text(&mut app, "one  two three");
         key_with(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
-        assert_eq!(app.cursor(), 9);
+        assert_eq!(app.dialog.cursor(), 9);
         key_with(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
-        assert_eq!(app.cursor(), 5);
+        assert_eq!(app.dialog.cursor(), 5);
         key_with(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
         key_with(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
-        assert_eq!(app.cursor(), 0);
+        assert_eq!(app.dialog.cursor(), 0);
         key_with(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
-        assert_eq!(app.cursor(), 3);
+        assert_eq!(app.dialog.cursor(), 3);
         key_with(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
-        assert_eq!(app.cursor(), 8);
+        assert_eq!(app.dialog.cursor(), 8);
     }
 
     #[test]
@@ -2876,34 +2884,34 @@ mod dialog {
         app.on_paste("abcdef\nab\nabcdef");
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
-        assert_eq!(app.cursor(), 14);
+        assert_eq!(app.dialog.cursor(), 14);
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.cursor(), 9, "clamped to the short line");
+        assert_eq!(app.dialog.cursor(), 9, "clamped to the short line");
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.cursor(), 4, "the column is remembered");
+        assert_eq!(app.dialog.cursor(), 4, "the column is remembered");
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.cursor(), 4, "no row above");
+        assert_eq!(app.dialog.cursor(), 4, "no row above");
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.cursor(), 14);
+        assert_eq!(app.dialog.cursor(), 14);
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.cursor(), 14);
+        assert_eq!(app.dialog.cursor(), 14);
     }
 
     #[test]
     fn up_down_between_wrapped_rows() {
         let mut app = open();
-        app.dialog_width.set(5);
+        app.dialog.set_width(5);
         app.on_paste("abcdefghijkl");
         // Rows: abcde / fghij / kl
-        assert_eq!(app.cursor(), 12);
+        assert_eq!(app.dialog.cursor(), 12);
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.cursor(), 7);
+        assert_eq!(app.dialog.cursor(), 7);
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.cursor(), 2);
+        assert_eq!(app.dialog.cursor(), 2);
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.cursor(), 12);
+        assert_eq!(app.dialog.cursor(), 12);
     }
 
     #[test]
@@ -2974,7 +2982,7 @@ mod dialog {
         type_text(&mut app, "hello");
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
-        assert_eq!(app.cursor(), 3);
+        assert_eq!(app.dialog.cursor(), 3);
         let buffer = draw_buffer(&app);
         let under = &buffer[(x0 + 3, y0)];
         assert_eq!(under.symbol(), "l");
@@ -3073,7 +3081,7 @@ mod dialog {
         assert!(!app.dialog_open);
         press(&mut app, KeyCode::Char('a'));
         assert!(app.dialog_open);
-        assert_eq!(app.dialog_text, "keep me");
+        assert_eq!(app.dialog.text(), "keep me");
     }
 
     #[test]
@@ -3612,7 +3620,7 @@ mod explore {
         assert!(app.dialog_open, "the dialog stays open with its message");
         // An empty input is refused: an empty project needs direction.
         app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
         assert_eq!(submit(&mut app), Action::None);
         assert_eq!(
             app.dialog_status.as_deref(),
@@ -3690,7 +3698,7 @@ mod explore {
         app.on_brief_saved();
         assert_eq!(app.scenario(), Scenario::NeedsQueue);
         assert!(app.dialog_open);
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
         assert_eq!(
             app.dialog_status.as_deref(),
             Some("SPEC.md created -- review it, then press Enter to start.")
@@ -3748,7 +3756,7 @@ mod explore {
         for app in [&mut clicked, &mut keyed] {
             assert!(!app.dialog_open);
             assert_eq!(app.focus, FrameFocus::Output);
-            assert_eq!(app.dialog_text, "");
+            assert_eq!(app.dialog.text(), "");
         }
 
         // The add dialog with an empty input, queue ready (the label renders
@@ -3799,7 +3807,7 @@ mod explore {
         for app in [&mut clicked, &mut keyed] {
             assert!(!app.dialog_open);
             assert_eq!(app.focus, FrameFocus::Tasks);
-            assert_eq!(app.dialog_text, "");
+            assert_eq!(app.dialog.text(), "");
         }
 
         // The inject modal with an empty input: the same inline refusal.
@@ -5424,7 +5432,7 @@ mod modal_footer {
             Action::None
         );
         assert!(!app.dialog_open);
-        assert_eq!(app.dialog_text, "hello");
+        assert_eq!(app.dialog.text(), "hello");
 
         // Clicks on the hint zone and on the input area change nothing.
         let mut app = open_dialog();
@@ -5800,14 +5808,14 @@ mod close_button {
         let close = app.dialog_close.get();
         assert_eq!(app.on_mouse(click(close.x + 3, close.y)), Action::None);
         assert!(!app.dialog_open);
-        assert_eq!(app.dialog_text, "add a login page");
+        assert_eq!(app.dialog.text(), "add a login page");
 
         // Esc takes exactly the same path with the same outcome.
         let mut app = open_dialog();
         type_text(&mut app, "add a login page");
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
         assert!(!app.dialog_open);
-        assert_eq!(app.dialog_text, "add a login page");
+        assert_eq!(app.dialog.text(), "add a login page");
 
         // Clicks on the title row outside the button and on the modal's body
         // change nothing.

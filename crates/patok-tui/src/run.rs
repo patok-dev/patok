@@ -1194,7 +1194,7 @@ mod tests {
     async fn submit_tasks_sends_the_planner_add_tasks_and_closes_on_accept() {
         let mut app = app();
         app.dialog_open = true;
-        app.dialog_text = "add a login page".into();
+        app.dialog.set_text("add a login page");
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut app,
@@ -1215,7 +1215,7 @@ mod tests {
         }
         assert!(!app.dialog_open);
         assert_eq!(app.focus, FrameFocus::Output);
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.text(), "");
     }
 
     /// The research queue-creation runs (T69.1) send the AddTasks command
@@ -1255,7 +1255,7 @@ mod tests {
         // The engine rejected the request: its reason lands in the dialog.
         let mut app = app();
         app.dialog_open = true;
-        app.dialog_text = "add a login page".into();
+        app.dialog.set_text("add a login page");
         run_submit_family(
             &mut app,
             std::path::Path::new("/home/user/demo"),
@@ -1264,7 +1264,7 @@ mod tests {
         )
         .await;
         assert!(app.dialog_open);
-        assert_eq!(app.dialog_text, "add a login page");
+        assert_eq!(app.dialog.text(), "add a login page");
         assert_eq!(app.dialog_status.as_deref(), Some("planner busy"));
 
         // The transport failed: the add's failure message lands instead.
@@ -1276,7 +1276,7 @@ mod tests {
         )
         .await;
         assert!(app.dialog_open);
-        assert_eq!(app.dialog_text, "add a login page");
+        assert_eq!(app.dialog.text(), "add a login page");
         assert_eq!(app.dialog_status.as_deref(), Some("add failed: nope"));
     }
 
