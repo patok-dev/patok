@@ -48,7 +48,7 @@ impl Engine {
             return ResearchStage::Report(report);
         }
         // A Simple task skips the stage when the key says so.
-        if unit.skip_research_for_simple
+        if unit.settings.skip_research_for_simple
             && complexity::classify(&task.description) == Complexity::Simple
         {
             return ResearchStage::Skipped;

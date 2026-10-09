@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::Engine;
 use super::session::{AgentPrompt, StageExit, StageStart, StageWords};
-use super::state::Unit;
+use super::state::{Unit, resolve_provider};
 use crate::{artifact, plan, prompt, review, taskfile};
 
 /// The largest git diff the reviewer prompt carries:
@@ -87,14 +87,14 @@ impl Engine {
         // not a completed review.
         let deferred = review::batch_deferred(&task.id, &pending_after);
         let inputs = review::SkipInputs {
-            review_in_loop: unit.review_in_loop,
-            batch_deferred: unit.batch_review && deferred,
-            skip_review_for_simple: unit.skip_review_for_simple,
+            review_in_loop: unit.settings.review_in_loop,
+            batch_deferred: unit.settings.batch_review && deferred,
+            skip_review_for_simple: unit.settings.skip_review_for_simple,
             complexity: Some(complexity),
             builder_clean: true,
-            review_confidence_threshold: unit.review_confidence_threshold,
+            review_confidence_threshold: unit.settings.review_confidence_threshold,
             history_consecutive_passes: history.match_shape(&task.description, complexity),
-            stage_enabled: unit.review_stage_enabled,
+            stage_enabled: unit.review_stage_enabled(),
         };
         if let Some(reason) = review::skip_review(&inputs) {
             tracing::info!("review skipped for {}: {}", task.id, reason.reason());
@@ -150,8 +150,8 @@ impl Engine {
             .filter(|file| !review::is_generated(file))
             .cloned()
             .collect();
-        let run = if unit.review_multipass_threshold > 0
-            && reviewable.len() as u64 > unit.review_multipass_threshold
+        let run = if unit.settings.review_multipass_threshold > 0
+            && reviewable.len() as u64 > unit.settings.review_multipass_threshold
         {
             self.multipass_review(task, unit, cancel, &reviewable, &changed)
                 .await
@@ -197,7 +197,7 @@ impl Engine {
         let report = result.0;
         let verdict = review::compute_verdict(
             result.1.then_some(report.as_str()),
-            unit.confidence_threshold,
+            unit.settings.confidence_threshold,
         );
         for below in &verdict.below_threshold {
             tracing::warn!(
@@ -245,31 +245,32 @@ impl Engine {
     /// (`reviewer_model`); the other providers keep their default model.
     fn reviewer_unit(&self, unit: &Unit) -> Unit {
         let mut reviewer = unit.clone();
-        if let Some(kind) = reviewer.reviewer_provider.kind() {
-            let name = reviewer.reviewer_provider;
-            match self.inner.resolver.as_ref() {
-                Some(resolver) => match resolver(kind) {
-                    Ok(provider) => {
-                        reviewer.provider = provider;
-                        reviewer.model = reviewer
-                            .provider
-                            .supports_reviewer_model()
-                            .then(|| reviewer.reviewer_model.clone());
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            "the {name} reviewer provider is unavailable ({error}); \
-                             the reviewer runs on the configured provider"
-                        );
-                    }
-                },
-                None => {
+        if let Some(resolver) = self.inner.resolver.as_ref() {
+            match resolve_provider(resolver, &reviewer.settings.reviewer_provider) {
+                Ok(Some(provider)) => {
+                    reviewer.provider = provider;
+                    reviewer.model = reviewer
+                        .provider
+                        .supports_reviewer_model()
+                        .then(|| reviewer.settings.reviewer_model.clone());
+                }
+                // A name this build does not implement: keep the configured
+                // provider silently, exactly like today.
+                Ok(None) => {}
+                Err(error) => {
+                    let name = reviewer.settings.reviewer_provider;
                     tracing::warn!(
-                        "the {name} reviewer provider has no resolver; \
-                         the reviewer runs on the fixed provider"
+                        "the {name} reviewer provider is unavailable ({error}); \
+                         the reviewer runs on the configured provider"
                     );
                 }
             }
+        } else if reviewer.settings.reviewer_provider.kind().is_some() {
+            let name = reviewer.settings.reviewer_provider;
+            tracing::warn!(
+                "the {name} reviewer provider has no resolver; \
+                 the reviewer runs on the fixed provider"
+            );
         }
         reviewer
     }

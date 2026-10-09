@@ -55,6 +55,19 @@ impl Git {
         self.run(args).await.is_some_and(|o| o.status.success())
     }
 
+    /// The current HEAD's SHA as formatted by `args` (for example
+    /// `&["--short", "HEAD"]`), or `None` when the read fails or prints
+    /// nothing.
+    async fn rev_parse(&self, args: &[&str]) -> Option<String> {
+        let mut command = vec!["rev-parse"];
+        command.extend_from_slice(args);
+        let out = self.run(&command).await?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .filter(|sha| !sha.is_empty())
+    }
+
     pub async fn is_repo(&self) -> bool {
         self.succeeds(&["rev-parse", "--is-inside-work-tree"]).await
     }
@@ -64,20 +77,12 @@ impl Git {
     // call it now.
     #[allow(dead_code)]
     pub async fn head_sha(&self) -> Option<String> {
-        let out = self.run(&["rev-parse", "--short", "HEAD"]).await?;
-        out.status
-            .success()
-            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-            .filter(|sha| !sha.is_empty())
+        self.rev_parse(&["--short", "HEAD"]).await
     }
 
     /// The current HEAD's full SHA, or `None` outside a repository.
     pub async fn head_full_sha(&self) -> Option<String> {
-        let out = self.run(&["rev-parse", "HEAD"]).await?;
-        out.status
-            .success()
-            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-            .filter(|sha| !sha.is_empty())
+        self.rev_parse(&["HEAD"]).await
     }
 
     /// Whether `ancestor` is an ancestor of `descendant`, built on
@@ -177,15 +182,9 @@ impl Git {
         {
             return None;
         }
-        let full = self.run(&["rev-parse", "HEAD"]).await?;
-        let short = self.run(&["rev-parse", "--short", "HEAD"]).await?;
-        if !full.status.success() || !short.status.success() {
-            return None;
-        }
-        Some(Commit {
-            full: String::from_utf8_lossy(&full.stdout).trim().to_string(),
-            short: String::from_utf8_lossy(&short.stdout).trim().to_string(),
-        })
+        let full = self.rev_parse(&["HEAD"]).await?;
+        let short = self.rev_parse(&["--short", "HEAD"]).await?;
+        Some(Commit { full, short })
     }
 }
 

@@ -11,7 +11,7 @@ use tokio::sync::{Notify, broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
-use super::state::{Central, Inner, Resolver, RunState, State, Tiles};
+use super::state::{Central, Inner, Resolver, RunState, State, Tiles, resolve_or_reject};
 use super::stop::Stop;
 use crate::TASK_FILE;
 use crate::schedule::DiscoverySchedule;
@@ -187,25 +187,12 @@ impl Engine {
         // An unrecognized provider value refuses runs.
         // The startup resolution is kept for error reporting; every unit of work
         // re-resolves from the central settings instead.
+        let resolver: Resolver = Arc::new(resolve);
         let provider = match loaded.errors.first() {
             Some(error) => Err(error.clone()),
-            None => match central.settings.provider.kind() {
-                Some(kind) => resolve(kind).map_err(|error| {
-                    tracing::error!("provider {name} unavailable: {error}");
-                    error.to_string()
-                }),
-                None => Err(format!(
-                    "the `{name}` provider is not available in this build; use claude, codex or mistral"
-                )),
-            },
+            None => resolve_or_reject(&resolver, &central.settings.provider),
         };
-        Self::build(
-            config,
-            provider,
-            central,
-            Some(Arc::new(resolve)),
-            env.clone(),
-        )
+        Self::build(config, provider, central, Some(resolver), env.clone())
     }
 
     fn build(

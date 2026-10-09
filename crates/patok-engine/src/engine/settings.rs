@@ -6,10 +6,9 @@ use patok_core::config::{
     daemon_field_value, load_daemon, set_daemon_field,
 };
 use patok_core::event::EngineEvent;
-use patok_core::pipeline::Stage;
 
 use super::Engine;
-use super::state::Unit;
+use super::state::{Unit, resolve_or_reject};
 
 /// How often the config files' modification times are checked.
 const CONFIG_FILE_POLL: Duration = Duration::from_secs(2);
@@ -34,42 +33,14 @@ impl Engine {
                 if let Err(error) = self.inner.provider.as_ref() {
                     return Err(error.clone());
                 }
-                let name = central.settings.provider.to_string();
-                match central.settings.provider.kind() {
-                    Some(kind) => resolver(kind).map_err(|error| {
-                        tracing::error!("provider {name} unavailable: {error}");
-                        error.to_string()
-                    })?,
-                    None => {
-                        return Err(format!(
-                            "the `{name}` provider is not available in this build; use claude, codex or mistral"
-                        ));
-                    }
-                }
+                resolve_or_reject(resolver, &central.settings.provider)?
             }
             None => self.inner.provider.clone()?,
         };
         Ok(Unit {
             provider,
             model: central.model.clone(),
-            agent_timeout: Duration::from_secs(central.settings.agent_timeout_secs),
-            plan_enabled: central.settings.plan_enabled,
-            run_mode: central.settings.run_mode,
-            skip_research_for_simple: central.settings.skip_research_for_simple,
-            review_in_loop: central.settings.review_in_loop,
-            skip_review_for_simple: central.settings.skip_review_for_simple,
-            batch_review: central.settings.batch_review,
-            review_confidence_threshold: central.settings.review_confidence_threshold,
-            review_multipass_threshold: central.settings.review_multipass_threshold,
-            confidence_threshold: central.settings.confidence_threshold,
-            reviewer_provider: central.settings.reviewer_provider,
-            reviewer_model: central.settings.reviewer_model.clone(),
-            review_stage_enabled: central
-                .settings
-                .stages
-                .iter()
-                .find(|entry| entry.stage == Stage::Review)
-                .is_some_and(|entry| entry.enabled),
+            settings: central.settings.clone(),
         })
     }
 

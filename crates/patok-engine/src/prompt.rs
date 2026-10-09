@@ -43,11 +43,10 @@ pub fn builder(task: &Task, plan: Option<&str>, research: Option<&str>) -> Strin
         .unwrap_or_default();
     // Without a plan the research report is the builder's only prior artifact,
     // so it travels along (T68.1); with a plan the planner already read it.
-    let research = match (plan.is_empty(), research) {
-        (true, Some(research)) => format!(
-            "\n\nThe research report for this task (a prior artifact, not a plan):\n\n{research}\n\nUse it as input; verify anything you rely on."
-        ),
-        _ => String::new(),
+    let research = if plan.is_empty() {
+        research_block(research)
+    } else {
+        String::new()
     };
     format!(
         "Implement this task.\n\nTask {id}: {description}\n\n\
@@ -75,13 +74,8 @@ pub fn planner(request: &str) -> String {
          1. If {SPEC_FILE} exists in the project root, read it for context.\n\
          2. Read the last 20 lines of {TASK_FILE} to find the highest task number in use, so you can pick the next number.\n\
          3. Append the new task lines at the end of {TASK_FILE}. Do not change anything above them.\n\n\
-         Guidelines:\n\
-         - Prefer fewer, larger tasks. Each task should deliver working software that a builder can implement and verify in one session, not scaffolding, stubs or documentation. Only split the request when the parts are truly independent.\n\
-         - Do not modify existing tasks, their text, their order or their checkbox state.\n\
-         - Each task is a single line in exactly this format: `- [ ] T<N>.1: <description>`, where <N> is the next unused number after the highest T number in the task list (for example `- [ ] T4.1: Add ...`). Use a new number for each task you append, always with the `.1` suffix, and always the `T` prefix, never an `H` or `D` prefix.\n\
-         - Write the description as plain text on one line: no markdown, no backticks, no bold or italics, no links, no nested lists and no line breaks inside a task line.\n\
-         - Make the description specific enough to implement without further questions: what to build, where it plugs in, and how to tell it works.\n\n\
-         Finish with a one-line summary of the tasks you added.",
+         Guidelines:\n{guidelines}",
+        guidelines = planner_guidelines(),
     )
 }
 
@@ -149,16 +143,46 @@ only append new lines at the end of the task list. \
 Return your research report as your final message, opening with the investigation \
 questions you pursued and then the answers to them.";
 
-/// The strict append rules shared by the two queue-creation prompts: the same
-/// line format the append-tasks planner is held to.
-const QUEUE_GUIDELINES: &str = "Guidelines:\n\n\
-         - Prefer fewer, larger tasks. Each task should deliver working software that a builder can implement and verify in one session, not scaffolding, stubs or documentation. Only split the work when the parts are truly independent.\n\
+/// The task-append guideline bullets shared by the append-tasks planner and
+/// the two queue-creation prompts: `split_word` is the planner's "request" or
+/// the queue prompts' "work", `nothing` is the queue prompts' honesty bullet
+/// (the planner passes `None`), and `finish` is the closing line. The bullets
+/// follow the caller's own "Guidelines:" header.
+fn append_guidelines(split_word: &str, nothing: Option<&str>, finish: &str) -> String {
+    let mut guidelines = format!(
+        "- Prefer fewer, larger tasks. Each task should deliver working software that a builder can implement and verify in one session, not scaffolding, stubs or documentation. Only split the {split_word} when the parts are truly independent.\n\
          - Do not modify existing tasks, their text, their order or their checkbox state.\n\
          - Each task is a single line in exactly this format: `- [ ] T<N>.1: <description>`, where <N> is the next unused number after the highest T number in the task list (for example `- [ ] T4.1: Add ...`). Use a new number for each task you append, always with the `.1` suffix, and always the `T` prefix, never an `H` or `D` prefix.\n\
          - Write the description as plain text on one line: no markdown, no backticks, no bold or italics, no links, no nested lists and no line breaks inside a task line.\n\
-         - Make the description specific enough to implement without further questions: what to build, where it plugs in, and how to tell it works.\n\
-         - If you find nothing credible to add, add no task and say so.\n\n\
-         Finish with your research report as your final message, opening with the investigation questions you pursued and then the answers to them.";
+         - Make the description specific enough to implement without further questions: what to build, where it plugs in, and how to tell it works."
+    );
+    if let Some(nothing) = nothing {
+        guidelines.push_str("\n- ");
+        guidelines.push_str(nothing);
+    }
+    guidelines.push_str("\n\n");
+    guidelines.push_str(finish);
+    guidelines
+}
+
+/// The append-tasks planner's guidelines.
+fn planner_guidelines() -> String {
+    append_guidelines(
+        "request",
+        None,
+        "Finish with a one-line summary of the tasks you added.",
+    )
+}
+
+/// The two queue-creation prompts' guidelines: the same rules plus the
+/// honesty bullet and the research-report closing line.
+fn queue_guidelines() -> String {
+    append_guidelines(
+        "work",
+        Some("If you find nothing credible to add, add no task and say so."),
+        "Finish with your research report as your final message, opening with the investigation questions you pursued and then the answers to them.",
+    )
+}
 
 /// The NeedsQueue scenario's empty submit (T69.1): the Research agent reads the
 /// spec and creates the project's initial task queue.
@@ -170,7 +194,8 @@ pub fn research_queue_bootstrap() -> String {
          2. Read the last 20 lines of {TASK_FILE} to find the highest task number in use, so you can pick the next number.\n\
          3. Investigate the project: detect the tech stack, read the source and note how the spec's work splits into independently verifiable tasks.\n\
          4. Append the new task lines at the end of {TASK_FILE}. Do not change anything above them.\n\n\
-         {QUEUE_GUIDELINES}",
+         Guidelines:\n\n{guidelines}",
+        guidelines = queue_guidelines(),
     )
 }
 
@@ -184,7 +209,8 @@ pub fn research_queue_scan() -> String {
          2. Read the last 20 lines of {TASK_FILE} to find the highest task number in use, so you can pick the next number.\n\
          3. Investigate the project for genuinely worthwhile follow-up work: bugs, missing pieces and rough edges left by the build work, not padding or nice-to-haves.\n\
          4. Append the new task lines at the end of {TASK_FILE}. Do not change anything above them.\n\n\
-         {QUEUE_GUIDELINES}",
+         Guidelines:\n\n{guidelines}",
+        guidelines = queue_guidelines(),
     )
 }
 
@@ -320,8 +346,16 @@ Before a task is implemented you write one implementation plan for a builder col
 You may only read files; you have no shell. \
 Edit no files: return the plan as your final message.";
 
-/// The research report block a plan prompt carries as its prior artifact (T68.1):
-/// input to verify, never a plan to copy.
+/// The two sections every plan must end with (T10.1), shared by the plan and
+/// plan-retry prompts.
+const PLAN_SECTIONS: &str = "The plan must end with these two sections, in this order:\n\n\
+## File Operations\n\
+Every file to create or change, one per line, with what happens to each and why.\n\n\
+## Verification\n\
+How to prove the work: the checks or commands to run and the result that means success.";
+
+/// The research report block a builder or plan prompt carries as its prior
+/// artifact (T68.1): input to verify, never a plan to copy.
 fn research_block(research: Option<&str>) -> String {
     research
         .map(|research| {
@@ -337,11 +371,7 @@ pub fn plan(task: &Task, research: Option<&str>) -> String {
         "Write one implementation plan for the task below, for a builder colleague to carry out.\n\n\
          Task {id}: {description}\n\n\
          The full task list is in {TASK_FILE} for context; treat it as read-only.{research}\n\n\
-         The plan must end with these two sections, in this order:\n\n\
-         ## File Operations\n\
-         Every file to create or change, one per line, with what happens to each and why.\n\n\
-         ## Verification\n\
-         How to prove the work: the checks or commands to run and the result that means success.",
+         {PLAN_SECTIONS}",
         id = task.id,
         description = task.description,
         research = research_block(research),
@@ -357,11 +387,7 @@ pub fn plan_retry(task: &Task, rejected: &str, reason: &str, research: Option<&s
          The full task list is in {TASK_FILE} for context; treat it as read-only.{research}\n\n\
          Why the previous plan was rejected:\n{reason}\n\n\
          The rejected plan:\n{rejected}\n\n\
-         Write a new plan that fixes the rejection. The plan must end with these two sections, in this order:\n\n\
-         ## File Operations\n\
-         Every file to create or change, one per line, with what happens to each and why.\n\n\
-         ## Verification\n\
-         How to prove the work: the checks or commands to run and the result that means success.",
+         Write a new plan that fixes the rejection. {PLAN_SECTIONS}",
         id = task.id,
         description = task.description,
         research = research_block(research),

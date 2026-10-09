@@ -78,10 +78,7 @@ impl EngineApi for Service {
         request: Request<CommandRequest>,
     ) -> Result<Response<CommandResponse>, Status> {
         let response = match request.into_inner().action {
-            Some(command_request::Action::StartBuild(_)) => match self.engine.start_build() {
-                Ok(()) => accepted(),
-                Err(error) => rejected(error),
-            },
+            Some(command_request::Action::StartBuild(_)) => outcome(self.engine.start_build()),
             Some(command_request::Action::AddTasks(add)) => {
                 // Which agent runs the append (T69.1): the planner expands a
                 // user request; the two research kinds run the research
@@ -95,39 +92,26 @@ impl EngineApi for Service {
                         } else {
                             // Runs in the background; planner output and the outcome reach the
                             // shell through the attach stream.
-                            match self.engine.start_add_tasks(&add.request) {
-                                Ok(()) => accepted(),
-                                Err(error) => rejected(error),
-                            }
+                            outcome(self.engine.start_add_tasks(&add.request))
                         }
                     }
                     AddTasksKind::AddTasksBootstrap => {
-                        match self.engine.start_queue_creation(QueueCreation::Bootstrap) {
-                            Ok(()) => accepted(),
-                            Err(error) => rejected(error),
-                        }
+                        outcome(self.engine.start_queue_creation(QueueCreation::Bootstrap))
                     }
                     AddTasksKind::AddTasksScan => {
-                        match self.engine.start_queue_creation(QueueCreation::Scan) {
-                            Ok(()) => accepted(),
-                            Err(error) => rejected(error),
-                        }
+                        outcome(self.engine.start_queue_creation(QueueCreation::Scan))
                     }
                 }
             }
             // Runs in the background; discovery output, the run state and the outcome
             // reach the shell through the attach stream.
-            Some(command_request::Action::RunDiscovery(_)) => match self.engine.start_discovery() {
-                Ok(()) => accepted(),
-                Err(error) => rejected(error),
-            },
+            Some(command_request::Action::RunDiscovery(_)) => {
+                outcome(self.engine.start_discovery())
+            }
             // Cancels a pending soft stop (T33.1): the loop continues with the
             // next pending task; rejected when no soft stop is pending.
             Some(command_request::Action::CancelSoftStop(_)) => {
-                match self.engine.cancel_soft_stop() {
-                    Ok(()) => accepted(),
-                    Err(error) => rejected(error),
-                }
+                outcome(self.engine.cancel_soft_stop())
             }
             // Injects one task line into TASKS.md under the engine's
             // task-file lock (T77.1): the typed text is normalized into a
@@ -136,20 +120,14 @@ impl EngineApi for Service {
             // mid-build; the appended line reaches the shell as a task-list
             // change right away.
             Some(command_request::Action::InjectTask(inject)) => {
-                match self.engine.inject_task(&inject.text).await {
-                    Ok(()) => accepted(),
-                    Err(error) => rejected(error),
-                }
+                outcome(self.engine.inject_task(&inject.text).await)
             }
             // Removes one pending task from TASKS.md under the engine's
             // task-file lock (T98.1), refusing the engine's current
             // (in-progress) task and completed tasks; the queue reconciles
             // immediately.
             Some(command_request::Action::RemoveTask(remove)) => {
-                match self.engine.remove_task(&remove.id).await {
-                    Ok(()) => accepted(),
-                    Err(error) => rejected(error),
-                }
+                outcome(self.engine.remove_task(&remove.id).await)
             }
             // One daemon-schema field change: validated,
             // persisted to the resolved layer and merged into the engine's central
@@ -273,6 +251,15 @@ fn accepted() -> CommandResponse {
         accepted: true,
         error: String::new(),
         settings_change_result: None,
+    }
+}
+
+/// The wire outcome of a command that starts work or is refused with the
+/// engine's reason: the one shape of every non-settings command arm.
+fn outcome(result: Result<(), String>) -> CommandResponse {
+    match result {
+        Ok(()) => accepted(),
+        Err(error) => rejected(error),
     }
 }
 

@@ -114,7 +114,7 @@ impl Engine {
             // The queue is empty: sprint mode stops here; in continuous mode one
             // discovery round runs, but only past the cooldown.
             if self.state().stop.is_pending()
-                || unit.run_mode != RunMode::Continuous
+                || unit.settings.run_mode != RunMode::Continuous
                 || !self.discovery_due()
             {
                 break;
@@ -240,7 +240,7 @@ impl Engine {
                 events,
                 log_dir: inner.config.data_dir.join("history"),
                 label: agent.label,
-                idle_timeout: unit.agent_timeout,
+                idle_timeout: unit.agent_timeout(),
                 cancel,
                 allowed_tools: agent.tools.to_vec(),
             })
@@ -615,7 +615,7 @@ impl Engine {
         // read-only allowlist runs before the builder session. A plan rejected twice
         // fails the task without a builder session, a commit or a task-file tick.
         // The research report is the plan prompt's prior artifact (T68.1).
-        let plan = if unit.plan_enabled {
+        let plan = if unit.settings.plan_enabled {
             match self
                 .run_plan_stage(&task, &cancel, unit, research.as_deref())
                 .await

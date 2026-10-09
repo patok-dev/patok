@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use patok_core::config::{DaemonEnv, DaemonSettings, ProviderKind, ProviderName, RunMode};
+use patok_core::config::{DaemonEnv, DaemonSettings, ProviderKind, ProviderName};
 use patok_core::event::{EngineEvent, Phase};
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
 use patok_core::task::{self, Task};
@@ -103,6 +103,39 @@ pub(crate) struct Central {
 pub(crate) type Resolver =
     Arc<dyn Fn(ProviderKind) -> Result<Arc<dyn Provider>, ProviderError> + Send + Sync>;
 
+/// Resolves `provider` through `resolver`: the shared resolution shape of the
+/// startup load, every unit of work and the reviewer routing. `Ok(None)`
+/// means the name is not a provider this build implements.
+pub(crate) fn resolve_provider(
+    resolver: &Resolver,
+    provider: &ProviderName,
+) -> Result<Option<Arc<dyn Provider>>, ProviderError> {
+    match provider.kind() {
+        Some(kind) => resolver(kind).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// [`resolve_provider`] as a user-facing rejection: a resolver failure is
+/// logged and reported with the provider's error, a name this build does not
+/// implement with the fixed message.
+pub(crate) fn resolve_or_reject(
+    resolver: &Resolver,
+    provider: &ProviderName,
+) -> Result<Arc<dyn Provider>, String> {
+    let name = provider.to_string();
+    match resolve_provider(resolver, provider) {
+        Ok(Some(provider)) => Ok(provider),
+        Ok(None) => Err(format!(
+            "the `{name}` provider is not available in this build; use claude, codex or mistral"
+        )),
+        Err(error) => {
+            tracing::error!("provider {name} unavailable: {error}");
+            Err(error.to_string())
+        }
+    }
+}
+
 pub(crate) struct Inner {
     pub(crate) config: EngineConfig,
     /// The selected provider, or why none could be set up (reported by the commands).
@@ -134,36 +167,32 @@ pub(crate) struct Inner {
     pub(crate) shutdown: CancellationToken,
 }
 
-/// One unit of work's snapshot of the central settings: taken at the unit's start -- a build-loop start (covering its whole
+/// One unit of work's snapshot of the central configuration: taken at the unit's start -- a build-loop start (covering its whole
 /// session), an add-tasks planner run, a discovery round -- and relied on for the unit's
 /// duration, so a settings change mid-run takes effect at the next such start.
 #[derive(Clone)]
 pub(crate) struct Unit {
     pub(crate) provider: Arc<dyn Provider>,
     pub(crate) model: Option<String>,
-    pub(crate) agent_timeout: Duration,
-    pub(crate) plan_enabled: bool,
-    /// The run mode (`run_mode`), snapshotted at the unit's start exactly like
-    /// the other fields: the scheduled discovery round runs only when it says
-    /// continuous (T103.1), and a mode change takes effect at the next unit.
-    pub(crate) run_mode: RunMode,
-    pub(crate) skip_research_for_simple: bool,
-    /// The review stage's knobs, snapshot at the
-    /// unit's start exactly like the other fields.
-    pub(crate) review_in_loop: bool,
-    pub(crate) skip_review_for_simple: bool,
-    pub(crate) batch_review: bool,
-    pub(crate) review_confidence_threshold: u64,
-    pub(crate) review_multipass_threshold: u64,
-    pub(crate) confidence_threshold: f64,
-    pub(crate) reviewer_provider: ProviderName,
-    /// The reviewer model the review stage's reviewer session runs with
-    /// (the `reviewer_model` daemon key), snapshot at the unit's start exactly
-    /// like the other fields.
-    pub(crate) reviewer_model: String,
+    /// The merged daemon settings held whole instead of copied field by field.
+    pub(crate) settings: DaemonSettings,
+}
+
+impl Unit {
+    /// The idle timeout of one agent session (`agent_timeout_secs`).
+    pub(crate) fn agent_timeout(&self) -> Duration {
+        Duration::from_secs(self.settings.agent_timeout_secs)
+    }
+
     /// Whether the review stage is enabled in the pipeline stage list (an
     /// absent entry is disabled).
-    pub(crate) review_stage_enabled: bool,
+    pub(crate) fn review_stage_enabled(&self) -> bool {
+        self.settings
+            .stages
+            .iter()
+            .find(|entry| entry.stage == Stage::Review)
+            .is_some_and(|entry| entry.enabled)
+    }
 }
 
 impl RunState {
