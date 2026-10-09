@@ -172,29 +172,25 @@ pub enum Phase {
     Running,
 }
 
+/// How a task or an agent session ended. The two vocabularies share
+/// `failed` and `cancelled` and differ only in the success spelling:
+/// [`EngineEvent::TaskFinished`] carries `Done`, [`EngineEvent::AgentFinished`]
+/// carries `Finished` (the wire spellings are pinned by the tests below).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TaskOutcome {
-    /// Agent completed; task ticked and committed as `feat`.
+pub enum Outcome {
+    /// A task completed; ticked and committed as `feat`.
     Done,
+    /// A session ran to completion.
+    Finished,
     /// Agent failed; progress committed as `WIP`, task stays pending.
     Failed,
     /// The agent was cancelled; nothing was committed.
     Cancelled,
 }
 
-/// How one agent session ended: the wording of the finished line the shell
-/// appends to the output pane (T42.1).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionOutcome {
-    /// The session ran to completion.
-    Finished,
-    /// The session errored or failed.
-    Failed,
-    /// The session was cancelled.
-    Cancelled,
-}
+pub type TaskOutcome = Outcome;
+pub type SessionOutcome = Outcome;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -451,6 +447,24 @@ mod tests {
             EngineEvent::from_payload(&event.to_payload()).unwrap(),
             event
         );
+    }
+
+    #[test]
+    fn the_outcome_wire_spellings_stay_pinned() {
+        let task = EngineEvent::TaskFinished {
+            id: "T1.1".into(),
+            outcome: TaskOutcome::Done,
+            commit: None,
+        };
+        let json = String::from_utf8(task.to_payload()).unwrap();
+        assert!(json.contains(r#""outcome":"done""#), "{json}");
+        let agent = EngineEvent::AgentFinished {
+            agent: "builder".into(),
+            outcome: SessionOutcome::Finished,
+            duration_ms: 1,
+        };
+        let json = String::from_utf8(agent.to_payload()).unwrap();
+        assert!(json.contains(r#""outcome":"finished""#), "{json}");
     }
 
     #[test]

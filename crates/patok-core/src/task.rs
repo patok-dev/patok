@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::digits::is_ascii_digits;
+
 /// Placeholder ID of a task line whose ID does not match the ID pattern.
 pub const MALFORMED_ID: &str = "TASK";
 
@@ -181,8 +183,7 @@ pub fn split_id(rest: &str) -> Option<(&str, Option<char>, &str)> {
     let letter = id.chars().next().filter(|c| matches!(c, 'T' | 'H' | 'D'));
     let digits = if letter.is_some() { &id[1..] } else { id };
     let (major, minor) = digits.split_once('.')?;
-    let is_number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    (is_number(major) && is_number(minor)).then_some((
+    (is_ascii_digits(major) && is_ascii_digits(minor)).then_some((
         id,
         letter.filter(|c| *c != 'H'),
         description,

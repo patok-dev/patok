@@ -16,9 +16,7 @@ use schemars::JsonSchema;
 
 use super::persist::SettingValue;
 use super::spelling::config_enum;
-use super::{
-    ConfigFiles, EnumSpelling, Fields, migrate_project_file, project_file, read_layer_table,
-};
+use super::{ConfigFiles, EnumSpelling, Fields, load_layers, migrate_project_file, project_file};
 
 use crate::pipeline::Stage;
 
@@ -1319,22 +1317,16 @@ pub fn load_daemon(
 ) -> DaemonConfig {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
-    let mut merged = DaemonLayer::default();
     migrate_project_file(project_dir, data_dir, &mut warnings);
-    for path in [
-        files.user_global.as_deref(),
-        files.user_local.as_deref(),
-        Some(project_file(data_dir).as_path()),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let Some(table) = read_layer_table(path, "daemon", "tui", &mut warnings) else {
-            continue;
-        };
-        let layer = parse_layer(&table, path, &mut warnings, &mut errors);
-        merged = merge(merged, layer);
-    }
+    let merged = load_layers(
+        files,
+        Some(&project_file(data_dir)),
+        "daemon",
+        "tui",
+        &mut warnings,
+        |table, path, warnings| parse_layer(table, path, warnings, &mut errors),
+        merge,
+    );
     let mut settings = materialize(merged);
     apply_env(&mut settings, env, &mut warnings);
     DaemonConfig {

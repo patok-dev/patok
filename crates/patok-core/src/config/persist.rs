@@ -84,7 +84,8 @@ pub enum ApplyTiming {
 }
 
 /// A persistence failure; `message` is user-facing.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 pub struct PersistError {
     pub message: String,
 }
@@ -96,14 +97,6 @@ impl PersistError {
         }
     }
 }
-
-impl fmt::Display for PersistError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for PersistError {}
 
 /// The tui field registry: every `[tui]` key and what it accepts.
 fn tui_field(name: &str) -> Option<FieldKind> {

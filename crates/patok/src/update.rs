@@ -1,6 +1,5 @@
 //! `patok update`: check for a newer release and install it.
 
-use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -74,38 +73,22 @@ impl HttpClient for CurlClient {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum DownloadError {
+    #[error("I/O error during update: {0}")]
     Io(std::io::Error),
+    #[error("{0}")]
     Http(HttpError),
     /// The checksums file has no line for the archive.
+    #[error("no checksum listed for {0}")]
     MissingChecksum(String),
+    #[error("checksum mismatch for {archive} (expected {expected}, got {actual})")]
     Mismatch {
         archive: String,
         expected: String,
         actual: String,
     },
 }
-
-impl fmt::Display for DownloadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "I/O error during update: {e}"),
-            Self::Http(e) => e.fmt(f),
-            Self::MissingChecksum(a) => write!(f, "no checksum listed for {a}"),
-            Self::Mismatch {
-                archive,
-                expected,
-                actual,
-            } => write!(
-                f,
-                "checksum mismatch for {archive} (expected {expected}, got {actual})"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for DownloadError {}
 
 impl From<std::io::Error> for DownloadError {
     fn from(e: std::io::Error) -> Self {

@@ -137,7 +137,7 @@ pub fn started_line(agent: &str, provider: &str, model: Option<&str>) -> String 
 /// outcome's word (`finished`, `failed` or `cancelled`) and the human duration.
 pub fn finished_line(agent: &str, outcome: SessionOutcome, duration: Duration) -> String {
     let word = match outcome {
-        SessionOutcome::Finished => "finished",
+        SessionOutcome::Done | SessionOutcome::Finished => "finished",
         SessionOutcome::Failed => "failed",
         SessionOutcome::Cancelled => "cancelled",
     };
@@ -938,7 +938,7 @@ impl App {
                 self.run.current_task = None;
                 let sha = commit.map(|c| format!(" ({c})")).unwrap_or_default();
                 let (kind, text) = match outcome {
-                    TaskOutcome::Done => {
+                    TaskOutcome::Done | TaskOutcome::Finished => {
                         self.run.completed += 1;
                         (LineKind::Notice, format!("✔ {id} done{sha}"))
                     }

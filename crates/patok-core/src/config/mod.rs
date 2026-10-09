@@ -171,6 +171,41 @@ pub(crate) fn read_layer_table(
     owned_table
 }
 
+/// Loads and merges one schema's layers over the empty layer: the user-global
+/// and user-local files, then the project file at `project_path` when one is
+/// given. Each file's `owned` table is parsed by `parse` and merged on top of
+/// the accumulated layers by `merge`; `warnings` collects the shared
+/// skip-and-fallback warnings of `read_layer_table` and `parse`.
+pub(crate) fn load_layers<L, P>(
+    files: &ConfigFiles,
+    project_path: Option<&Path>,
+    owned: &str,
+    ignored: &str,
+    warnings: &mut Vec<String>,
+    mut parse: P,
+    merge: impl Fn(L, L) -> L,
+) -> L
+where
+    L: Default,
+    P: FnMut(&toml::Table, &Path, &mut Vec<String>) -> L,
+{
+    let mut merged = L::default();
+    for path in [
+        files.user_global.as_deref(),
+        files.user_local.as_deref(),
+        project_path,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let Some(table) = read_layer_table(path, owned, ignored, warnings) else {
+            continue;
+        };
+        merged = merge(merged, parse(&table, path, warnings));
+    }
+    merged
+}
+
 /// Per-field extraction with failure handling: a wrong
 /// type falls back to that field's default (the `None` of the raw layer) with a warning
 /// naming the field and the source file; every other field is kept.
@@ -248,16 +283,19 @@ impl Fields<'_> {
         parsed
     }
 
-    /// A port number (1-65535).
+    /// A port number (1-65535), on top of [`Fields::uint`]: the range beyond
+    /// `u16::MAX` is the only rejection `uint` cannot report itself.
     pub fn port(&mut self, key: &str, value: &toml::Value) -> Option<u16> {
-        let parsed = value
-            .as_integer()
-            .and_then(|i| u16::try_from(i).ok())
-            .filter(|p| *p > 0);
-        if parsed.is_none() {
-            self.wrong_type(key, "a port number (1-65535)", value);
+        let Some(number) = self.uint(key, value, "a port number (1-65535)", true) else {
+            return None; // uint already warned
+        };
+        match u16::try_from(number) {
+            Ok(port) => Some(port),
+            Err(_) => {
+                self.wrong_type(key, "a port number (1-65535)", value);
+                None
+            }
         }
-        parsed
     }
 
     /// A string field; an empty string means "unset" and also yields `None`.

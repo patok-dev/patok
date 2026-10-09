@@ -5,7 +5,6 @@
 //! installing a release, and writing user-facing lines) live in the binary's
 //! update module, which consumes [`UpdateOutcome`] and prints it.
 
-use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -40,33 +39,17 @@ pub trait HttpClient {
     fn download(&self, url: &str, dest: &Path, timeout: Duration) -> Result<(), HttpError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("http request failed: {0}")]
 pub struct HttpError(pub String);
 
-impl fmt::Display for HttpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "http request failed: {}", self.0)
-    }
-}
-
-impl std::error::Error for HttpError {}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DiscoveryError {
+    #[error("{0}")]
     Http(HttpError),
+    #[error("invalid release listing: {0}")]
     Parse(String),
 }
-
-impl fmt::Display for DiscoveryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Http(e) => e.fmt(f),
-            Self::Parse(e) => write!(f, "invalid release listing: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for DiscoveryError {}
 
 #[derive(Debug, Deserialize)]
 struct RawRelease {

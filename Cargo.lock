@@ -1263,6 +1263,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tonic",
@@ -1278,6 +1279,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "toml",
 ]
 

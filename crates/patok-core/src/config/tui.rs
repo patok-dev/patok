@@ -7,9 +7,7 @@ use std::path::Path;
 use schemars::JsonSchema;
 
 use super::spelling::config_enum;
-use super::{
-    ConfigFiles, EnumSpelling, Fields, migrate_project_file, project_file, read_layer_table,
-};
+use super::{ConfigFiles, EnumSpelling, Fields, load_layers, migrate_project_file, project_file};
 
 use crate::update::UpdateChannel;
 
@@ -123,25 +121,19 @@ pub fn load_tui(
     data_dir: Option<&Path>,
 ) -> (TuiSettings, Vec<String>) {
     let mut warnings = Vec::new();
-    let mut merged = TuiLayer::default();
     let project_path = data_dir.map(|dir| {
         migrate_project_file(project_dir, dir, &mut warnings);
         project_file(dir)
     });
-    for path in [
-        files.user_global.as_deref(),
-        files.user_local.as_deref(),
+    let merged = load_layers(
+        files,
         project_path.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let Some(table) = read_layer_table(path, "tui", "daemon", &mut warnings) else {
-            continue;
-        };
-        let layer = parse_layer(&table, path, &mut warnings);
-        merged = super::merge::tui(merged, layer);
-    }
+        "tui",
+        "daemon",
+        &mut warnings,
+        parse_layer,
+        super::merge::tui,
+    );
     (merged.materialize(), warnings)
 }
 

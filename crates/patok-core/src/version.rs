@@ -4,6 +4,8 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::digits::is_ascii_digits;
+
 /// A parsed version: numeric core plus an optional pre-release suffix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
@@ -14,16 +16,9 @@ pub struct Version {
     pub pre: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid version: {0}")]
 pub struct ParseVersionError(pub String);
-
-impl fmt::Display for ParseVersionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid version: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseVersionError {}
 
 impl FromStr for Version {
     type Err = ParseVersionError;
@@ -39,7 +34,7 @@ impl FromStr for Version {
         let mut parts = core.split('.');
         let mut num = || -> Result<u64, ParseVersionError> {
             let p = parts.next().ok_or_else(err)?;
-            if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+            if !is_ascii_digits(p) {
                 return Err(err());
             }
             p.parse().map_err(|_| err())
@@ -77,12 +72,8 @@ impl fmt::Display for Version {
     }
 }
 
-fn is_numeric(f: &str) -> bool {
-    f.bytes().all(|b| b.is_ascii_digit())
-}
-
 fn cmp_field(a: &str, b: &str) -> Ordering {
-    match (is_numeric(a), is_numeric(b)) {
+    match (is_ascii_digits(a), is_ascii_digits(b)) {
         (true, true) => {
             // Compare by magnitude without overflow: strip leading zeros, then length, then lexically.
             let (a, b) = (a.trim_start_matches('0'), b.trim_start_matches('0'));
