@@ -8,10 +8,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use super::common::{
-    ENTRY_INDENT, base_style, close_button_line, close_button_rect, group_header_line,
-    render_modal_footer, render_scrollbar, selected_row_style,
+    ENTRY_INDENT, base_style, group_header_line, render_modal_footer, render_scrollbar,
+    selected_row_style,
 };
-use crate::app::App;
+use super::modal::{ModalTitle, render_modal_frame};
+use crate::app::{App, CONFIRM_ESC_LABEL, OVERLAY_BUTTONS};
 use crate::overlay::{Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel};
 use crate::theme::Theme;
 
@@ -21,12 +22,7 @@ use crate::theme::Theme;
 pub fn settings_area(screen: Rect) -> Rect {
     let width = (screen.width * 9 / 10).max(80).min(screen.width);
     let height = (screen.height * 4 / 5).max(24).min(screen.height);
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
+    super::modal::centered(screen, width, height)
 }
 
 /// The settings body width from which the help box (T85.1) fits beside the
@@ -67,15 +63,14 @@ pub fn settings_body_areas(body: Rect) -> (Rect, Rect) {
 pub(super) fn render_settings_overlay(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = settings_area(frame.area());
-    frame.render_widget(Clear, area);
-    app.overlay.close.set(close_button_rect(area));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(base_style(theme))
-        .title_top(Line::from(" Settings -- Patok ").centered())
-        .title_top(close_button_line(theme).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let chrome = render_modal_frame(
+        frame,
+        theme,
+        area,
+        ModalTitle::Centered(" Settings -- Patok "),
+    );
+    app.overlay.close.set(chrome.close);
+    let inner = chrome.inner;
     let [body, status_line, footer] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(1),
@@ -131,7 +126,7 @@ pub(super) fn render_settings_overlay(frame: &mut Frame, app: &App) {
         frame,
         footer,
         &["↑↓ move", "Enter/Space edit", "←→ fold/cycle"],
-        &[("Esc", "Close")],
+        &OVERLAY_BUTTONS,
         theme,
     );
 }
@@ -177,7 +172,7 @@ pub(super) fn render_settings_confirm(frame: &mut Frame, app: &App) {
         " Unsaved changes ",
         &SETTINGS_CHOICES,
         app.overlay.confirm_selected,
-        "Cancel",
+        CONFIRM_ESC_LABEL,
     );
     app.overlay.confirm_close.set(rects.close);
     app.overlay.confirm_body.set(rects.body);

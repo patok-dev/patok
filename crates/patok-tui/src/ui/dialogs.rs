@@ -4,13 +4,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::common::{
-    ENTRY_INDENT, base_style, close_button_line, close_button_rect, group_header_line,
-    render_modal_footer, selected_row_style,
+    ENTRY_INDENT, base_style, group_header_line, render_modal_footer, selected_row_style,
 };
-use crate::app::{App, DialogKind, STOP_CHOICES, menu_entries};
+use super::modal::{ModalTitle, render_modal_frame};
+use crate::app::{
+    App, DialogKind, MENU_BUTTONS, STOP_CHOICES, STOP_ESC_LABEL, THEME_BUTTONS, menu_entries,
+};
 use crate::overlay::{Entry, SETTINGS_CHOICES};
 use crate::theme::theme_modal_groups;
 use patok_core::event::Phase;
@@ -31,19 +33,12 @@ pub const INJECT_WATERMARK: &str = "Type the task; it lands as an unchecked task
 pub fn dialog_area(screen: Rect) -> Rect {
     let width = (screen.width * 9 / 10).max(60).min(screen.width);
     let height = (screen.height * 4 / 5).max(20).min(screen.height);
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
+    super::modal::centered(screen, width, height)
 }
 
 pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = dialog_area(frame.area());
-    frame.render_widget(Clear, area);
-    app.dialog_close.set(close_button_rect(area));
     // The two modals share everything but their chrome strings (T76.1): the
     // title and the empty-input watermark follow the dialog's kind; the
     // primary button's label flows from `App::primary_label`, which branches
@@ -52,13 +47,9 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
         DialogKind::Add => (" What do you want to do? ", DIALOG_WATERMARK),
         DialogKind::Inject => (" Inject a task ", INJECT_WATERMARK),
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(base_style(theme))
-        .title(Span::raw(title))
-        .title_top(close_button_line(theme).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Left(title));
+    app.dialog_close.set(chrome.close);
+    let inner = chrome.inner;
     let [input, dialog_status, footer] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(1),
@@ -136,7 +127,7 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
         frame,
         footer,
         &["↑↓←→ move", "Shift-Enter new line", "Ctrl+U clear"],
-        &[("Enter", app.primary_label()), ("Esc", "Close")],
+        &app.dialog_buttons(),
         theme,
     );
 }
@@ -161,7 +152,7 @@ pub(super) fn render_stop_dialog(frame: &mut Frame, app: &App) {
         " Stop build ",
         &STOP_CHOICES,
         app.stop_selected,
-        "Close",
+        STOP_ESC_LABEL,
     );
     app.stop_close.set(rects.close);
     app.stop_body.set(rects.body);
@@ -175,12 +166,7 @@ pub(super) fn render_stop_dialog(frame: &mut Frame, app: &App) {
 pub fn menu_area(screen: Rect, running: bool) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
     let height = (menu_entries(running).len() + 3).min(usize::from(screen.height)) as u16;
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
+    super::modal::centered(screen, width, height)
 }
 
 /// The m menu (the `m` key): a centered " Menu " modal listing the status
@@ -196,15 +182,9 @@ pub(super) fn render_menu(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let running = app.phase == Phase::Running;
     let area = menu_area(frame.area(), running);
-    frame.render_widget(Clear, area);
-    app.menu_close.set(close_button_rect(area));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(base_style(theme))
-        .title_top(Line::from(" Menu ").centered())
-        .title_top(close_button_line(theme).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(" Menu "));
+    app.menu_close.set(chrome.close);
+    let inner = chrome.inner;
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     app.menu_body.set(body);
     let lines: Vec<Line> = menu_entries(running)
@@ -235,13 +215,7 @@ pub(super) fn render_menu(frame: &mut Frame, app: &App) {
     // The bottom line's two zones (T59.1): the selection hint on the left, the
     // Confirm and Close buttons on the right.
     app.menu_footer.set(footer);
-    render_modal_footer(
-        frame,
-        footer,
-        &["↑↓ move"],
-        &[("Enter", "Confirm"), ("Esc", "Close")],
-        theme,
-    );
+    render_modal_footer(frame, footer, &["↑↓ move"], &MENU_BUTTONS, theme);
 }
 
 /// The theme picker's rect (T43.1, T116.1): a centered modal, at least 54
@@ -251,12 +225,7 @@ pub(super) fn render_menu(frame: &mut Frame, app: &App) {
 pub fn theme_area(screen: Rect) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
     let height = 16.min(screen.height);
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
+    super::modal::centered(screen, width, height)
 }
 
 /// The theme picker's entry the pointer sits on (T43.1, T116.1): the visible
@@ -313,15 +282,9 @@ pub fn stop_row_at(position: Position, body: Rect) -> Option<usize> {
 pub(super) fn render_theme_modal(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = theme_area(frame.area());
-    frame.render_widget(Clear, area);
-    app.theme_modal.close.set(close_button_rect(area));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(base_style(theme))
-        .title_top(Line::from(" Theme ").centered())
-        .title_top(close_button_line(theme).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(" Theme "));
+    app.theme_modal.close.set(chrome.close);
+    let inner = chrome.inner;
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     app.theme_modal.area.set(body);
     let groups = theme_modal_groups();
@@ -342,13 +305,7 @@ pub(super) fn render_theme_modal(frame: &mut Frame, app: &App) {
     // Save and Cancel buttons on the right. The modal is the narrowest of the
     // five, so the hint stays short enough to keep the two zones apart.
     app.theme_modal.footer.set(footer);
-    render_modal_footer(
-        frame,
-        footer,
-        &["↑↓/jk previews"],
-        &[("Enter", "Save"), ("Esc", "Cancel")],
-        theme,
-    );
+    render_modal_footer(frame, footer, &["↑↓/jk previews"], &THEME_BUTTONS, theme);
 }
 
 /// One visible entry of the picker (T43.1, T115.1, T116.1): a group header

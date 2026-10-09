@@ -294,6 +294,79 @@ pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
 /// two keys that act on the pending stop.
 pub const SOFT_STOP_PENDING: &str = "Soft stop requested -- the build stops after the current task and the app keeps running; press Esc to cancel the stop or q to cancel the current task now. [d] detach instead";
 
+/// Which modal is open (finding 20): one enum over the five modals' open
+/// flags plus the overlay's nested unsaved-changes dialog. The flags stay the
+/// writable state (and the test surface); this enum is the shared view of
+/// them that key dispatch, mouse dispatch and the render stack all derive
+/// which modal wins from, instead of three independently encoded orders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Modal {
+    /// The settings overlay.
+    Overlay,
+    /// The add-task / inject-task dialog.
+    Dialog,
+    /// The m menu.
+    Menu,
+    /// The stop dialog.
+    Stop,
+    /// The settings overlay's unsaved-changes dialog, nested inside it.
+    Confirm,
+    /// The theme picker.
+    Theme,
+}
+
+impl Modal {
+    /// Top first: which modal wins keys, mouse and the top pixel layer when
+    /// several flags are set. Today's `on_mouse` chain's order, which `on_key`
+    /// agrees with in every reachable state (co-occurrence beyond the
+    /// overlay→confirm nesting is unreachable: every cross-modal opener closes
+    /// its own modal first, and each modal swallows everything); the render
+    /// stack draws the reverse, so the highest-precedence modal ends on top.
+    pub(crate) const PRECEDENCE: [Modal; 6] = [
+        Modal::Theme,
+        Modal::Confirm,
+        Modal::Stop,
+        Modal::Menu,
+        Modal::Dialog,
+        Modal::Overlay,
+    ];
+
+    /// Whether this modal's open flag is set.
+    pub(crate) fn is_open(self, app: &App) -> bool {
+        match self {
+            Modal::Theme => app.theme_modal.open,
+            Modal::Confirm => app.overlay.confirm_open,
+            Modal::Stop => app.stop_open,
+            Modal::Menu => app.menu_open,
+            Modal::Dialog => app.dialog_open,
+            Modal::Overlay => app.overlay.open,
+        }
+    }
+}
+
+/// The m menu's footer buttons (finding 20): defined once beside the menu's
+/// rows, shared by the renderer and the mouse hit-test, so the drawn buttons
+/// and their hit-test rectangles agree by construction.
+pub(crate) const MENU_BUTTONS: [(&str, &str); 2] = [("Enter", "Confirm"), ("Esc", "Close")];
+
+/// The theme picker's footer buttons (finding 20): shared by the renderer
+/// and the mouse hit-test.
+pub(crate) const THEME_BUTTONS: [(&str, &str); 2] = [("Enter", "Save"), ("Esc", "Cancel")];
+
+/// The settings overlay's footer buttons (finding 20): shared by the
+/// renderer and the mouse hit-test.
+pub(crate) const OVERLAY_BUTTONS: [(&str, &str); 1] = [("Esc", "Close")];
+
+/// The stop dialog's footer Esc label (finding 20): the one spelling its
+/// renderer and its mouse hit-test share, through the choice dialog's
+/// `esc_label`.
+pub(crate) const STOP_ESC_LABEL: &str = "Close";
+
+/// The unsaved-changes dialog's footer Esc label (finding 20): the one
+/// spelling its renderer and its mouse hit-test share, through the choice
+/// dialog's `esc_label`.
+pub(crate) const CONFIRM_ESC_LABEL: &str = "Cancel";
+
 /// The merged view's focused frame: which of the two stacked frames takes all the
 /// free space (the other shrinks to 5 content lines).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -956,6 +1029,24 @@ impl App {
         }
     }
 
+    /// The dialog footer's buttons (finding 20): defined once beside the
+    /// primary label they branch on, shared by the renderer and the mouse
+    /// hit-test, so the drawn buttons and their hit-test rectangles agree
+    /// by construction.
+    pub(crate) fn dialog_buttons(&self) -> [(&'static str, &'static str); 2] {
+        [("Enter", self.primary_label()), ("Esc", "Close")]
+    }
+
+    /// The open modal that wins keys, mouse and the top pixel layer (finding
+    /// 20): the first entry of the shared [`Modal::PRECEDENCE`] table whose
+    /// flag is set, `None` when no modal is open. Pure, so callers can then
+    /// take `&mut self`.
+    pub(crate) fn active_modal(&self) -> Option<Modal> {
+        Modal::PRECEDENCE
+            .into_iter()
+            .find(|modal| modal.is_open(self))
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> Action {
         if key.kind == KeyEventKind::Release {
             return Action::None;
@@ -966,27 +1057,20 @@ impl App {
         if key.code == KeyCode::Char('c') && ctrl {
             return Action::Detach;
         }
-        // The theme picker swallows every other key while it is open, so
-        // nothing underneath reacts (T43.1); Ctrl+C above still detaches, the
-        // same convention as the other modals.
-        if self.theme_modal.open {
-            return self.on_theme_key(key, ctrl);
-        }
-        // The stop dialog swallows every other key while it is open, so nothing
-        // leaks to the shell (no restart, no navigation, no second build).
-        if self.stop_open {
-            return self.on_stop_key(key);
-        }
-        // The m menu swallows every other key while it is open, so nothing
-        // leaks to the shell either.
-        if self.menu_open {
-            return self.on_menu_key(key);
-        }
-        if self.dialog_open {
-            return self.on_dialog_key(key, ctrl);
-        }
-        if self.overlay.open {
-            return self.on_overlay_key(key);
+        // The open modal swallows every other key, so nothing underneath
+        // reacts -- no restart, no navigation, no second build; which one
+        // wins comes from the shared precedence table (finding 20), the one
+        // order the mouse dispatch and the render stack also derive theirs
+        // from. Ctrl+C above still detaches, the same convention as before.
+        match self.active_modal() {
+            Some(Modal::Theme) => return self.on_theme_key(key, ctrl),
+            Some(Modal::Stop) => return self.on_stop_key(key),
+            Some(Modal::Menu) => return self.on_menu_key(key),
+            Some(Modal::Dialog) => return self.on_dialog_key(key, ctrl),
+            // The unsaved-changes dialog's keys route through the overlay's
+            // key path, which handles it before anything else.
+            Some(Modal::Confirm | Modal::Overlay) => return self.on_overlay_key(key),
+            None => {}
         }
         match key.code {
             KeyCode::Char('d') => Action::Detach,
@@ -1352,11 +1436,9 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 // The footer's buttons sit outside the body rows, so they are
                 // checked first (T59.1).
-                if let Some(code) = footer_button_code(
-                    &mouse,
-                    self.theme_modal.footer.get(),
-                    &[("Enter", "Save"), ("Esc", "Cancel")],
-                ) {
+                if let Some(code) =
+                    footer_button_code(&mouse, self.theme_modal.footer.get(), &THEME_BUTTONS)
+                {
                     return self.on_theme_key(KeyEvent::new(code, KeyModifiers::NONE), false);
                 }
                 if let Some(row) = row {
@@ -1385,11 +1467,7 @@ impl App {
         if close_clicked(&mouse, self.dialog_close.get()) {
             return self.on_dialog_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false);
         }
-        let code = footer_button_code(
-            &mouse,
-            self.dialog_footer.get(),
-            &[("Enter", self.primary_label()), ("Esc", "Close")],
-        );
+        let code = footer_button_code(&mouse, self.dialog_footer.get(), &self.dialog_buttons());
         match code {
             Some(code) => self.on_dialog_key(KeyEvent::new(code, KeyModifiers::NONE), false),
             None => Action::None,
@@ -1414,7 +1492,7 @@ impl App {
             &mouse,
             self.stop_close.get(),
             self.stop_footer.get(),
-            "Close",
+            STOP_ESC_LABEL,
             self.stop_body.get(),
             STOP_CHOICES.len(),
         ) {
@@ -1457,11 +1535,7 @@ impl App {
         if close_clicked(&mouse, self.menu_close.get()) {
             return self.on_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
-        if let Some(code) = footer_button_code(
-            &mouse,
-            self.menu_footer.get(),
-            &[("Enter", "Confirm"), ("Esc", "Close")],
-        ) {
+        if let Some(code) = footer_button_code(&mouse, self.menu_footer.get(), &MENU_BUTTONS) {
             return self.on_menu_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
@@ -1513,8 +1587,7 @@ impl App {
         if close_clicked(&mouse, self.overlay.close.get()) {
             return self.on_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         }
-        if let Some(code) =
-            footer_button_code(&mouse, self.overlay.footer.get(), &[("Esc", "Close")])
+        if let Some(code) = footer_button_code(&mouse, self.overlay.footer.get(), &OVERLAY_BUTTONS)
         {
             return self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE));
         }
@@ -1582,7 +1655,7 @@ impl App {
             &mouse,
             self.overlay.confirm_close.get(),
             self.overlay.confirm_footer.get(),
-            "Cancel",
+            CONFIRM_ESC_LABEL,
             self.overlay.confirm_body.get(),
             SETTINGS_CHOICES.len(),
         ) {
@@ -2053,23 +2126,22 @@ impl App {
     /// modal's bottom-line buttons respond to a click on their rectangle with
     /// exactly the action their key triggers (T59.1).
     pub fn on_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if self.theme_modal.open {
-            return self.on_theme_mouse(mouse);
-        }
-        if self.overlay.confirm_open {
-            return self.on_confirm_mouse(mouse);
-        }
-        if self.stop_open {
-            return self.on_stop_mouse(mouse);
-        }
-        if self.menu_open {
-            return self.on_menu_mouse(mouse);
-        }
-        if self.dialog_open {
-            return self.on_dialog_mouse(mouse);
-        }
-        if self.overlay.open {
-            return self.on_overlay_mouse(mouse);
+        // Every open modal handles its own mouse events and swallows the
+        // rest, so nothing underneath reacts while it is open -- the theme
+        // picker keeps its row hover and click behaviour (T43.1) and every
+        // modal's bottom-line buttons respond to a click on their rectangle
+        // with exactly the action their key triggers (T59.1); which modal
+        // wins comes from the shared precedence table (finding 20), the one
+        // order the key dispatch and the render stack also derive theirs
+        // from.
+        match self.active_modal() {
+            Some(Modal::Theme) => return self.on_theme_mouse(mouse),
+            Some(Modal::Confirm) => return self.on_confirm_mouse(mouse),
+            Some(Modal::Stop) => return self.on_stop_mouse(mouse),
+            Some(Modal::Menu) => return self.on_menu_mouse(mouse),
+            Some(Modal::Dialog) => return self.on_dialog_mouse(mouse),
+            Some(Modal::Overlay) => return self.on_overlay_mouse(mouse),
+            None => {}
         }
         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
         let frame = frame_at(position, self.output_area.get(), self.tasks_area.get());

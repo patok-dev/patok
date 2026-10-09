@@ -13,12 +13,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::common::{
-    base_style, close_button_line, close_button_rect, close_clicked, footer_button_code,
-    render_modal_footer, selected_row_style,
-};
+use super::common::{close_clicked, footer_button_code, render_modal_footer, selected_row_style};
+use super::modal::{ModalTitle, render_modal_frame};
 use crate::theme::Theme;
 
 /// One labelled choice row of a three-choice dialog (finding 6): the label
@@ -38,12 +36,7 @@ pub(crate) trait Choice {
 pub(super) fn choice_area(screen: Rect) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
     let height = 9.min(screen.height);
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
+    super::modal::centered(screen, width, height)
 }
 
 /// The choice row the pointer sits on (T146.1, T148.1): the row index when
@@ -190,15 +183,8 @@ pub(super) fn render_choice_dialog<T: Choice>(
     esc_label: &'static str,
 ) -> ChoiceRects {
     let area = choice_area(frame.area());
-    frame.render_widget(Clear, area);
-    let close = close_button_rect(area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(base_style(theme))
-        .title_top(Line::from(title).centered())
-        .title_top(close_button_line(theme).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(title));
+    let inner = chrome.inner;
     let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     let lines: Vec<Line> = choices
         .iter()
@@ -233,7 +219,7 @@ pub(super) fn render_choice_dialog<T: Choice>(
         theme,
     );
     ChoiceRects {
-        close,
+        close: chrome.close,
         body,
         footer,
     }

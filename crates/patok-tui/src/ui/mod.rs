@@ -3,6 +3,7 @@
 pub(crate) mod choice;
 mod common;
 mod dialogs;
+mod modal;
 mod output;
 mod settings;
 mod status;
@@ -12,7 +13,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::widgets::Block;
 
-use crate::app::{App, FrameFocus};
+use crate::app::{App, FrameFocus, Modal};
 use crate::pipeline::{rail_width, render_rail};
 
 pub use common::{
@@ -73,23 +74,23 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_output(frame, app, output);
     render_tasks(frame, app, tasks);
     frame.render_widget(status_widget(app, status), status);
-    if app.settings_open() {
-        render_settings_overlay(frame, app);
-    }
-    if app.overlay.confirm_open {
-        render_settings_confirm(frame, app);
-    }
-    if app.dialog_open {
-        render_dialog(frame, app);
-    }
-    if app.stop_open {
-        render_stop_dialog(frame, app);
-    }
-    if app.menu_open {
-        render_menu(frame, app);
-    }
-    if app.theme_modal.open {
-        render_theme_modal(frame, app);
+    // The open modals on top, bottom layer first (finding 20): the order is
+    // the shared [`Modal::PRECEDENCE`] table reversed -- the same table the
+    // key and mouse dispatch derive the winning modal from -- so the
+    // highest-precedence modal ends up on top and which modal wins when
+    // several would be open is decided in one place.
+    for modal in Modal::PRECEDENCE.iter().rev().copied() {
+        if !modal.is_open(app) {
+            continue;
+        }
+        match modal {
+            Modal::Overlay => render_settings_overlay(frame, app),
+            Modal::Confirm => render_settings_confirm(frame, app),
+            Modal::Dialog => render_dialog(frame, app),
+            Modal::Menu => render_menu(frame, app),
+            Modal::Stop => render_stop_dialog(frame, app),
+            Modal::Theme => render_theme_modal(frame, app),
+        }
     }
 }
 
