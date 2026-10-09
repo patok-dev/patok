@@ -10,7 +10,7 @@ use crossterm::event::{Event as TermEvent, EventStream};
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use patok_core::config::{SettingValue, Theme as ThemeKey};
-use patok_core::event::{EngineEvent, Snapshot};
+use patok_core::event::Snapshot;
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{
     AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, InjectTask,
@@ -23,6 +23,8 @@ use tonic::Streaming;
 use tonic::transport::Channel;
 
 use crate::app::{Action, App, QueueRun};
+use crate::driver::CommandCall;
+use crate::driver::Update;
 use crate::overlay::Schema;
 use crate::project;
 use crate::settings::{ShellSettings, to_proto};
@@ -297,9 +299,6 @@ where
     }
 }
 
-/// The submit RPC's result, as the shared dispatch asks the engine for it.
-type CommandCall = Result<tonic::Response<patok_proto::CommandResponse>, tonic::Status>;
-
 /// Whether the shared submit dispatch consumed the action.
 enum SubmitFlow {
     /// The action was one of the submit family and its flow ran.
@@ -373,21 +372,15 @@ where
         // agent session. The modal closes with the focus back on the task
         // list; a rejection keeps it open on the input with the error.
         Action::InjectTask(text) => {
-            let command = CommandRequest {
-                action: Some(command_request::Action::InjectTask(InjectTask {
-                    text: text.clone(),
-                })),
-            };
-            let error = match submit(command).await {
-                Ok(response) => {
-                    let response = response.into_inner();
-                    (!response.accepted).then_some(response.error)
-                }
-                Err(status) => Some(format!("inject failed: {}", status.message())),
-            };
-            match error {
-                None => app.on_task_injected(),
-                Some(error) => {
+            match crate::driver::submit(
+                submit,
+                command_request::Action::InjectTask(InjectTask { text: text.clone() }),
+                "inject failed",
+            )
+            .await
+            {
+                Ok(()) => app.on_task_injected(),
+                Err(error) => {
                     app.on_submit_failed(format!("could not append to TASKS.md: {error}"));
                 }
             }
@@ -406,22 +399,18 @@ where
     Req: FnOnce(CommandRequest) -> Fut,
     Fut: std::future::Future<Output = CommandCall>,
 {
-    let command = CommandRequest {
-        action: Some(command_request::Action::AddTasks(AddTasks {
+    match crate::driver::submit(
+        submit,
+        command_request::Action::AddTasks(AddTasks {
             request,
             kind: kind as i32,
-        })),
-    };
-    let error = match submit(command).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("add failed: {}", status.message())),
-    };
-    match error {
-        None => app.on_tasks_submitted(),
-        Some(error) => app.on_submit_failed(error),
+        }),
+        "add failed",
+    )
+    .await
+    {
+        Ok(()) => app.on_tasks_submitted(),
+        Err(error) => app.on_submit_failed(error),
     }
 }
 
@@ -605,36 +594,35 @@ async fn event_loop(
                 Some(Err(e)) => return Err(e.into()),
                 None => return Ok(Outcome::Detached { completed: app.run.completed }),
             },
-            update = updates.message() => match update {
-                Ok(Some(update)) => match update.payload {
-                    Some(engine_update::Payload::Event(event)) => {
-                        match EngineEvent::from_payload(&event.payload) {
-                            Ok(event) => {
-                                // Entering the idle phase rescans the project, so the
-                                // scenario reflects the files as they are now
-                                //.
-                                let was_idle = app.is_idle();
-                                app.apply(event);
-                                if !was_idle && app.is_idle() {
-                                    let dir = std::path::PathBuf::from(app.project.clone());
-                                    app.project_status = probe_status(&dir).await;
-                                }
-                            }
-                            Err(e) => app.status = Some(format!("unreadable {} event: {e}", event.kind)),
-                        }
+            update = crate::driver::next_update(&mut updates) => match update {
+                Update::Event(event) => {
+                    // Entering the idle phase rescans the project, so the
+                    // scenario reflects the files as they are now
+                    // .
+                    let was_idle = app.is_idle();
+                    app.apply(event);
+                    if !was_idle && app.is_idle() {
+                        let dir = std::path::PathBuf::from(app.project.clone());
+                        app.project_status = probe_status(&dir).await;
                     }
-                    Some(engine_update::Payload::ShutdownNotice(notice)) => {
-                        app.status = Some(format!("Engine stopping: {}", notice.reason));
-                        stopped_reason = Some(notice.reason);
-                    }
-                    _ => {}
-                },
+                }
+                Update::UnreadableEvent { kind, error } => {
+                    app.status = Some(format!("unreadable {kind} event: {error}"))
+                }
+                Update::ShutdownNotice(reason) => {
+                    app.status = Some(format!("Engine stopping: {reason}"));
+                    stopped_reason = Some(reason);
+                }
+                Update::Ignored => {}
                 // The stream ends once the engine is gone.
-                Ok(None) => {
-                    let reason = stopped_reason.unwrap_or_else(|| "connection to the engine closed".into());
+                Update::StreamEnded => {
+                    let reason =
+                        stopped_reason.unwrap_or_else(|| "connection to the engine closed".into());
                     return Ok(Outcome::EngineStopped { reason, completed: app.run.completed });
                 }
-                Err(status) => return Err(anyhow!("lost the engine connection: {}", status.message())),
+                Update::ConnectionLost(message) => {
+                    return Err(anyhow!("lost the engine connection: {message}"))
+                }
             },
             progress = next_shutdown(&mut shutdown) => match progress {
                 Some(Ok(update)) => {
@@ -707,16 +695,13 @@ async fn next_shutdown(
 }
 
 async fn start_build(client: &mut EngineClient<Channel>, app: &mut App) {
-    let request = CommandRequest {
-        action: Some(command_request::Action::StartBuild(StartBuild {})),
-    };
-    app.status = match client.submit_command(request).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("start failed: {}", status.message())),
-    };
+    app.status = crate::driver::submit(
+        |command| client.submit_command(command),
+        command_request::Action::StartBuild(StartBuild {}),
+        "start failed",
+    )
+    .await
+    .err();
 }
 
 /// Starts one discovery round now (the Enter key while the engine is idle): the round
@@ -724,16 +709,13 @@ async fn start_build(client: &mut EngineClient<Channel>, app: &mut App) {
 /// attach stream; only a rejection (e.g. a run that just started) lands in the
 /// status bar.
 async fn run_discovery(client: &mut EngineClient<Channel>, app: &mut App) {
-    let request = CommandRequest {
-        action: Some(command_request::Action::RunDiscovery(RunDiscovery {})),
-    };
-    app.status = match client.submit_command(request).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("discovery failed: {}", status.message())),
-    };
+    app.status = crate::driver::submit(
+        |command| client.submit_command(command),
+        command_request::Action::RunDiscovery(RunDiscovery {}),
+        "discovery failed",
+    )
+    .await
+    .err();
 }
 
 /// Cancels a pending soft stop (Esc while one is pending). The app state was
@@ -742,17 +724,13 @@ async fn run_discovery(client: &mut EngineClient<Channel>, app: &mut App) {
 /// puts it back: the stop is still in flight and its stream finishes the
 /// cleanup.
 async fn cancel_soft_stop(client: &mut EngineClient<Channel>, app: &mut App) {
-    let request = CommandRequest {
-        action: Some(command_request::Action::CancelSoftStop(CancelSoftStop {})),
-    };
-    let error = match client.submit_command(request).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("cancel failed: {}", status.message())),
-    };
-    if let Some(error) = error {
+    if let Err(error) = crate::driver::submit(
+        |command| client.submit_command(command),
+        command_request::Action::CancelSoftStop(CancelSoftStop {}),
+        "cancel failed",
+    )
+    .await
+    {
         app.run.stopping = true;
         app.status = Some(error);
     }
@@ -818,26 +796,21 @@ async fn change_setting<S: SettingsSubmit>(
                     return false;
                 }
             };
-            let request = CommandRequest {
-                action: Some(command_request::Action::SettingsChange(SettingsChange {
+            match crate::driver::submit(
+                |request| submitter.settings_change(request),
+                command_request::Action::SettingsChange(SettingsChange {
                     change: Some(change),
-                })),
-            };
-            match submitter.settings_change(request).await {
-                Ok(response) => {
-                    let response = response.into_inner();
-                    if !response.accepted {
-                        app.on_settings_rejected(response.error);
-                        return false;
-                    }
+                }),
+                "settings change failed",
+            )
+            .await
+            {
+                Ok(()) => {
                     app.on_settings_applied(schema, field, value);
                     true
                 }
-                Err(status) => {
-                    app.on_settings_rejected(format!(
-                        "settings change failed: {}",
-                        status.message()
-                    ));
+                Err(error) => {
+                    app.on_settings_rejected(error);
                     false
                 }
             }

@@ -5,6 +5,7 @@ mod app;
 mod choice;
 pub mod client;
 mod dialog_editor;
+mod driver;
 mod headless;
 mod hit;
 mod markdown;
