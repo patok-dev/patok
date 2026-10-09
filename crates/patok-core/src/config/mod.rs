@@ -85,10 +85,7 @@ fn user_layer_file(
     xdg_config_home: Option<&str>,
     home: Option<&str>,
 ) -> Option<PathBuf> {
-    let base = match xdg_config_home.filter(|v| !v.is_empty()) {
-        Some(dir) => PathBuf::from(dir),
-        None => Path::new(home.filter(|v| !v.is_empty())?).join(".config"),
-    };
+    let base = crate::paths::base_dir(xdg_config_home, home, ".config")?;
     Some(base.join("patok").join(file))
 }
 
