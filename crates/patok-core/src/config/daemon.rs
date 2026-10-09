@@ -20,6 +20,8 @@ use super::{
     ConfigFiles, EnumSpelling, Fields, migrate_project_file, project_file, read_layer_table,
 };
 
+use crate::pipeline::Stage;
+
 config_enum! {
     /// The providers the engine can run today.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -164,18 +166,46 @@ config_enum! {
 /// prompt override. A stage absent from the list is treated as disabled by the consumer;
 /// order is display-only.
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-pub struct Stage {
-    pub id: String,
+#[schemars(rename = "Stage")]
+pub struct StageConfig {
+    #[schemars(rename = "id", schema_with = "stage_id_schema")]
+    pub stage: Stage,
     pub label: String,
     pub enabled: bool,
     pub prompt: Option<String>,
 }
 
+/// The schema of the `id` property: the committed schema documents the stage id as a
+/// free string (parsing is manual, per the schema module's doc), so the enum-keyed
+/// field renders exactly that shape.
+fn stage_id_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type": "string"})
+}
+
+/// The accepted stage ids, as the unknown-id error names them.
+const ACCEPTED_STAGE_IDS: &str = "research, plan, build (alias implement), review";
+
+/// The config alias of a pipeline stage id: `implement` is the build stage's
+/// pre-enum spelling, kept so existing config files keep loading.
+const STAGE_ID_ALIASES: &[(&str, Stage)] = &[("implement", Stage::Build)];
+
+/// Parses a stage id: one of the pipeline enum's spellings, or a config alias;
+/// trimmed, case-insensitive; `None` for anything unrecognized.
+fn parse_stage_id(id: &str) -> Option<Stage> {
+    Stage::parse(id).or_else(|| {
+        let normalized = id.trim().to_lowercase();
+        STAGE_ID_ALIASES
+            .iter()
+            .find(|(alias, _)| normalized == *alias)
+            .map(|(_, stage)| *stage)
+    })
+}
+
 /// A pipeline stage as written in one layer, before merging: each field may be absent,
 /// and a higher layer's entry overrides only the fields it sets.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RawStage {
-    pub id: String,
+    pub stage: Stage,
     pub label: Option<String>,
     pub enabled: Option<bool>,
     pub prompt: Option<String>,
@@ -260,7 +290,7 @@ macro_rules! daemon_ty {
     (provider $($rest:tt)*) => (ProviderName);
     (strings $($rest:tt)*) => (Vec<String>);
     (string_map $($rest:tt)*) => (std::collections::BTreeMap<String, String>);
-    (stages $($rest:tt)*) => (Vec<Stage>);
+    (stages $($rest:tt)*) => (Vec<StageConfig>);
 }
 
 /// The settings struct, accumulated one table entry at a time: each step appends the
@@ -490,11 +520,13 @@ macro_rules! daemon_materialize {
                     .map(|stages| {
                         stages
                             .into_iter()
-                            .map(|stage| Stage {
-                                label: stage.label.unwrap_or_else(|| stage.id.clone()),
+                            .map(|stage| StageConfig {
+                                label: stage
+                                    .label
+                                    .unwrap_or_else(|| stage.stage.as_str().into()),
                                 enabled: stage.enabled.unwrap_or(true),
                                 prompt: stage.prompt,
-                                id: stage.id,
+                                stage: stage.stage,
                             })
                             .collect()
                     })
@@ -709,7 +741,7 @@ macro_rules! daemon_entry {
         [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
-            $layer.$f = $fields.stages($value);
+            $layer.$f = $fields.stages($value, $errors);
             continue;
         }
     };
@@ -914,7 +946,7 @@ macro_rules! daemon_table {
         }
 
         /// Merges two daemon layers, `higher` winning per key: structured fields merge
-        /// deeper (the stage list by stage id, the catalog URL override map per key),
+        /// deeper (the stage list by stage, the catalog URL override map per key),
         /// plain values and lists are replaced wholesale.
         fn merge(lower: DaemonLayer, higher: DaemonLayer) -> DaemonLayer {
             daemon_merge! {
@@ -926,8 +958,8 @@ macro_rules! daemon_table {
 
         /// Parses one file's `[daemon]` table into a raw layer. Wrong types fall back
         /// to the field's default with a warning; unknown keys warn; unrecognized
-        /// provider values push a hard error onto `errors` (the field still falls
-        /// back to its default).
+        /// provider values and stage ids naming no pipeline stage push hard errors
+        /// onto `errors` (the field still falls back to its default).
         pub(crate) fn parse_layer(
             table: &toml::Table,
             path: &Path,
@@ -1112,10 +1144,11 @@ daemon_table! {
 }
 
 impl Fields<'_> {
-    /// The pipeline stage list (`[[daemon.stages]]`): merged by id across layers. An entry
-    /// without a usable id is skipped with a warning; each of its fields with a wrong
-    /// type falls back to that field's default.
-    fn stages(&mut self, value: &toml::Value) -> Option<Vec<RawStage>> {
+    /// The pipeline stage list (`[[daemon.stages]]`): merged by stage across layers. An
+    /// entry whose `id` names no pipeline stage is skipped with a hard error that
+    /// refuses runs; an entry without a usable id is skipped with a warning; each of
+    /// its fields with a wrong type falls back to that field's default.
+    fn stages(&mut self, value: &toml::Value, errors: &mut Vec<String>) -> Option<Vec<RawStage>> {
         let Some(entries) = value.as_array() else {
             self.warnings.push(format!(
                 "{}: {}.stages must be an array of stage tables, got {value}; using the default",
@@ -1147,42 +1180,52 @@ impl Fields<'_> {
                 ));
                 continue;
             };
-            let mut stage = RawStage {
-                id: id.to_string(),
-                ..RawStage::default()
+            let Some(stage) = parse_stage_id(id) else {
+                errors.push(format!(
+                    "invalid config {}: {}.stages entry {index} must name a pipeline stage ({ACCEPTED_STAGE_IDS}), got {id}",
+                    self.path.display(),
+                    self.schema
+                ));
+                continue;
+            };
+            let mut entry = RawStage {
+                stage,
+                label: None,
+                enabled: None,
+                prompt: None,
             };
             for (field, value) in table {
                 match field.as_str() {
                     "id" => {}
                     "label" => {
-                        stage.label = self.string(&format!("stages entry `{id}` label"), value)
+                        entry.label = self.string(&format!("stages entry `{id}` label"), value)
                     }
                     "enabled" => {
-                        stage.enabled = self.boolean(&format!("stages entry `{id}` enabled"), value)
+                        entry.enabled = self.boolean(&format!("stages entry `{id}` enabled"), value)
                     }
                     "prompt" => {
-                        stage.prompt = self.string(&format!("stages entry `{id}` prompt"), value)
+                        entry.prompt = self.string(&format!("stages entry `{id}` prompt"), value)
                     }
                     other => self.unknown(&format!("stages entry `{id}` key `{other}`")),
                 }
             }
-            stages.push(stage);
+            stages.push(entry);
         }
         Some(stages)
     }
 }
 
 /// The four default pipeline stages.
-fn default_stages() -> Vec<Stage> {
+fn default_stages() -> Vec<StageConfig> {
     [
-        ("research", "RESEARCH"),
-        ("plan", "PLAN"),
-        ("implement", "BUILD"),
-        ("review", "REVIEW"),
+        (Stage::Research, "RESEARCH"),
+        (Stage::Plan, "PLAN"),
+        (Stage::Build, "BUILD"),
+        (Stage::Review, "REVIEW"),
     ]
     .into_iter()
-    .map(|(id, label)| Stage {
-        id: id.into(),
+    .map(|(stage, label)| StageConfig {
+        stage,
         label: label.into(),
         enabled: true,
         prompt: None,
@@ -1190,9 +1233,9 @@ fn default_stages() -> Vec<Stage> {
     .collect()
 }
 
-/// The stage list merges by stage id: a higher entry
+/// The stage list merges by stage: a higher entry
 /// overrides only that stage's fields, a stage a file omits keeps the lower definition,
-/// and a stage id a higher layer introduces is appended after the lower list.
+/// and a stage a higher layer introduces is appended after the lower list.
 fn merge_stages(
     lower: Option<Vec<RawStage>>,
     higher: Option<Vec<RawStage>>,
@@ -1203,7 +1246,7 @@ fn merge_stages(
         (lower, Some(higher)) => {
             let mut merged = lower.unwrap_or_default();
             for stage in higher {
-                if let Some(existing) = merged.iter_mut().find(|s| s.id == stage.id) {
+                if let Some(existing) = merged.iter_mut().find(|s| s.stage == stage.stage) {
                     existing.label = stage.label.or(existing.label.take());
                     existing.enabled = stage.enabled.or(existing.enabled.take());
                     existing.prompt = stage.prompt.or(existing.prompt.take());
@@ -1475,6 +1518,121 @@ mod tests {
                 "mistral",
                 "vibe",
             ]
+        );
+    }
+
+    /// The stage-id parser accepts every pipeline spelling plus the `implement`
+    /// alias, trimmed and case-insensitive; anything else is rejected.
+    #[test]
+    fn stage_ids_parse_through_spellings_and_the_implement_alias() {
+        assert_eq!(parse_stage_id("research"), Some(Stage::Research));
+        assert_eq!(parse_stage_id("plan"), Some(Stage::Plan));
+        assert_eq!(parse_stage_id("build"), Some(Stage::Build));
+        assert_eq!(parse_stage_id("implement"), Some(Stage::Build));
+        assert_eq!(parse_stage_id(" BUILD "), Some(Stage::Build));
+        assert_eq!(parse_stage_id("Implement"), Some(Stage::Build));
+        assert_eq!(parse_stage_id("review"), Some(Stage::Review));
+        assert_eq!(parse_stage_id("doubt"), None);
+        assert_eq!(parse_stage_id(""), None);
+    }
+
+    /// A valid stages list parses into stage configs keyed by the pipeline enum:
+    /// the `implement` alias keys the Build stage, an unlabelled entry takes the
+    /// canonical spelling as its label, and an absent `enabled` defaults to true.
+    #[test]
+    fn a_valid_stages_list_parses_into_stage_configs() {
+        let loaded = load_project(
+            r#"[daemon]
+[[daemon.stages]]
+id = "research"
+label = "The research stage"
+enabled = false
+prompt = "custom prompt"
+[[daemon.stages]]
+id = "implement"
+[[daemon.stages]]
+id = " REVIEW "
+[[daemon.stages]]
+id = "plan"
+"#,
+        );
+        assert_eq!(
+            loaded.settings.stages,
+            vec![
+                StageConfig {
+                    stage: Stage::Research,
+                    label: "The research stage".into(),
+                    enabled: false,
+                    prompt: Some("custom prompt".into()),
+                },
+                StageConfig {
+                    stage: Stage::Build,
+                    label: "build".into(),
+                    enabled: true,
+                    prompt: None,
+                },
+                StageConfig {
+                    stage: Stage::Review,
+                    label: "review".into(),
+                    enabled: true,
+                    prompt: None,
+                },
+                StageConfig {
+                    stage: Stage::Plan,
+                    label: "plan".into(),
+                    enabled: true,
+                    prompt: None,
+                },
+            ]
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+
+        // The default list is the four pipeline stages, all enabled.
+        let defaults = DaemonSettings::default().stages;
+        assert_eq!(
+            defaults.iter().map(|stage| stage.stage).collect::<Vec<_>>(),
+            [Stage::Research, Stage::Plan, Stage::Build, Stage::Review]
+        );
+        assert!(defaults.iter().all(|stage| stage.enabled));
+        assert_eq!(
+            defaults
+                .iter()
+                .map(|stage| stage.label.as_str())
+                .collect::<Vec<_>>(),
+            ["RESEARCH", "PLAN", "BUILD", "REVIEW"]
+        );
+    }
+
+    /// A stage id naming no pipeline stage is a hard error that refuses runs:
+    /// exactly one error naming the file, the entry index, the accepted ids and
+    /// the offending value; the valid sibling entries still parse.
+    #[test]
+    fn an_unknown_stage_id_is_rejected_with_a_clear_error() {
+        let loaded = load_project(
+            r#"[daemon]
+[[daemon.stages]]
+id = "review"
+enabled = false
+[[daemon.stages]]
+id = "doubt"
+"#,
+        );
+        assert_eq!(loaded.errors.len(), 1, "{:?}", loaded.errors);
+        let error = &loaded.errors[0];
+        assert!(error.contains("patok.config.toml"), "{error}");
+        assert!(error.contains("daemon.stages entry 1"), "{error}");
+        assert!(error.contains(ACCEPTED_STAGE_IDS), "{error}");
+        assert!(error.contains("doubt"), "{error}");
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.settings.stages,
+            vec![StageConfig {
+                stage: Stage::Review,
+                label: "review".into(),
+                enabled: false,
+                prompt: None,
+            }]
         );
     }
 

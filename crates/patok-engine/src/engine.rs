@@ -867,8 +867,8 @@ impl Engine {
                 .settings
                 .stages
                 .iter()
-                .find(|stage| stage.id == Stage::Review.as_str())
-                .is_some_and(|stage| stage.enabled),
+                .find(|entry| entry.stage == Stage::Review)
+                .is_some_and(|entry| entry.enabled),
         })
     }
 

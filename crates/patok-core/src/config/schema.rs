@@ -42,6 +42,36 @@ mod tests {
         }
     }
 
+    /// The stages property and the `Stage` definition stay in their committed
+    /// shape even though the settings type behind them is keyed by the pipeline
+    /// enum: the id stays a free string (parsing is manual), and the rename of the
+    /// config struct cannot leak into the schema.
+    #[test]
+    fn the_stages_schema_stays_committed_byte_for_byte() {
+        let json: serde_json::Value = serde_json::from_str(&daemon_json_schema()).unwrap();
+        assert_eq!(
+            json["properties"]["stages"],
+            serde_json::json!({
+                "type": "array",
+                "items": { "$ref": "#/$defs/Stage" }
+            })
+        );
+        assert_eq!(
+            json["$defs"]["Stage"],
+            serde_json::json!({
+                "description": "One pipeline stage: id, label, enabled flag and an optional\nprompt override. A stage absent from the list is treated as disabled by the consumer;\norder is display-only.",
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean" },
+                    "id": { "type": "string" },
+                    "label": { "type": "string" },
+                    "prompt": { "type": ["string", "null"] }
+                },
+                "required": ["id", "label", "enabled"]
+            })
+        );
+    }
+
     #[test]
     fn schemas_parse_and_list_representative_properties() {
         for (schema, properties) in [

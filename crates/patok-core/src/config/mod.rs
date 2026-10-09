@@ -19,7 +19,7 @@ mod tui;
 
 pub use daemon::{
     AcceptPolicy, DAEMON_FIELDS, DaemonConfig, DaemonEnv, DaemonSettings, FieldKind, ProviderKind,
-    ProviderName, RunMode, Stage, daemon_field, daemon_field_value, daemon_help, load_daemon,
+    ProviderName, RunMode, StageConfig, daemon_field, daemon_field_value, daemon_help, load_daemon,
 };
 pub use persist::{
     ApplyTiming, PersistError, SettingValue, daemon_apply_timing, daemon_changed_fields,
