@@ -16,4 +16,4 @@ pub use server::{prepare_runtime_dir, serve};
 pub use settings::from_proto;
 
 /// Name of the task file in the project root.
-pub const TASK_FILE: &str = "TASKS.md";
+pub use patok_core::scenario::TASK_FILE;

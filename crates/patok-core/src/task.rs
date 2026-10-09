@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 /// Placeholder ID of a task line whose ID does not match the ID pattern.
 pub const MALFORMED_ID: &str = "TASK";
 
+/// The unchecked checkbox prefix that begins every task line, after optional whitespace.
+pub const UNCHECKED: &str = "- [ ] ";
+
+/// The checked checkbox prefix of a completed task line.
+pub const CHECKED: &str = "- [x] ";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
@@ -47,22 +53,7 @@ pub fn next_pending(tasks: &[Task]) -> Option<&Task> {
 /// unchecked line whose full text equals the original.
 pub fn mark_done(text: &str, task: &Task) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    let by_line = task.line.checked_sub(1).filter(|&i| {
-        lines
-            .get(i)
-            .is_some_and(|l| is_unchecked(l) && same_id(l, task))
-    });
-    let index = by_line
-        .or_else(|| {
-            (!task.is_malformed())
-                .then(|| {
-                    lines
-                        .iter()
-                        .position(|l| is_unchecked(l) && same_id(l, task))
-                })
-                .flatten()
-        })
-        .or_else(|| lines.iter().position(|l| is_unchecked(l) && *l == task.raw))?;
+    let index = task_line(&lines, task)?;
 
     let mut out = String::with_capacity(text.len() + 1);
     for (i, line) in lines.iter().enumerate() {
@@ -76,27 +67,52 @@ pub fn mark_done(text: &str, task: &Task) -> Option<String> {
     Some(out)
 }
 
-fn is_unchecked(line: &str) -> bool {
-    line.trim_start().starts_with("- [ ] ")
+/// The index of `task`'s unchecked line in `lines`, by the same tiers as [`mark_done`]:
+/// the recorded line number, the first unchecked line with the same `ID:` prefix, then a
+/// line whose full text equals the original. An already-checked line is not matched.
+/// Public for the engine's progress rewrite, which shares the matching but not the rewrite.
+pub fn task_line(lines: &[&str], task: &Task) -> Option<usize> {
+    task.line
+        .checked_sub(1)
+        .filter(|&i| {
+            lines
+                .get(i)
+                .is_some_and(|l| is_unchecked(l) && same_id(l, task))
+        })
+        .or_else(|| {
+            (!task.is_malformed())
+                .then(|| {
+                    lines
+                        .iter()
+                        .position(|l| is_unchecked(l) && same_id(l, task))
+                })
+                .flatten()
+        })
+        .or_else(|| lines.iter().position(|l| is_unchecked(l) && *l == task.raw))
+}
+
+/// Whether the line is an unchecked task line.
+pub fn is_unchecked(line: &str) -> bool {
+    line.trim_start().starts_with(UNCHECKED)
 }
 
 /// Whether the line's text after the checkbox starts with `<task id>:`. For malformed tasks the
 /// recorded line is only trusted when its full text still matches the original.
-fn same_id(line: &str, task: &Task) -> bool {
+pub fn same_id(line: &str, task: &Task) -> bool {
     if task.is_malformed() {
         return line == task.raw;
     }
-    let rest = line.trim_start().strip_prefix("- [ ] ").unwrap_or("");
+    let rest = line.trim_start().strip_prefix(UNCHECKED).unwrap_or("");
     rest.strip_prefix(task.id.as_str())
         .is_some_and(|r| r.starts_with(':'))
 }
 
 fn parse_line(line: &str, number: usize) -> Option<Task> {
     let trimmed = line.trim_start();
-    let (done, rest) = if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
+    let (done, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
         (false, rest)
     } else {
-        (true, trimmed.strip_prefix("- [x] ")?)
+        (true, trimmed.strip_prefix(CHECKED)?)
     };
     let (id, origin, description) = match split_id(rest) {
         Some((id, origin, description)) => (

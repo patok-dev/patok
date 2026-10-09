@@ -6,7 +6,7 @@ use std::path::Path;
 
 use patok_core::task::{self, Task};
 
-use patok_core::task::split_id;
+use patok_core::task::{CHECKED, UNCHECKED, split_id};
 
 pub fn load(path: &Path) -> io::Result<Vec<Task>> {
     Ok(task::parse(&std::fs::read_to_string(path)?))
@@ -89,7 +89,8 @@ pub fn mark_done(path: &Path, task: &Task) -> io::Result<bool> {
 /// unterminated last line -- are preserved, and nothing is normalized.
 pub fn write_progress(path: &Path, task: &Task, token: &str, done: bool) -> io::Result<bool> {
     let text = std::fs::read_to_string(path)?;
-    let Some(index) = task_line(&text, task) else {
+    let lines: Vec<&str> = text.lines().collect();
+    let Some(index) = task::task_line(&lines, task) else {
         return Ok(false);
     };
     let mut updated = String::with_capacity(text.len() + token.len());
@@ -180,10 +181,8 @@ pub fn next_task_number(file: &str) -> usize {
 /// Never reads or writes the file; the caller reads it under the
 /// task-file lock first.
 pub fn normalize_injected(text: &str, file: &str) -> String {
-    const CHECKBOX: &str = "- [ ] ";
-    const CHECKED: &str = "- [x] ";
     let trimmed = text.trim();
-    let rest = if let Some(rest) = trimmed.strip_prefix(CHECKBOX) {
+    let rest = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
         rest
     } else if let Some(rest) = trimmed.strip_prefix(CHECKED) {
         // A checked input still lands as an unchecked line.
@@ -193,49 +192,9 @@ pub fn normalize_injected(text: &str, file: &str) -> String {
     };
     let has_id = split_id(rest).is_some_and(|(_, origin, _)| origin == Some('T'));
     if has_id {
-        return format!("{CHECKBOX}{rest}");
+        return format!("{UNCHECKED}{rest}");
     }
-    format!("{CHECKBOX}T{}.1: {rest}", next_task_number(file))
-}
-
-/// The task's unchecked line, by the same tiers as `mark_done`: the recorded
-/// line number, the first unchecked line with the same `ID:` prefix, then a
-/// line whose full text equals the original. An already-checked line is not
-/// touched again.
-fn task_line(text: &str, task: &Task) -> Option<usize> {
-    let lines: Vec<&str> = text.lines().collect();
-    task.line
-        .checked_sub(1)
-        .filter(|&i| {
-            lines
-                .get(i)
-                .is_some_and(|l| is_unchecked(l) && same_id(l, task))
-        })
-        .or_else(|| {
-            (!task.is_malformed())
-                .then(|| {
-                    lines
-                        .iter()
-                        .position(|l| is_unchecked(l) && same_id(l, task))
-                })
-                .flatten()
-        })
-        .or_else(|| lines.iter().position(|l| is_unchecked(l) && *l == task.raw))
-}
-
-/// Whether the line is an unchecked task line.
-fn is_unchecked(line: &str) -> bool {
-    line.trim_start().starts_with("- [ ] ")
-}
-
-/// Whether the line's text after the checkbox starts with `<task id>:`.
-fn same_id(line: &str, task: &Task) -> bool {
-    if task.is_malformed() {
-        return line == task.raw;
-    }
-    let rest = line.trim_start().strip_prefix("- [ ] ").unwrap_or("");
-    rest.strip_prefix(task.id.as_str())
-        .is_some_and(|r| r.starts_with(':'))
+    format!("{UNCHECKED}T{}.1: {rest}", next_task_number(file))
 }
 
 /// One task line with the progress token inserted after the ID's colon (a
@@ -243,8 +202,8 @@ fn same_id(line: &str, task: &Task) -> bool {
 /// is returned unchanged.
 fn with_progress(line: &str, token: &str, done: bool) -> String {
     let trimmed = line.trim_start();
-    let (checkbox, rest) = if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
-        ("- [ ] ", rest)
+    let (checkbox, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
+        (UNCHECKED, rest)
     } else {
         return line.to_string();
     };
@@ -253,7 +212,7 @@ fn with_progress(line: &str, token: &str, done: bool) -> String {
     };
     let description = strip_progress_token(description.trim());
     let mut updated = String::with_capacity(line.len() + token.len());
-    updated.push_str(if done { "- [x] " } else { checkbox });
+    updated.push_str(if done { CHECKED } else { checkbox });
     updated.push_str(id);
     updated.push_str(": ");
     updated.push_str(token);
@@ -432,9 +391,9 @@ pub fn cleanup_text(text: &str) -> Option<String> {
     let mut last_group: Option<u32> = None;
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
-        let (done, rest) = if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
+        let (done, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
             (false, rest)
-        } else if let Some(rest) = trimmed.strip_prefix("- [x] ") {
+        } else if let Some(rest) = trimmed.strip_prefix(CHECKED) {
             (true, rest)
         } else {
             continue;
@@ -481,7 +440,7 @@ pub fn cleanup_text(text: &str) -> Option<String> {
     let is_heading = |i: usize| lines[i].starts_with("## ");
     let is_task_line = |i: usize| {
         let trimmed = lines[i].trim_start();
-        trimmed.starts_with("- [ ] ") || trimmed.starts_with("- [x] ")
+        trimmed.starts_with(UNCHECKED) || trimmed.starts_with(CHECKED)
     };
     let headings: Vec<usize> = (0..lines.len()).filter(|&i| is_heading(i)).collect();
     for (pos, &h) in headings.iter().enumerate() {
@@ -574,9 +533,9 @@ pub fn remove_task(path: &Path, id: &str) -> io::Result<RemoveOutcome> {
     let mut completed = false;
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
-        let (checked, rest) = if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
+        let (checked, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
             (false, rest)
-        } else if let Some(rest) = trimmed.strip_prefix("- [x] ") {
+        } else if let Some(rest) = trimmed.strip_prefix(CHECKED) {
             (true, rest)
         } else {
             continue;
