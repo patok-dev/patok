@@ -169,8 +169,10 @@ impl MockProvider {
             exit,
             failure: match exit {
                 ExitKind::Completed => None,
-                ExitKind::Failed => Some("Agent mock exited unsuccessfully".into()),
-                ExitKind::Cancelled => Some("cancelled by shutdown".into()),
+                ExitKind::Failed => Some(crate::process::agent_exited_unsuccessfully("mock")),
+                ExitKind::Cancelled => Some(crate::process::CANCELLED_BY_SHUTDOWN.into()),
+                // A scripted timeout has no real duration to report, so the mock keeps
+                // the short form of the timeout message.
                 ExitKind::TimedOut => Some("timed out".into()),
             },
             log_path: Some(log_path),

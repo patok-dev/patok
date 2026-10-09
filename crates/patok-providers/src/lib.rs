@@ -15,6 +15,8 @@ pub mod codex;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 mod process;
+#[cfg(test)]
+pub(crate) mod test_util;
 pub mod vibe;
 
 /// Everything a provider needs to run one agent session.
@@ -140,8 +142,9 @@ pub const BUILDER_TOOLS: &[Tool] = &[
 /// The Planner role's tool allowlist: read-only exploration plus file writes, no shell or web.
 pub const PLANNER_TOOLS: &[Tool] = &[Tool::Read, Tool::Glob, Tool::Grep, Tool::Edit, Tool::Write];
 
-/// The Discovery role's tool allowlist: read-only exploration, no edits, writes, shell or web.
-pub const DISCOVERY_TOOLS: &[Tool] = &[Tool::Read, Tool::Glob, Tool::Grep];
+/// The Discovery role's tool allowlist: the same read-only exploration as the
+/// Plan role.
+pub use PLAN_TOOLS as DISCOVERY_TOOLS;
 
 /// The Reviewer role's tool allowlist: read and search
 /// the project, run shell commands, edit and write files -- the combined

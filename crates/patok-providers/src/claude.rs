@@ -605,19 +605,7 @@ mod tests {
 
     #[test]
     fn args_include_model_system_prompt_and_tools_only_when_set() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut request = SessionRequest {
-            model: None,
-            prompt: "p".into(),
-            system_prompt: None,
-            project_dir: ".".into(),
-            events: tx,
-            log_dir: ".".into(),
-            label: "t".into(),
-            idle_timeout: std::time::Duration::from_secs(1),
-            cancel: Default::default(),
-            allowed_tools: vec![],
-        };
+        let (mut request, _rx) = crate::test_util::request("p", None, &[]);
         assert!(!build_args(&request).contains(&"--model".to_string()));
         request.model = Some("opus".into());
         request.system_prompt = Some("s".into());

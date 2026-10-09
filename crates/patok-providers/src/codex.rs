@@ -344,19 +344,7 @@ mod tests {
     }
 
     fn request(prompt: &str, system: Option<&str>, tools: &[Tool]) -> SessionRequest {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        SessionRequest {
-            model: None,
-            prompt: prompt.into(),
-            system_prompt: system.map(str::to_string),
-            project_dir: ".".into(),
-            events: tx,
-            log_dir: ".".into(),
-            label: "t".into(),
-            idle_timeout: std::time::Duration::from_secs(1),
-            cancel: Default::default(),
-            allowed_tools: tools.to_vec(),
-        }
+        crate::test_util::request(prompt, system, tools).0
     }
 
     #[test]

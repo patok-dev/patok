@@ -304,19 +304,8 @@ mod tests {
 
     #[test]
     fn args_map_role_tools_and_prepend_the_system_prompt() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut request = SessionRequest {
-            model: None,
-            prompt: "do it".into(),
-            system_prompt: Some("sys".into()),
-            project_dir: ".".into(),
-            events: tx,
-            log_dir: ".".into(),
-            label: "t".into(),
-            idle_timeout: std::time::Duration::from_secs(1),
-            cancel: Default::default(),
-            allowed_tools: crate::PLANNER_TOOLS.to_vec(),
-        };
+        let (mut request, _rx) =
+            crate::test_util::request("do it", Some("sys"), crate::PLANNER_TOOLS);
         let args = build_args(&request);
         assert_eq!(args[..2], ["-p", "sys\n\ndo it"]);
         let tools: Vec<&str> = args
