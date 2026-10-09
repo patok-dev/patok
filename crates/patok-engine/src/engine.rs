@@ -358,7 +358,7 @@ struct Unit {
 struct AgentPrompt {
     prompt: String,
     system_prompt: &'static str,
-    label: &'static str,
+    label: String,
     tools: &'static [&'static str],
 }
 
@@ -1626,7 +1626,7 @@ impl Engine {
                 project_dir: inner.config.project_dir.clone(),
                 events,
                 log_dir: inner.config.data_dir.join("history"),
-                label: agent.label.into(),
+                label: agent.label,
                 idle_timeout: unit.agent_timeout,
                 cancel,
                 allowed_tools: agent.tools.iter().map(ToString::to_string).collect(),
@@ -1659,7 +1659,7 @@ impl Engine {
                 AgentPrompt {
                     prompt: prompt::planner(&request),
                     system_prompt: prompt::PLANNER_SYSTEM,
-                    label: "planner",
+                    label: "planner".into(),
                     tools: PLANNER_TOOLS,
                 },
                 cancel,
@@ -1719,7 +1719,7 @@ impl Engine {
                         QueueCreation::Scan => prompt::research_queue_scan(),
                     },
                     system_prompt: prompt::RESEARCH_QUEUE_SYSTEM,
-                    label: "research",
+                    label: "research".into(),
                     tools: RESEARCH_TOOLS,
                 },
                 cancel,
@@ -1801,7 +1801,7 @@ impl Engine {
                 AgentPrompt {
                     prompt: prompt::discovery(),
                     system_prompt: prompt::DISCOVERY_SYSTEM,
-                    label: "discovery",
+                    label: "discovery".into(),
                     tools: DISCOVERY_TOOLS,
                 },
                 cancel,
@@ -2009,41 +2009,21 @@ impl Engine {
             unit.model.as_deref(),
         );
 
-        let inner = &self.inner;
-        let (events, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
         // The builder's final message carries the build claims section the review
-        // stage reviews, so the events are
-        // recorded like the plan stage's.
-        let recorded = Arc::new(Mutex::new(Vec::<AgentEvent>::new()));
-        let recorder = recorded.clone();
-        let forwarder = {
-            let engine = self.clone();
-            tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    recorder.lock().expect("capture lock").push(event.clone());
-                    engine.emit(EngineEvent::Agent { event });
-                }
-            })
-        };
-
-        let provider = unit.provider.clone();
-        let request = SessionRequest {
-            model: unit.model.clone(),
-            prompt: prompt::builder(&task, plan.as_deref(), research.as_deref()),
-            system_prompt: Some(prompt::SYSTEM.to_string()),
-            project_dir: inner.config.project_dir.clone(),
-            events,
-            log_dir: inner.config.data_dir.join("history"),
-            label: task.id.clone(),
-            idle_timeout: unit.agent_timeout,
-            cancel: cancel.clone(),
-            allowed_tools: BUILDER_TOOLS.iter().map(ToString::to_string).collect(),
-        };
-        let session = provider.run_session(request).await;
-        // The request (and its sender) is gone: let the forwarder flush the tail of the stream.
-        let _ = forwarder.await;
-        let builder_events: Vec<AgentEvent> =
-            recorded.lock().expect("capture lock").drain(..).collect();
+        // stage reviews, so the events are captured like the plan stage's.
+        let (session, builder_events) = self
+            .run_agent_session(
+                AgentPrompt {
+                    prompt: prompt::builder(&task, plan.as_deref(), research.as_deref()),
+                    system_prompt: prompt::SYSTEM,
+                    label: task.id.clone(),
+                    tools: BUILDER_TOOLS,
+                },
+                cancel.clone(),
+                true,
+                unit,
+            )
+            .await;
         // One finished line lands after the agent output and before the task's own
         // outcome line (T42.1).
         self.finish_session(
@@ -2556,7 +2536,7 @@ impl Engine {
                 AgentPrompt {
                     prompt: prompt.to_string(),
                     system_prompt: prompt::REVIEWER_SYSTEM,
-                    label: "review",
+                    label: "review".into(),
                     tools: REVIEWER_TOOLS,
                 },
                 cancel.clone(),
@@ -2801,7 +2781,7 @@ impl Engine {
                 AgentPrompt {
                     prompt: prompt::research(task),
                     system_prompt: prompt::RESEARCH_SYSTEM,
-                    label: "research",
+                    label: "research".into(),
                     tools: RESEARCH_TOOLS,
                 },
                 cancel.clone(),
@@ -2935,7 +2915,7 @@ impl Engine {
                     AgentPrompt {
                         prompt: prompt_text,
                         system_prompt: prompt::PLAN_SYSTEM,
-                        label: "plan",
+                        label: "plan".into(),
                         tools: PLAN_TOOLS,
                     },
                     cancel.clone(),

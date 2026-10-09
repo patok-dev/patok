@@ -121,6 +121,27 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
     );
 }
 
+/// T152.5: the builder session runs through the shared `run_agent_session`
+/// path, and its transcript label still carries the task id.
+#[tokio::test]
+async fn the_builder_session_label_contains_the_task_id() {
+    let fixture = Fixture::new(TASKS);
+    let provider = scripted();
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let _ = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The builder's recorded request is labelled with its task id rather than
+    // a static agent label.
+    let sessions = provider.sessions();
+    assert!(
+        sessions
+            .iter()
+            .any(|s| s.label.contains("T1.1") && s.allowed_tools.contains(&"Bash".to_string()))
+    );
+}
+
 /// T103.1: sprint mode ends the session on the emptied queue -- no scheduled
 /// discovery round starts, unlike the continuous mode above.
 #[tokio::test]
