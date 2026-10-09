@@ -26,6 +26,16 @@ use anyhow::{Context, bail};
 use patok_proto::command_request;
 use patok_proto::{CommandRequest, RemoveTask};
 
+/// The task file read whole: a missing file reads as empty (the append then
+/// creates it, the list then lists nothing), while any other read failure
+/// fails with the path in the message.
+fn read_task_file(path: &Path) -> anyhow::Result<String> {
+    match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        other => other.with_context(|| format!("cannot read {}", path.display())),
+    }
+}
+
 /// Appends `text` as a new unchecked task line to the project's task file,
 /// with a fresh patok-generated `T<N>.1:` id, then prints a confirmation
 /// with that id. One task is one line. A missing file reads as empty and
@@ -40,10 +50,7 @@ pub fn add(project: &Path, text: &str) -> anyhow::Result<()> {
     let path = project.join(patok_engine::TASK_FILE);
     // The file is read only to number the new task; a missing file reads as
     // empty and the append creates it.
-    let file = match std::fs::read_to_string(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        other => other.with_context(|| format!("cannot read {}", path.display()))?,
-    };
+    let file = read_task_file(&path)?;
     let line = patok_engine::taskfile::normalize_injected(text, &file);
     // The generated id is parsed back out of the line before appending, so
     // the confirmation reports exactly what landed in the file.
@@ -111,10 +118,7 @@ pub async fn remove(project: &Path, id: &str) -> anyhow::Result<()> {
 /// reads as empty and lists nothing, exactly like `add` reads it.
 pub fn list(project: &Path) -> anyhow::Result<()> {
     let path = project.join(patok_engine::TASK_FILE);
-    let file = match std::fs::read_to_string(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        other => other.with_context(|| format!("cannot read {}", path.display()))?,
-    };
+    let file = read_task_file(&path)?;
     for task in patok_core::task::parse(&file) {
         println!("{} {}", task.id, task.description);
     }

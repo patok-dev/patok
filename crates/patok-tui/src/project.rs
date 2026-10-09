@@ -1,6 +1,8 @@
-//! Project facts for the idle scenario classification:
-//! the filesystem scan. The shell scans the project's files only; nothing here
-//! can block the shell.
+//! The project brief the shell writes: the SPEC.md body a typed brief is
+//! saved as, which provides the non-heading content the bootstrap gate
+//! looks for. Nothing here touches the filesystem; the best-effort project
+//! scan behind the idle scenario classification lives in
+//! `patok_core::scenario`.
 
 /// The SPEC.md body a typed brief is saved as: a heading plus the user's text, which
 /// provides the non-heading content the bootstrap gate looks for.

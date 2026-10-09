@@ -39,23 +39,41 @@ pub(super) fn hint_line(hints: &[&str], colour: Color) -> Line<'static> {
     Line::styled(format!(" {}", hints.join(" · ")), Style::new().fg(colour))
 }
 
+/// The longest prefix of width-costed items that fits a budget: `base`
+/// columns count first, then each item's cost plus `gap` columns between
+/// items; the first cost that overflows and every one after it are
+/// dropped. Returns how many leading costs were kept and the columns they
+/// used, base and gaps included -- the shared tail-drop of the hint strip
+/// ([`fitted_hints`]), the status line's buttons and the output frame
+/// title's parts.
+pub(super) fn fitted_prefix<I>(costs: I, base: usize, gap: usize, budget: usize) -> (usize, usize)
+where
+    I: IntoIterator<Item = usize>,
+{
+    let mut used = base;
+    let mut kept = 0;
+    for cost in costs {
+        let next = used + cost + usize::from(kept > 0) * gap;
+        if next > budget {
+            break;
+        }
+        used = next;
+        kept += 1;
+    }
+    (kept, used)
+}
+
 /// The hints that fit a frame's reserved bottom row (T71.1): the leading hints
 /// while the strip the shared hint formatting builds -- one leading space and
 /// ` · ` between hints -- stays within `width` columns; the first hint that
 /// does not fit and every one after it are dropped, so a narrow frame sheds
 /// trailing hints instead of overflowing its borders. Nothing fits when even
-/// the first hint does not.
+/// the first hint does not. The fit itself is the shared [`fitted_prefix`]
+/// tail-drop with the strip's own leading space and ` · ` gap.
 pub fn fitted_hints<'a>(hints: &[&'a str], width: usize) -> Vec<&'a str> {
-    let mut used = 1;
-    let mut fitted = Vec::new();
-    for hint in hints {
-        used += hint.chars().count() + usize::from(!fitted.is_empty()) * 3;
-        if used > width {
-            break;
-        }
-        fitted.push(*hint);
-    }
-    fitted
+    let costs = hints.iter().map(|hint| hint.chars().count());
+    let (kept, _) = fitted_prefix(costs, 1, 3, width);
+    hints[..kept].to_vec()
 }
 
 /// The focused frame's inner split (T71.1): the bottom inner row reserved for

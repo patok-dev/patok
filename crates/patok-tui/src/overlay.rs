@@ -1170,13 +1170,35 @@ fn help_for(schema: Schema, key: &str) -> Option<&'static str> {
 /// auto-detection) apply again, which needs [`SettingValue::Unset`].
 fn enum_submit_value(field: &str, choice: &str) -> SettingValue {
     if field == "truecolor" {
-        return match choice {
-            "on" => SettingValue::Bool(true),
-            "off" => SettingValue::Bool(false),
-            _ => SettingValue::Unset,
-        };
+        return truecolor_value(choice);
     }
     SettingValue::Str(choice.to_string())
+}
+
+/// The truecolor tri-state's stored shape for an enum choice: "on"/"off"
+/// submit as the `Bool` the setting is stored as; "auto" removes the key
+/// ([`SettingValue::Unset`]) so the lower layers (and finally the
+/// auto-detection) apply again. The display direction is
+/// [`truecolor_choice`]; the two are one mapping.
+fn truecolor_value(choice: &str) -> SettingValue {
+    match choice {
+        "on" => SettingValue::Bool(true),
+        "off" => SettingValue::Bool(false),
+        _ => SettingValue::Unset,
+    }
+}
+
+/// The truecolor tri-state's display choice: the shell mirror's
+/// `Option<bool>` -- and the drafted `Bool`/`Unset` shape through
+/// [`SettingValue::as_bool`] -- as the auto/on/off string the overlay
+/// renders and cycles. The submit direction is [`truecolor_value`]; the
+/// two are one mapping.
+pub(crate) fn truecolor_choice(value: Option<bool>) -> &'static str {
+    match value {
+        None => "auto",
+        Some(true) => "on",
+        Some(false) => "off",
+    }
 }
 
 #[cfg(test)]

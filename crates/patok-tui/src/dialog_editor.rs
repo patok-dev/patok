@@ -8,6 +8,8 @@ use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::ui::output::wrap_chunks;
+
 /// One visual row of the dialog text: a character range of the editor's text.
 /// `last` marks the final row of a logical line (the cursor may sit at its end).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +136,8 @@ impl DialogEditor {
 
     /// Visual rows of the text when wrapped at the last rendered width; width
     /// 0 (never rendered) wraps at `usize::MAX`, i.e. one row per logical line.
+    /// The cutting walk itself is the shared [`wrap_chunks`]; an empty logical
+    /// line still emits its own row, which the walk alone would not.
     pub fn rows(&self) -> Vec<DialogRow> {
         let width = match self.width.get() {
             0 => usize::MAX,
@@ -143,17 +147,19 @@ impl DialogEditor {
         let mut start = 0;
         for line in self.text.split('\n') {
             let len = line.chars().count();
-            let mut offset = 0usize;
-            loop {
-                let end = offset.saturating_add(width).min(len);
+            if len == 0 {
                 rows.push(DialogRow {
-                    start: start + offset,
-                    end: start + end,
-                    last: end == len,
+                    start,
+                    end: start,
+                    last: true,
                 });
-                offset = end;
-                if end == len {
-                    break;
+            } else {
+                for range in wrap_chunks(len, width) {
+                    rows.push(DialogRow {
+                        start: start + range.start,
+                        end: start + range.end,
+                        last: range.end == len,
+                    });
                 }
             }
             start += len + 1;

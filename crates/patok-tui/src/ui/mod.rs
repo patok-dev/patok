@@ -4,7 +4,7 @@ pub(crate) mod choice;
 mod common;
 mod dialogs;
 pub(crate) mod modal;
-mod output;
+pub(crate) mod output;
 mod settings;
 mod status;
 mod tasks;

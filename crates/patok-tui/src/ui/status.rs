@@ -6,6 +6,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use super::common::fitted_prefix;
 use crate::app::App;
 use crate::hit::{button_line, button_text};
 
@@ -109,25 +110,21 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
             // the zone left of the chips, so no half-cut button ever shows;
             // the kept prefix is right-aligned. The buttons' own padding
             // separates them from the mode chip, so no extra gap column is
-            // added.
+            // added. The drop itself is the shared [`fitted_prefix`]
+            // tail-drop with no base and no gap.
             let zone = width.saturating_sub(left_width);
-            let mut kept: Vec<(&str, &str)> = Vec::new();
-            let mut used = 0;
-            for (key, label) in keys {
-                let pair = button_text(key, label).chars().count();
-                if used + pair > zone {
-                    break;
-                }
-                used += pair;
-                kept.push((key, label));
-            }
+            let costs = keys
+                .iter()
+                .map(|(key, label)| button_text(key, label).chars().count());
+            let (kept, used) = fitted_prefix(costs, 0, 0, zone);
+            let kept = &keys[..kept];
             let mut right = vec![Span::raw(" ".repeat(zone.saturating_sub(used)))];
             // The hint zone's running column: the pad ends where the first
             // kept button starts, and each button advances it by its own
             // character count, so every interactive chip's rect is the exact
             // columns its full button text occupies.
             let mut column = left_width + zone.saturating_sub(used);
-            for (key, label) in kept {
+            for &(key, label) in kept {
                 // The interactive chips (T133.1, T134.1, T141.1) -- the m menu
                 // button, the idle Enter button and the running Esc stop
                 // button -- render through the shared [`button_line`] so each

@@ -25,7 +25,7 @@ use crate::hit::{
 };
 use crate::overlay::{
     Entry, Row, SETTINGS_CHOICES, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries,
-    header_fold,
+    header_fold, truecolor_choice,
 };
 use crate::theme::{Theme, theme_modal_groups};
 
@@ -2005,12 +2005,7 @@ impl App {
             Schema::Tui => match row.key {
                 "theme" => Some(SettingValue::Str(self.tui.theme.as_str().into())),
                 "truecolor" => Some(SettingValue::Str(
-                    match self.tui.truecolor {
-                        None => "auto",
-                        Some(true) => "on",
-                        Some(false) => "off",
-                    }
-                    .into(),
+                    truecolor_choice(self.tui.truecolor).into(),
                 )),
                 "preview_wrap" => Some(SettingValue::Bool(self.tui.preview_wrap)),
                 "update_channel" => {
@@ -2168,14 +2163,7 @@ impl App {
 /// choice, like the shell's live mirror does.
 fn draft_display(key: &str, value: &SettingValue) -> SettingValue {
     if key == "truecolor" {
-        return SettingValue::Str(
-            match value {
-                SettingValue::Bool(true) => "on",
-                SettingValue::Bool(false) => "off",
-                _ => "auto",
-            }
-            .into(),
-        );
+        return SettingValue::Str(truecolor_choice(value.as_bool()).into());
     }
     value.clone()
 }

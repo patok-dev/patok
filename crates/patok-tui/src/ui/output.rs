@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::Duration;
 
-use super::common::{render_hints_strip, split_hints_row};
+use super::common::{fitted_prefix, render_hints_strip, split_hints_row};
 use crate::app::{App, FrameFocus, LineKind, OutLine, Pane, agent_display};
 use crate::markdown::markdown_lines;
 use crate::theme::Theme;
@@ -69,8 +69,11 @@ fn left_title(agent: &str, provider: Option<&str>, model: Option<&str>) -> Strin
 
 /// The shared T31.1 truncation decision: which of the provider, model and
 /// timer survive `width` columns. The candidates drop the model first, then
-/// the provider; each is tried with the timer (`left + right <= width`), then
-/// without it. The agent type always stays, so the title is never empty.
+/// the provider; each is tried with the timer (`left + right <= width`),
+/// then without it. The agent type always stays, so the title is never
+/// empty. The fit itself is the shared [`fitted_prefix`] tail-drop over the
+/// parts' costs, with the always-kept agent (its two surrounding spaces) as
+/// the base.
 fn kept_title(
     agent: &str,
     provider: &str,
@@ -79,34 +82,38 @@ fn kept_title(
     width: usize,
 ) -> KeptTitle {
     let timer = timer.map(|t| format!(" {t} "));
-    let mut candidates: Vec<(Option<&str>, Option<&str>)> = Vec::new();
+    // The left side's fixed cost (` {agent} `), then the optional parts'
+    // costs in the order they drop: the provider with its ` | `, then the
+    // model with its ` - ` (which never renders without the provider).
+    let base = agent.chars().count() + 2;
+    let mut costs = Vec::new();
     if !provider.is_empty() {
+        costs.push(3 + provider.chars().count());
         if !model.is_empty() {
-            candidates.push((Some(provider), Some(model)));
+            costs.push(3 + model.chars().count());
         }
-        candidates.push((Some(provider), None));
     }
-    candidates.push((None, None));
     let right_len = timer.as_ref().map_or(0, |t| t.chars().count());
-    for &(provider, model) in &candidates {
-        if left_title(agent, provider, model).chars().count() + right_len <= width {
-            return KeptTitle {
-                provider: provider.map(String::from),
-                model: model.map(String::from),
-                timer,
-            };
-        }
+    // With the timer: the longest prefix that fits beside it (the timer
+    // survives even beside a bare agent when the pair fits).
+    let with_timer = width.saturating_sub(right_len);
+    if base <= with_timer {
+        let (kept, _) = fitted_prefix(costs.iter().copied(), base, 0, with_timer);
+        return KeptTitle {
+            provider: (kept >= 1).then(|| provider.to_string()),
+            model: (kept >= 2).then(|| model.to_string()),
+            timer,
+        };
     }
-    // The timer is the last element to disappear: without it, try the left parts
-    // against the full width.
-    for &(provider, model) in &candidates {
-        if left_title(agent, provider, model).chars().count() <= width {
-            return KeptTitle {
-                provider: provider.map(String::from),
-                model: model.map(String::from),
-                timer: None,
-            };
-        }
+    // The timer is the last element to disappear: without it, the left parts
+    // try against the full width.
+    if base <= width {
+        let (kept, _) = fitted_prefix(costs.iter().copied(), base, 0, width);
+        return KeptTitle {
+            provider: (kept >= 1).then(|| provider.to_string()),
+            model: (kept >= 2).then(|| model.to_string()),
+            timer: None,
+        };
     }
     KeptTitle {
         provider: None,
@@ -275,6 +282,21 @@ pub(super) fn visual_lines(theme: Theme, line: &OutLine, width: usize) -> Vec<Li
     }
 }
 
+/// One hard-wrap implementation: the character ranges of a `len`-long
+/// sequence cut at `width` columns -- the shared boundary walk behind the
+/// styled [`wrap_line`], the plain [`wrap`] and the dialog editor's
+/// [`crate::dialog_editor::DialogEditor::rows`]. The caller resolves its
+/// own zero width first: a zero step is an error, exactly like the slice
+/// `chunks` it replaces.
+pub(crate) fn wrap_chunks(
+    len: usize,
+    width: usize,
+) -> impl Iterator<Item = std::ops::Range<usize>> {
+    (0..len)
+        .step_by(width)
+        .map(move |start| start..(start + width).min(len))
+}
+
 /// Wraps a styled line at `width` columns, keeping each span's style.
 pub(super) fn wrap_line(line: &Line<'_>, width: usize) -> Vec<Line<'static>> {
     let cells: Vec<(char, Style)> = line
@@ -285,11 +307,10 @@ pub(super) fn wrap_line(line: &Line<'_>, width: usize) -> Vec<Line<'static>> {
     if cells.is_empty() {
         return vec![Line::default()];
     }
-    cells
-        .chunks(width.max(1))
-        .map(|chunk| {
+    wrap_chunks(cells.len(), width.max(1))
+        .map(|range| {
             let mut spans: Vec<Span> = Vec::new();
-            for (c, style) in chunk {
+            for (c, style) in &cells[range] {
                 match spans.last_mut() {
                     Some(last) if last.style == *style => last.content.to_mut().push(*c),
                     _ => spans.push(Span::styled(c.to_string(), *style)),
@@ -320,5 +341,7 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
     if chars.is_empty() {
         return vec![String::new()];
     }
-    chars.chunks(width).map(|c| c.iter().collect()).collect()
+    wrap_chunks(chars.len(), width)
+        .map(|range| chars[range].iter().collect())
+        .collect()
 }
