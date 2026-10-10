@@ -9,5 +9,5 @@ pub mod review;
 pub mod scenario;
 pub mod task;
 pub mod update;
-pub mod util;
+pub mod utils;
 pub mod version;

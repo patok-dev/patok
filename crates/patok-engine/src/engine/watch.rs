@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use patok_core::event::EngineEvent;
-use patok_core::util::atomic_write;
+use patok_core::utils::atomic_write;
 
 use super::Engine;
 use crate::taskfile;

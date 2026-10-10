@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::util::digits::is_ascii_digits;
+use crate::utils::digits::is_ascii_digits;
 
 /// Placeholder ID of a task line whose ID does not match the ID pattern.
 pub const MALFORMED_ID: &str = "TASK";
