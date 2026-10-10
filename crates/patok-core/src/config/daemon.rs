@@ -104,30 +104,47 @@ pub struct StageConfig {
     pub prompt: Option<String>,
 }
 
-/// The schema of the `id` property: the committed schema documents the stage id as a
-/// free string (parsing is manual, per the schema module's doc), so the enum-keyed
-/// field renders exactly that shape.
-fn stage_id_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({"type": "string"})
+/// The schema of the `id` property: the accepted stage-id spellings as the
+/// [`StageId`] enum's schema, so the committed schema and the parser derive from the
+/// same list and cannot drift.
+fn stage_id_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<StageId>()
 }
 
-/// The accepted stage ids, as the unknown-id error names them.
+/// The accepted stage ids, as the unknown-id warning names them.
 const ACCEPTED_STAGE_IDS: &str = "research, plan, build (alias implement), review";
 
-/// The config alias of a pipeline stage id: `implement` is the build stage's
-/// pre-enum spelling, kept so existing config files keep loading.
-const STAGE_ID_ALIASES: &[(&str, Stage)] = &[("implement", Stage::Build)];
+config_enum! {
+    /// A stage id as written in a `[[daemon.stages]]` entry: the four pipeline
+    /// stage spellings plus `implement`, the build stage's pre-enum spelling.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "lowercase")]
+    enum StageId {
+        Research => "research",
+        Plan => "plan",
+        Build => "build",
+        Implement => "implement",
+        Review => "review",
+    }
+}
 
-/// Parses a stage id: one of the pipeline enum's spellings, or a config alias;
-/// trimmed, case-insensitive; `None` for anything unrecognized.
+impl StageId {
+    /// The pipeline stage the id keys: `implement` is the build stage's
+    /// pre-enum spelling, kept so existing config files keep loading.
+    fn stage(self) -> Stage {
+        match self {
+            Self::Research => Stage::Research,
+            Self::Plan => Stage::Plan,
+            Self::Build | Self::Implement => Stage::Build,
+            Self::Review => Stage::Review,
+        }
+    }
+}
+
+/// Parses a stage id: one of the accepted spellings, trimmed, case-insensitive;
+/// `None` for anything unrecognized.
 fn parse_stage_id(id: &str) -> Option<Stage> {
-    Stage::parse(id).or_else(|| {
-        let normalized = id.trim().to_lowercase();
-        STAGE_ID_ALIASES
-            .iter()
-            .find(|(alias, _)| normalized == *alias)
-            .map(|(_, stage)| *stage)
-    })
+    StageId::parse(id).map(StageId::stage)
 }
 
 /// A pipeline stage as written in one layer, before merging: each field may be absent,
@@ -670,7 +687,7 @@ macro_rules! daemon_entry {
         [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
-            $layer.$f = $fields.stages($value, $errors);
+            $layer.$f = $fields.stages($value);
             continue;
         }
     };
@@ -887,8 +904,8 @@ macro_rules! daemon_table {
 
         /// Parses one file's `[daemon]` table into a raw layer. Wrong types fall back
         /// to the field's default with a warning; unknown keys warn; unrecognized
-        /// provider values and stage ids naming no pipeline stage push hard errors
-        /// onto `errors` (the field still falls back to its default).
+        /// provider values push hard errors onto `errors` (the field still falls
+        /// back to its default).
         pub(crate) fn parse_layer(
             table: &toml::Table,
             path: &Path,
@@ -1074,10 +1091,10 @@ daemon_table! {
 
 impl Fields<'_> {
     /// The pipeline stage list (`[[daemon.stages]]`): merged by stage across layers. An
-    /// entry whose `id` names no pipeline stage is skipped with a hard error that
-    /// refuses runs; an entry without a usable id is skipped with a warning; each of
-    /// its fields with a wrong type falls back to that field's default.
-    fn stages(&mut self, value: &toml::Value, errors: &mut Vec<String>) -> Option<Vec<RawStage>> {
+    /// entry whose `id` is unusable or names no accepted stage id is skipped with a
+    /// warning; each of its fields with a wrong type falls back to that field's
+    /// default.
+    fn stages(&mut self, value: &toml::Value) -> Option<Vec<RawStage>> {
         let Some(entries) = value.as_array() else {
             self.warnings.push(format!(
                 "{}: {}.stages must be an array of stage tables, got {value}; using the default",
@@ -1110,8 +1127,8 @@ impl Fields<'_> {
                 continue;
             };
             let Some(stage) = parse_stage_id(id) else {
-                errors.push(format!(
-                    "invalid config {}: {}.stages entry {index} must name a pipeline stage ({ACCEPTED_STAGE_IDS}), got {id}",
+                self.warnings.push(format!(
+                    "{}: {}.stages entry {index} must name a pipeline stage ({ACCEPTED_STAGE_IDS}), got {id}; skipping it",
                     self.path.display(),
                     self.schema
                 ));
@@ -1537,35 +1554,47 @@ id = "plan"
         );
     }
 
-    /// A stage id naming no pipeline stage is a hard error that refuses runs:
-    /// exactly one error naming the file, the entry index, the accepted ids and
-    /// the offending value; the valid sibling entries still parse.
+    /// A stage id naming no pipeline stage is skipped with a warning (D1): exactly
+    /// one warning naming the file, the entry index, the accepted ids and the
+    /// offending value; the valid sibling entries still parse -- `implement`
+    /// materializes as the Build stage -- and the load carries no errors, so runs
+    /// are not refused.
     #[test]
-    fn an_unknown_stage_id_is_rejected_with_a_clear_error() {
+    fn an_unknown_stage_id_warns_and_the_entry_is_skipped() {
         let loaded = load_project(
             r#"[daemon]
 [[daemon.stages]]
 id = "review"
 enabled = false
 [[daemon.stages]]
+id = "implement"
+[[daemon.stages]]
 id = "doubt"
 "#,
         );
-        assert_eq!(loaded.errors.len(), 1, "{:?}", loaded.errors);
-        let error = &loaded.errors[0];
-        assert!(error.contains("patok.config.toml"), "{error}");
-        assert!(error.contains("daemon.stages entry 1"), "{error}");
-        assert!(error.contains(ACCEPTED_STAGE_IDS), "{error}");
-        assert!(error.contains("doubt"), "{error}");
-        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+        let warning = &loaded.warnings[0];
+        assert!(warning.contains("patok.config.toml"), "{warning}");
+        assert!(warning.contains("daemon.stages entry 2"), "{warning}");
+        assert!(warning.contains(ACCEPTED_STAGE_IDS), "{warning}");
+        assert!(warning.contains("doubt"), "{warning}");
+        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
         assert_eq!(
             loaded.settings.stages,
-            vec![StageConfig {
-                stage: Stage::Review,
-                label: "review".into(),
-                enabled: false,
-                prompt: None,
-            }]
+            vec![
+                StageConfig {
+                    stage: Stage::Review,
+                    label: "review".into(),
+                    enabled: false,
+                    prompt: None,
+                },
+                StageConfig {
+                    stage: Stage::Build,
+                    label: "build".into(),
+                    enabled: true,
+                    prompt: None,
+                },
+            ]
         );
     }
 

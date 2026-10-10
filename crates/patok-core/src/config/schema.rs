@@ -42,10 +42,11 @@ mod tests {
         }
     }
 
-    /// The stages property and the `Stage` definition stay in their committed
-    /// shape even though the settings type behind them is keyed by the pipeline
-    /// enum: the id stays a free string (parsing is manual), and the rename of the
-    /// config struct cannot leak into the schema.
+    /// The stages property, the `Stage` definition and the `StageId` definition stay
+    /// in their committed shape: the id enumerates the five accepted spellings
+    /// (including `implement`, the build stage's pre-enum spelling), derived from
+    /// the same enum the parser reads, and the rename of the config struct cannot
+    /// leak into the schema.
     #[test]
     fn the_stages_schema_stays_committed_byte_for_byte() {
         let json: serde_json::Value = serde_json::from_str(&daemon_json_schema()).unwrap();
@@ -63,11 +64,19 @@ mod tests {
                 "type": "object",
                 "properties": {
                     "enabled": { "type": "boolean" },
-                    "id": { "type": "string" },
+                    "id": { "$ref": "#/$defs/StageId" },
                     "label": { "type": "string" },
                     "prompt": { "type": ["string", "null"] }
                 },
                 "required": ["id", "label", "enabled"]
+            })
+        );
+        assert_eq!(
+            json["$defs"]["StageId"],
+            serde_json::json!({
+                "description": "A stage id as written in a `[[daemon.stages]]` entry: the four pipeline\nstage spellings plus `implement`, the build stage's pre-enum spelling.",
+                "type": "string",
+                "enum": ["research", "plan", "build", "implement", "review"]
             })
         );
     }

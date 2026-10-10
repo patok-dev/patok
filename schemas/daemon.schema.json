@@ -358,7 +358,7 @@
           "type": "boolean"
         },
         "id": {
-          "type": "string"
+          "$ref": "#/$defs/StageId"
         },
         "label": {
           "type": "string"
@@ -374,6 +374,17 @@
         "id",
         "label",
         "enabled"
+      ]
+    },
+    "StageId": {
+      "description": "A stage id as written in a `[[daemon.stages]]` entry: the four pipeline\nstage spellings plus `implement`, the build stage's pre-enum spelling.",
+      "type": "string",
+      "enum": [
+        "research",
+        "plan",
+        "build",
+        "implement",
+        "review"
       ]
     }
   }

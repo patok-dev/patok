@@ -3047,6 +3047,18 @@ mod provider_config {
     }
 
     #[tokio::test]
+    async fn an_unknown_stage_id_does_not_refuse_runs() {
+        // Per D1: a stage id naming no pipeline stage is skipped with a warning,
+        // like the wrong-typed fields; the run is not refused.
+        let (_fixture, engine) = engine_with(
+            None,
+            Some("[daemon]\n[[daemon.stages]]\nid = \"doubt\"\n"),
+            picking(&Arc::default()),
+        );
+        engine.start_build().unwrap();
+    }
+
+    #[tokio::test]
     async fn the_plan_stage_runs_by_default_from_the_config() {
         let fixture = Fixture::new("- [ ] T1.1: fix the only task\n");
         let provider = MockProvider::per_session(vec![
