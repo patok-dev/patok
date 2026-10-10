@@ -1,5 +1,7 @@
-//! The settings overlay: a static row model over the
-//! configuration that exists after T13.1 and T14.1, plus the pure interaction state --
+//! The settings overlay: a row model over the
+//! configuration that exists after T13.1 and T14.1, whose daemon rows are built from
+//! the core field registry (only the grouping and order are written here), plus the
+//! pure interaction state --
 //! focus, collapsible sections, the inline editor, the unsaved-changes dialog, the
 //! draft map and the status line. Editing a value only updates the draft map in this
 //! state; nothing is applied or persisted until the user picks save in the close
@@ -10,11 +12,12 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use patok_core::config::{
-    AcceptPolicy, EnumSpelling, ProviderName, RailMode, RunMode, SettingValue, Theme,
-    UpdateChannel, daemon_help, tui_help,
+    EnumSpelling, FieldKind as CoreFieldKind, ProviderName, RailMode, SettingValue, Theme,
+    UpdateChannel, daemon_field, daemon_help, daemon_label, tui_help,
 };
 use ratatui::layout::Rect;
 
@@ -73,417 +76,188 @@ pub struct Section {
     pub expanded: bool,
     /// The group id the section's help text is registered under (T85.1).
     pub group: &'static str,
-    pub rows: &'static [Row],
+    /// The section's rows, built once at first use: the daemon rows read the core
+    /// field registry, which is not available in a `const` context.
+    pub rows: &'static LazyLock<Vec<Row>>,
 }
 
 // The row model mirrors the core field table (`DAEMON_FIELDS` in `patok-core`, the
-// single source of truth for the daemon settings): every single-value daemon key has
-// a row below, and the drift test in `crate::settings`
-// (`every_daemon_field_has_an_overlay_row_and_round_trips_the_wire`) fails the build
-// if a row, a mapper arm or an editor kind disagrees with the registry. Deliberate
-// exclusions: the composite keys (`stages`, `stage_overrides`,
-// `catalog_url_overrides`, `semgrep_rulesets`, `plugins` -- no single-value editor),
-// the per-stage model pickers (no model catalog exists yet, so there is nothing to
-// pick from) and `agent_pane_split` (the TUI has a fixed split and no dragging). The
-// two read-only report rows (`engine_version`, `shell_version`) report engine and
-// shell state instead of a setting.
+// single source of truth for the daemon settings): every daemon row below is built
+// by `daemon_row` from the registry entry its key names -- the label and the editor
+// kind come from the table, the help text routes through the registry in
+// `help_for` -- so only the section grouping and the display order are written
+// here, and the drift test in `crate::settings`
+// (`every_daemon_field_has_an_overlay_row_and_round_trips_the_wire`) fails the
+// build if a row, a mapper arm or an editor kind disagrees with the registry.
+// Deliberate exclusions: the composite keys (`stages`, `stage_overrides`,
+// `catalog_url_overrides`, `semgrep_rulesets`, `plugins` -- no single-value editor)
+// and `agent_pane_split` (the TUI has a fixed split and no dragging). The two
+// read-only report rows (`engine_version`, `shell_version`) report engine and shell
+// state instead of a setting; the display section is the shell's own tui schema, so
+// its rows stay literal.
 
-static PROVIDER_SECTION: &[Row] = &[
-    Row {
-        key: "engine_version",
-        label: "engine version",
-        schema: Schema::Daemon,
-        kind: FieldKind::ReadOnly,
-    },
-    Row {
-        key: "shell_version",
-        label: "shell version",
-        schema: Schema::Daemon,
-        kind: FieldKind::ReadOnly,
-    },
-    Row {
-        key: "provider",
-        label: "provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(ProviderName::SPELLINGS),
-    },
-    Row {
-        key: "model",
-        label: "model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "research_provider",
-        label: "research provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(ProviderName::SPELLINGS),
-    },
-    Row {
-        key: "research_model",
-        label: "research model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "planner_provider",
-        label: "planner provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(ProviderName::SPELLINGS),
-    },
-    Row {
-        key: "planner_model",
-        label: "planner model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "builder_provider",
-        label: "builder provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(ProviderName::SPELLINGS),
-    },
-    Row {
-        key: "builder_model",
-        label: "builder model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "reviewer_provider",
-        label: "reviewer provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(ProviderName::SPELLINGS),
-    },
-    Row {
-        key: "reviewer_model",
-        label: "reviewer model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "discovery_provider",
-        label: "discovery provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(ProviderName::SPELLINGS),
-    },
-    Row {
-        key: "discovery_model",
-        label: "discovery model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "learning_extraction_model",
-        label: "learning extraction model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "learning_extraction_provider",
-        label: "learning extraction provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(ProviderName::SPELLINGS),
-    },
-    Row {
-        key: "local_model",
-        label: "local model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "model_catalog_refresh_secs",
-        label: "model catalog refresh",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-];
+/// The overlay editor kind the core registry kind calls for: the one mapping from
+/// the field table's kind to the row model's editor, shared by [`daemon_row`] below
+/// and the drift test in `crate::settings`, so the rows and the test cannot
+/// disagree about what a kind edits.
+pub(crate) fn overlay_kind(kind: &CoreFieldKind) -> FieldKind {
+    match kind {
+        CoreFieldKind::Bool => FieldKind::Bool,
+        CoreFieldKind::Uint | CoreFieldKind::Port | CoreFieldKind::Range(..) => {
+            FieldKind::Number(Number::Uint)
+        }
+        CoreFieldKind::PositiveUint => FieldKind::Number(Number::PositiveUint),
+        CoreFieldKind::FloatRange(..) => FieldKind::Number(Number::Float),
+        CoreFieldKind::Str | CoreFieldKind::OptStr => FieldKind::Text,
+        CoreFieldKind::Enum(accepted) => FieldKind::Enum(accepted),
+        CoreFieldKind::Provider => FieldKind::Enum(ProviderName::SPELLINGS),
+        CoreFieldKind::Composite => unreachable!("composite keys are not registry fields"),
+    }
+}
 
-static PIPELINE_SECTION: &[Row] = &[
+/// One daemon-schema row, built from the core field registry: the key names the
+/// entry, and its table entry supplies the label and the editor kind. A key with
+/// no registry entry or label is a programming error caught by the registry tests
+/// and the drift test, never reachable in a passing build.
+fn daemon_row(key: &'static str) -> Row {
+    let kind = daemon_field(key).unwrap_or_else(|| panic!("`{key}` has no registry entry"));
+    let label = daemon_label(key).unwrap_or_else(|| panic!("`{key}` has no overlay label"));
     Row {
-        key: "run_mode",
-        label: "run mode",
+        key,
+        label,
         schema: Schema::Daemon,
-        kind: FieldKind::Enum(RunMode::SPELLINGS),
-    },
-    Row {
-        key: "plan_enabled",
-        label: "plan enabled",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "skip_planner_for_simple",
-        label: "skip planner for simple",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "skip_research_for_simple",
-        label: "skip research for simple",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "skip_review_for_simple",
-        label: "skip review for simple",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "review_confidence_threshold",
-        label: "review confidence threshold",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "review_multipass_threshold",
-        label: "review multipass threshold",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "batch_review",
-        label: "batch review",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "planner_lookahead",
-        label: "planner lookahead",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "review_in_loop",
-        label: "review in loop",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "confidence_threshold",
-        label: "confidence threshold",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Float),
-    },
-    Row {
-        key: "plan_revision_cycles",
-        label: "plan revision cycles",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "plan_revision_accept_policy",
-        label: "plan revision accept policy",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(AcceptPolicy::SPELLINGS),
-    },
-    Row {
-        key: "semgrep_enabled",
-        label: "semgrep enabled",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "build_command",
-        label: "build command",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "planning_iterations",
-        label: "planning iterations",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "require_human_approval",
-        label: "require human approval",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "on_task_complete_hook",
-        label: "on task complete hook",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-];
+        kind: overlay_kind(&kind),
+    }
+}
 
-static TIMEOUTS_SECTION: &[Row] = &[
-    Row {
-        key: "agent_timeout_secs",
-        label: "agent timeout",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::PositiveUint),
-    },
-    Row {
-        key: "pause_between_tasks_secs",
-        label: "pause between tasks",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "pause_between_agents_secs",
-        label: "pause between agents",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "pause_between_cycles_secs",
-        label: "pause between cycles",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "engine_idle_timeout_secs",
-        label: "engine idle timeout",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "adaptive_pauses",
-        label: "adaptive pauses",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "discovery_cooldown_secs",
-        label: "discovery cooldown",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::PositiveUint),
-    },
-    Row {
-        key: "discovery_cooldown_cap_secs",
-        label: "discovery cooldown cap",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::PositiveUint),
-    },
-];
+static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        Row {
+            key: "engine_version",
+            label: "engine version",
+            schema: Schema::Daemon,
+            kind: FieldKind::ReadOnly,
+        },
+        Row {
+            key: "shell_version",
+            label: "shell version",
+            schema: Schema::Daemon,
+            kind: FieldKind::ReadOnly,
+        },
+        daemon_row("provider"),
+        daemon_row("model"),
+        daemon_row("research_provider"),
+        daemon_row("research_model"),
+        daemon_row("planner_provider"),
+        daemon_row("planner_model"),
+        daemon_row("builder_provider"),
+        daemon_row("builder_model"),
+        daemon_row("reviewer_provider"),
+        daemon_row("reviewer_model"),
+        daemon_row("discovery_provider"),
+        daemon_row("discovery_model"),
+        daemon_row("learning_extraction_model"),
+        daemon_row("learning_extraction_provider"),
+        daemon_row("local_model"),
+        daemon_row("model_catalog_refresh_secs"),
+    ]
+});
 
-static GIT_SECTION: &[Row] = &[Row {
-    key: "auto_push_remote",
-    label: "auto-push remote",
-    schema: Schema::Daemon,
-    kind: FieldKind::Text,
-}];
+static PIPELINE_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("run_mode"),
+        daemon_row("plan_enabled"),
+        daemon_row("skip_planner_for_simple"),
+        daemon_row("skip_research_for_simple"),
+        daemon_row("skip_review_for_simple"),
+        daemon_row("review_confidence_threshold"),
+        daemon_row("review_multipass_threshold"),
+        daemon_row("batch_review"),
+        daemon_row("planner_lookahead"),
+        daemon_row("review_in_loop"),
+        daemon_row("confidence_threshold"),
+        daemon_row("plan_revision_cycles"),
+        daemon_row("plan_revision_accept_policy"),
+        daemon_row("semgrep_enabled"),
+        daemon_row("build_command"),
+        daemon_row("planning_iterations"),
+        daemon_row("require_human_approval"),
+        daemon_row("on_task_complete_hook"),
+    ]
+});
 
-static ISOLATION_SECTION: &[Row] = &[
-    Row {
-        key: "phase_isolation",
-        label: "phase isolation",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "enforce_phase_rbac",
-        label: "enforce phase rbac",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-];
+static TIMEOUTS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("agent_timeout_secs"),
+        daemon_row("pause_between_tasks_secs"),
+        daemon_row("pause_between_agents_secs"),
+        daemon_row("pause_between_cycles_secs"),
+        daemon_row("engine_idle_timeout_secs"),
+        daemon_row("adaptive_pauses"),
+        daemon_row("discovery_cooldown_secs"),
+        daemon_row("discovery_cooldown_cap_secs"),
+    ]
+});
 
-static LEARNINGS_SECTION: &[Row] = &[
-    Row {
-        key: "history_dir",
-        label: "history dir",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "max_learning_injection",
-        label: "max learning injection",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "min_learning_injection",
-        label: "min learning injection",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "history_search_results",
-        label: "history search results",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "history_retention_tasks",
-        label: "history retention tasks",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "observatory_retention_days",
-        label: "observatory retention days",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "semantic_match_enabled",
-        label: "semantic match enabled",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "embedding_model",
-        label: "embedding model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "embedding_port",
-        label: "embedding port",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "embedding_timeout_ms",
-        label: "embedding timeout",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "show_retrieval_panel",
-        label: "show retrieval panel",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-];
+static GIT_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| vec![daemon_row("auto_push_remote")]);
 
-static DISPLAY_SECTION: &[Row] = &[
-    Row {
-        key: "theme",
-        label: "theme",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(Theme::SPELLINGS),
-    },
-    Row {
-        key: "truecolor",
-        label: "truecolor",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(&["auto", "on", "off"]),
-    },
-    Row {
-        key: "preview_wrap",
-        label: "preview wrap",
-        schema: Schema::Tui,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "update_channel",
-        label: "update channel",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(UpdateChannel::SPELLINGS),
-    },
-    Row {
-        key: "rail_mode",
-        label: "rail mode",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(RailMode::SPELLINGS),
-    },
-];
+static ISOLATION_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("phase_isolation"),
+        daemon_row("enforce_phase_rbac"),
+    ]
+});
+
+static LEARNINGS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("history_dir"),
+        daemon_row("max_learning_injection"),
+        daemon_row("min_learning_injection"),
+        daemon_row("history_search_results"),
+        daemon_row("history_retention_tasks"),
+        daemon_row("observatory_retention_days"),
+        daemon_row("semantic_match_enabled"),
+        daemon_row("embedding_model"),
+        daemon_row("embedding_port"),
+        daemon_row("embedding_timeout_ms"),
+        daemon_row("show_retrieval_panel"),
+    ]
+});
+
+static DISPLAY_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        Row {
+            key: "theme",
+            label: "theme",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(Theme::SPELLINGS),
+        },
+        Row {
+            key: "truecolor",
+            label: "truecolor",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(&["auto", "on", "off"]),
+        },
+        Row {
+            key: "preview_wrap",
+            label: "preview wrap",
+            schema: Schema::Tui,
+            kind: FieldKind::Bool,
+        },
+        Row {
+            key: "update_channel",
+            label: "update channel",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(UpdateChannel::SPELLINGS),
+        },
+        Row {
+            key: "rail_mode",
+            label: "rail mode",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(RailMode::SPELLINGS),
+        },
+    ]
+});
 
 /// The overlay's sections in display order.
 pub(crate) static SECTIONS: &[Section] = &[
@@ -491,43 +265,43 @@ pub(crate) static SECTIONS: &[Section] = &[
         title: "Provider and model",
         expanded: true,
         group: "provider_and_model",
-        rows: PROVIDER_SECTION,
+        rows: &PROVIDER_SECTION,
     },
     Section {
         title: "Pipeline",
         expanded: true,
         group: "pipeline",
-        rows: PIPELINE_SECTION,
+        rows: &PIPELINE_SECTION,
     },
     Section {
         title: "Timeouts and pauses",
         expanded: true,
         group: "timeouts_and_pauses",
-        rows: TIMEOUTS_SECTION,
+        rows: &TIMEOUTS_SECTION,
     },
     Section {
         title: "Git",
         expanded: true,
         group: "git",
-        rows: GIT_SECTION,
+        rows: &GIT_SECTION,
     },
     Section {
         title: "Isolation and security",
         expanded: true,
         group: "isolation",
-        rows: ISOLATION_SECTION,
+        rows: &ISOLATION_SECTION,
     },
     Section {
         title: "Learnings, history and embeddings",
         expanded: true,
         group: "learnings_history",
-        rows: LEARNINGS_SECTION,
+        rows: &LEARNINGS_SECTION,
     },
     Section {
         title: "Display and theme",
         expanded: true,
         group: "display_and_theme",
-        rows: DISPLAY_SECTION,
+        rows: &DISPLAY_SECTION,
     },
 ];
 
@@ -553,8 +327,8 @@ impl<T> Entry<T> {
 
 /// The visible entries of a collapsible group list: every group's header
 /// always, its rows (by reference) only while the group is expanded, in
-/// group order -- the one fold mechanism the settings overlay's sections and
-/// the theme picker's Dark/Light groups (T116.1) share.
+/// group order -- the fold mechanism the theme picker's Dark/Light groups
+/// (T116.1) use over their slices.
 pub fn group_entries<'a, T>(groups: &'a [&'a [T]], expanded: &[bool]) -> Vec<Entry<&'a T>> {
     let mut entries = Vec::new();
     for (index, rows) in groups.iter().enumerate() {
@@ -586,16 +360,16 @@ pub fn clamp_focus(focus: usize, len: usize) -> usize {
     focus.min(len.saturating_sub(1))
 }
 
-/// The sections' row groups in display order, the input of the shared fold
-/// mechanism ([`group_entries`]); parallel to [`SECTIONS`].
-static SECTION_ROWS: [&[Row]; 7] = [
-    PROVIDER_SECTION,
-    PIPELINE_SECTION,
-    TIMEOUTS_SECTION,
-    GIT_SECTION,
-    ISOLATION_SECTION,
-    LEARNINGS_SECTION,
-    DISPLAY_SECTION,
+/// The sections' row groups in display order, read by
+/// [`SettingsOverlay::visible`]; parallel to [`SECTIONS`].
+static SECTION_ROWS: [&LazyLock<Vec<Row>>; 7] = [
+    &PROVIDER_SECTION,
+    &PIPELINE_SECTION,
+    &TIMEOUTS_SECTION,
+    &GIT_SECTION,
+    &ISOLATION_SECTION,
+    &LEARNINGS_SECTION,
+    &DISPLAY_SECTION,
 ];
 
 /// The unsaved-changes dialog's choices (Esc or q on a dirty overlay): what the
@@ -780,7 +554,14 @@ impl SettingsOverlay {
     /// The focusable entries in display order: each section header and its rows when
     /// the section is expanded.
     pub fn visible(&self) -> Vec<Entry<&'static Row>> {
-        group_entries(&SECTION_ROWS, &self.expanded)
+        let mut entries = Vec::new();
+        for (index, rows) in SECTION_ROWS.iter().enumerate() {
+            entries.push(Entry::Header(index));
+            if self.expanded.get(index).copied().unwrap_or(false) {
+                entries.extend(rows.iter().map(Entry::Row));
+            }
+        }
+        entries
     }
 
     pub(crate) fn expanded(&self, index: usize) -> bool {
@@ -1140,9 +921,16 @@ impl SettingsOverlay {
                     .buffer
                     .parse()
                     .map_err(|_| format!("{} must be a number", editor.field))?;
-                if !(0.0..=1.0).contains(&value) {
+                // The bounds come from the field's registry entry (only the
+                // confidence threshold is a float today); a missing entry falls
+                // back to the 0.0..=1.0 range.
+                let (min, max) = match daemon_field(editor.field) {
+                    Some(CoreFieldKind::FloatRange(min, max)) => (min, max),
+                    _ => (0.0, 1.0),
+                };
+                if !(min..=max).contains(&value) {
                     return Err(format!(
-                        "{} must be a number between 0.0 and 1.0",
+                        "{} must be a number between {min:?} and {max:?}",
                         editor.field
                     ));
                 }
@@ -1288,7 +1076,7 @@ mod tests {
             let group = help_for(section.rows[0].schema, section.group)
                 .unwrap_or_else(|| panic!("`{}` has no group help", section.group));
             assert!(!group.is_empty());
-            for row in section.rows {
+            for row in section.rows.iter() {
                 let help = help_for(row.schema, row.key)
                     .unwrap_or_else(|| panic!("`{}` has no help text", row.key));
                 assert!(!help.is_empty());

@@ -12,6 +12,7 @@ crossterm.workspace = true
 futures.workspace = true
 patok-core.workspace = true
 patok-proto.workspace = true
+patok-wire.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

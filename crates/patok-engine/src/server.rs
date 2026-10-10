@@ -4,6 +4,7 @@ use std::os::unix::fs::DirBuilderExt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::from_proto;
 use anyhow::Context;
 use patok_core::config::ApplyTiming;
 use patok_core::event::EngineEvent;
@@ -134,7 +135,7 @@ impl EngineApi for Service {
             // config; the new value reaches the shell as a ConfigChanged event.
             Some(command_request::Action::SettingsChange(change)) => match change.change {
                 Some(change) => {
-                    let (field, value) = crate::settings::from_proto(&change);
+                    let (field, value) = from_proto(&change);
                     match self.engine.apply_settings_change(&field, value) {
                         Ok(ApplyTiming::Immediate) => {
                             settings_accepted(settings_change_result::ApplyTiming::Immediate)

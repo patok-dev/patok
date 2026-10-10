@@ -3,11 +3,12 @@
 //! `[daemon]` table of each config file.
 //!
 //! Every setting is declared once, in the `daemon_table!` invocation below: one entry
-//! carries the key, type, default, help text and validation, and the macro derives every
+//! carries the key, type, default, overlay label, help text and validation, and the
+//! macro derives every
 //! table that used to be hand-listed beside it -- the settings struct with its defaults,
 //! the raw option layer, the per-key parser, the layer merge, the materialization, the
 //! persistence registry (field kind, key list, apply timing, effective values) and the
-//! settings-overlay help. Adding a setting is one entry.
+//! settings-overlay label and help. Adding a setting is one entry.
 
 use std::path::Path;
 
@@ -163,7 +164,7 @@ pub(crate) struct RawStage {
 /// parser and the write-path validator so the two cannot drift apart again.
 ///
 /// The cross-crate drift surface of finding 10: the settings overlay's row model and
-/// both proto mappers (`patok-tui`'s `to_proto`, `patok-engine`'s `from_proto`) read
+/// both generated proto mappers (`patok-wire`'s `to_proto` and `from_proto`) read
 /// the kind through [`daemon_field`], and the drift test in `patok-tui` fails the
 /// build when a row's editor disagrees with the registry.
 pub enum FieldKind {
@@ -203,15 +204,16 @@ pub enum FieldKind {
 // consumer reads the same entry, so the tables cannot disagree.
 //
 // Entry grammar, one bracketed item per field:
-// `[kind field "key" (help "text")? (immediate)? <kind tail>]` with `bool`, `port` and
-// `str` tail `default <expr>`, `uint` and `positive_uint` tail
+// `[kind field "key" (label "text")? (help "text")? (immediate)? <kind tail>]` with `bool`,
+// `port` and `str` tail `default <expr>`, `uint` and `positive_uint` tail
 // `expect "<warning noun>" default <expr>`, `float_range` tail
 // `range <min> ..= <max> default <expr>`, `enum` its enum type right after the key,
 // and no tail for
 // `opt_str`, `provider`, `strings`, `string_map` and `stages`. A leading `//` documents
-// the settings-struct field (and so the JSON schema); `help` adds the settings-overlay
-// help text (absent means the overlay shows none for the key); `immediate` marks a
-// field read at the point of use.
+// the settings-struct field (and so the JSON schema); `label` adds the settings-overlay
+// row label; `help` adds the settings-overlay help text (absent means the overlay
+// shows no label or help for the key); `immediate` marks a field read at the point of
+// use.
 //
 // The derivation is split by expansion position (macro_rules cannot expand into struct
 // fields or match arms): the two structs, the merged layer literal, the materialized
@@ -346,7 +348,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* bool $f:ident $k:literal $(help $h:literal)? $(immediate)? default $d:expr]
+        [$(#[$doc:meta])* bool $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -356,7 +358,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal default $d:expr]
+        [$(#[$doc:meta])* uint $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? expect $e:literal default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -366,7 +368,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal default $d:expr]
+        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? expect $e:literal default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -376,7 +378,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* port $f:ident $k:literal $(help $h:literal)? $(immediate)? default $d:expr]
+        [$(#[$doc:meta])* port $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -386,7 +388,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* float_range $f:ident $k:literal $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal default $d:expr]
+        [$(#[$doc:meta])* float_range $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -396,7 +398,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* str $f:ident $k:literal $(help $h:literal)? $(immediate)? default $d:expr]
+        [$(#[$doc:meta])* str $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -406,7 +408,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* opt_str $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* opt_str $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -416,7 +418,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -426,7 +428,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* provider $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* provider $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -436,7 +438,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* strings $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* strings $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -446,7 +448,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* string_map $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* string_map $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -456,7 +458,7 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* stages $f:ident $k:literal $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* stages $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -544,7 +546,7 @@ macro_rules! daemon_immediate {
     };
     (
         keys [$($acc:tt)*]
-        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? immediate $($rest:tt)*]
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(label $l:literal)? $(help $h:literal)? immediate $($rest:tt)*]
         $($tail:tt)*
     ) => {
         daemon_immediate! {
@@ -554,7 +556,7 @@ macro_rules! daemon_immediate {
     };
     (
         keys [$($acc:tt)*]
-        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $(help $h:literal)? immediate $($rest:tt)*]
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? immediate $($rest:tt)*]
         $($tail:tt)*
     ) => {
         daemon_immediate! {
@@ -577,7 +579,8 @@ macro_rules! daemon_immediate {
 /// One table entry's per-key runtime behaviour, named by the first argument: the parse
 /// statement (`parse`: one known-key check, ending the loop iteration so unknown keys
 /// fall through to the warning), the registry lookup (`kind`), the effective value
-/// (`value`) and the overlay help (`help`), each expanding to one early-return
+/// (`value`), the overlay label (`label`) and the overlay help (`help`), each expanding
+/// to one early-return
 /// statement. The ident arguments name the runtime binding the expansion lands on
 /// (`layer`, `f`, `key`, `value`, `errors`, `name`, `settings`, `field`), so hygiene
 /// puts each inside the function that owns it.
@@ -594,7 +597,7 @@ macro_rules! daemon_entry {
     };
     (
         parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
-        [$(#[$doc:meta])* uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal $($rest:tt)*]
+        [$(#[$doc:meta])* uint $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? expect $e:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
             $layer.$f = $fields.uint($key, $value, $e, false);
@@ -603,7 +606,7 @@ macro_rules! daemon_entry {
     };
     (
         parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
-        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $(help $h:literal)? $(immediate)? expect $e:literal $($rest:tt)*]
+        [$(#[$doc:meta])* positive_uint $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? expect $e:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
             $layer.$f = $fields.uint($key, $value, $e, true);
@@ -621,7 +624,7 @@ macro_rules! daemon_entry {
     };
     (
         parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
-        [$(#[$doc:meta])* float_range $f:ident $k:literal $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal $($rest:tt)*]
+        [$(#[$doc:meta])* float_range $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
             $layer.$f = $fields.float($key, $value, Some(($min, $max)));
@@ -648,7 +651,7 @@ macro_rules! daemon_entry {
     };
     (
         parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
-        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(label $l:literal)? $(help $h:literal)? $(immediate)?]
     ) => {
         if $key.as_str() == $k {
             $layer.$f = $fields.enumerated($key, $value, &$ty::accepted_spellings(), $ty::parse);
@@ -720,7 +723,7 @@ macro_rules! daemon_entry {
     };
     (
         kind, $name:ident,
-        [$(#[$doc:meta])* float_range $f:ident $k:literal $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal $($rest:tt)*]
+        [$(#[$doc:meta])* float_range $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal $($rest:tt)*]
     ) => {
         if $name == $k {
             return Some(FieldKind::FloatRange($min, $max));
@@ -738,7 +741,7 @@ macro_rules! daemon_entry {
     };
     (
         kind, $name:ident,
-        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(help $h:literal)? $(immediate)?]
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(label $l:literal)? $(help $h:literal)? $(immediate)?]
     ) => {
         if $name == $k {
             return Some(FieldKind::Enum($ty::SPELLINGS));
@@ -848,7 +851,7 @@ macro_rules! daemon_entry {
     // The overlay help.
     (
         help, $key:ident,
-        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident help $h:literal $($rest:tt)*]
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident $(label $l:literal)? help $h:literal $($rest:tt)*]
     ) => {
         if $key == $k {
             return Some($h);
@@ -856,7 +859,7 @@ macro_rules! daemon_entry {
     };
     (
         help, $key:ident,
-        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal help $h:literal $($rest:tt)*]
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal $(label $l:literal)? help $h:literal $($rest:tt)*]
     ) => {
         if $key == $k {
             return Some($h);
@@ -864,6 +867,25 @@ macro_rules! daemon_entry {
     };
     // A key with no help entry contributes nothing.
     (help, $key:ident, [$($rest:tt)*]) => {};
+    // The overlay label.
+    (
+        label, $key:ident,
+        [$(#[$doc:meta])* enum $f:ident $k:literal $ty:ident label $l:literal $($rest:tt)*]
+    ) => {
+        if $key == $k {
+            return Some($l);
+        }
+    };
+    (
+        label, $key:ident,
+        [$(#[$doc:meta])* $kind:ident $f:ident $k:literal label $l:literal $($rest:tt)*]
+    ) => {
+        if $key == $k {
+            return Some($l);
+        }
+    };
+    // A key with no label entry contributes nothing.
+    (label, $key:ident, [$($rest:tt)*]) => {};
 }
 
 /// The table driver: takes the struct-level docs, the entries and the normalization
@@ -996,6 +1018,19 @@ macro_rules! daemon_table {
             )*
             None
         }
+
+        /// The settings-overlay row label of one daemon field key, from its table
+        /// entry; `None` for a key with no label (the composite keys carry none).
+        ///
+        /// Part of the cross-crate drift surface of finding 10: the settings overlay
+        /// builds each daemon row's label through this lookup, so the label lives
+        /// with the field's kind, default and help instead of a hand-written row.
+        pub fn daemon_label(key: &str) -> Option<&'static str> {
+            $(
+                daemon_entry! { label, key, $entry }
+            )*
+            None
+        }
     };
 }
 daemon_table! {
@@ -1006,74 +1041,74 @@ daemon_table! {
     /// pipeline, routing and learnings tasks pick them up.
     entries {
         // Routing (section 4).
-        [provider provider "provider" help "The provider every agent role runs on: claude, codex, opencode, ghcopilot or mistral. Any unrecognized value behaves as claude."],
+        [provider provider "provider" label "provider" help "The provider every agent role runs on: claude, codex, opencode, ghcopilot or mistral. Any unrecognized value behaves as claude."],
         [/// The single-model override; empty means none (normalization applies it per role).
-         opt_str model "model" help "Single-model override: when set, it replaces the model of every agent role (research, planner, builder, reviewer, discovery, learning extraction). Meant for subscriptions locked to one model; empty means each role keeps its own model."],
-        [str research_model "research_model" help "The model the research role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
-        [str planner_model "planner_model" help "The model the planner role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
-        [str builder_model "builder_model" help "The model the builder role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
-        [str reviewer_model "reviewer_model" help "The model the reviewer role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
-        [str discovery_model "discovery_model" help "The model the discovery role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
-        [str learning_extraction_model "learning_extraction_model" help "The model the learning extraction role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
-        [provider research_provider "research_provider" help "The provider the research role runs on. Applies at the next research session start."],
-        [provider planner_provider "planner_provider" help "The provider the planner role runs on. Applies at the next planner session start."],
-        [provider builder_provider "builder_provider" help "The provider the builder role runs on. Applies at the next builder session start."],
-        [provider reviewer_provider "reviewer_provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
-        [provider discovery_provider "discovery_provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
-        [provider learning_extraction_provider "learning_extraction_provider" help "The provider the learning extraction role runs on. Applies at the next learning extraction session start."],
-        [opt_str local_model "local_model" help "The model used for local runs; empty uses the provider's default."],
-        [uint model_catalog_refresh_secs "model_catalog_refresh_secs" help "How often the model catalog refreshes from the provider, in seconds. Default 86400 (24 hours)." expect "a whole number of seconds" default 86400],
+         opt_str model "model" label "model" help "Single-model override: when set, it replaces the model of every agent role (research, planner, builder, reviewer, discovery, learning extraction). Meant for subscriptions locked to one model; empty means each role keeps its own model."],
+        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
+        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
+        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
+        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
+        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
+        [str learning_extraction_model "learning_extraction_model" label "learning extraction model" help "The model the learning extraction role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
+        [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start."],
+        [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start."],
+        [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start."],
+        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
+        [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
+        [provider learning_extraction_provider "learning_extraction_provider" label "learning extraction provider" help "The provider the learning extraction role runs on. Applies at the next learning extraction session start."],
+        [opt_str local_model "local_model" label "local model" help "The model used for local runs; empty uses the provider's default."],
+        [uint model_catalog_refresh_secs "model_catalog_refresh_secs" label "model catalog refresh" help "How often the model catalog refreshes from the provider, in seconds. Default 86400 (24 hours)." expect "a whole number of seconds" default 86400],
         [string_map catalog_url_overrides "catalog_url_overrides"],
         [strings stage_overrides "stage_overrides"],
         // Pipeline flow (section 5).
-        [enum run_mode "run_mode" RunMode help "sprint (default) or continuous. The running loop keeps the mode it started with; a change applies at the next run."],
+        [enum run_mode "run_mode" RunMode label "run mode" help "sprint (default) or continuous. The running loop keeps the mode it started with; a change applies at the next run."],
         [stages stages "stages" help "The pipeline stage list. Only the review stage can be disabled: enabled = false on research, plan or build is ignored with a warning, and those stages still run."],
-        [bool skip_planner_for_simple "skip_planner_for_simple" help "Simple tasks go straight to the builder (default on)." default true],
+        [bool skip_planner_for_simple "skip_planner_for_simple" label "skip planner for simple" help "Simple tasks go straight to the builder (default on)." default true],
         [/// Whether a Simple-classified task skips the research stage (T68.1).
-         bool skip_research_for_simple "skip_research_for_simple" help "Simple tasks skip the research stage (default on)." default true],
-        [bool skip_review_for_simple "skip_review_for_simple" help "Simple tasks skip the review stage, only when the builder's verification exited cleanly (default on)." default true],
-        [uint review_confidence_threshold "review_confidence_threshold" help "Consecutive review passes needed before learned confidence may skip the review for matching task shapes (simple and medium tasks only); 0 disables. Default 5." expect "a whole number" default 5],
-        [bool batch_review "batch_review" help "Skip the review for all but the last task in each contiguous run of same-numbered task IDs; that task's review covers every commit in the run (default on)." default true],
-        [bool planner_lookahead "planner_lookahead" help "Plan task N+1 while task N builds; the plan is reused when that task comes up (default on)." default true],
-        [uint plan_revision_cycles "plan_revision_cycles" help "How many times the planner revises its own plan before accepting it; 0 disables plan self-review." expect "a whole number" default 0],
-        [enum plan_revision_accept_policy "plan_revision_accept_policy" AcceptPolicy help "Which findings the plan self-review must clear before the plan is accepted: no-high (default), no-high-medium or no-findings."],
-        [bool review_in_loop "review_in_loop" help "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)." default true],
-        [uint review_multipass_threshold "review_multipass_threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 8." expect "a whole number" default 8],
-        [float_range confidence_threshold "confidence_threshold" help "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5." range 0.0..=1.0 default 0.5],
-        [bool semgrep_enabled "semgrep_enabled" help "Run semgrep static analysis as part of the review stage (default off)." default false],
+         bool skip_research_for_simple "skip_research_for_simple" label "skip research for simple" help "Simple tasks skip the research stage (default on)." default true],
+        [bool skip_review_for_simple "skip_review_for_simple" label "skip review for simple" help "Simple tasks skip the review stage, only when the builder's verification exited cleanly (default on)." default true],
+        [uint review_confidence_threshold "review_confidence_threshold" label "review confidence threshold" help "Consecutive review passes needed before learned confidence may skip the review for matching task shapes (simple and medium tasks only); 0 disables. Default 5." expect "a whole number" default 5],
+        [bool batch_review "batch_review" label "batch review" help "Skip the review for all but the last task in each contiguous run of same-numbered task IDs; that task's review covers every commit in the run (default on)." default true],
+        [bool planner_lookahead "planner_lookahead" label "planner lookahead" help "Plan task N+1 while task N builds; the plan is reused when that task comes up (default on)." default true],
+        [uint plan_revision_cycles "plan_revision_cycles" label "plan revision cycles" help "How many times the planner revises its own plan before accepting it; 0 disables plan self-review." expect "a whole number" default 0],
+        [enum plan_revision_accept_policy "plan_revision_accept_policy" AcceptPolicy label "plan revision accept policy" help "Which findings the plan self-review must clear before the plan is accepted: no-high (default), no-high-medium or no-findings."],
+        [bool review_in_loop "review_in_loop" label "review in loop" help "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)." default true],
+        [uint review_multipass_threshold "review_multipass_threshold" label "review multipass threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 8." expect "a whole number" default 8],
+        [float_range confidence_threshold "confidence_threshold" label "confidence threshold" help "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5." range 0.0..=1.0 default 0.5],
+        [bool semgrep_enabled "semgrep_enabled" label "semgrep enabled" help "Run semgrep static analysis as part of the review stage (default off)." default false],
         [strings semgrep_rulesets "semgrep_rulesets"],
-        [opt_str build_command "build_command" help "The command the builder runs to verify its work; empty uses the provider's default."],
-        [uint planning_iterations "planning_iterations" help "How many planning passes the planner runs before handing the plan over; 0 means a single pass." expect "a whole number" default 0],
-        [bool require_human_approval "require_human_approval" help "Wait for human approval before each task's work continues (default off)." default false],
-        [opt_str auto_push_remote "auto_push_remote" help "Push to this remote after each successful commit; empty means local commits only." immediate],
-        [opt_str on_task_complete_hook "on_task_complete_hook" help "A command run after each completed task; empty means none." immediate],
-        [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
-        [positive_uint discovery_cooldown_cap_secs "discovery_cooldown_cap_secs" help "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS],
+        [opt_str build_command "build_command" label "build command" help "The command the builder runs to verify its work; empty uses the provider's default."],
+        [uint planning_iterations "planning_iterations" label "planning iterations" help "How many planning passes the planner runs before handing the plan over; 0 means a single pass." expect "a whole number" default 0],
+        [bool require_human_approval "require_human_approval" label "require human approval" help "Wait for human approval before each task's work continues (default off)." default false],
+        [opt_str auto_push_remote "auto_push_remote" label "auto-push remote" help "Push to this remote after each successful commit; empty means local commits only." immediate],
+        [opt_str on_task_complete_hook "on_task_complete_hook" label "on task complete hook" help "A command run after each completed task; empty means none." immediate],
+        [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" label "discovery cooldown" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
+        [positive_uint discovery_cooldown_cap_secs "discovery_cooldown_cap_secs" label "discovery cooldown cap" help "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS],
         [/// Whether a plan session runs before each builder session (T10.1).
-         bool plan_enabled "plan_enabled" help "Whether a plan session runs before each builder session." default true],
+         bool plan_enabled "plan_enabled" label "plan enabled" help "Whether a plan session runs before each builder session." default true],
         // Timing (section 6).
-        [positive_uint agent_timeout_secs "agent_timeout_secs" help "How long one agent invocation may idle, in seconds, before it is stopped; the hard timeout is four times this. Default 600." expect "a whole number of seconds greater than zero" default 600],
-        [uint pause_between_tasks_secs "pause_between_tasks_secs" help "Pause between two tasks, in seconds. Default 10." expect "a whole number of seconds" default 10],
-        [uint pause_between_agents_secs "pause_between_agents_secs" help "Pause between two agent invocations, in seconds. Default 3." expect "a whole number of seconds" default 3],
-        [uint pause_between_cycles_secs "pause_between_cycles_secs" help "Pause between build cycles, in seconds. Default 30." expect "a whole number of seconds" default 30],
-        [bool adaptive_pauses "adaptive_pauses" help "Shorten the pauses to about 500 ms when the last agent was not rate limited (default on)." default true],
-        [uint engine_idle_timeout_secs "engine_idle_timeout_secs" help "When no shell is attached and the engine has been idle this long, it shuts itself down. Default 1800 (30 minutes)." expect "a whole number of seconds" default 1800],
+        [positive_uint agent_timeout_secs "agent_timeout_secs" label "agent timeout" help "How long one agent invocation may idle, in seconds, before it is stopped; the hard timeout is four times this. Default 600." expect "a whole number of seconds greater than zero" default 600],
+        [uint pause_between_tasks_secs "pause_between_tasks_secs" label "pause between tasks" help "Pause between two tasks, in seconds. Default 10." expect "a whole number of seconds" default 10],
+        [uint pause_between_agents_secs "pause_between_agents_secs" label "pause between agents" help "Pause between two agent invocations, in seconds. Default 3." expect "a whole number of seconds" default 3],
+        [uint pause_between_cycles_secs "pause_between_cycles_secs" label "pause between cycles" help "Pause between build cycles, in seconds. Default 30." expect "a whole number of seconds" default 30],
+        [bool adaptive_pauses "adaptive_pauses" label "adaptive pauses" help "Shorten the pauses to about 500 ms when the last agent was not rate limited (default on)." default true],
+        [uint engine_idle_timeout_secs "engine_idle_timeout_secs" label "engine idle timeout" help "When no shell is attached and the engine has been idle this long, it shuts itself down. Default 1800 (30 minutes)." expect "a whole number of seconds" default 1800],
         // Isolation and security (section 7).
-        [bool phase_isolation "phase_isolation" help "Run each pipeline phase in its own isolated session (default on)." default true],
-        [bool enforce_phase_rbac "enforce_phase_rbac" help "Enforce role-based access control between the pipeline phases (default on)." default true],
+        [bool phase_isolation "phase_isolation" label "phase isolation" help "Run each pipeline phase in its own isolated session (default on)." default true],
+        [bool enforce_phase_rbac "enforce_phase_rbac" label "enforce phase rbac" help "Enforce role-based access control between the pipeline phases (default on)." default true],
         // Learnings, history and embeddings (section 8).
-        [opt_str history_dir "history_dir" help "Directory the session history lives in; empty uses the default location."],
-        [uint max_learning_injection "max_learning_injection" help "The most learned items injected into one prompt. Default 10." expect "a whole number" default 10],
-        [uint min_learning_injection "min_learning_injection" help "The fewest learned items injected into one prompt. Default 2." expect "a whole number" default 2],
-        [uint history_search_results "history_search_results" help "How many matches a history search returns. Default 5." expect "a whole number" default 5],
-        [uint history_retention_tasks "history_retention_tasks" help "How many tasks the history keeps. Default 50." expect "a whole number" default 50],
-        [uint observatory_retention_days "observatory_retention_days" help "How many days the observatory keeps its findings. Default 30." immediate expect "a whole number" default 30],
-        [bool semantic_match_enabled "semantic_match_enabled" help "Match learnings by semantic similarity as well as text (default on)." default true],
-        [str embedding_model "embedding_model" help "The embedding model used for semantic matching. Default nomic-embed-text." default "nomic-embed-text".into()],
-        [port embedding_port "embedding_port" help "The port of the local embedding server. Default 11434." default 11434],
-        [uint embedding_timeout_ms "embedding_timeout_ms" help "How long the embedding request may take, in milliseconds. Default 2000." expect "a whole number of milliseconds" default 2000],
+        [opt_str history_dir "history_dir" label "history dir" help "Directory the session history lives in; empty uses the default location."],
+        [uint max_learning_injection "max_learning_injection" label "max learning injection" help "The most learned items injected into one prompt. Default 10." expect "a whole number" default 10],
+        [uint min_learning_injection "min_learning_injection" label "min learning injection" help "The fewest learned items injected into one prompt. Default 2." expect "a whole number" default 2],
+        [uint history_search_results "history_search_results" label "history search results" help "How many matches a history search returns. Default 5." expect "a whole number" default 5],
+        [uint history_retention_tasks "history_retention_tasks" label "history retention tasks" help "How many tasks the history keeps. Default 50." expect "a whole number" default 50],
+        [uint observatory_retention_days "observatory_retention_days" label "observatory retention days" help "How many days the observatory keeps its findings. Default 30." immediate expect "a whole number" default 30],
+        [bool semantic_match_enabled "semantic_match_enabled" label "semantic match enabled" help "Match learnings by semantic similarity as well as text (default on)." default true],
+        [str embedding_model "embedding_model" label "embedding model" help "The embedding model used for semantic matching. Default nomic-embed-text." default "nomic-embed-text".into()],
+        [port embedding_port "embedding_port" label "embedding port" help "The port of the local embedding server. Default 11434." default 11434],
+        [uint embedding_timeout_ms "embedding_timeout_ms" label "embedding timeout" help "How long the embedding request may take, in milliseconds. Default 2000." expect "a whole number of milliseconds" default 2000],
         [strings plugins "plugins"],
-        [bool show_retrieval_panel "show_retrieval_panel" help "Show the retrieval panel in the shell (default off)." immediate default false],
+        [bool show_retrieval_panel "show_retrieval_panel" label "show retrieval panel" help "Show the retrieval panel in the shell (default off)." immediate default false],
     }
     normalize settings {
         // Normalization: a non-empty single-model override replaces the models of
@@ -1721,6 +1756,26 @@ enabled = false
         // The composite `stages` key carries its field-table help even though
         // the overlay shows no row for it; groups of the other schema stay out.
         assert_eq!(daemon_help("theme"), None);
+    }
+
+    /// Finding 10: every single-value registry key carries the settings-overlay row
+    /// label the overlay builds its row from, so a new setting without one fails here
+    /// instead of surfacing as a missing overlay label; the composite keys carry none.
+    #[test]
+    fn every_daemon_field_key_has_an_overlay_label() {
+        for &key in DAEMON_FIELDS {
+            let label = daemon_label(key).unwrap_or_else(|| panic!("`{key}` has no label"));
+            assert!(!label.is_empty(), "`{key}` has an empty label");
+        }
+        for key in [
+            "stages",
+            "stage_overrides",
+            "catalog_url_overrides",
+            "semgrep_rulesets",
+            "plugins",
+        ] {
+            assert_eq!(daemon_label(key), None, "`{key}` must carry no label");
+        }
     }
 
     /// The per-field sample a round trip writes and reads back: valid for the field's

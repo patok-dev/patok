@@ -1292,6 +1292,7 @@ dependencies = [
  "patok-core",
  "patok-proto",
  "patok-providers",
+ "patok-wire",
  "serde",
  "serde_json",
  "sha2",
@@ -1346,11 +1347,20 @@ dependencies = [
  "patok-proto",
  "patok-providers",
  "patok-tui",
+ "patok-wire",
  "ratatui",
  "tempfile",
  "tokio",
  "tokio-util",
  "tonic",
+]
+
+[[package]]
+name = "patok-wire"
+version = "0.0.0"
+dependencies = [
+ "patok-core",
+ "patok-proto",
 ]
 
 [[package]]
