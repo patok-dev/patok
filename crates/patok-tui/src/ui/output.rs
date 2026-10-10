@@ -38,6 +38,7 @@ pub(super) fn provider_display_name(provider: &str) -> &str {
 /// The output frame title: " Builder | Claude - claude-sonnet-5.5 ", dropping the
 /// model first and then the provider when `width` is too narrow; the agent type
 /// always stays, so the title is never empty.
+#[cfg(any(test, feature = "test-support"))]
 pub fn output_title(agent: &str, provider: &str, model: &str, width: usize) -> String {
     output_title_parts(agent, provider, model, None, width).0
 }
@@ -53,6 +54,7 @@ struct KeptTitle {
 /// The output frame title's left side from its kept parts: `" {agent}"`, then
 /// `" | {provider}"` and `" - {model}"` when they survived, closed by a
 /// trailing space.
+#[cfg(any(test, feature = "test-support"))]
 fn left_title(agent: &str, provider: Option<&str>, model: Option<&str>) -> String {
     let mut left = format!(" {agent}");
     if let Some(provider) = provider {
@@ -126,6 +128,7 @@ fn kept_title(
 /// on the left, the running timer on the right. A narrow `width` drops the model
 /// first, then the provider, and only then the timer; the agent type always
 /// keeps its surrounding spaces, so the left side is never empty.
+#[cfg(any(test, feature = "test-support"))]
 pub fn output_title_parts(
     agent: &str,
     provider: &str,

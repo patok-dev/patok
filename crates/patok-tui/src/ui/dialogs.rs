@@ -135,6 +135,7 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
 /// The stop dialog's rect: a small centered modal, at least 54 columns wide and
 /// 9 rows tall, clamped to the screen -- the shared choice-dialog rect
 /// (finding 6).
+#[cfg(any(test, feature = "test-support"))]
 pub fn stop_area(screen: Rect) -> Rect {
     crate::choice::choice_area(screen)
 }

@@ -16,9 +16,13 @@ use ratatui::widgets::Block;
 use crate::app::{App, FrameFocus, Modal};
 use crate::pipeline::{rail_width, render_rail};
 
+#[cfg(any(test, feature = "test-support"))]
 pub use common::fitted_hints;
+#[cfg(any(test, feature = "test-support"))]
 pub use dialogs::{DIALOG_WATERMARK, dialog_area, stop_area, theme_area};
+#[cfg(any(test, feature = "test-support"))]
 pub use output::{format_elapsed, output_title, output_title_parts, output_title_spans};
+#[cfg(any(test, feature = "test-support"))]
 pub use settings::{
     SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH,
     settings_area, settings_body_areas, settings_confirm_area,

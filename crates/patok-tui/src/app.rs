@@ -1978,6 +1978,7 @@ impl App {
     }
 
     /// Whether the settings overlay is open (rendered above everything else).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn settings_open(&self) -> bool {
         self.overlay.open
     }

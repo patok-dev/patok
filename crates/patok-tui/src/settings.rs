@@ -86,6 +86,7 @@ impl ShellSettings {
 
     /// Reloads all layers unconditionally (the shell itself just rewrote a file, so the
     /// mtime-based reload cannot be relied on); returns the re-merge warnings.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn reload(&mut self) -> Vec<String> {
         let (_, warnings) = self.remerge();
         warnings
@@ -108,6 +109,7 @@ impl ShellSettings {
 
     /// The config files the shell reads, with the user-local layer every tui field is
     /// persisted to (used by the settings overlay's touched-file restore).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn files(&self) -> &ConfigFiles {
         &self.files
     }

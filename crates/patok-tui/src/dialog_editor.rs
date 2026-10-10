@@ -43,6 +43,7 @@ impl DialogEditor {
     /// Replaces the whole buffer without touching the cursor, matching a raw
     /// field write: an out-of-range cursor stays raw until [`DialogEditor::cursor`]
     /// clamps it on read.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_text(&mut self, text: &str) {
         self.text = text.to_owned();
     }
@@ -54,6 +55,7 @@ impl DialogEditor {
 
     /// Stores the cursor raw, without clamping; read it through
     /// [`DialogEditor::cursor`].
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_cursor(&mut self, cursor: usize) {
         self.cursor = cursor;
     }

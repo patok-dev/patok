@@ -798,6 +798,7 @@ impl SettingsOverlay {
     }
 
     /// The focused editable row, if any.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn focused_row(&self) -> Option<&'static Row> {
         match self.focused() {
             Entry::Row(row) => Some(row),

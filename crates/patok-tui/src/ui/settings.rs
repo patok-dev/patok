@@ -154,6 +154,7 @@ pub(super) fn render_settings_help(frame: &mut Frame, help: Rect, app: &App, the
 /// The unsaved-changes dialog's rect: a small centered modal, at least 54 columns
 /// wide and 9 rows tall, clamped to the screen -- the shared choice-dialog
 /// rect (finding 6).
+#[cfg(any(test, feature = "test-support"))]
 pub fn settings_confirm_area(screen: Rect) -> Rect {
     crate::choice::choice_area(screen)
 }
