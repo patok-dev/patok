@@ -12,7 +12,8 @@ use super::common::{
     selected_row_style,
 };
 use super::modal::{ModalTitle, render_modal_frame};
-use crate::app::{App, CONFIRM_ESC_LABEL, OVERLAY_BUTTONS};
+use crate::app::App;
+use crate::modal::{Modal, ModalLayer};
 use crate::overlay::{Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel};
 use crate::theme::Theme;
 
@@ -60,9 +61,9 @@ pub fn settings_body_areas(body: Rect) -> (Rect, Rect) {
 /// The body splits into the list and a help box describing the focused entry (T85.1):
 /// beside the list on a wide body, under it on a narrow one. Edits show as drafted values;
 /// nothing is applied until the close dialog's save choice.
-pub(super) fn render_settings_overlay(frame: &mut Frame, app: &App) {
+pub(crate) fn render_settings_overlay(frame: &mut Frame, app: &App) {
     let theme = app.theme();
-    let area = settings_area(frame.area());
+    let area = Modal::Overlay.area(app, frame.area());
     let chrome = render_modal_frame(
         frame,
         theme,
@@ -126,7 +127,7 @@ pub(super) fn render_settings_overlay(frame: &mut Frame, app: &App) {
         frame,
         footer,
         &["↑↓ move", "Enter/Space edit", "←→ fold/cycle"],
-        &OVERLAY_BUTTONS,
+        &Modal::Overlay.buttons(app),
         theme,
     );
 }
@@ -166,14 +167,15 @@ pub fn settings_confirm_area(screen: Rect) -> Rect {
 /// the stop dialog. Rendered on top of everything else. The shared
 /// choice-dialog renderer draws it (finding 6); this records the rects its
 /// mouse hit-testing reads.
-pub(super) fn render_settings_confirm(frame: &mut Frame, app: &App) {
+pub(crate) fn render_settings_confirm(frame: &mut Frame, app: &App) {
     let rects = super::choice::render_choice_dialog(
         frame,
         app.theme(),
         " Unsaved changes ",
         &SETTINGS_CHOICES,
         app.overlay.confirm_selected,
-        CONFIRM_ESC_LABEL,
+        Modal::Confirm.area(app, frame.area()),
+        &Modal::Confirm.buttons(app),
     );
     app.overlay.confirm_close.set(rects.close);
     app.overlay.confirm_body.set(rects.body);

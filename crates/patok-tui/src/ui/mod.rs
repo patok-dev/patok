@@ -2,10 +2,10 @@
 
 pub(crate) mod choice;
 mod common;
-mod dialogs;
+pub(crate) mod dialogs;
 pub(crate) mod modal;
 pub(crate) mod output;
-mod settings;
+pub(crate) mod settings;
 mod status;
 mod tasks;
 
@@ -13,7 +13,8 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::widgets::Block;
 
-use crate::app::{App, FrameFocus, Modal};
+use crate::app::{App, FrameFocus};
+use crate::modal::ModalLayer;
 use crate::pipeline::{rail_width, render_rail};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -29,9 +30,7 @@ pub use settings::{
 };
 
 use common::base_style;
-use dialogs::{render_dialog, render_menu, render_stop_dialog, render_theme_modal};
 use output::render_output;
-use settings::{render_settings_confirm, render_settings_overlay};
 use status::status_widget;
 use tasks::render_tasks;
 
@@ -69,23 +68,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_output(frame, app, output);
     render_tasks(frame, app, tasks);
     frame.render_widget(status_widget(app, status), status);
-    // The open modals on top, bottom layer first (finding 20): the order is
-    // the shared [`Modal::PRECEDENCE`] table reversed -- the same table the
-    // key and mouse dispatch derive the winning modal from -- so the
-    // highest-precedence modal ends up on top and which modal wins when
-    // several would be open is decided in one place.
-    for modal in Modal::PRECEDENCE.iter().rev().copied() {
-        if !modal.is_open(app) {
-            continue;
-        }
-        match modal {
-            Modal::Overlay => render_settings_overlay(frame, app),
-            Modal::Confirm => render_settings_confirm(frame, app),
-            Modal::Dialog => render_dialog(frame, app),
-            Modal::Menu => render_menu(frame, app),
-            Modal::Stop => render_stop_dialog(frame, app),
-            Modal::Theme => render_theme_modal(frame, app),
-        }
+    // The open modals on top, the modal stack's order bottom first (finding
+    // 20): the bottom layer is drawn first and the top modal -- the one that
+    // wins keys and mouse -- ends on top. The key and mouse dispatch read
+    // the same stack, so the three orders cannot disagree.
+    for modal in app.modals.iter() {
+        modal.render(frame, app);
     }
 }
 
@@ -102,6 +90,7 @@ pub fn frame_constraints(focus: FrameFocus) -> [Constraint; 2] {
 #[cfg(test)]
 mod tests {
     use super::common::{render_scrollbar, selected_row_style};
+    use super::dialogs::render_dialog;
     use super::output::visual_lines;
     use super::settings::settings_row_line;
     use super::status::status_widget;
@@ -433,7 +422,6 @@ mod tests {
             let mut app = app_with_one_task();
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
-            app.dialog.open = true;
             app.dialog.editor.set_text("hello");
             app.dialog.editor.set_cursor(3);
             let buffer = dialog_buffer(&app);
@@ -457,7 +445,6 @@ mod tests {
             let mut app = app_with_one_task();
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
-            app.dialog.open = true;
             let buffer = dialog_buffer(&app);
             for (i, ch) in DIALOG_WATERMARK.chars().enumerate() {
                 let cell = &buffer[(x0 + i as u16, y0)];

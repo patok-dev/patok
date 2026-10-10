@@ -23,6 +23,7 @@ use ratatui::layout::Rect;
 
 use crate::app::Action;
 use crate::choice::{Choice, ChoiceKey, choice_key};
+use crate::modal::{Modal, ModalStack};
 
 /// Which schema a field belongs to, and so who applies a change to it: daemon fields go through the engine, tui fields are the shell's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -467,7 +468,6 @@ pub fn scroll_offset(cursor: usize, len: usize, height: usize, current: usize) -
 /// The overlay's interaction state; values live in [`crate::app::App`].
 #[derive(Default)]
 pub struct SettingsOverlay {
-    pub open: bool,
     /// Per-section expanded flag, parallel to [`SECTIONS`].
     expanded: Vec<bool>,
     /// Index into the visible-row list.
@@ -477,8 +477,6 @@ pub struct SettingsOverlay {
     /// updates this map; the save choice in the close dialog applies and persists
     /// every entry through the settings-change flow.
     pub drafts: BTreeMap<String, SettingValue>,
-    /// The unsaved-changes dialog is open (Esc or q on a dirty overlay).
-    pub confirm_open: bool,
     /// The dialog's selected row; indexes [`SETTINGS_CHOICES`].
     pub confirm_selected: usize,
     pub status: Option<(String, StatusLevel)>,
@@ -509,25 +507,25 @@ pub struct SettingsOverlay {
 }
 
 impl SettingsOverlay {
-    /// Opens the overlay with fresh per-open state.
-    pub fn open(&mut self) {
-        self.open = true;
+    /// Resets the overlay with fresh per-open state; the caller pushes it
+    /// onto the modal stack ([`crate::modal::ModalStack`]), which is what
+    /// being open now means.
+    pub fn reset(&mut self) {
         self.expanded = SECTIONS.iter().map(|section| section.expanded).collect();
         self.focus = 0;
         self.editor = None;
         self.drafts.clear();
-        self.confirm_open = false;
         self.confirm_selected = 0;
         self.status = None;
         self.scroll.set(0);
     }
 
-    /// Closes the overlay, whatever state it is in.
-    pub fn close(&mut self) {
-        self.open = false;
+    /// Throws the overlay's interaction state away, whatever state it is
+    /// in; the caller pops it from the modal stack, which dismisses the
+    /// unsaved-changes dialog stacked on it with it.
+    pub fn discard(&mut self) {
         self.editor = None;
         self.drafts.clear();
-        self.confirm_open = false;
         self.confirm_selected = 0;
         self.status = None;
     }
@@ -657,12 +655,15 @@ impl SettingsOverlay {
     /// when one exists, otherwise the engine-reported readout or the shell's tui
     /// mirror; edits only update [`Self::drafts`], and the close dialog's save
     /// choice is what asks the driver to apply and persist them.
-    pub fn on_key(&mut self, key: KeyEvent, current: Option<SettingValue>) -> Action {
+    pub(crate) fn on_key(
+        &mut self,
+        modals: &mut ModalStack,
+        key: KeyEvent,
+        current: Option<SettingValue>,
+    ) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // The unsaved-changes dialog swallows every key while it is open.
-        if self.confirm_open {
-            return self.on_confirm_key(key.code);
-        }
+        // The unsaved-changes dialog's keys never reach this path: the
+        // modal stack routes them to `on_confirm_key` while it is on top.
         if self.editor.is_some() {
             return self.on_editor_key(key, ctrl);
         }
@@ -698,7 +699,7 @@ impl SettingsOverlay {
             }
             // q and Esc share the same close path: direct on a clean overlay,
             // the unsaved-changes dialog on a dirty one.
-            KeyCode::Esc | KeyCode::Char('q') if !ctrl => self.begin_close(),
+            KeyCode::Esc | KeyCode::Char('q') if !ctrl => self.begin_close(modals),
             _ => Action::None,
         }
     }
@@ -709,23 +710,25 @@ impl SettingsOverlay {
     /// runs (it detaches from anywhere). The shared choice-dialog key
     /// handling moves the selection (finding 6); this owns only the Enter
     /// dispatch.
-    fn on_confirm_key(&mut self, code: KeyCode) -> Action {
+    pub(crate) fn on_confirm_key(&mut self, modals: &mut ModalStack, code: KeyCode) -> Action {
         match choice_key(
             code,
             true,
             SETTINGS_CHOICES.len(),
             &mut self.confirm_selected,
         ) {
-            ChoiceKey::Close => self.confirm_open = false,
+            ChoiceKey::Close => modals.pop(Modal::Confirm),
             ChoiceKey::Enter(index) => {
-                self.confirm_open = false;
+                modals.pop(Modal::Confirm);
                 return match SETTINGS_CHOICES[index] {
                     // Save: the driver applies and persists every drafted change
-                    // through the settings-change flow, then closes the overlay.
+                    // through the settings-change flow, then closes the overlay
+                    // (which dismisses the whole stack).
                     SettingsChoice::Save => Action::SaveSettings,
                     SettingsChoice::Discard => {
                         self.drafts.clear();
-                        self.close();
+                        modals.pop(Modal::Overlay);
+                        self.discard();
                         Action::CloseSettings
                     }
                     SettingsChoice::Cancel => Action::None,
@@ -869,15 +872,20 @@ impl SettingsOverlay {
         Action::None
     }
 
-    /// Esc/q: nothing drafted closes directly; a dirty overlay opens the unsaved-changes dialog asking what
-    /// to do with the drafted changes instead.
-    fn begin_close(&mut self) -> Action {
+    /// Esc/q: nothing drafted closes directly -- popping the overlay from
+    /// the stack and discarding its drafts; a dirty overlay stacks the
+    /// unsaved-changes dialog on top instead, asking what to do with the
+    /// drafted changes. The one legitimate co-open pair; see
+    /// [`crate::modal::ModalStack`].
+    pub(crate) fn begin_close(&mut self, modals: &mut ModalStack) -> Action {
         if !self.dirty() {
-            self.close();
+            modals.pop(Modal::Overlay);
+            self.discard();
             return Action::CloseSettings;
         }
-        self.confirm_open = true;
-        self.confirm_selected = 0;
+        if modals.push(Modal::Confirm) {
+            self.confirm_selected = 0;
+        }
         Action::None
     }
 
@@ -996,8 +1004,16 @@ mod tests {
 
     fn overlay() -> SettingsOverlay {
         let mut overlay = SettingsOverlay::default();
-        overlay.open();
+        overlay.reset();
         overlay
+    }
+
+    /// The modal stack with the overlay open on it, the state the overlay's
+    /// key path runs against.
+    fn stack() -> ModalStack {
+        let mut modals = ModalStack::new();
+        assert!(modals.push(Modal::Overlay));
+        modals
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1029,9 +1045,9 @@ mod tests {
     }
 
     /// Puts focus on a section header and toggles it.
-    fn toggle_section(overlay: &mut SettingsOverlay, index: usize) {
+    fn toggle_section(overlay: &mut SettingsOverlay, modals: &mut ModalStack, index: usize) {
         focus_header(overlay, index);
-        overlay.on_key(key(KeyCode::Enter), None);
+        overlay.on_key(modals, key(KeyCode::Enter), None);
     }
 
     #[test]
@@ -1107,10 +1123,11 @@ mod tests {
 
     #[test]
     fn collapsing_and_focus_stay_consistent() {
+        let mut modals = stack();
         let mut overlay = overlay();
         let full = overlay.visible().len();
         assert_eq!(overlay.focused(), Entry::Header(0));
-        toggle_section(&mut overlay, 1);
+        toggle_section(&mut overlay, &mut modals, 1);
         let entries = overlay.visible();
         assert_eq!(entries.len(), full - PIPELINE_SECTION.len());
         // Focus clamps into range and never lands on a hidden row.
@@ -1119,57 +1136,72 @@ mod tests {
         assert_eq!(overlay.focused(), Entry::Row(&DISPLAY_SECTION[4]));
         assert!(!entries.contains(&Entry::Row(&PIPELINE_SECTION[0])));
         // Expanding brings the rows back.
-        toggle_section(&mut overlay, 1);
+        toggle_section(&mut overlay, &mut modals, 1);
         assert_eq!(overlay.visible().len(), full);
     }
 
     #[test]
     fn left_folds_a_header_and_right_unfolds_it() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_header(&mut overlay, 1);
         let full = overlay.visible().len();
-        assert_eq!(overlay.on_key(key(KeyCode::Left), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Left), None),
+            Action::None
+        );
         assert!(!overlay.expanded(1));
         assert_eq!(overlay.visible().len(), full - PIPELINE_SECTION.len());
         // Folding the focused header keeps focus on it (the header never hides).
         assert_eq!(overlay.focused(), Entry::Header(1));
-        assert_eq!(overlay.on_key(key(KeyCode::Right), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Right), None),
+            Action::None
+        );
         assert!(overlay.expanded(1));
         assert_eq!(overlay.visible().len(), full);
     }
 
     #[test]
     fn left_on_a_folded_header_and_right_on_an_expanded_one_are_noops() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_header(&mut overlay, 1);
         overlay.toggle_section(1);
         let folded = overlay.visible();
-        assert_eq!(overlay.on_key(key(KeyCode::Left), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Left), None),
+            Action::None
+        );
         assert!(!overlay.expanded(1));
         assert_eq!(overlay.visible(), folded);
         focus_header(&mut overlay, 0);
         let expanded = overlay.visible();
-        assert_eq!(overlay.on_key(key(KeyCode::Right), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Right), None),
+            Action::None
+        );
         assert!(overlay.expanded(0));
         assert_eq!(overlay.visible(), expanded);
     }
 
     #[test]
     fn hjkl_alias_the_arrows() {
+        let mut modals = stack();
         // j/k move the cursor exactly like Down/Up.
         let mut hjkl = overlay();
         let mut arrows = overlay();
         for _ in 0..5 {
             assert_eq!(
-                hjkl.on_key(key(KeyCode::Char('j')), None),
-                arrows.on_key(key(KeyCode::Down), None)
+                hjkl.on_key(&mut modals, key(KeyCode::Char('j')), None),
+                arrows.on_key(&mut modals, key(KeyCode::Down), None)
             );
             assert_eq!(hjkl.focus, arrows.focus);
         }
         for _ in 0..3 {
             assert_eq!(
-                hjkl.on_key(key(KeyCode::Char('k')), None),
-                arrows.on_key(key(KeyCode::Up), None)
+                hjkl.on_key(&mut modals, key(KeyCode::Char('k')), None),
+                arrows.on_key(&mut modals, key(KeyCode::Up), None)
             );
             assert_eq!(hjkl.focus, arrows.focus);
         }
@@ -1178,25 +1210,37 @@ mod tests {
         let mut subject = overlay();
         focus_header(&mut subject, 1);
         let full = subject.visible().len();
-        assert_eq!(subject.on_key(key(KeyCode::Char('h')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('h')), None),
+            Action::None
+        );
         assert!(!subject.expanded(1));
         assert_eq!(subject.visible().len(), full - PIPELINE_SECTION.len());
         // h on a folded header is a no-op, like Left.
         let folded = subject.visible();
-        assert_eq!(subject.on_key(key(KeyCode::Char('h')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('h')), None),
+            Action::None
+        );
         assert_eq!(subject.visible(), folded);
-        assert_eq!(subject.on_key(key(KeyCode::Char('l')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('l')), None),
+            Action::None
+        );
         assert!(subject.expanded(1));
         assert_eq!(subject.visible().len(), full);
         // l on an expanded header is a no-op, like Right.
         let expanded = subject.visible();
-        assert_eq!(subject.on_key(key(KeyCode::Char('l')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('l')), None),
+            Action::None
+        );
         assert_eq!(subject.visible(), expanded);
 
         // h/l cycle enum fields like Left/Right, drafting the new choice.
         focus_field(&mut subject, "run_mode");
         assert_eq!(
-            subject.on_key(key(KeyCode::Char('l')), str("sprint")),
+            subject.on_key(&mut modals, key(KeyCode::Char('l')), str("sprint")),
             Action::None
         );
         assert_eq!(
@@ -1204,7 +1248,7 @@ mod tests {
             Some(&SettingValue::Str("continuous".into()))
         );
         assert_eq!(
-            subject.on_key(key(KeyCode::Char('h')), str("continuous")),
+            subject.on_key(&mut modals, key(KeyCode::Char('h')), str("continuous")),
             Action::None
         );
         assert_eq!(
@@ -1214,10 +1258,17 @@ mod tests {
 
         // Inside an open text editor the four letters keep typing as characters.
         focus_field(&mut subject, "model");
-        subject.on_key(key(KeyCode::Enter), Some(SettingValue::Str(String::new())));
+        subject.on_key(
+            &mut modals,
+            key(KeyCode::Enter),
+            Some(SettingValue::Str(String::new())),
+        );
         let before = subject.expanded.clone();
         for c in ['h', 'j', 'k', 'l'] {
-            assert_eq!(subject.on_key(key(KeyCode::Char(c)), None), Action::None);
+            assert_eq!(
+                subject.on_key(&mut modals, key(KeyCode::Char(c)), None),
+                Action::None
+            );
         }
         assert_eq!(subject.editor.as_ref().unwrap().buffer, "hjkl");
         assert!(subject.editor.is_some());
@@ -1227,6 +1278,7 @@ mod tests {
         let mut ctrl_overlay = overlay();
         let focus = ctrl_overlay.focus;
         ctrl_overlay.on_key(
+            &mut modals,
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
             None,
         );
@@ -1235,13 +1287,24 @@ mod tests {
 
     #[test]
     fn left_and_right_keep_going_to_the_open_editor() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_field(&mut overlay, "agent_timeout_secs");
-        overlay.on_key(key(KeyCode::Enter), Some(SettingValue::Uint(600)));
+        overlay.on_key(
+            &mut modals,
+            key(KeyCode::Enter),
+            Some(SettingValue::Uint(600)),
+        );
         assert!(overlay.editor.is_some());
         let before = overlay.expanded.clone();
-        assert_eq!(overlay.on_key(key(KeyCode::Left), None), Action::None);
-        assert_eq!(overlay.on_key(key(KeyCode::Right), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Left), None),
+            Action::None
+        );
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Right), None),
+            Action::None
+        );
         // The editor stays open with its buffer untouched, and nothing folded.
         assert!(overlay.editor.is_some());
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "600");
@@ -1250,10 +1313,11 @@ mod tests {
 
     #[test]
     fn enums_cycle_wrapping_and_truecolor_maps_to_unset() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_field(&mut overlay, "run_mode");
         assert_eq!(
-            overlay.on_key(key(KeyCode::Right), str("sprint")),
+            overlay.on_key(&mut modals, key(KeyCode::Right), str("sprint")),
             Action::None
         );
         assert_eq!(
@@ -1263,7 +1327,7 @@ mod tests {
         // Enter cycles forward too, Left backward, both wrapping; each step drafts
         // (the caller passes the drafted value as `current`, as the app does).
         assert_eq!(
-            overlay.on_key(key(KeyCode::Enter), str("continuous")),
+            overlay.on_key(&mut modals, key(KeyCode::Enter), str("continuous")),
             Action::None
         );
         assert_eq!(
@@ -1271,7 +1335,7 @@ mod tests {
             Some(&SettingValue::Str("sprint".into()))
         );
         assert_eq!(
-            overlay.on_key(key(KeyCode::Left), str("sprint")),
+            overlay.on_key(&mut modals, key(KeyCode::Left), str("sprint")),
             Action::None
         );
         assert_eq!(
@@ -1287,7 +1351,10 @@ mod tests {
             (str("off"), SettingValue::Unset),
             (str("auto"), SettingValue::Bool(true)),
         ] {
-            assert_eq!(overlay.on_key(key(KeyCode::Enter), current), Action::None);
+            assert_eq!(
+                overlay.on_key(&mut modals, key(KeyCode::Enter), current),
+                Action::None
+            );
             assert_eq!(overlay.drafts.get("truecolor"), Some(&expected));
         }
 
@@ -1298,7 +1365,10 @@ mod tests {
             (str("normal"), "detailed"),
             (str("detailed"), "compact"),
         ] {
-            assert_eq!(overlay.on_key(key(KeyCode::Right), current), Action::None);
+            assert_eq!(
+                overlay.on_key(&mut modals, key(KeyCode::Right), current),
+                Action::None
+            );
             assert_eq!(
                 overlay.drafts.get("rail_mode"),
                 Some(&SettingValue::Str(expected.into()))
@@ -1308,26 +1378,35 @@ mod tests {
 
     #[test]
     fn the_editor_validates_before_submitting() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_field(&mut overlay, "agent_timeout_secs");
         assert_eq!(
-            overlay.on_key(key(KeyCode::Enter), Some(SettingValue::Uint(600))),
+            overlay.on_key(
+                &mut modals,
+                key(KeyCode::Enter),
+                Some(SettingValue::Uint(600))
+            ),
             Action::None
         );
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "600");
         // Digits type, letters do not, Ctrl+U clears.
-        overlay.on_key(key(KeyCode::Char('2')), None);
+        overlay.on_key(&mut modals, key(KeyCode::Char('2')), None);
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "6002");
-        overlay.on_key(key(KeyCode::Char('x')), None);
+        overlay.on_key(&mut modals, key(KeyCode::Char('x')), None);
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "6002");
         overlay.on_key(
+            &mut modals,
             KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
             None,
         );
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "");
         // Zero is a local violation: the editor stays open with the reason.
-        overlay.on_key(key(KeyCode::Char('0')), None);
-        assert_eq!(overlay.on_key(key(KeyCode::Enter), None), Action::None);
+        overlay.on_key(&mut modals, key(KeyCode::Char('0')), None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Enter), None),
+            Action::None
+        );
         assert!(overlay.editor.is_some());
         assert_eq!(overlay.status.as_ref().unwrap().1, StatusLevel::Error);
         assert!(
@@ -1340,71 +1419,95 @@ mod tests {
         );
         // A valid value commits as a draft and closes the editor.
         overlay.on_key(
+            &mut modals,
             KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
             None,
         );
         for c in "120".chars() {
-            overlay.on_key(key(KeyCode::Char(c)), None);
+            overlay.on_key(&mut modals, key(KeyCode::Char(c)), None);
         }
-        assert_eq!(overlay.on_key(key(KeyCode::Enter), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Enter), None),
+            Action::None
+        );
         assert!(overlay.editor.is_none());
         assert_eq!(
             overlay.drafts.get("agent_timeout_secs"),
             Some(&SettingValue::Uint(120))
         );
         // Esc discards the edit instead.
-        overlay.on_key(key(KeyCode::Enter), Some(SettingValue::Uint(120)));
+        overlay.on_key(
+            &mut modals,
+            key(KeyCode::Enter),
+            Some(SettingValue::Uint(120)),
+        );
         assert!(overlay.editor.is_some());
-        assert_eq!(overlay.on_key(key(KeyCode::Esc), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Esc), None),
+            Action::None
+        );
         assert!(overlay.editor.is_none());
     }
 
     #[test]
     fn the_close_dialog_saves_discards_or_cancels() {
-        // Clean: closes directly.
+        // Clean: closes directly, popping the overlay off the stack.
+        let mut modals = stack();
         let mut subject = overlay();
         assert_eq!(
-            subject.on_key(key(KeyCode::Esc), None),
+            subject.on_key(&mut modals, key(KeyCode::Esc), None),
             Action::CloseSettings
         );
-        assert!(!subject.open);
+        assert!(modals.is_empty());
 
-        // Dirty: Esc opens the three-choice dialog instead of closing.
+        // Dirty: Esc stacks the three-choice dialog on the overlay.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
         assert!(subject.dirty());
-        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
-        assert!(subject.confirm_open);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Esc), None),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Confirm));
         assert_eq!(subject.confirm_selected, 0);
         // Up clamps at the first row; Down walks to the last and clamps there.
-        assert_eq!(subject.on_key(key(KeyCode::Up), None), Action::None);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Up),
+            Action::None
+        );
         assert_eq!(subject.confirm_selected, 0);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(subject.confirm_selected, 1);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(subject.confirm_selected, 2);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(subject.confirm_selected, 2);
-        // Everything else is swallowed while the dialog is open.
+        // Everything else is swallowed while the dialog is on top.
         let before = (subject.confirm_selected, subject.drafts.clone());
-        assert_eq!(subject.on_key(key(KeyCode::Char('x')), None), Action::None);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Char('x')),
+            Action::None
+        );
         assert_eq!((subject.confirm_selected, subject.drafts.clone()), before);
         // Esc cancels: back to the overlay with the drafts intact.
-        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
-        assert!(!subject.confirm_open);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Esc),
+            Action::None
+        );
+        assert!(!modals.contains(Modal::Confirm));
         assert!(subject.dirty());
 
         // Save asks the driver to apply every draft; the overlay stays open until
         // the driver finishes.
-        subject.on_key(key(KeyCode::Esc), None);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
         assert_eq!(
-            subject.on_key(key(KeyCode::Enter), None),
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
             Action::SaveSettings
         );
-        assert!(!subject.confirm_open);
-        assert!(subject.open);
+        assert_eq!(modals.top(), Some(Modal::Overlay));
         assert_eq!(
             subject.pending(),
             vec![(
@@ -1415,69 +1518,83 @@ mod tests {
         );
 
         // Discard throws the drafts away and closes.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
-        subject.on_key(key(KeyCode::Esc), None);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(
-            subject.on_key(key(KeyCode::Enter), None),
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
             Action::CloseSettings
         );
-        assert!(!subject.open);
+        assert!(modals.is_empty());
         assert!(subject.drafts.is_empty());
 
         // Cancel (the third row) leaves the overlay open with the drafts intact.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
-        subject.on_key(key(KeyCode::Esc), None);
-        subject.on_key(key(KeyCode::Down), None);
-        subject.on_key(key(KeyCode::Down), None);
-        assert_eq!(subject.on_key(key(KeyCode::Enter), None), Action::None);
-        assert!(subject.open);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Overlay));
         assert!(subject.dirty());
     }
 
     #[test]
     fn the_close_dialog_moves_with_j_and_k() {
-        // Dirty: Esc opens the dialog with Save selected.
+        // Dirty: Esc stacks the dialog with Save selected.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
         assert!(subject.dirty());
-        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
-        assert!(subject.confirm_open);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Esc), None),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Confirm));
         assert_eq!(subject.confirm_selected, 0);
         // k clamps at the first row; j walks to the last and clamps there.
-        assert_eq!(subject.on_key(key(KeyCode::Char('k')), None), Action::None);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Char('k')),
+            Action::None
+        );
         assert_eq!(subject.confirm_selected, 0);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(subject.confirm_selected, 1);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(subject.confirm_selected, 2);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(subject.confirm_selected, 2);
         // Enter on Cancel (row 2) leaves the overlay open with drafts intact.
-        assert_eq!(subject.on_key(key(KeyCode::Enter), None), Action::None);
-        assert!(!subject.confirm_open);
-        assert!(subject.open);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Overlay));
         assert!(subject.dirty());
 
         // Reopening resets to Save; a j move selects Discard, which closes and
         // throws the drafts away.
-        subject.on_key(key(KeyCode::Esc), None);
-        assert!(subject.confirm_open);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
+        assert_eq!(modals.top(), Some(Modal::Confirm));
         assert_eq!(subject.confirm_selected, 0);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(
-            subject.on_key(key(KeyCode::Enter), None),
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
             Action::CloseSettings
         );
-        assert!(!subject.open);
+        assert!(modals.is_empty());
         assert!(subject.drafts.is_empty());
     }
 
@@ -1580,12 +1697,13 @@ mod tests {
 
     #[test]
     fn the_scroll_offset_follows_the_selection_down_past_the_edge() {
+        let mut modals = stack();
         let mut subject = overlay();
         let len = subject.visible().len();
         subject.list.set(viewport(10));
         // The cursor starts at the top: the margin band holds the offset at 0.
         for _ in 0..5 {
-            subject.on_key(key(KeyCode::Down), None);
+            subject.on_key(&mut modals, key(KeyCode::Down), None);
         }
         assert_eq!(subject.focus, 5);
         assert_eq!(subject.scroll.get(), 0);
@@ -1593,30 +1711,31 @@ mod tests {
         // cursor visible, and lands on the last scrollable offset at the
         // last row.
         for _ in 0..(len - 6) {
-            subject.on_key(key(KeyCode::Char('j')), None);
+            subject.on_key(&mut modals, key(KeyCode::Char('j')), None);
         }
         assert_eq!(subject.focus, len - 1);
         assert_eq!(subject.scroll.get(), len - 10);
         assert!(subject.focus - subject.scroll.get() < 10);
         // Extra Down presses clamp at the last row and the last offset.
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_key(&mut modals, key(KeyCode::Down), None);
         assert_eq!(subject.focus, len - 1);
         assert_eq!(subject.scroll.get(), len - 10);
     }
 
     #[test]
     fn the_scroll_offset_follows_the_selection_back_up_to_the_top() {
+        let mut modals = stack();
         let mut subject = overlay();
         let len = subject.visible().len();
         subject.list.set(viewport(10));
         // Start at the last row, the offset the down walk ends on.
         subject.focus = len - 1;
-        subject.on_key(key(KeyCode::Char('k')), None);
+        subject.on_key(&mut modals, key(KeyCode::Char('k')), None);
         assert!(subject.scroll.get() > 0);
         // Walking back up with k (the Up alias) keeps the cursor visible and
         // the offset walks back with it ...
         for _ in 0..(len - 1) {
-            subject.on_key(key(KeyCode::Char('k')), None);
+            subject.on_key(&mut modals, key(KeyCode::Char('k')), None);
             assert!(
                 subject.focus - subject.scroll.get() < 10,
                 "focus {} offset {}",
@@ -1628,7 +1747,7 @@ mod tests {
         // clamped there.
         assert_eq!(subject.focus, 0);
         assert_eq!(subject.scroll.get(), 0);
-        subject.on_key(key(KeyCode::Up), None);
+        subject.on_key(&mut modals, key(KeyCode::Up), None);
         assert_eq!(subject.focus, 0);
         assert_eq!(subject.scroll.get(), 0);
     }

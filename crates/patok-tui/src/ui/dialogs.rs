@@ -10,9 +10,8 @@ use super::common::{
     ENTRY_INDENT, base_style, group_header_line, render_modal_footer, selected_row_style,
 };
 use super::modal::{ModalTitle, render_modal_frame};
-use crate::app::{
-    App, DialogKind, MENU_BUTTONS, STOP_CHOICES, STOP_ESC_LABEL, THEME_BUTTONS, menu_entries,
-};
+use crate::app::{App, DialogKind, STOP_CHOICES, menu_entries};
+use crate::modal::{Modal, ModalLayer};
 use crate::overlay::Entry;
 use crate::theme::theme_modal_groups;
 use patok_core::event::Phase;
@@ -36,9 +35,9 @@ pub fn dialog_area(screen: Rect) -> Rect {
     super::modal::centered(screen, width, height)
 }
 
-pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
+pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     let theme = app.theme();
-    let area = dialog_area(frame.area());
+    let area = Modal::Dialog.area(app, frame.area());
     // The two modals share everything but their chrome strings (T76.1): the
     // title and the empty-input watermark follow the dialog's kind; the
     // primary button's label flows from `App::primary_label`, which branches
@@ -123,11 +122,12 @@ pub(super) fn render_dialog(frame: &mut Frame, app: &App) {
     // shared footer renderer. The primary button's label follows the scenario
     //.
     app.dialog.footer.set(footer);
+    let buttons = Modal::Dialog.buttons(app);
     render_modal_footer(
         frame,
         footer,
         &["↑↓←→ move", "Shift-Enter new line", "Ctrl+U clear"],
-        &app.dialog_buttons(),
+        &buttons,
         theme,
     );
 }
@@ -146,14 +146,15 @@ pub fn stop_area(screen: Rect) -> Rect {
 /// hints left, buttons right (T59.1). Rendered on top of everything else.
 /// The shared choice-dialog renderer draws it (finding 6); this records the
 /// rects its mouse hit-testing reads.
-pub(super) fn render_stop_dialog(frame: &mut Frame, app: &App) {
+pub(crate) fn render_stop_dialog(frame: &mut Frame, app: &App) {
     let rects = super::choice::render_choice_dialog(
         frame,
         app.theme(),
         " Stop build ",
         &STOP_CHOICES,
         app.stop.selected,
-        STOP_ESC_LABEL,
+        Modal::Stop.area(app, frame.area()),
+        &Modal::Stop.buttons(app),
     );
     app.stop.close.set(rects.close);
     app.stop.body.set(rects.body);
@@ -179,10 +180,10 @@ pub fn menu_area(screen: Rect, running: bool) -> Rect {
 /// the selection to the row and runs it (T137.1), so the body rect is
 /// recorded for the app's mouse hit-testing. Rendered on top of everything
 /// else.
-pub(super) fn render_menu(frame: &mut Frame, app: &App) {
+pub(crate) fn render_menu(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let running = app.run.phase == Phase::Running;
-    let area = menu_area(frame.area(), running);
+    let area = Modal::Menu.area(app, frame.area());
     let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(" Menu "));
     app.menu.close.set(chrome.close);
     let inner = chrome.inner;
@@ -216,7 +217,13 @@ pub(super) fn render_menu(frame: &mut Frame, app: &App) {
     // The bottom line's two zones (T59.1): the selection hint on the left, the
     // Confirm and Close buttons on the right.
     app.menu.footer.set(footer);
-    render_modal_footer(frame, footer, &["↑↓ move"], &MENU_BUTTONS, theme);
+    render_modal_footer(
+        frame,
+        footer,
+        &["↑↓ move"],
+        &Modal::Menu.buttons(app),
+        theme,
+    );
 }
 
 /// The theme picker's rect (T43.1, T116.1): a centered modal, at least 54
@@ -237,9 +244,9 @@ pub fn theme_area(screen: Rect) -> Rect {
 /// a selection marker and a two-zone bottom line of hints left, buttons
 /// right (T59.1). Rendered on top of everything else; the shell underneath
 /// is already recoloured by the live preview, since `App::theme` resolves it.
-pub(super) fn render_theme_modal(frame: &mut Frame, app: &App) {
+pub(crate) fn render_theme_modal(frame: &mut Frame, app: &App) {
     let theme = app.theme();
-    let area = theme_area(frame.area());
+    let area = Modal::Theme.area(app, frame.area());
     let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(" Theme "));
     app.theme_modal.close.set(chrome.close);
     let inner = chrome.inner;
@@ -263,7 +270,13 @@ pub(super) fn render_theme_modal(frame: &mut Frame, app: &App) {
     // Save and Cancel buttons on the right. The modal is the narrowest of the
     // five, so the hint stays short enough to keep the two zones apart.
     app.theme_modal.footer.set(footer);
-    render_modal_footer(frame, footer, &["↑↓/jk previews"], &THEME_BUTTONS, theme);
+    render_modal_footer(
+        frame,
+        footer,
+        &["↑↓/jk previews"],
+        &Modal::Theme.buttons(app),
+        theme,
+    );
 }
 
 /// One visible entry of the picker (T43.1, T115.1, T116.1): a group header

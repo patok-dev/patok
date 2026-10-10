@@ -10,7 +10,7 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 use patok_core::config::{ApplyTiming, SettingValue};
 use patok_core::event::EngineEvent;
 use patok_tui::{
-    Action, App, Entry, FieldKind, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
+    Action, App, Entry, FieldKind, Modal, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
     SETTINGS_HELP_PANEL_WIDTH, settings_area, settings_body_areas,
 };
 use ratatui::Terminal;
@@ -701,7 +701,12 @@ fn a_dirty_overlay_opens_the_three_choice_close_dialog() {
 
     // Esc opens the centered dialog with Save selected; the drafts stay.
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(app.overlay.confirm_open);
+    assert!(app.confirm_open());
+    assert_eq!(
+        app.open_modals(),
+        vec![Modal::Overlay, Modal::Confirm],
+        "the confirm stacks over the overlay, the render order's top layer"
+    );
     assert_eq!(app.overlay.confirm_selected, 0);
     insta::assert_snapshot!(draw(&app, W, H));
     // Up/Down move through the three rows and clamp at the ends.
@@ -715,18 +720,19 @@ fn a_dirty_overlay_opens_the_three_choice_close_dialog() {
     assert_eq!(app.overlay.confirm_selected, 2);
     // Esc in the dialog cancels: back to the overlay, drafts intact.
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(!app.overlay.confirm_open);
+    assert!(!app.confirm_open());
+    assert_eq!(app.open_modals(), vec![Modal::Overlay]);
     assert!(app.settings_open());
     assert!(app.overlay.dirty());
     // q opens the same dialog.
     assert_eq!(press(&mut app, KeyCode::Char('q')), Action::None);
-    assert!(app.overlay.confirm_open);
+    assert!(app.confirm_open());
 
     // Cancel (the third row) returns to the overlay the same way.
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Down);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-    assert!(!app.overlay.confirm_open);
+    assert!(!app.confirm_open());
     assert!(app.settings_open());
     assert!(app.overlay.dirty());
 
@@ -753,13 +759,13 @@ fn a_dirty_overlay_opens_the_three_choice_close_dialog() {
     assert_eq!(app.run_mode(), "sprint");
     press(&mut app, KeyCode::Esc);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::SaveSettings);
-    assert!(!app.overlay.confirm_open);
+    assert!(!app.confirm_open());
     assert!(app.settings_open());
     for (schema, field, value) in app.overlay.pending() {
         app.on_settings_applied(schema, &field, value);
     }
     assert!(!app.overlay.dirty());
-    app.overlay.close();
+    app.close_settings();
     assert!(!app.settings_open());
     assert_eq!(
         app.settings.get("plan_enabled"),
@@ -1613,7 +1619,7 @@ mod modal_footer {
         press(&mut app, KeyCode::Enter);
         assert!(app.overlay.dirty());
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(app.overlay.confirm_open);
+        assert!(app.confirm_open());
         app
     }
 
@@ -1748,7 +1754,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 2, rects[0].y)),
             Action::None
         );
-        assert!(app.overlay.confirm_open);
+        assert!(app.confirm_open());
         assert!(app.overlay.dirty());
 
         // Clicks on the hint zone change nothing; since T136.1 a click inside
@@ -1825,7 +1831,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 3, rects[0].y)),
             Action::SaveSettings
         );
-        assert!(!app.overlay.confirm_open);
+        assert!(!app.confirm_open());
         assert!(app.settings_open());
 
         // Enter on Discard throws the drafts away and closes the overlay.
@@ -1856,7 +1862,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 3, rects[0].y)),
             Action::None
         );
-        assert!(!app.overlay.confirm_open);
+        assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert!(app.overlay.dirty());
 
@@ -1871,7 +1877,7 @@ mod modal_footer {
             app.on_mouse(click(rects[1].x + 2, rects[1].y)),
             Action::None
         );
-        assert!(!app.overlay.confirm_open);
+        assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert!(app.overlay.dirty());
     }
@@ -2051,7 +2057,7 @@ mod close_button {
         press(&mut app, KeyCode::Enter);
         assert!(app.overlay.dirty());
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(app.overlay.confirm_open);
+        assert!(app.confirm_open());
         app
     }
 
@@ -2151,7 +2157,7 @@ mod close_button {
         let close = app.overlay.close.get();
         assert_eq!(app.on_mouse(click(close.x + 3, close.y)), Action::None);
         assert!(app.settings_open());
-        assert!(app.overlay.confirm_open);
+        assert!(app.confirm_open());
         assert_eq!(app.overlay.confirm_selected, 0);
         assert!(app.overlay.dirty());
 
@@ -2176,14 +2182,14 @@ mod close_button {
         buffer(&app);
         let close = app.overlay.confirm_close.get();
         assert_eq!(app.on_mouse(click(close.x + 3, close.y)), Action::None);
-        assert!(!app.overlay.confirm_open);
+        assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert!(app.overlay.dirty(), "the drafts survive the round trip");
 
         // Esc from the dialog takes the identical path.
         let mut app = dirty_confirm();
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.overlay.confirm_open);
+        assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert!(app.overlay.dirty());
 
@@ -2196,7 +2202,7 @@ mod close_button {
             app.on_mouse(click(overlay_close.x + 3, overlay_close.y)),
             Action::None
         );
-        assert!(app.overlay.confirm_open, "the dialog stays open");
+        assert!(app.confirm_open(), "the dialog stays open");
         assert!(app.settings_open());
     }
 }
@@ -2305,7 +2311,7 @@ mod selected_row_colours {
         press(&mut app, KeyCode::Enter);
         assert!(app.overlay.dirty());
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(app.overlay.confirm_open);
+        assert!(app.confirm_open());
         app
     }
 

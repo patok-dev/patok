@@ -72,8 +72,8 @@ fn the_enter_start_chip_click_starts_the_build() {
     let focus = app.focus;
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::StartBuild);
     assert_eq!(app.focus, focus, "the click must not move the frame focus");
-    assert!(!app.menu.open);
-    assert!(!app.stop.open);
+    assert!(!app.menu_open());
+    assert!(!app.stop_open());
 
     // The click aliases the key exactly: the Enter press returns the same
     // action on an identically prepared app.
@@ -91,8 +91,8 @@ fn the_run_discovery_chip_click_runs_discovery() {
     assert_eq!(chip, ratatui::layout::Rect::new(43, 13, 25, 1));
 
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::RunDiscovery);
-    assert!(!app.menu.open);
-    assert!(!app.stop.open);
+    assert!(!app.menu_open());
+    assert!(!app.stop_open());
 
     // The click aliases the key exactly: the Enter press returns the same
     // action on an identically prepared app.
@@ -111,16 +111,16 @@ fn the_esc_stop_chip_click_opens_the_stop_dialog() {
     assert_eq!(chip, ratatui::layout::Rect::new(54, 13, 14, 1));
 
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::None);
-    assert!(app.stop.open);
+    assert!(app.stop_open());
     assert_eq!(app.stop.selected, 0);
     assert_eq!(app.status, None);
-    assert!(!app.menu.open);
+    assert!(!app.menu_open());
 
     // The click aliases the key exactly: the Esc press on an identically
     // prepared running app leaves the same state.
     let mut key_app = running_app();
     assert_eq!(press(&mut key_app, KeyCode::Esc), Action::None);
-    assert_eq!(key_app.stop.open, app.stop.open);
+    assert_eq!(key_app.stop_open(), app.stop_open());
     assert_eq!(key_app.stop.selected, app.stop.selected);
     assert_eq!(key_app.status, app.status);
 }
@@ -135,15 +135,15 @@ fn the_menu_chip_click_opens_the_menu() {
     assert_eq!(chip, ratatui::layout::Rect::new(68, 13, 12, 1));
 
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::None);
-    assert!(app.menu.open);
+    assert!(app.menu_open());
     assert_eq!(app.menu.selected, 0);
-    assert!(!app.stop.open);
+    assert!(!app.stop_open());
 
     // The click aliases the key exactly: the m press on an identically
     // prepared app leaves the same state.
     let mut key_app = app_with(TASKS);
     assert_eq!(press(&mut key_app, KeyCode::Char('m')), Action::None);
-    assert_eq!(key_app.menu.open, app.menu.open);
+    assert_eq!(key_app.menu_open(), app.menu_open());
     assert_eq!(key_app.menu.selected, app.menu.selected);
 }
 
@@ -197,7 +197,7 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
         );
         assert!(chip.contains(ratatui::layout::Position::new(column, 13)));
         click(&mut app, column, chip.y);
-        assert!(app.stop.open, "the stop dialog opens at {column}");
+        assert!(app.stop_open(), "the stop dialog opens at {column}");
     }
 
     // The m menu button, in every state that shows it.
@@ -211,7 +211,7 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
                 button_text("m", "menu").chars().count()
             );
             click(&mut app, column, chip.y);
-            assert!(app.menu.open, "the menu opens at {column}");
+            assert!(app.menu_open(), "the menu opens at {column}");
         }
     }
 
@@ -243,8 +243,8 @@ fn the_chips_are_inert_in_the_wrong_state() {
         ratatui::layout::Rect::default()
     );
     assert_eq!(click(&mut running, 53, 13), Action::None);
-    assert!(!running.menu.open);
-    assert!(!running.stop.open);
+    assert!(!running.menu_open());
+    assert!(!running.stop_open());
 
     // Idle: the Esc chip is gone, and clicks at pad columns open no stop
     // dialog. (The Enter button covers columns 51-67 and the m button
@@ -257,8 +257,8 @@ fn the_chips_are_inert_in_the_wrong_state() {
     );
     assert_eq!(click(&mut idle, 0, 13), Action::None);
     assert_eq!(click(&mut idle, 50, 13), Action::None);
-    assert!(!idle.stop.open);
-    assert!(!idle.menu.open);
+    assert!(!idle.stop_open());
+    assert!(!idle.menu_open());
 
     // A pending soft stop: Esc cancels the stop instead, so the chip hides
     // and a click at its place changes nothing.
@@ -271,7 +271,7 @@ fn the_chips_are_inert_in_the_wrong_state() {
         ratatui::layout::Rect::default()
     );
     assert_eq!(click(&mut stopping, 60, 13), Action::None);
-    assert!(!stopping.stop.open);
+    assert!(!stopping.stop_open());
     assert!(stopping.run.stopping);
 }
 
@@ -291,8 +291,8 @@ fn the_chips_are_inert_while_a_status_message_shows() {
         ratatui::layout::Rect::default()
     );
     assert_eq!(click(&mut idle, 57, 13), Action::None);
-    assert!(!idle.menu.open);
-    assert!(!idle.stop.open);
+    assert!(!idle.menu_open());
+    assert!(!idle.stop_open());
 
     let mut running = running_app();
     running.status = Some("Stopping after this task...".into());
@@ -302,7 +302,7 @@ fn the_chips_are_inert_while_a_status_message_shows() {
         ratatui::layout::Rect::default()
     );
     assert_eq!(click(&mut running, 60, 13), Action::None);
-    assert!(!running.stop.open);
+    assert!(!running.stop_open());
 }
 
 /// Clicks outside the chips' rects -- on the strip's padding, on the line's
@@ -327,8 +327,8 @@ fn clicks_outside_the_chip_rects_do_nothing() {
             Action::None,
             "a click at ({column}, {row}) must do nothing"
         );
-        assert!(!idle.menu.open, "at ({column}, {row})");
-        assert!(!idle.stop.open, "at ({column}, {row})");
+        assert!(!idle.menu_open(), "at ({column}, {row})");
+        assert!(!idle.stop_open(), "at ({column}, {row})");
     }
     assert_eq!(idle.focus, focus, "no outside click moves the focus");
 
@@ -347,8 +347,8 @@ fn clicks_outside_the_chip_rects_do_nothing() {
             Action::None,
             "a click at ({column}, {row}) must do nothing"
         );
-        assert!(!running.stop.open, "at ({column}, {row})");
-        assert!(!running.menu.open, "at ({column}, {row})");
+        assert!(!running.stop_open(), "at ({column}, {row})");
+        assert!(!running.menu_open(), "at ({column}, {row})");
     }
     assert_eq!(running.focus, focus, "no outside click moves the focus");
     assert_eq!(
@@ -369,16 +369,16 @@ fn the_button_boundary_click_fires_the_neighbour() {
     draw(&idle, 80, 14);
     let enter = idle.layout.enter_chip.get();
     click(&mut idle, enter.x + enter.width, enter.y);
-    assert!(idle.menu.open, "the boundary column opens the menu");
-    assert!(!idle.stop.open);
+    assert!(idle.menu_open(), "the boundary column opens the menu");
+    assert!(!idle.stop_open());
 
     // Running: the column past the Esc button's right edge likewise.
     let mut running = running_app();
     draw(&running, 80, 14);
     let stop = running.layout.stop_chip.get();
     click(&mut running, stop.x + stop.width, stop.y);
-    assert!(running.menu.open, "the boundary column opens the menu");
-    assert!(!running.stop.open);
+    assert!(running.menu_open(), "the boundary column opens the menu");
+    assert!(!running.stop_open());
 }
 
 /// The Esc stop chip shows and clicks during planner and discovery runs too
@@ -400,16 +400,16 @@ fn the_esc_stop_chip_shows_and_clicks_during_planner_and_discovery_runs() {
         );
 
         assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::None);
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         assert_eq!(app.stop.selected, 0);
         assert_eq!(app.status, None);
-        assert!(!app.menu.open);
+        assert!(!app.menu_open());
 
         // The click aliases the key exactly: the Esc press on an
         // identically prepared app leaves the same state.
         let mut key_app = make();
         assert_eq!(press(&mut key_app, KeyCode::Esc), Action::None);
-        assert_eq!(key_app.stop.open, app.stop.open);
+        assert_eq!(key_app.stop_open(), app.stop_open());
         assert_eq!(key_app.stop.selected, app.stop.selected);
         assert_eq!(key_app.status, app.status);
     }
@@ -427,7 +427,7 @@ fn the_stop_dialog_choices_act_on_planner_and_discovery_runs() {
         assert_eq!(press(&mut app, KeyCode::Enter), Action::Quit);
         assert!(app.run.stopping);
         assert_eq!(app.status, Some(SOFT_STOP_PENDING.into()));
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
 
         // Interrupt (the second choice) interrupts the run.
         let mut app = make();
@@ -435,7 +435,7 @@ fn the_stop_dialog_choices_act_on_planner_and_discovery_runs() {
         press(&mut app, KeyCode::Down);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::Interrupt);
         assert!(app.run.stopping);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
 
         // Cancel (the third choice) closes the dialog with the run
         // untouched.
@@ -444,7 +444,7 @@ fn the_stop_dialog_choices_act_on_planner_and_discovery_runs() {
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert_eq!(app.status, None);
         assert!(
@@ -456,7 +456,7 @@ fn the_stop_dialog_choices_act_on_planner_and_discovery_runs() {
         let mut app = make();
         press(&mut app, KeyCode::Esc);
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert!(app.run.planning || app.run.discovering);
     }
@@ -474,7 +474,7 @@ fn esc_cancels_a_pending_soft_stop_during_planner_and_discovery_runs() {
 
         assert_eq!(press(&mut app, KeyCode::Esc), Action::CancelSoftStop);
         assert!(!app.run.stopping);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
     }
 }
 
@@ -500,7 +500,7 @@ fn the_esc_chip_stays_hidden_while_idle_or_while_a_stop_is_pending() {
         draw(&app, 80, 14);
         assert_eq!(app.layout.stop_chip.get(), ratatui::layout::Rect::default());
         assert_eq!(click(&mut app, 60, 13), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(app.run.stopping, "the pending stop survives the click");
     }
 }

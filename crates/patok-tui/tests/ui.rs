@@ -1489,7 +1489,7 @@ fn keys_map_to_actions() {
     );
     // The old `s` key no longer triggers anything.
     assert_eq!(app.on_key(key('s')), Action::None);
-    assert!(!app.stop.open);
+    assert!(!app.stop_open());
     assert_eq!(app.status, None);
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
@@ -1499,14 +1499,14 @@ fn keys_map_to_actions() {
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         Action::None
     );
-    assert!(app.stop.open);
+    assert!(app.stop_open());
     assert_eq!(app.status, None);
     // A second Esc closes it; the build continues.
     assert_eq!(
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         Action::None
     );
-    assert!(!app.stop.open);
+    assert!(!app.stop_open());
     assert_eq!(
         app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         Action::Detach
@@ -1532,7 +1532,7 @@ fn the_s_key_triggers_nothing_in_any_state() {
     let mut idle = app();
     assert_eq!(idle.on_key(s), Action::None);
     assert_eq!(idle.status, None);
-    assert!(!idle.stop.open);
+    assert!(!idle.stop_open());
     assert!(!idle.run.stopping);
 
     // While a build runs: no stop dialog, no message.
@@ -1541,7 +1541,7 @@ fn the_s_key_triggers_nothing_in_any_state() {
         phase: Phase::Running,
     });
     assert_eq!(running.on_key(s), Action::None);
-    assert!(!running.stop.open);
+    assert!(!running.stop_open());
     assert_eq!(running.status, None);
 
     // During a planner run: no refusal, no message.
@@ -1571,7 +1571,7 @@ fn the_s_key_triggers_nothing_in_any_state() {
     );
     assert_eq!(stopping.on_key(s), Action::None);
     assert!(stopping.run.stopping, "the pending soft stop is untouched");
-    assert!(!stopping.stop.open);
+    assert!(!stopping.stop_open());
 }
 
 /// The m menu opens with `m` from every engine state, so the status bar
@@ -1875,7 +1875,7 @@ fn esc_cancels_a_pending_soft_stop() {
     );
     assert_eq!(app.on_key(key('s')), Action::None);
     assert_eq!(app.on_key(key('a')), Action::None);
-    assert!(app.dialog.open);
+    assert!(app.dialog_open());
 }
 
 #[test]
@@ -1894,7 +1894,7 @@ fn s_during_a_pending_soft_stop_does_nothing() {
     // The old `s` escalation is gone (T46.1): the second q is the only way
     // to interrupt now, so `s` leaves the pending stop untouched.
     assert_eq!(app.on_key(key('s')), Action::None);
-    assert!(!app.stop.open, "the stop dialog must not open");
+    assert!(!app.stop_open(), "the stop dialog must not open");
     assert!(app.run.stopping);
 }
 
@@ -2024,7 +2024,7 @@ fn discovery_blocks_keys_and_its_tasks_reuse_the_new_task_highlight() {
     // so Tab puts it back on the task list first.
     app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(app.on_key(key('a')), Action::None);
-    assert!(!app.dialog.open);
+    assert!(!app.dialog_open());
     assert_eq!(
         app.status.as_deref(),
         Some("A discovery round is running; wait for it to finish.")
@@ -2148,7 +2148,7 @@ mod dialog {
     fn open() -> App {
         let mut app = app();
         press(&mut app, KeyCode::Char('a'));
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         app
     }
 
@@ -2207,7 +2207,7 @@ mod dialog {
         let mut app = self::app();
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         assert_eq!(press(&mut app, KeyCode::Char('a')), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
 
         // A run moves the focus to the agent output frame: the same key is a
         // strict no-op there -- no dialog, no status message.
@@ -2217,7 +2217,7 @@ mod dialog {
         });
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
         assert_eq!(press(&mut app, KeyCode::Char('a')), Action::None);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert!(app.status.is_none());
         // The ignored key does not swallow pane focus toggling: Tab still
         // flips the focus, and from the focused task list frame the busy run
@@ -2225,7 +2225,7 @@ mod dialog {
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         press(&mut app, KeyCode::Char('a'));
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(
             app.status.as_deref(),
             Some("A build is running; wait for it to finish.")
@@ -2236,14 +2236,14 @@ mod dialog {
         let mut app = self::app();
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         press(&mut app, KeyCode::Char('a'));
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         type_text(&mut app, "add a login page");
         assert_eq!(
             ctrl(&mut app, 's'),
             Action::SubmitTasks("add a login page".into())
         );
         app.on_tasks_submitted();
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
     }
 
@@ -2257,10 +2257,10 @@ mod dialog {
         let mut app = self::app();
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.kind, DialogKind::Inject);
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
 
         // A run moves the focus to the agent output frame: the same key is a
         // strict no-op there -- no modal, no status message.
@@ -2270,7 +2270,7 @@ mod dialog {
         });
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
         assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert!(app.status.is_none());
         // Tab back to the task list frame: `i` opens the inject modal even
         // while the engine is busy -- a plain file append is safe in every
@@ -2278,7 +2278,7 @@ mod dialog {
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.kind, DialogKind::Inject);
         assert!(app.status.is_none());
     }
@@ -2302,7 +2302,7 @@ mod dialog {
         // clears, and the task list frame keeps the focus (contrast with the
         // add flow's move to the output frame).
         app.on_task_injected();
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "");
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
 
@@ -2324,7 +2324,7 @@ mod dialog {
             Action::InjectTask("- [ ] T78.1: Polish the README".into())
         );
         app.on_submit_failed("could not append to TASKS.md: nope".into());
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(
             app.dialog.status.as_deref(),
             Some("could not append to TASKS.md: nope")
@@ -2340,7 +2340,7 @@ mod dialog {
         let mut app = self::app();
         press(&mut app, KeyCode::Char('i'));
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(
             app.dialog.status.as_deref(),
             Some("Nothing to inject -- type a task line first.")
@@ -2349,14 +2349,14 @@ mod dialog {
         assert!(app.dialog.status.is_some());
         // Esc cancels: the modal closes with no effect.
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
 
         // The add-task dialog keeps its own flow: `a` pins the kind back to
         // Add, its empty-input refusal keeps its own message, and its submit
         // still sends the text to the engine and focuses the output frame.
         let mut app = self::app();
         press(&mut app, KeyCode::Char('a'));
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.kind, DialogKind::Add);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
         assert_eq!(
@@ -2369,7 +2369,7 @@ mod dialog {
             Action::SubmitTasks("add a login page".into())
         );
         app.on_tasks_submitted();
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
     }
 
@@ -2389,7 +2389,7 @@ mod dialog {
         // type, confirm -- all mid-run, with no busy refusal anywhere.
         press(&mut app, KeyCode::Tab);
         assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.kind, DialogKind::Inject);
         assert!(app.status.is_none(), "no busy refusal blocks the modal");
         type_text(&mut app, "- [ ] T79.1: Polish the inject path");
@@ -2399,9 +2399,9 @@ mod dialog {
         );
         // The confirm returns success even while a session is active: the
         // modal closes only once the driver reports the engine's acceptance.
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         app.on_task_injected();
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         // The engine's immediate reconcile broadcasts the new line: it
         // appears in the list without waiting for the next poll cycle.
@@ -2468,7 +2468,7 @@ mod dialog {
             Action::SubmitTasks("add a login page".into())
         );
         app.on_tasks_submitted();
-        assert!(!app.dialog.open, "the accepted submit closes the modal");
+        assert!(!app.dialog_open(), "the accepted submit closes the modal");
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
         assert_eq!(app.dialog.editor.text(), "");
     }
@@ -2484,7 +2484,7 @@ mod dialog {
             Action::SubmitTasks("add a login page".into())
         );
         app.on_tasks_submitted();
-        assert!(!app.dialog.open, "the accepted submit closes the modal");
+        assert!(!app.dialog_open(), "the accepted submit closes the modal");
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
         assert_eq!(app.dialog.editor.text(), "");
 
@@ -2504,7 +2504,7 @@ mod dialog {
     fn shift_enter_inserts_a_newline_without_submitting() {
         let mut app = open();
         type_text(&mut app, "first line");
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(shift_enter(&mut app), Action::None);
         assert_eq!(
             app.dialog.editor.cursor(),
@@ -2513,7 +2513,7 @@ mod dialog {
         );
         type_text(&mut app, "second line");
         assert_eq!(app.dialog.editor.text(), "first line\nsecond line");
-        assert!(app.dialog.open, "the dialog never submitted");
+        assert!(app.dialog_open(), "the dialog never submitted");
         let screen = draw(&app, 80, 24);
         assert!(screen.contains("first line"), "{screen}");
         assert!(screen.contains("second line"), "{screen}");
@@ -2533,7 +2533,7 @@ mod dialog {
         press(&mut app, KeyCode::Left);
         assert_eq!(app.dialog.editor.cursor(), 3);
         assert_eq!(shift_enter(&mut app), Action::None);
-        assert!(app.dialog.open, "Shift-Enter never submits");
+        assert!(app.dialog_open(), "Shift-Enter never submits");
         assert_eq!(app.dialog.editor.text(), "abc\ndef");
         assert_eq!(
             app.dialog.editor.cursor(),
@@ -2579,7 +2579,7 @@ mod dialog {
         let mut app = open();
         assert_eq!(app.dialog.editor.text(), "");
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-        assert!(app.dialog.open, "the dialog stays open");
+        assert!(app.dialog_open(), "the dialog stays open");
         assert_eq!(
             app.dialog.status.as_deref(),
             Some("Nothing to submit -- type a request first.")
@@ -3013,9 +3013,9 @@ mod dialog {
         let mut app = open();
         type_text(&mut app, "keep me");
         press(&mut app, KeyCode::Esc);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         press(&mut app, KeyCode::Char('a'));
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "keep me");
     }
 
@@ -3048,7 +3048,7 @@ mod dialog {
         assert_eq!(press(&mut app, KeyCode::Tab), Action::None);
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
         assert!(app.run.planning, "switching the focus leaves the run going");
-        assert!(!app.dialog.open, "the dialog stays closed");
+        assert!(!app.dialog_open(), "the dialog stays closed");
     }
 
     #[test]
@@ -3060,12 +3060,12 @@ mod dialog {
         // The key belongs to the task list frame (T74.1), and a run moves the
         // focus to the agent output frame, so it does nothing there.
         press(&mut app, KeyCode::Char('a'));
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert!(app.status.is_none());
         // From the focused task list frame the busy run refuses the dialog.
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('a'));
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(
             app.status.as_deref(),
             Some("A build is running; wait for it to finish.")
@@ -3077,11 +3077,11 @@ mod dialog {
         // nothing to it either.
         assert_eq!(app.status, None);
         press(&mut app, KeyCode::Char('a'));
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.status, None);
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('a'));
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
         assert_eq!(
             app.status.as_deref(),
@@ -3257,7 +3257,7 @@ mod explore {
 
     fn open_dialog(app: &mut App) {
         app.on_key(key(KeyCode::Char('a')));
-        assert!(app.dialog.open, "the dialog must be open");
+        assert!(app.dialog_open(), "the dialog must be open");
     }
 
     fn type_text(app: &mut App, text: &str) {
@@ -3383,25 +3383,25 @@ mod explore {
         app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         open_dialog(&mut app);
         assert_eq!(app.on_key(key(KeyCode::BackTab)), Action::None);
-        assert!(app.dialog.open, "the dialog keeps the keyboard");
+        assert!(app.dialog_open(), "the dialog keeps the keyboard");
         assert_eq!(app.run_mode(), "sprint");
         assert_eq!(app.status, None);
 
         // The settings overlay.
         let mut app = app_with(TASKS);
         assert_eq!(app.on_key(key(KeyCode::Char('?'))), Action::None);
-        assert!(app.overlay.open);
+        assert!(app.settings_open());
         assert_eq!(app.on_key(key(KeyCode::BackTab)), Action::None);
-        assert!(app.overlay.open, "the overlay keeps the keyboard");
+        assert!(app.settings_open(), "the overlay keeps the keyboard");
         assert_eq!(app.run_mode(), "sprint");
         assert_eq!(app.status, None);
 
         // The theme picker modal.
         let mut app = app_with(TASKS);
         assert_eq!(app.on_key(key(KeyCode::Char('t'))), Action::None);
-        assert!(app.theme_modal.open);
+        assert!(app.theme_open());
         assert_eq!(app.on_key(key(KeyCode::BackTab)), Action::None);
-        assert!(app.theme_modal.open, "the picker keeps the keyboard");
+        assert!(app.theme_open(), "the picker keeps the keyboard");
         assert_eq!(app.run_mode(), "sprint");
 
         // The stop dialog (Esc while a build runs).
@@ -3410,9 +3410,9 @@ mod explore {
             phase: Phase::Running,
         });
         app.on_key(key(KeyCode::Esc));
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         assert_eq!(app.on_key(key(KeyCode::BackTab)), Action::None);
-        assert!(app.stop.open, "the stop dialog keeps the keyboard");
+        assert!(app.stop_open(), "the stop dialog keeps the keyboard");
         assert_eq!(app.run_mode(), "sprint");
     }
 
@@ -3535,7 +3535,7 @@ mod explore {
             submit(&mut app),
             Action::SaveBrief("A web service for recipes.".into())
         );
-        assert!(app.dialog.open, "the dialog stays open with its message");
+        assert!(app.dialog_open(), "the dialog stays open with its message");
         // An empty input is refused: an empty project needs direction.
         app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
         assert_eq!(app.dialog.editor.text(), "");
@@ -3571,7 +3571,7 @@ mod explore {
         app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         open_dialog(&mut app);
         assert_eq!(submit(&mut app), Action::StartBuild);
-        assert!(!app.dialog.open, "starting closes the modal");
+        assert!(!app.dialog_open(), "starting closes the modal");
         assert_eq!(
             app.focus,
             FrameFocus::Output,
@@ -3615,7 +3615,7 @@ mod explore {
         app.project_status = status(true, TaskFileState::Missing, SpecState::Content);
         app.on_brief_saved();
         assert_eq!(app.scenario(), Scenario::NeedsQueue);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "");
         assert_eq!(
             app.dialog.status.as_deref(),
@@ -3672,7 +3672,7 @@ mod explore {
         clicked.on_tasks_submitted();
         keyed.on_tasks_submitted();
         for app in [&mut clicked, &mut keyed] {
-            assert!(!app.dialog.open);
+            assert!(!app.dialog_open());
             assert_eq!(app.focus, FrameFocus::Output);
             assert_eq!(app.dialog.editor.text(), "");
         }
@@ -3692,7 +3692,7 @@ mod explore {
         open_dialog(&mut keyed);
         assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
         for app in [&mut clicked, &mut keyed] {
-            assert!(app.dialog.open);
+            assert!(app.dialog_open());
             assert_eq!(
                 app.dialog.status.as_deref(),
                 Some("Nothing to submit -- type a request first.")
@@ -3705,7 +3705,7 @@ mod explore {
         let mut clicked = app_with(TASKS);
         clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         clicked.on_key(key(KeyCode::Char('i')));
-        assert!(clicked.dialog.open);
+        assert!(clicked.dialog_open());
         type_text(&mut clicked, "- [ ] T78.1: Polish the README");
         assert_eq!(clicked.primary_label(), "Inject");
         assert_eq!(
@@ -3723,7 +3723,7 @@ mod explore {
         clicked.on_task_injected();
         keyed.on_task_injected();
         for app in [&mut clicked, &mut keyed] {
-            assert!(!app.dialog.open);
+            assert!(!app.dialog_open());
             assert_eq!(app.focus, FrameFocus::Tasks);
             assert_eq!(app.dialog.editor.text(), "");
         }
@@ -3738,7 +3738,7 @@ mod explore {
         keyed.on_key(key(KeyCode::Char('i')));
         assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
         for app in [&mut clicked, &mut keyed] {
-            assert!(app.dialog.open);
+            assert!(app.dialog_open());
             assert_eq!(
                 app.dialog.status.as_deref(),
                 Some("Nothing to inject -- type a task line first.")
@@ -3763,8 +3763,8 @@ mod explore {
             keyed.on_key(key(KeyCode::Enter)),
             Action::SaveBrief("A web service for recipes.".into())
         );
-        assert!(clicked.dialog.open);
-        assert!(keyed.dialog.open);
+        assert!(clicked.dialog_open());
+        assert!(keyed.dialog_open());
 
         // NeedsQueue with an empty input: the [Enter] click cannot bootstrap
         // -- the plain Enter refuses an empty input first; the driver-side
@@ -3778,7 +3778,7 @@ mod explore {
         open_dialog(&mut keyed);
         assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
         for app in [&mut clicked, &mut keyed] {
-            assert!(app.dialog.open);
+            assert!(app.dialog_open());
             assert_eq!(
                 app.dialog.status.as_deref(),
                 Some("Nothing to submit -- type a request first.")
@@ -3797,7 +3797,7 @@ mod explore {
         open_dialog(&mut keyed);
         assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
         for app in [&mut clicked, &mut keyed] {
-            assert!(app.dialog.open);
+            assert!(app.dialog_open());
             assert_eq!(
                 app.dialog.status.as_deref(),
                 Some("Nothing to submit -- type a request first.")
@@ -3812,16 +3812,16 @@ mod explore {
         // key-mapping tests).
         let mut app = app_with("- [x] T1.1: first done\n- [x] T1.2: second done\n");
         assert_eq!(app.on_key(key(KeyCode::Enter)), Action::RunDiscovery);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert!(app.status.is_none());
         // The old `s` key no longer opens anything either.
         assert_eq!(app.on_key(key(KeyCode::Char('s'))), Action::None);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         // `a` stays the add-task dialog key.
         assert_eq!(app.on_key(key(KeyCode::Char('a'))), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         app.on_key(key(KeyCode::Esc));
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
 
         // While busy, Enter refuses with the same messages as the `a` path; each busy
         // case is checked on its own, from an idle app.
@@ -3849,7 +3849,7 @@ mod explore {
             app.apply(apply);
             assert_eq!(app.on_key(key(KeyCode::Enter)), Action::None);
             assert!(
-                !app.dialog.open,
+                !app.dialog_open(),
                 "Enter while busy must not open the dialog"
             );
             assert_eq!(app.status.as_deref(), Some(message));
@@ -3858,7 +3858,7 @@ mod explore {
             // the agent output frame, so Tab puts it back first.
             app.on_key(key(KeyCode::Tab));
             app.on_key(key(KeyCode::Char('a')));
-            assert!(!app.dialog.open);
+            assert!(!app.dialog_open());
             assert_eq!(app.status.as_deref(), Some(message));
             // Back to idle, so the next case starts from an idle app.
             app.apply(reset);
@@ -4040,7 +4040,7 @@ mod view {
         assert_eq!(app.focus, FrameFocus::Tasks);
         // An open modal swallows every click.
         app.on_key(key(KeyCode::Char('a')));
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         app.on_mouse(click(output.x + 1, output.y + 1));
         assert_eq!(app.focus, FrameFocus::Tasks);
     }
@@ -4441,9 +4441,9 @@ mod hints {
             ),
             (max_scroll, task_max_scroll)
         );
-        assert!(!app.dialog.open);
-        assert!(!app.stop.open);
-        assert!(!app.overlay.open);
+        assert!(!app.dialog_open());
+        assert!(!app.stop_open());
+        assert!(!app.settings_open());
         assert!(!app.run.stopping);
         assert!(app.status.is_none());
         let drawn = buffer(&app);
@@ -4477,16 +4477,16 @@ mod hints {
         {
             let mut app = app();
             assert_eq!(app.on_key(key(KeyCode::Char('a'))), Action::None);
-            assert!(app.dialog.open);
+            assert!(app.dialog_open());
             app.on_key(key(KeyCode::Esc));
-            assert!(!app.dialog.open);
+            assert!(!app.dialog_open());
         }
         {
             let mut app = app();
             assert_eq!(app.on_key(key(KeyCode::Char('i'))), Action::None);
-            assert!(app.dialog.open);
+            assert!(app.dialog_open());
             app.on_key(key(KeyCode::Esc));
-            assert!(!app.dialog.open);
+            assert!(!app.dialog_open());
         }
         {
             let mut app = app();
@@ -4638,7 +4638,7 @@ mod stop_dialog {
     fn open() -> App {
         let mut app = running();
         press(&mut app, KeyCode::Esc);
-        assert!(app.stop.open, "the dialog must be open");
+        assert!(app.stop_open(), "the dialog must be open");
         app
     }
 
@@ -4646,7 +4646,7 @@ mod stop_dialog {
     fn enter_while_idle_starts_the_build() {
         let mut app = app();
         assert_eq!(press(&mut app, KeyCode::Enter), Action::StartBuild);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
     }
 
     #[test]
@@ -4654,18 +4654,18 @@ mod stop_dialog {
         let mut app = running();
         // The old `s` key no longer opens the dialog (T46.1).
         assert_eq!(press(&mut app, KeyCode::Char('s')), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert_eq!(app.status, None);
         // Esc opens the stop dialog while a build runs.
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         assert_eq!(app.stop.selected, 0);
         assert_eq!(app.status, None);
         assert_eq!(app.run.phase, Phase::Running);
         assert!(!app.run.stopping);
         // A second Esc closes it: no second build, no state change.
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert_eq!(app.run.phase, Phase::Running);
         assert!(!app.run.stopping);
     }
@@ -4691,7 +4691,7 @@ mod stop_dialog {
     fn enter_on_soft_stop_soft_stops() {
         let mut app = open();
         assert_eq!(press(&mut app, KeyCode::Enter), Action::Quit);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(app.run.stopping);
         let status = app.status.as_deref().unwrap();
         assert!(
@@ -4705,7 +4705,7 @@ mod stop_dialog {
         let mut app = open();
         press(&mut app, KeyCode::Down);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::Interrupt);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(app.run.stopping);
         let status = app.status.as_deref().unwrap();
         assert!(
@@ -4720,7 +4720,7 @@ mod stop_dialog {
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert_eq!(app.run.phase, Phase::Running);
         assert_eq!(app.run.current_task.as_deref(), Some("T1.2"));
@@ -4730,7 +4730,7 @@ mod stop_dialog {
     fn esc_closes_and_the_build_continues() {
         let mut app = open();
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert_eq!(app.run.phase, Phase::Running);
         assert_eq!(app.run.current_task.as_deref(), Some("T1.2"));
@@ -4749,8 +4749,8 @@ mod stop_dialog {
             KeyCode::PageUp,
         ] {
             assert_eq!(press(&mut app, code), Action::None);
-            assert!(app.stop.open, "the dialog stays open");
-            assert!(!app.dialog.open);
+            assert!(app.stop_open(), "the dialog stays open");
+            assert!(!app.dialog_open());
             assert!(!app.run.stopping);
             assert_eq!(app.focus, focus);
         }
@@ -4890,7 +4890,7 @@ mod stop_dialog {
                 Action::None
             );
             assert_eq!(app.stop.selected, index as usize);
-            assert!(app.stop.open);
+            assert!(app.stop_open());
             assert!(!app.run.stopping);
             assert_eq!(app.run.phase, Phase::Running);
             assert_eq!(app.run.current_task.as_deref(), Some("T1.2"));
@@ -4915,7 +4915,7 @@ mod stop_dialog {
             );
             assert_eq!(app.stop.selected, index);
             assert_eq!(press(&mut app, KeyCode::Enter), *action);
-            assert!(!app.stop.open);
+            assert!(!app.stop_open());
             assert_eq!(app.run.stopping, *stopping);
             if status_part.is_empty() {
                 // Cancel leaves the soft-stop and interrupt statuses unset.
@@ -4949,7 +4949,7 @@ mod stop_dialog {
                 )),
                 *action
             );
-            assert!(!app.stop.open);
+            assert!(!app.stop_open());
             assert_eq!(app.run.stopping, *stopping);
             assert_eq!(app.stop.selected, index);
             assert_eq!(app.run.phase, Phase::Running);
@@ -5001,7 +5001,7 @@ mod stop_dialog {
                 Action::None,
                 "{where_}"
             );
-            assert!(app.stop.open, "{where_}");
+            assert!(app.stop_open(), "{where_}");
             assert_eq!(app.stop.selected, 1, "{where_}");
             assert!(!app.run.stopping, "{where_}");
             assert_eq!(app.run.phase, Phase::Running, "{where_}");
@@ -5020,17 +5020,17 @@ mod stop_dialog {
         draw(&app, 80, 24);
         let body = app.stop.body.get();
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         for index in 0..3u16 {
             assert_eq!(
                 app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
                 Action::None
             );
-            assert!(!app.stop.open);
+            assert!(!app.stop_open());
             assert!(!app.run.stopping);
-            assert!(!app.menu.open);
+            assert!(!app.menu_open());
             assert_eq!(app.menu.selected, 0);
-            assert!(!app.theme_modal.open);
+            assert!(!app.theme_open());
             assert_eq!(app.theme_modal.selected, 0);
             assert!(!app.settings_open());
             assert_eq!(app.overlay.focus, 0);
@@ -5045,9 +5045,9 @@ mod stop_dialog {
                 app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + index)),
                 Action::None
             );
-            assert!(!app.stop.open);
+            assert!(!app.stop_open());
             assert!(!app.run.stopping);
-            assert!(!app.menu.open);
+            assert!(!app.menu_open());
         }
     }
 }
@@ -5103,7 +5103,7 @@ mod modal_footer {
     fn open_dialog() -> App {
         let mut app = app();
         press(&mut app, KeyCode::Char('a'));
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         app
     }
 
@@ -5117,7 +5117,7 @@ mod modal_footer {
             description: "add the parser for task files".into(),
         });
         press(&mut app, KeyCode::Esc);
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         app
     }
 
@@ -5286,7 +5286,7 @@ mod modal_footer {
         // The click takes the dialog exactly where the Enter key takes it: the
         // driver's accepted-submit flow is what closes it.
         app.on_tasks_submitted();
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
 
         // Enter on an empty input keeps the dialog open with the inline refusal.
         let mut app = open_dialog();
@@ -5299,7 +5299,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 5, rects[0].y)),
             Action::None
         );
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert!(
             app.dialog
                 .status
@@ -5320,7 +5320,7 @@ mod modal_footer {
             app.on_mouse(click(rects[1].x + 2, rects[1].y)),
             Action::None
         );
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "hello");
 
         // Clicks on the hint zone and on the input area change nothing.
@@ -5328,12 +5328,12 @@ mod modal_footer {
         buffer(&app);
         let footer = app.dialog.footer.get();
         assert_eq!(app.on_mouse(click(footer.x + 1, footer.y)), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(
             app.on_mouse(click(footer.x + 1, footer.y - 5)),
             Action::None
         );
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
     }
 
     #[test]
@@ -5356,7 +5356,7 @@ mod modal_footer {
             phase: Phase::Running,
         });
         press(&mut app, KeyCode::Esc);
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         let buffer = buffer(&app);
         assert_two_zones(
             &buffer,
@@ -5380,7 +5380,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 3, rects[0].y)),
             Action::Quit
         );
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(app.run.stopping);
 
         // Enter on Interrupt interrupts.
@@ -5395,7 +5395,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 3, rects[0].y)),
             Action::Interrupt
         );
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(app.run.stopping);
 
         // Enter on the third row keeps the build going.
@@ -5411,7 +5411,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 3, rects[0].y)),
             Action::None
         );
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert_eq!(app.run.phase, Phase::Running);
 
@@ -5426,7 +5426,7 @@ mod modal_footer {
             app.on_mouse(click(rects[1].x + 2, rects[1].y)),
             Action::None
         );
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert_eq!(app.run.phase, Phase::Running);
         assert_eq!(app.run.current_task.as_deref(), Some("T1.2"));
@@ -5438,12 +5438,12 @@ mod modal_footer {
         buffer(&app);
         let footer = app.stop.footer.get();
         assert_eq!(app.on_mouse(click(footer.x + 1, footer.y)), Action::None);
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         assert_eq!(
             app.on_mouse(click(footer.x + 2, footer.y - 1)),
             Action::None
         );
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         assert_eq!(app.stop.selected, 0);
     }
 
@@ -5526,7 +5526,7 @@ mod close_button {
     fn open_dialog() -> App {
         let mut app = app();
         press(&mut app, KeyCode::Char('a'));
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         app
     }
 
@@ -5540,7 +5540,7 @@ mod close_button {
             description: "add the parser for task files".into(),
         });
         press(&mut app, KeyCode::Esc);
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         app
     }
 
@@ -5690,14 +5690,14 @@ mod close_button {
         buffer(&app, W, H);
         let close = app.dialog.close.get();
         assert_eq!(app.on_mouse(click(close.x + 3, close.y)), Action::None);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "add a login page");
 
         // Esc takes exactly the same path with the same outcome.
         let mut app = open_dialog();
         type_text(&mut app, "add a login page");
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "add a login page");
 
         // Clicks on the title row outside the button and on the modal's body
@@ -5706,9 +5706,9 @@ mod close_button {
         buffer(&app, W, H);
         let close = app.dialog.close.get();
         assert_eq!(app.on_mouse(click(close.x - 1, close.y)), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.on_mouse(click(close.x + 3, close.y + 5)), Action::None);
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
     }
 
     #[test]
@@ -5718,7 +5718,7 @@ mod close_button {
         buffer(&app, W, H);
         let close = app.stop.close.get();
         assert_eq!(app.on_mouse(click(close.x + 3, close.y)), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert_eq!(app.run.phase, Phase::Running);
         assert_eq!(app.run.current_task.as_deref(), Some("T1.2"));
@@ -5726,7 +5726,7 @@ mod close_button {
         // Esc closes it the same way.
         let mut app = open_stop();
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.stop.open);
+        assert!(!app.stop_open());
         assert!(!app.run.stopping);
         assert_eq!(app.run.current_task.as_deref(), Some("T1.2"));
 
@@ -5736,7 +5736,7 @@ mod close_button {
         buffer(&app, W, H);
         let close = app.stop.close.get();
         assert_eq!(app.on_mouse(click(close.x - 2, close.y + 4)), Action::None);
-        assert!(app.stop.open);
+        assert!(app.stop_open());
         assert_eq!(app.stop.selected, 1);
     }
 
@@ -6713,7 +6713,7 @@ mod pipeline {
         // Esc opens the three-choice dialog; Enter on Save asks the driver to
         // apply every drafted change.
         shell.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(shell.overlay.confirm_open);
+        assert!(shell.confirm_open());
         assert_eq!(
             shell.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             Action::SaveSettings
@@ -6726,7 +6726,7 @@ mod pipeline {
             shell.tui = shell_settings.settings().clone();
             shell.on_settings_applied(schema, &field, value);
         }
-        shell.overlay.close();
+        shell.close_settings();
 
         let text = std::fs::read_to_string(dir.path().join("config.local.toml")).unwrap();
         assert!(text.contains("rail_mode = \"compact\""), "{text}");

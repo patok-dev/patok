@@ -17,15 +17,12 @@ use patok_core::scenario::{ProjectScan, Scenario, SpecState};
 use patok_core::task::Task;
 use ratatui::layout::Rect;
 
-use crate::choice::{Choice, ChoiceKey, ChoiceMouse, choice_key, choice_mouse};
+use crate::choice::Choice;
 use crate::dialog_editor::DialogEditor;
-use crate::hit::{
-    chip_clicked, close_clicked, footer_button_code, frame_at, menu_row_at, settings_row_at,
-    theme_row_at,
-};
+use crate::hit::{chip_clicked, frame_at};
+use crate::modal::{Modal, ModalLayer, ModalStack};
 use crate::overlay::{
-    Entry, Row, SETTINGS_CHOICES, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries,
-    header_fold, truecolor_choice,
+    Entry, Row, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries, truecolor_choice,
 };
 use crate::theme::{Theme, theme_modal_groups};
 
@@ -347,79 +344,6 @@ pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
 /// two keys that act on the pending stop.
 pub const SOFT_STOP_PENDING: &str = "Soft stop requested -- the build stops after the current task and the app keeps running; press Esc to cancel the stop or q to cancel the current task now. [d] detach instead";
 
-/// Which modal is open (finding 20): one enum over the five modals' open
-/// flags plus the overlay's nested unsaved-changes dialog. The flags stay the
-/// writable state (and the test surface); this enum is the shared view of
-/// them that key dispatch, mouse dispatch and the render stack all derive
-/// which modal wins from, instead of three independently encoded orders.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Modal {
-    /// The settings overlay.
-    Overlay,
-    /// The add-task / inject-task dialog.
-    Dialog,
-    /// The m menu.
-    Menu,
-    /// The stop dialog.
-    Stop,
-    /// The settings overlay's unsaved-changes dialog, nested inside it.
-    Confirm,
-    /// The theme picker.
-    Theme,
-}
-
-impl Modal {
-    /// Top first: which modal wins keys, mouse and the top pixel layer when
-    /// several flags are set. Today's `on_mouse` chain's order, which `on_key`
-    /// agrees with in every reachable state (co-occurrence beyond the
-    /// overlay→confirm nesting is unreachable: every cross-modal opener closes
-    /// its own modal first, and each modal swallows everything); the render
-    /// stack draws the reverse, so the highest-precedence modal ends on top.
-    pub(crate) const PRECEDENCE: [Modal; 6] = [
-        Modal::Theme,
-        Modal::Confirm,
-        Modal::Stop,
-        Modal::Menu,
-        Modal::Dialog,
-        Modal::Overlay,
-    ];
-
-    /// Whether this modal's open flag is set.
-    pub(crate) fn is_open(self, app: &App) -> bool {
-        match self {
-            Modal::Theme => app.theme_modal.open,
-            Modal::Confirm => app.overlay.confirm_open,
-            Modal::Stop => app.stop.open,
-            Modal::Menu => app.menu.open,
-            Modal::Dialog => app.dialog.open,
-            Modal::Overlay => app.overlay.open,
-        }
-    }
-}
-
-/// The m menu's footer buttons (finding 20): defined once beside the menu's
-/// rows, shared by the renderer and the mouse hit-test, so the drawn buttons
-/// and their hit-test rectangles agree by construction.
-pub(crate) const MENU_BUTTONS: [(&str, &str); 2] = [("Enter", "Confirm"), ("Esc", "Close")];
-
-/// The theme picker's footer buttons (finding 20): shared by the renderer
-/// and the mouse hit-test.
-pub(crate) const THEME_BUTTONS: [(&str, &str); 2] = [("Enter", "Save"), ("Esc", "Cancel")];
-
-/// The settings overlay's footer buttons (finding 20): shared by the
-/// renderer and the mouse hit-test.
-pub(crate) const OVERLAY_BUTTONS: [(&str, &str); 1] = [("Esc", "Close")];
-
-/// The stop dialog's footer Esc label (finding 20): the one spelling its
-/// renderer and its mouse hit-test share, through the choice dialog's
-/// `esc_label`.
-pub(crate) const STOP_ESC_LABEL: &str = "Close";
-
-/// The unsaved-changes dialog's footer Esc label (finding 20): the one
-/// spelling its renderer and its mouse hit-test share, through the choice
-/// dialog's `esc_label`.
-pub(crate) const CONFIRM_ESC_LABEL: &str = "Cancel";
-
 /// The merged view's focused frame: which of the two stacked frames takes all the
 /// free space (the other shrinks to 5 content lines).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -456,7 +380,6 @@ pub enum DialogKind {
 /// the last render for mouse hit-testing.
 #[derive(Default)]
 pub struct ThemeModal {
-    pub open: bool,
     /// The selected entry's index into the visible list (headers plus the
     /// expanded groups' rows); a header selection never previews or commits.
     pub selected: usize,
@@ -498,7 +421,7 @@ impl ThemeModal {
     /// Flips a group's fold and clamps the selection into the (possibly
     /// shortened) visible list; folding never hides a header, so the
     /// selection always stays on a visible entry.
-    fn toggle(&mut self, group: usize) {
+    pub(crate) fn toggle(&mut self, group: usize) {
         if let Some(flag) = self.expanded.get_mut(group) {
             *flag = !*flag;
         }
@@ -643,13 +566,12 @@ pub struct LayoutCache {
     pub pipeline_area: Cell<Rect>,
 }
 
-/// The stop dialog's state (Esc pressed while a build runs, T46.1): its open
-/// flag, its selected row and the rects its mouse hit-testing reads.
-/// Grouped (finding 19) like the modal's own state.
+/// The stop dialog's state (Esc pressed while a build runs, T46.1): its
+/// selected row and the rects its mouse hit-testing reads. Grouped (finding
+/// 19) like the modal's own state; whether it is open lives on the modal
+/// stack.
 #[derive(Default)]
 pub struct StopState {
-    /// The stop dialog is open (Esc pressed while a build runs, T46.1).
-    pub open: bool,
     /// The stop dialog's selected row; indexes [`STOP_CHOICES`].
     pub selected: usize,
     /// The stop dialog's bottom line rect at the last render; its buttons'
@@ -665,13 +587,11 @@ pub struct StopState {
     pub body: Cell<Rect>,
 }
 
-/// The m menu's state (the `m` key, from any engine state): its open flag,
-/// its selected row and the rects its mouse hit-testing reads. Grouped
-/// (finding 19) like the modal's own state.
+/// The m menu's state (the `m` key, from any engine state): its selected
+/// row and the rects its mouse hit-testing reads. Grouped (finding 19) like
+/// the modal's own state; whether it is open lives on the modal stack.
 #[derive(Default)]
 pub struct MenuState {
-    /// The m menu is open (the `m` key, from any engine state).
-    pub open: bool,
     /// The m menu's selected row; indexes [`menu_entries`].
     pub selected: usize,
     /// The m menu's bottom line rect at the last render; its buttons' mouse
@@ -687,18 +607,15 @@ pub struct MenuState {
 }
 
 /// The add-task / inject-task dialog's state (T74.1, T76.1): the shared
-/// multi-line editor, the open flag, which modal the open dialog is, the
-/// dialog's status line and the rects its mouse hit-testing reads. Grouped
-/// (finding 19) like the other modals' state.
+/// multi-line editor, which modal the open dialog is, the dialog's status
+/// line and the rects its mouse hit-testing reads. Grouped (finding 19) like
+/// the other modals' state; whether it is open lives on the modal stack.
 #[derive(Default)]
 pub struct DialogState {
     /// The dialog's multi-line text editor: the buffer, its cursor,
     /// the Up/Down goal column and the wrap width the renderer reports
     /// (T154.2). The buffer is kept when the dialog is closed.
     pub editor: DialogEditor,
-    /// The dialog is open (true for both dialog kinds: the add-task
-    /// dialog and the inject-task modal share the input).
-    pub open: bool,
     /// Which modal the open dialog is (T76.1): the add-task dialog or the
     /// inject-task modal. Pinned back to [`DialogKind::Add`] whenever the
     /// add-task dialog opens, so a reopen never inherits the inject kind.
@@ -715,6 +632,11 @@ pub struct DialogState {
 
 pub struct App {
     pub(crate) project: String,
+    /// The open modals, one stack (finding 20, the rest): the bottom modal
+    /// first, the top modal -- the one that wins keys, mouse and the top
+    /// pixel layer -- last. See [`crate::modal::ModalStack`] for which
+    /// combinations are legitimately open together.
+    pub(crate) modals: ModalStack,
     /// The focused frame of the merged view; it takes all the free space. Defaults
     /// to the task list while the engine is idle and the agent output while a run
     /// is active.
@@ -765,6 +687,7 @@ impl App {
     pub fn new(snapshot: Snapshot, engine_version: String) -> Self {
         let mut app = Self {
             project: snapshot.project_dir,
+            modals: ModalStack::new(),
             focus: FrameFocus::Tasks,
             project_status: ProjectScan::default(),
             engine_version,
@@ -795,7 +718,6 @@ impl App {
             menu: MenuState::default(),
             dialog: DialogState {
                 editor: DialogEditor::default(),
-                open: false,
                 kind: DialogKind::Add,
                 status: None,
                 footer: Cell::new(Rect::default()),
@@ -1044,7 +966,7 @@ impl App {
     /// and `tui.theme` stays the persisted truth, so a config-file reload cannot
     /// race the preview and the preview cannot outlive the modal.
     pub fn theme(&self) -> Theme {
-        let key = match (self.theme_modal.open, self.theme_modal.preview) {
+        let key = match (self.modals.contains(Modal::Theme), self.theme_modal.preview) {
             (true, Some(preview)) => preview,
             _ => self.tui.theme,
         };
@@ -1131,24 +1053,6 @@ impl App {
         }
     }
 
-    /// The dialog footer's buttons (finding 20): defined once beside the
-    /// primary label they branch on, shared by the renderer and the mouse
-    /// hit-test, so the drawn buttons and their hit-test rectangles agree
-    /// by construction.
-    pub(crate) fn dialog_buttons(&self) -> [(&'static str, &'static str); 2] {
-        [("Enter", self.primary_label()), ("Esc", "Close")]
-    }
-
-    /// The open modal that wins keys, mouse and the top pixel layer (finding
-    /// 20): the first entry of the shared [`Modal::PRECEDENCE`] table whose
-    /// flag is set, `None` when no modal is open. Pure, so callers can then
-    /// take `&mut self`.
-    pub(crate) fn active_modal(&self) -> Option<Modal> {
-        Modal::PRECEDENCE
-            .into_iter()
-            .find(|modal| modal.is_open(self))
-    }
-
     pub fn on_key(&mut self, key: KeyEvent) -> Action {
         if key.kind == KeyEventKind::Release {
             return Action::None;
@@ -1160,19 +1064,12 @@ impl App {
             return Action::Detach;
         }
         // The open modal swallows every other key, so nothing underneath
-        // reacts -- no restart, no navigation, no second build; which one
-        // wins comes from the shared precedence table (finding 20), the one
-        // order the mouse dispatch and the render stack also derive theirs
-        // from. Ctrl+C above still detaches, the same convention as before.
-        match self.active_modal() {
-            Some(Modal::Theme) => return self.on_theme_key(key, ctrl),
-            Some(Modal::Stop) => return self.on_stop_key(key),
-            Some(Modal::Menu) => return self.on_menu_key(key),
-            Some(Modal::Dialog) => return self.on_dialog_key(key, ctrl),
-            // The unsaved-changes dialog's keys route through the overlay's
-            // key path, which handles it before anything else.
-            Some(Modal::Confirm | Modal::Overlay) => return self.on_overlay_key(key),
-            None => {}
+        // reacts -- no restart, no navigation, no second build. The top of
+        // the modal stack is the one modal that wins; the mouse dispatch and
+        // the render order read the same stack (finding 20). Ctrl+C above
+        // still detaches, the same convention as before.
+        if let Some(modal) = self.modals.top() {
+            return modal.on_key(self, key, ctrl);
         }
         match key.code {
             KeyCode::Char('d') => Action::Detach,
@@ -1191,8 +1088,7 @@ impl App {
             // the running Esc stop dialog) live behind one chip instead.
             KeyCode::Char('m') if !ctrl => {
                 self.status = None;
-                self.menu.open = true;
-                self.menu.selected = 0;
+                self.open_menu();
                 Action::None
             }
             // S-Tab flips the run mode between `sprint` and `continuous`
@@ -1245,8 +1141,7 @@ impl App {
                     || self.run.discovering =>
             {
                 self.status = None;
-                self.stop.open = true;
-                self.stop.selected = 0;
+                self.open_stop();
                 Action::None
             }
             // The add-task dialog's key (T74.1): it belongs to the task list
@@ -1266,7 +1161,7 @@ impl App {
             KeyCode::Enter if !ctrl => self.enter_key(),
             KeyCode::Char('?') if !ctrl => {
                 self.status = None;
-                self.overlay.open();
+                self.open_settings();
                 Action::None
             }
             KeyCode::Up | KeyCode::Char('k') => self.scroll_by(1),
@@ -1289,7 +1184,7 @@ impl App {
     /// press while a soft stop is already pending interrupts instead; the
     /// main match's stopping guard reaches the `q` key before this helper,
     /// so that branch serves the menu's path, where no guard runs first.
-    fn quit_action(&mut self) -> Action {
+    pub(crate) fn quit_action(&mut self) -> Action {
         if self.run.stopping {
             return Action::Interrupt;
         }
@@ -1318,87 +1213,16 @@ impl App {
         Action::SetRunMode(mode.into())
     }
 
-    /// The stop dialog's keys: Up/Down move the selection, Enter confirms it,
-    /// Esc closes with no effect, and everything else is swallowed. Ctrl+C is
-    /// handled before this runs (it detaches from anywhere). The shared
-    /// choice-dialog key handling moves the selection (finding 6); this owns
-    /// only the Enter dispatch.
-    fn on_stop_key(&mut self, key: KeyEvent) -> Action {
-        match choice_key(key.code, false, STOP_CHOICES.len(), &mut self.stop.selected) {
-            ChoiceKey::Close => self.stop.open = false,
-            ChoiceKey::Enter(index) => {
-                self.stop.open = false;
-                return match STOP_CHOICES[index] {
-                    StopChoice::SoftStop => {
-                        self.run.stopping = true;
-                        self.status = Some(SOFT_STOP_PENDING.into());
-                        Action::Quit
-                    }
-                    StopChoice::Interrupt => {
-                        self.run.stopping = true;
-                        self.status = Some(
-                            "Interrupting -- the current task is cancelled and the app keeps running."
-                                .into(),
-                        );
-                        Action::Interrupt
-                    }
-                    StopChoice::Cancel => Action::None,
-                };
-            }
-            ChoiceKey::Swallowed => {}
-        }
-        Action::None
-    }
-
-    /// The m menu's keys: Up/Down -- j/k aliasing them, the theme picker's
-    /// convention -- move the selection, Enter runs the selected
-    /// entry -- exactly the action its direct key binding triggers -- Esc
-    /// closes with no effect, and everything else is swallowed. Ctrl+C is
-    /// handled before this runs (it detaches from anywhere).
-    fn on_menu_key(&mut self, key: KeyEvent) -> Action {
-        let entries = menu_entries(self.run.phase == Phase::Running);
-        match key.code {
-            KeyCode::Esc => self.menu.open = false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.menu.selected = self.menu.selected.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.menu.selected = (self.menu.selected + 1).min(entries.len() - 1);
-            }
-            KeyCode::Enter => {
-                self.menu.open = false;
-                return match entries[self.menu.selected.min(entries.len() - 1)] {
-                    MenuChoice::Settings => {
-                        self.status = None;
-                        self.overlay.open();
-                        Action::None
-                    }
-                    MenuChoice::Theme => {
-                        self.status = None;
-                        self.open_theme();
-                        Action::None
-                    }
-                    MenuChoice::Detach => Action::Detach,
-                    MenuChoice::Quit => self.quit_action(),
-                    MenuChoice::StopBuild => {
-                        self.status = None;
-                        self.stop.open = true;
-                        self.stop.selected = 0;
-                        Action::None
-                    }
-                };
-            }
-            _ => {}
-        }
-        Action::None
-    }
-
     /// Opens the theme picker (the `t` key, T43.1): the selection starts on
     /// the active theme, and the theme active now is remembered, so Esc
     /// restores it exactly. Both groups open expanded (T116.1), the fold state
     /// resetting with every open. Nothing is previewed or persisted yet.
-    fn open_theme(&mut self) {
-        self.theme_modal.open = true;
+    /// A refused push (another modal already open) is a no-op: the picker's
+    /// state is left exactly as it was.
+    pub(crate) fn open_theme(&mut self) {
+        if !self.modals.push(Modal::Theme) {
+            return;
+        }
         self.theme_modal.original = self.tui.theme;
         self.theme_modal.expanded = [true, true];
         let active = self.tui.theme.as_str();
@@ -1411,50 +1235,11 @@ impl App {
         self.theme_modal.preview = None;
     }
 
-    /// The theme picker's keys (T43.1, T116.1): Up/Down and j/k move the
-    /// selection through the visible entries -- the group headers and the
-    /// expanded groups' rows, in list order -- and immediately live-preview
-    /// it when it lands on a row; a header takes only the highlight and
-    /// leaves the preview alone. The acting keys follow the selected entry:
-    /// on a header, Enter/Space toggle the fold and Left folds an expanded
-    /// one while Right unfolds a folded one (the settings overlay's header
-    /// rule, h/l aliasing the arrows); on a row, Enter keeps the previewed
-    /// theme and hands it to the driver for persistence. Esc restores the
-    /// theme the picker opened with and closes; everything else is swallowed.
-    fn on_theme_key(&mut self, key: KeyEvent, ctrl: bool) -> Action {
-        // h/l alias Left/Right on the headers (the settings overlay's hjkl
-        // convention); j/k are matched directly below.
-        let code = match key.code {
-            KeyCode::Char('h') if !ctrl => KeyCode::Left,
-            KeyCode::Char('l') if !ctrl => KeyCode::Right,
-            code => code,
-        };
-        match code {
-            KeyCode::Esc => {
-                self.theme_modal.preview = None;
-                self.theme_modal.open = false;
-            }
-            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
-            KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
-            code => match self.theme_modal.selected_entry() {
-                Entry::Header(group) => {
-                    if header_fold(code, self.theme_modal.expanded[group]).is_some() {
-                        self.theme_modal.toggle(group);
-                    }
-                }
-                // Enter on a theme row commits; every other key is swallowed.
-                Entry::Row(_) if code == KeyCode::Enter && !ctrl => return self.commit_theme(),
-                Entry::Row(_) => {}
-            },
-        }
-        Action::None
-    }
-
     /// Moves the selection one visible entry (`delta` sign) and previews the
     /// entry it lands on when it is a row; a header takes only the highlight.
     /// The visible list contains no entry of a collapsed group, so collapsed
     /// entries are skipped by construction; the clamp keeps both ends put.
-    fn move_selection(&mut self, delta: isize) {
+    pub(crate) fn move_selection(&mut self, delta: isize) {
         let len = self.theme_modal.entries().len();
         let target = clamp_focus(self.theme_modal.selected.saturating_add_signed(delta), len);
         if let Entry::Row(name) = self.theme_modal.entries()[target] {
@@ -1480,7 +1265,7 @@ impl App {
     /// render with nothing persisted and no engine round trip, since the
     /// theme is a tui-schema field. A header takes only the highlight; the
     /// preview stays what it was.
-    fn preview_entry(&mut self, index: usize) {
+    pub(crate) fn preview_entry(&mut self, index: usize) {
         let len = self.theme_modal.entries().len();
         self.theme_modal.selected = clamp_focus(index, len);
         self.theme_modal.preview = match self.theme_modal.selected_entry() {
@@ -1493,10 +1278,10 @@ impl App {
     /// picker, and ask the driver to persist the same value through the tui
     /// field's read-modify-write. On a failed save the driver restores the
     /// remembered original.
-    fn commit_theme(&mut self) -> Action {
+    pub(crate) fn commit_theme(&mut self) -> Action {
         let theme = self.selected_theme();
         self.theme_modal.preview = None;
-        self.theme_modal.open = false;
+        self.modals.pop(Modal::Theme);
         self.tui.theme = theme;
         Action::SaveTheme(theme)
     }
@@ -1513,278 +1298,9 @@ impl App {
         self.status = Some(error);
     }
 
-    /// The theme picker's mouse handling (T43.1, T116.1): the pointer moving
-    /// onto a visible entry moves the selection there and previews it when it
-    /// is a row -- a header takes only the highlight -- and a click on a row
-    /// previews and then commits, exactly like hovering plus Enter, while a
-    /// click on a header toggles its fold and commits nothing. A click on one
-    /// of the footer's buttons runs that button's key (T59.1), and a click on
-    /// the title row's close button runs the picker's Esc key -- the previewed
-    /// theme is dropped and the opening one restored (T66.1). Events outside
-    /// the visible entries and every other kind are swallowed, so nothing
-    /// underneath scrolls or focuses.
-    fn on_theme_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if close_clicked(&mouse, self.theme_modal.close.get()) {
-            return self.on_theme_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false);
-        }
-        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let row = theme_row_at(
-            position,
-            self.theme_modal.area.get(),
-            self.theme_modal.entries().len(),
-        );
-        match mouse.kind {
-            MouseEventKind::Moved => {
-                if let Some(row) = row {
-                    self.preview_entry(row);
-                }
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                // The footer's buttons sit outside the body rows, so they are
-                // checked first (T59.1).
-                if let Some(code) =
-                    footer_button_code(&mouse, self.theme_modal.footer.get(), &THEME_BUTTONS)
-                {
-                    return self.on_theme_key(KeyEvent::new(code, KeyModifiers::NONE), false);
-                }
-                if let Some(row) = row {
-                    match self.theme_modal.entries()[row] {
-                        // A header click folds its group; it never commits.
-                        Entry::Header(group) => self.theme_modal.toggle(group),
-                        Entry::Row(_) => {
-                            self.preview_entry(row);
-                            return self.commit_theme();
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        Action::None
-    }
-
-    /// The add-task dialog's mouse handling (T59.1): a click on one of the
-    /// bottom line's buttons runs exactly that button's key through the
-    /// dialog's key path -- Enter submits (with the empty-input refusal) and
-    /// Esc closes keeping the text. A click on the title row's close button
-    /// runs the dialog's Esc key the same way (T66.1). Everything else is
-    /// swallowed, as before.
-    fn on_dialog_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if close_clicked(&mouse, self.dialog.close.get()) {
-            return self.on_dialog_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false);
-        }
-        let code = footer_button_code(&mouse, self.dialog.footer.get(), &self.dialog_buttons());
-        match code {
-            Some(code) => self.on_dialog_key(KeyEvent::new(code, KeyModifiers::NONE), false),
-            None => Action::None,
-        }
-    }
-
-    /// The stop dialog's mouse handling (T59.1): a click on one of the bottom
-    /// line's buttons runs exactly that button's key through the dialog's key
-    /// path -- Enter confirms the selected choice and Esc closes with no
-    /// effect. A click on the title row's close button runs the dialog's Esc
-    /// key the same way, leaving the build unchanged (T66.1). A pointer move
-    /// over one of the dialog's three choice rows moves the selection
-    /// highlight there without confirming it, and a left click inside a
-    /// choice row runs that row's Enter key verbatim, so a click and Enter
-    /// on a row are indistinguishable (T148.1). A move or click inside the
-    /// dialog that misses every row -- the blank body padding below the
-    /// choices, the border, the title, the footer's non-button columns --
-    /// or lands outside it does nothing. Everything else is swallowed,
-    /// as before.
-    fn on_stop_mouse(&mut self, mouse: MouseEvent) -> Action {
-        match choice_mouse(
-            &mouse,
-            self.stop.close.get(),
-            self.stop.footer.get(),
-            STOP_ESC_LABEL,
-            self.stop.body.get(),
-            STOP_CHOICES.len(),
-        ) {
-            ChoiceMouse::Key(code) => self.on_stop_key(KeyEvent::new(code, KeyModifiers::NONE)),
-            // The move moves only the highlight, never the dispatch.
-            ChoiceMouse::Hover(index) => {
-                self.stop.selected = index;
-                Action::None
-            }
-            // The click is the row's Enter key verbatim: it moves the
-            // selection to the row, then runs the Enter dispatch, so a
-            // click and Enter on the same row are indistinguishable.
-            ChoiceMouse::Click(index) => {
-                self.stop.selected = index;
-                self.on_stop_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-            }
-            ChoiceMouse::None => Action::None,
-        }
-    }
-
-    /// The m menu's mouse handling (T59.1): a click on one of the bottom
-    /// line's buttons runs exactly that button's key through the menu's key
-    /// path -- Enter runs the selected entry and Esc closes with no effect.
-    /// A click on the title row's close button runs the menu's Esc key the
-    /// same way (T66.1). A left click inside a rendered entry row moves the
-    /// selection to that row and runs it -- exactly the `m` plus Enter
-    /// path (T137.1). The pointer moving onto a rendered entry moves only
-    /// the selection highlight there, without running it (T140.1), so a
-    /// click is exactly hover plus Enter; a move inside the modal but
-    /// outside every row -- or anywhere else -- leaves the selection
-    /// unchanged. A click on the status bar's m menu chip closes the
-    /// menu, the second half of the chip's toggle (T133.1). Everything else
-    /// -- the border, the title, the footer's non-button columns, the shell
-    /// behind the modal -- is swallowed, as before.
-    fn on_menu_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if chip_clicked(&mouse, self.layout.menu_chip.get()) {
-            self.menu.open = false;
-            return Action::None;
-        }
-        if close_clicked(&mouse, self.menu.close.get()) {
-            return self.on_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        }
-        if let Some(code) = footer_button_code(&mouse, self.menu.footer.get(), &MENU_BUTTONS) {
-            return self.on_menu_key(KeyEvent::new(code, KeyModifiers::NONE));
-        }
-        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let body = self.menu.body.get();
-        let entries = menu_entries(self.run.phase == Phase::Running);
-        let visible = entries.len().min(usize::from(body.height));
-        let row = menu_row_at(position, body, visible);
-        match mouse.kind {
-            MouseEventKind::Moved => {
-                // The pointer move moves only the highlight, never the
-                // dispatch (T140.1): a move that misses every row -- the
-                // border, the title, the footer, the shell behind the
-                // modal, the running-only stop row's absent slot -- leaves
-                // the selection alone.
-                if let Some(index) = row {
-                    self.menu.selected = index;
-                }
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(index) = row {
-                    // The click is the row's Enter key verbatim: it moves the
-                    // highlight to the row, then runs the Enter dispatch -- so a
-                    // click and `m` plus Enter on the same row are
-                    // indistinguishable.
-                    self.menu.selected = index;
-                    return self.on_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                }
-            }
-            _ => {}
-        }
-        Action::None
-    }
-
-    /// The settings overlay's mouse handling (T59.1, T136.1): a click on the
-    /// bottom line's Close button runs exactly the Esc key through the
-    /// overlay's key path -- a clean overlay closes, a dirty one opens the
-    /// unsaved-changes dialog. A click on the title row's close button runs
-    /// the same Esc key (T66.1). A wheel step scrolls the list one row per
-    /// step without moving the selection, clamped at the list's ends, and a
-    /// left click inside a rendered list row runs that row's Enter key
-    /// verbatim -- it selects the row first, so a click and Enter on the
-    /// same row are indistinguishable. A pointer move inside a rendered
-    /// list row moves the selection highlight to that row with the same
-    /// viewport follow the Up and Down keys run, without running it
-    /// (T145.1). The inline editor is modal like its keys: while it is
-    /// open, row clicks, wheel steps and pointer moves are swallowed.
-    /// Everything else is swallowed, as before.
-    fn on_overlay_mouse(&mut self, mouse: MouseEvent) -> Action {
-        if close_clicked(&mouse, self.overlay.close.get()) {
-            return self.on_overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        }
-        if let Some(code) = footer_button_code(&mouse, self.overlay.footer.get(), &OVERLAY_BUTTONS)
-        {
-            return self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE));
-        }
-        // The inline editor is modal: while it is open, row clicks, wheel
-        // steps and pointer moves are swallowed, like every key that is
-        // not the editor's.
-        if self.overlay.editor.is_some() {
-            return Action::None;
-        }
-        let position = ratatui::layout::Position::new(mouse.column, mouse.row);
-        let row = settings_row_at(
-            position,
-            self.overlay.list.get(),
-            self.overlay.scroll.get(),
-            self.overlay.visible().len(),
-        );
-        match mouse.kind {
-            // The pointer move moves only the selection highlight and the
-            // viewport's follow (T145.1): it never runs the row's Enter
-            // key, and a move that misses every row -- the blank viewport
-            // rows past the last entry, the help box, the border, the
-            // footer, the shell outside -- leaves the focus and the
-            // offset alone.
-            MouseEventKind::Moved => {
-                if let Some(index) = row {
-                    self.overlay.hover_focus(index);
-                }
-            }
-            MouseEventKind::ScrollUp => {
-                self.overlay.scroll_by(-1);
-            }
-            MouseEventKind::ScrollDown => {
-                self.overlay.scroll_by(1);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(index) = row {
-                    // The click is the row's Enter key verbatim: it moves
-                    // the focus to the row, then runs the Enter dispatch,
-                    // which reads the row's current value -- so a click and
-                    // Enter on the same row are indistinguishable.
-                    self.overlay.focus = index;
-                    return self.on_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                }
-            }
-            _ => {}
-        }
-        Action::None
-    }
-
-    /// The unsaved-changes dialog's mouse handling (T59.1): a click on one of
-    /// the bottom line's buttons runs exactly that button's key through the
-    /// overlay's key path, which routes it to the dialog while it is open --
-    /// Enter confirms the selected choice (save, discard or cancel) and Esc
-    /// returns to the overlay with the drafts intact. A click on the title
-    /// row's close button returns to the overlay the same way (T66.1). A
-    /// pointer move over one of the dialog's three choice rows moves the
-    /// selection highlight there without confirming it, and a left click
-    /// inside a choice row runs that row's Enter key verbatim, so a click
-    /// and Enter on a row are indistinguishable (T146.1). A move or click
-    /// inside the dialog that misses every row -- the blank body padding
-    /// below the choices, the border, the title -- or lands outside it does
-    /// nothing. Everything else is swallowed, as before.
-    fn on_confirm_mouse(&mut self, mouse: MouseEvent) -> Action {
-        match choice_mouse(
-            &mouse,
-            self.overlay.confirm_close.get(),
-            self.overlay.confirm_footer.get(),
-            CONFIRM_ESC_LABEL,
-            self.overlay.confirm_body.get(),
-            SETTINGS_CHOICES.len(),
-        ) {
-            ChoiceMouse::Key(code) => self.on_overlay_key(KeyEvent::new(code, KeyModifiers::NONE)),
-            // The move moves only the highlight, never the dispatch.
-            ChoiceMouse::Hover(index) => {
-                self.overlay.confirm_selected = index;
-                Action::None
-            }
-            // The click is the row's Enter key verbatim: it moves the
-            // selection to the row, then runs the Enter dispatch, so a
-            // click and Enter on the same row are indistinguishable.
-            ChoiceMouse::Click(index) => {
-                self.overlay.confirm_selected = index;
-                self.on_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-            }
-            ChoiceMouse::None => Action::None,
-        }
-    }
-
     /// The short inline refusal for a busy engine, shared by every key that
     /// starts something (Enter, `a`): `None` while the engine is idle.
-    fn busy_status(&self) -> Option<&'static str> {
+    pub(crate) fn busy_status(&self) -> Option<&'static str> {
         if self.run.phase == Phase::Running {
             Some("A build is running; wait for it to finish.")
         } else if self.run.planning {
@@ -1798,14 +1314,15 @@ impl App {
 
     /// Opens the add-task dialog when the engine is idle; a busy engine refuses with a
     /// short inline message (the same message the Enter key shows).
-    fn open_dialog(&mut self) -> Action {
+    pub(crate) fn open_dialog(&mut self) -> Action {
         self.status = None;
         self.dialog.kind = DialogKind::Add;
         match self.busy_status() {
             Some(message) => self.status = Some(message.into()),
             None => {
-                self.dialog.open = true;
-                self.dialog.status = None;
+                if self.modals.push(Modal::Dialog) {
+                    self.dialog.status = None;
+                }
             }
         }
         Action::None
@@ -1816,12 +1333,14 @@ impl App {
     /// text to the engine, which normalizes it into a well-formed unchecked
     /// task line before appending it. No busy state refuses it -- the append
     /// is a plain file write, so the engine's task-file poll reconciles the
-    /// line even while a run is active.
-    fn open_inject(&mut self) -> Action {
+    /// line even while a run is active. A refused push (another modal
+    /// already open) is a no-op: the kind and the status are left alone.
+    pub(crate) fn open_inject(&mut self) -> Action {
         self.status = None;
-        self.dialog.open = true;
-        self.dialog.kind = DialogKind::Inject;
-        self.dialog.status = None;
+        if self.modals.push(Modal::Dialog) {
+            self.dialog.kind = DialogKind::Inject;
+            self.dialog.status = None;
+        }
         Action::None
     }
 
@@ -1846,43 +1365,9 @@ impl App {
         }
     }
 
-    /// The dialog's key path (T154.2): App owns the modal chrome -- Esc
-    /// closes keeping the text, Ctrl+C detaches, the status line clears and
-    /// the goal column is forgotten on every key but Up/Down -- and the
-    /// editor (`DialogEditor`) owns the buffer, the cursor and their motion.
-    fn on_dialog_key(&mut self, key: KeyEvent, ctrl: bool) -> Action {
-        if key.code == KeyCode::Esc {
-            self.dialog.open = false;
-            return Action::None;
-        }
-        if key.code == KeyCode::Char('c') && ctrl {
-            return Action::Detach;
-        }
-        self.dialog.status = None;
-        if !matches!(key.code, KeyCode::Up | KeyCode::Down) {
-            self.dialog.editor.reset_goal();
-        }
-        match key.code {
-            KeyCode::Char('s') if ctrl => return self.submit_dialog(),
-            KeyCode::Char('u') if ctrl => self.dialog.editor.clear(),
-            // Enter submits through the same path as the Submit button;
-            // an empty input is refused inline. A submit that
-            // launches a run closes the dialog; a command error keeps it open.
-            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
-                if self.dialog.editor.text().trim().is_empty() {
-                    self.dialog.status = Some(self.empty_input_message().into());
-                } else {
-                    return self.submit_dialog();
-                }
-            }
-            _ => self.dialog.editor.on_key(key, ctrl),
-        }
-        Action::None
-    }
-
     /// The inline refusal for an empty input on the dialog's primary key:
     /// kind-dependent (T76.1), because the two modals submit different things.
-    fn empty_input_message(&self) -> &'static str {
+    pub(crate) fn empty_input_message(&self) -> &'static str {
         match self.dialog.kind {
             DialogKind::Add => "Nothing to submit -- type a request first.",
             DialogKind::Inject => "Nothing to inject -- type a task line first.",
@@ -1893,7 +1378,7 @@ impl App {
     /// on the project scenario and whether the input is empty. A submit that launches
     /// a run or the build loop closes the dialog; one that only writes the spec file
     /// or refuses keeps it open with its message in the status line.
-    fn submit_dialog(&mut self) -> Action {
+    pub(crate) fn submit_dialog(&mut self) -> Action {
         // The inject-task modal's submit (T76.1): the typed text goes to the
         // engine, which normalizes it into a well-formed unchecked task line
         // and appends it under its task-file lock -- never to an agent
@@ -1928,7 +1413,7 @@ impl App {
                 }
             }
             (Scenario::QueueReady, true) => {
-                self.dialog.open = false;
+                self.modals.pop(Modal::Dialog);
                 self.focus = FrameFocus::Output;
                 Action::StartBuild
             }
@@ -1940,7 +1425,7 @@ impl App {
     /// The engine accepted the request: the dialog closes immediately and the output
     /// frame takes the focus, where the planner's output streams (T24.1).
     pub fn on_tasks_submitted(&mut self) {
-        self.dialog.open = false;
+        self.modals.pop(Modal::Dialog);
         self.dialog.editor.clear();
         self.dialog.status = None;
         self.focus = FrameFocus::Output;
@@ -1950,7 +1435,7 @@ impl App {
     /// closes and the task list frame keeps the focus, where the engine's
     /// task-file poll brings the new line in as a TasksChanged event.
     pub fn on_task_injected(&mut self) {
-        self.dialog.open = false;
+        self.modals.pop(Modal::Dialog);
         self.dialog.editor.clear();
         self.dialog.status = None;
         self.focus = FrameFocus::Tasks;
@@ -1972,7 +1457,7 @@ impl App {
 
     /// Pasted text appends to the dialog's input; ignored while the dialog is closed.
     pub fn on_paste(&mut self, text: &str) {
-        if self.dialog.open {
+        if self.modals.contains(Modal::Dialog) {
             self.dialog.editor.insert_paste(text);
         }
     }
@@ -1980,14 +1465,77 @@ impl App {
     /// Whether the settings overlay is open (rendered above everything else).
     #[cfg(any(test, feature = "test-support"))]
     pub fn settings_open(&self) -> bool {
-        self.overlay.open
+        self.modals.contains(Modal::Overlay)
     }
 
-    fn on_overlay_key(&mut self, key: KeyEvent) -> Action {
-        // The focused row's current value is read before the state is borrowed mutably.
-        let entry = self.overlay.focused();
-        let current = self.setting_value(entry);
-        self.overlay.on_key(key, current)
+    /// Whether the stop dialog is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn stop_open(&self) -> bool {
+        self.modals.contains(Modal::Stop)
+    }
+
+    /// Whether the m menu is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn menu_open(&self) -> bool {
+        self.modals.contains(Modal::Menu)
+    }
+
+    /// Whether the add-task / inject-task dialog is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dialog_open(&self) -> bool {
+        self.modals.contains(Modal::Dialog)
+    }
+
+    /// Whether the theme picker is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn theme_open(&self) -> bool {
+        self.modals.contains(Modal::Theme)
+    }
+
+    /// Whether the settings overlay's unsaved-changes dialog is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn confirm_open(&self) -> bool {
+        self.modals.contains(Modal::Confirm)
+    }
+
+    /// The open modals, bottom first: the render order, the bottom layer
+    /// drawn first and the top modal last.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_modals(&self) -> Vec<Modal> {
+        self.modals.iter().collect()
+    }
+
+    /// Opens the m menu (the `m` key): a refused push (another modal
+    /// already open) is a no-op, so the selection is left alone.
+    pub(crate) fn open_menu(&mut self) {
+        if self.modals.push(Modal::Menu) {
+            self.menu.selected = 0;
+        }
+    }
+
+    /// Opens the stop dialog (Esc while a run is active): a refused push
+    /// (another modal already open) is a no-op, so the selection is left
+    /// alone.
+    pub(crate) fn open_stop(&mut self) {
+        if self.modals.push(Modal::Stop) {
+            self.stop.selected = 0;
+        }
+    }
+
+    /// Opens the settings overlay with fresh per-open state: a refused push
+    /// (another modal already open) is a no-op, so the overlay's state is
+    /// left alone.
+    pub(crate) fn open_settings(&mut self) {
+        if self.modals.push(Modal::Overlay) {
+            self.overlay.reset();
+        }
+    }
+
+    /// Closes the settings overlay, whatever state it is in, together with
+    /// the unsaved-changes dialog stacked on it.
+    pub fn close_settings(&mut self) {
+        self.modals.pop(Modal::Overlay);
+        self.overlay.discard();
     }
 
     /// One entry's current value: the drafted change when one exists (the overlay
@@ -2026,7 +1574,7 @@ impl App {
         if schema == Schema::Daemon {
             self.settings.insert(field.to_string(), value);
         }
-        if self.overlay.open {
+        if self.modals.contains(Modal::Overlay) {
             self.overlay.drafts.remove(field);
         }
     }
@@ -2036,7 +1584,7 @@ impl App {
     /// can pick the save choice again. With the overlay closed (a run-mode flip
     /// sent from the main view, T60.1), the reason shows in the status bar.
     pub fn on_settings_rejected(&mut self, error: String) {
-        if self.overlay.open {
+        if self.modals.contains(Modal::Overlay) {
             self.overlay.status = Some((error, StatusLevel::Error));
         } else {
             self.status = Some(error);
@@ -2085,18 +1633,11 @@ impl App {
         // rest, so nothing underneath reacts while it is open -- the theme
         // picker keeps its row hover and click behaviour (T43.1) and every
         // modal's bottom-line buttons respond to a click on their rectangle
-        // with exactly the action their key triggers (T59.1); which modal
-        // wins comes from the shared precedence table (finding 20), the one
-        // order the key dispatch and the render stack also derive theirs
-        // from.
-        match self.active_modal() {
-            Some(Modal::Theme) => return self.on_theme_mouse(mouse),
-            Some(Modal::Confirm) => return self.on_confirm_mouse(mouse),
-            Some(Modal::Stop) => return self.on_stop_mouse(mouse),
-            Some(Modal::Menu) => return self.on_menu_mouse(mouse),
-            Some(Modal::Dialog) => return self.on_dialog_mouse(mouse),
-            Some(Modal::Overlay) => return self.on_overlay_mouse(mouse),
-            None => {}
+        // with exactly the action their key triggers (T59.1). The top of
+        // the modal stack is the one modal that wins; the key dispatch and
+        // the render order read the same stack (finding 20).
+        if let Some(modal) = self.modals.top() {
+            return modal.on_mouse(self, mouse);
         }
         let position = ratatui::layout::Position::new(mouse.column, mouse.row);
         let frame = frame_at(
@@ -2110,8 +1651,7 @@ impl App {
                     // The m key's open path, verbatim: the chip is its
                     // mouse alias (T133.1).
                     self.status = None;
-                    self.menu.open = true;
-                    self.menu.selected = 0;
+                    self.open_menu();
                     Action::None
                 } else if chip_clicked(&mouse, self.layout.enter_chip.get()) {
                     // The Enter chip is the Enter key's mouse alias
@@ -2131,8 +1671,7 @@ impl App {
                     // (T142.1), so the chip stays inert in any other state
                     // -- the zero rect makes those miss naturally.
                     self.status = None;
-                    self.stop.open = true;
-                    self.stop.selected = 0;
+                    self.open_stop();
                     Action::None
                 } else {
                     if let Some(frame) = frame {
@@ -2446,7 +1985,7 @@ mod tests {
     /// there miss naturally.
     fn settings_app() -> (App, Rect) {
         let mut app = app();
-        app.overlay.open();
+        app.open_settings();
         let list = Rect::new(10, 5, 60, 10);
         app.overlay.list.set(list);
         (app, list)
@@ -2463,7 +2002,7 @@ mod tests {
             .drafts
             .insert("model".into(), SettingValue::Str("opus".into()));
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(app.overlay.confirm_open);
+        assert!(app.confirm_open());
         assert_eq!(app.overlay.confirm_selected, 0);
         let body = Rect::new(0, 20, 50, 6);
         app.overlay.confirm_body.set(body);
@@ -2641,10 +2180,10 @@ mod tests {
             assert_eq!(app.overlay.focus, hovered);
             assert!(app.overlay.focus >= app.overlay.scroll.get());
             assert!(app.overlay.focus - app.overlay.scroll.get() < 10);
-            assert!(app.overlay.open);
+            assert!(app.settings_open());
             assert!(app.overlay.editor.is_none());
             assert!(app.overlay.drafts.is_empty());
-            assert!(!app.overlay.confirm_open);
+            assert!(!app.confirm_open());
             assert_eq!(
                 app.overlay.visible().len(),
                 len,
@@ -2863,7 +2402,7 @@ mod tests {
                 Action::None
             );
             assert_eq!(app.overlay.confirm_selected, row);
-            assert!(app.overlay.confirm_open);
+            assert!(app.confirm_open());
             assert_eq!(
                 app.overlay.drafts.get("model"),
                 Some(&SettingValue::Str("opus".into()))
@@ -2885,7 +2424,7 @@ mod tests {
                 Action::None
             );
             assert_eq!(app.overlay.confirm_selected, 2);
-            assert!(app.overlay.confirm_open);
+            assert!(app.confirm_open());
         }
     }
 
@@ -2898,8 +2437,8 @@ mod tests {
         app.on_mouse(mouse(MouseEventKind::Moved, body.x + 2, body.y + 1));
         assert_eq!(app.overlay.confirm_selected, 1);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::CloseSettings);
-        assert!(!app.overlay.confirm_open);
-        assert!(!app.overlay.open);
+        assert!(!app.confirm_open());
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
 
         // Hovering Cancel (row 2) and pressing Enter returns to the overlay
@@ -2908,8 +2447,8 @@ mod tests {
         app.on_mouse(mouse(MouseEventKind::Moved, body.x + 2, body.y + 2));
         assert_eq!(app.overlay.confirm_selected, 2);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-        assert!(!app.overlay.confirm_open);
-        assert!(app.overlay.open);
+        assert!(!app.confirm_open());
+        assert!(app.settings_open());
         assert_eq!(
             app.overlay.drafts.get("model"),
             Some(&SettingValue::Str("opus".into()))
@@ -2933,8 +2472,8 @@ mod tests {
             )),
             Action::SaveSettings
         );
-        assert!(!app.overlay.confirm_open);
-        assert!(app.overlay.open);
+        assert!(!app.confirm_open());
+        assert!(app.settings_open());
         assert_eq!(
             app.overlay.drafts.get("model"),
             Some(&SettingValue::Str("opus".into()))
@@ -2958,8 +2497,8 @@ mod tests {
             )),
             Action::CloseSettings
         );
-        assert!(!app.overlay.confirm_open);
-        assert!(!app.overlay.open);
+        assert!(!app.confirm_open());
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
 
         // Cancel (row 2): only the dialog closes; the overlay and the drafts
@@ -2973,8 +2512,8 @@ mod tests {
             )),
             Action::None
         );
-        assert!(!app.overlay.confirm_open);
-        assert!(app.overlay.open);
+        assert!(!app.confirm_open());
+        assert!(app.settings_open());
         assert_eq!(
             app.overlay.drafts.get("model"),
             Some(&SettingValue::Str("opus".into()))
@@ -2990,7 +2529,7 @@ mod tests {
                 app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), column, row)),
                 Action::None
             );
-            assert!(app.overlay.confirm_open);
+            assert!(app.confirm_open());
             assert_eq!(app.overlay.confirm_selected, 0);
             assert_eq!(
                 app.overlay.drafts.get("model"),
@@ -3017,8 +2556,8 @@ mod tests {
         assert_eq!(press(&mut app, KeyCode::Up), Action::None);
         assert_eq!(app.overlay.confirm_selected, 1);
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.overlay.confirm_open);
-        assert!(app.overlay.open);
+        assert!(!app.confirm_open());
+        assert!(app.settings_open());
         assert_eq!(
             app.overlay.drafts.get("model"),
             Some(&SettingValue::Str("opus".into()))

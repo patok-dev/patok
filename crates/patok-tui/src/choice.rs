@@ -112,7 +112,9 @@ pub(crate) fn choice_key(code: KeyCode, jk: bool, len: usize, selected: &mut usi
 /// its Enter -- a click and Enter on a row are indistinguishable
 /// (T146.1, T148.1). A move or click that misses every row -- the blank
 /// body padding below the choices, the border, the title, the footer's
-/// non-button columns -- or lands outside the dialog does nothing.
+/// non-button columns -- or lands outside the dialog does nothing. The
+/// footer buttons are the caller's, so the drawn buttons and the
+/// hit-tested rectangles agree by construction.
 pub(crate) enum ChoiceMouse {
     /// The close button or a footer button: run this key through the
     /// dialog's key path.
@@ -132,16 +134,14 @@ pub(crate) fn choice_mouse(
     mouse: &MouseEvent,
     close: Rect,
     footer: Rect,
-    esc_label: &'static str,
+    buttons: &[(&'static str, &'static str)],
     body: Rect,
     len: usize,
 ) -> ChoiceMouse {
     if close_clicked(mouse, close) {
         return ChoiceMouse::Key(KeyCode::Esc);
     }
-    if let Some(code) =
-        footer_button_code(mouse, footer, &[("Enter", "Confirm"), ("Esc", esc_label)])
-    {
+    if let Some(code) = footer_button_code(mouse, footer, buttons) {
         return ChoiceMouse::Key(code);
     }
     let position = Position::new(mouse.column, mouse.row);

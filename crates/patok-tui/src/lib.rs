@@ -8,6 +8,7 @@ mod driver;
 mod headless;
 mod hit;
 mod markdown;
+mod modal;
 mod overlay;
 mod pipeline;
 mod project;
@@ -33,6 +34,8 @@ pub use app::{
 pub use hit::{
     CLOSE_BUTTON_WIDTH, button_text, close_button_rect, footer_button_rects, frame_at, theme_row_at,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use modal::Modal;
 #[cfg(any(test, feature = "test-support"))]
 pub use overlay::{Entry, FieldKind, SETTINGS_CHOICES, Schema, StatusLevel};
 #[cfg(any(test, feature = "test-support"))]

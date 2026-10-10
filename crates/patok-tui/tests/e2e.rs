@@ -408,7 +408,7 @@ async fn choosing_interrupt_from_the_stop_modal_keeps_the_shell_running_and_a_ne
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         patok_tui::Action::None
     );
-    assert!(app.stop.open);
+    assert!(app.stop_open());
     assert_eq!(
         app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
         patok_tui::Action::None
@@ -417,7 +417,7 @@ async fn choosing_interrupt_from_the_stop_modal_keeps_the_shell_running_and_a_ne
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         patok_tui::Action::Interrupt
     );
-    assert!(!app.stop.open);
+    assert!(!app.stop_open());
     assert!(app.run.stopping);
     let status = app.status.as_deref().unwrap();
     assert!(
@@ -896,7 +896,7 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
     // Open the dialog, type the request, submit.
     let press = |app: &mut App, code, modifiers| app.on_key(KeyEvent::new(code, modifiers));
     press(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
-    assert!(app.dialog.open);
+    assert!(app.dialog_open());
     let mut action = Action::None;
     for c in "write greeting tests".chars() {
         press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
@@ -920,7 +920,7 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
         .into_inner();
     assert!(response.accepted, "{}", response.error);
     app.on_tasks_submitted();
-    assert!(!app.dialog.open, "the accepted submit closes the modal");
+    assert!(!app.dialog_open(), "the accepted submit closes the modal");
     assert_eq!(app.focus, FrameFocus::Output);
 
     let draw = |app: &App| {
@@ -1431,7 +1431,7 @@ async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
     // Enter no longer opens the dialog: it asks for a discovery round.
     let action = app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(action, Action::RunDiscovery);
-    assert!(!app.dialog.open);
+    assert!(!app.dialog_open());
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::RunDiscovery(
@@ -1862,7 +1862,7 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
     // every drafted change through the settings-change flow. Simulating it (the
     // driver loops pending() through the flow) persists the change.
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-    assert!(app.overlay.confirm_open);
+    assert!(app.confirm_open());
     assert_eq!(press(&mut app, KeyCode::Enter), Action::SaveSettings);
     for (schema, field, value) in app.overlay.pending() {
         let change = to_proto(&field, value.clone()).unwrap();
@@ -1878,7 +1878,7 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
         assert!(response.accepted, "{}", response.error);
         app.on_settings_applied(schema, &field, value);
     }
-    app.overlay.close();
+    app.close_settings();
     let saved = std::fs::read_to_string(&config_file).unwrap();
     assert!(saved.contains("plan_enabled = true"), "{saved}");
 
@@ -1932,7 +1932,7 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
         assert!(response.accepted, "{}", response.error);
         app.on_settings_applied(schema, &field, value);
     }
-    app.overlay.close();
+    app.close_settings();
     assert!(
         draw(&app).contains(" STOPPED  continuous "),
         "the chip follows the save"
@@ -2261,7 +2261,7 @@ async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
     // typed, Enter confirms. The action carries the raw typed text; the
     // normalizing happens engine-side.
     app.on_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
-    assert!(app.dialog.open);
+    assert!(app.dialog_open());
     for c in "polish the readme".chars() {
         app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }

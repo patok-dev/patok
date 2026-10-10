@@ -25,7 +25,7 @@ fn app() -> App {
 fn open() -> App {
     let mut app = app();
     assert_eq!(press(&mut app, KeyCode::Char('t')), Action::None);
-    assert!(app.theme_modal.open);
+    assert!(app.theme_open());
     app
 }
 
@@ -83,19 +83,19 @@ fn t_opens_the_picker_from_every_app_state() {
         description: "scaffold the workspace".into(),
     });
     assert_eq!(press(&mut running, KeyCode::Char('t')), Action::None);
-    assert!(running.theme_modal.open);
+    assert!(running.theme_open());
 
     // Planning.
     let mut planning = app();
     planning.apply(EngineEvent::PlanningChanged { planning: true });
     assert_eq!(press(&mut planning, KeyCode::Char('t')), Action::None);
-    assert!(planning.theme_modal.open);
+    assert!(planning.theme_open());
 
     // Discovery.
     let mut discovering = app();
     discovering.apply(EngineEvent::DiscoveryChanged { discovering: true });
     assert_eq!(press(&mut discovering, KeyCode::Char('t')), Action::None);
-    assert!(discovering.theme_modal.open);
+    assert!(discovering.theme_open());
 
     // Even while a soft stop is pending: the picker sits above it, and the
     // stop's keys work again once the picker closes.
@@ -106,7 +106,7 @@ fn t_opens_the_picker_from_every_app_state() {
     assert_eq!(press(&mut stopping, KeyCode::Char('q')), Action::Quit);
     assert!(stopping.run.stopping);
     assert_eq!(press(&mut stopping, KeyCode::Char('t')), Action::None);
-    assert!(stopping.theme_modal.open);
+    assert!(stopping.theme_open());
     assert!(
         stopping.run.stopping,
         "the pending stop survives underneath"
@@ -115,7 +115,7 @@ fn t_opens_the_picker_from_every_app_state() {
     assert_eq!(press(&mut stopping, KeyCode::Char('q')), Action::None);
     assert_eq!(press(&mut stopping, KeyCode::Esc), Action::None);
     assert!(stopping.run.stopping);
-    assert!(!stopping.theme_modal.open);
+    assert!(!stopping.theme_open());
     // ...and they reach the shell again after the picker closes.
     assert_eq!(press(&mut stopping, KeyCode::Char('q')), Action::Interrupt);
 }
@@ -125,9 +125,9 @@ fn t_stays_with_the_modal_that_has_the_keyboard() {
     // The add-task dialog types the t.
     let mut dialog = app();
     press(&mut dialog, KeyCode::Char('a'));
-    assert!(dialog.dialog.open);
+    assert!(dialog.dialog_open());
     assert_eq!(press(&mut dialog, KeyCode::Char('t')), Action::None);
-    assert!(!dialog.theme_modal.open);
+    assert!(!dialog.theme_open());
     assert_eq!(dialog.dialog.editor.text(), "t");
 
     // The settings overlay ignores it.
@@ -135,7 +135,7 @@ fn t_stays_with_the_modal_that_has_the_keyboard() {
     press(&mut overlay, KeyCode::Char('?'));
     assert!(overlay.settings_open());
     assert_eq!(press(&mut overlay, KeyCode::Char('t')), Action::None);
-    assert!(!overlay.theme_modal.open);
+    assert!(!overlay.theme_open());
 
     // The stop dialog swallows it.
     let mut stop = app();
@@ -143,9 +143,9 @@ fn t_stays_with_the_modal_that_has_the_keyboard() {
         phase: Phase::Running,
     });
     press(&mut stop, KeyCode::Esc);
-    assert!(stop.stop.open);
+    assert!(stop.stop_open());
     assert_eq!(press(&mut stop, KeyCode::Char('t')), Action::None);
-    assert!(!stop.theme_modal.open);
+    assert!(!stop.theme_open());
 }
 
 #[test]
@@ -223,8 +223,8 @@ fn keys_and_mouse_are_swallowed_while_the_picker_is_open() {
         assert_eq!(press(&mut app, key), Action::None);
     }
     assert!(!app.run.stopping);
-    assert!(!app.dialog.open);
-    assert!(!app.stop.open);
+    assert!(!app.dialog_open());
+    assert!(!app.stop_open());
     assert!(!app.settings_open());
     assert_eq!(app.focus, FrameFocus::Tasks);
     assert_eq!(app.scroll, 0);
@@ -257,7 +257,7 @@ fn esc_restores_the_theme_the_picker_opened_with() {
     press_down_to(&mut previewed, "catppuccin_latte");
     assert_eq!(previewed.theme(), theme_of(ThemeKey::CatppuccinLatte));
     assert_eq!(press(&mut previewed, KeyCode::Esc), Action::None);
-    assert!(!previewed.theme_modal.open);
+    assert!(!previewed.theme_open());
     assert_eq!(previewed.theme_modal.preview, None);
     assert_eq!(previewed.theme(), theme_of(ThemeKey::Dark));
     assert_eq!(previewed.tui.theme, ThemeKey::Dark);
@@ -293,7 +293,7 @@ fn enter_keeps_the_previewed_theme_and_hands_it_to_the_driver() {
         press(&mut app, KeyCode::Enter),
         Action::SaveTheme(ThemeKey::GruvboxDark)
     );
-    assert!(!app.theme_modal.open);
+    assert!(!app.theme_open());
     assert_eq!(app.tui.theme, ThemeKey::GruvboxDark);
     assert_eq!(app.theme(), theme_of(ThemeKey::GruvboxDark));
 }
@@ -313,7 +313,7 @@ fn clicking_a_row_previews_then_saves_like_enter() {
         )),
         Action::SaveTheme(ThemeKey::CatppuccinMocha)
     );
-    assert!(!app.theme_modal.open);
+    assert!(!app.theme_open());
     assert_eq!(app.theme_modal.selected, 4);
     assert_eq!(app.tui.theme, ThemeKey::CatppuccinMocha);
     assert_eq!(app.theme(), theme_of(ThemeKey::CatppuccinMocha));
@@ -330,7 +330,7 @@ fn clicking_a_row_previews_then_saves_like_enter() {
         )),
         Action::None
     );
-    assert!(app.theme_modal.open);
+    assert!(app.theme_open());
     assert_eq!(app.tui.theme, ThemeKey::Dark);
 }
 
@@ -461,7 +461,7 @@ fn left_folds_a_header_and_right_unfolds_it() {
     ] {
         assert_eq!(press(&mut app, key), Action::None);
         assert_eq!(app.theme_modal.expanded, [true, true]);
-        assert!(app.theme_modal.open);
+        assert!(app.theme_open());
         assert_eq!(app.tui.theme, ThemeKey::Dark);
         assert_eq!(app.theme_modal.preview, Some(ThemeKey::Dark));
     }
@@ -477,7 +477,7 @@ fn a_header_never_commits() {
     for key in [KeyCode::Enter, KeyCode::Char(' ')] {
         let preview = app.theme_modal.preview;
         assert_eq!(press(&mut app, key), Action::None);
-        assert!(app.theme_modal.open);
+        assert!(app.theme_open());
         assert_eq!(app.tui.theme, ThemeKey::Dark);
         assert_eq!(app.theme_modal.preview, preview);
     }
@@ -490,7 +490,7 @@ fn a_header_never_commits() {
     for key in [KeyCode::Enter, KeyCode::Char(' ')] {
         let preview = app.theme_modal.preview;
         assert_eq!(press(&mut app, key), Action::None);
-        assert!(app.theme_modal.open);
+        assert!(app.theme_open());
         assert_eq!(app.tui.theme, ThemeKey::Dark);
         assert_eq!(app.theme_modal.preview, preview);
     }
@@ -521,7 +521,7 @@ fn hovering_and_clicking_a_header_toggle_without_previewing_or_committing() {
         Action::None
     );
     assert_eq!(app.theme_modal.expanded, [false, true]);
-    assert!(app.theme_modal.open);
+    assert!(app.theme_open());
     assert_eq!(app.tui.theme, ThemeKey::Dark);
     // Hovering the folded header still previews nothing; clicking unfolds.
     assert_eq!(
@@ -548,7 +548,7 @@ fn hovering_and_clicking_a_header_toggle_without_previewing_or_committing() {
         Action::None
     );
     assert_eq!(app.theme_modal.expanded, [true, false]);
-    assert!(app.theme_modal.open);
+    assert!(app.theme_open());
     assert_eq!(app.tui.theme, ThemeKey::Dark);
 }
 
@@ -612,7 +612,7 @@ fn clicking_the_close_button_restores_the_opening_theme_like_esc() {
         )),
         Action::None
     );
-    assert!(!app.theme_modal.open);
+    assert!(!app.theme_open());
     assert_eq!(app.theme_modal.preview, None);
     assert_eq!(app.tui.theme, ThemeKey::Dark, "nothing is persisted");
     assert_eq!(app.theme(), theme_of(ThemeKey::Dark));
@@ -621,7 +621,7 @@ fn clicking_the_close_button_restores_the_opening_theme_like_esc() {
     let mut esc = open();
     press_down_to(&mut esc, "catppuccin_latte");
     assert_eq!(press(&mut esc, KeyCode::Esc), Action::None);
-    assert!(!esc.theme_modal.open);
+    assert!(!esc.theme_open());
     assert_eq!(esc.theme_modal.preview, None);
     assert_eq!(esc.theme(), theme_of(ThemeKey::Dark));
 
@@ -637,7 +637,7 @@ fn clicking_the_close_button_restores_the_opening_theme_like_esc() {
         )),
         Action::None
     );
-    assert!(app.theme_modal.open);
+    assert!(app.theme_open());
     assert_eq!(app.tui.theme, ThemeKey::Dark);
 }
 
@@ -1087,7 +1087,7 @@ mod modal_footer {
             app.on_mouse(click(rects[0].x + 3, rects[0].y)),
             Action::SaveTheme(ThemeKey::GruvboxDark)
         );
-        assert!(!app.theme_modal.open);
+        assert!(!app.theme_open());
         assert_eq!(app.tui.theme, ThemeKey::GruvboxDark);
 
         // A click on Cancel restores the theme the picker opened with.
@@ -1102,7 +1102,7 @@ mod modal_footer {
             app.on_mouse(click(rects[1].x + 2, rects[1].y)),
             Action::None
         );
-        assert!(!app.theme_modal.open);
+        assert!(!app.theme_open());
         assert_eq!(app.theme_modal.preview, None);
         assert_eq!(app.tui.theme, ThemeKey::Dark);
         assert_eq!(app.theme(), theme_of(ThemeKey::Dark));
@@ -1113,7 +1113,7 @@ mod modal_footer {
         draw_buffer(&app);
         let footer = app.theme_modal.footer.get();
         assert_eq!(app.on_mouse(click(footer.x + 1, footer.y)), Action::None);
-        assert!(app.theme_modal.open);
+        assert!(app.theme_open());
         assert_eq!(app.tui.theme, ThemeKey::Dark);
         assert_eq!(
             app.on_mouse(mouse(MouseEventKind::Moved, footer.x + 1, footer.y)),

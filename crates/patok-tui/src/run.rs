@@ -846,7 +846,7 @@ async fn save_settings<S: SettingsSubmit>(
         }
     }
     if !app.overlay.dirty() {
-        app.overlay.close();
+        app.close_settings();
     }
 }
 
@@ -1034,7 +1034,7 @@ mod tests {
     /// changes pending.
     fn save_app(drafts: &[(&str, &str)]) -> App {
         let mut app = app();
-        app.overlay.open();
+        app.open_settings();
         for (field, value) in drafts {
             app.overlay
                 .drafts
@@ -1048,8 +1048,12 @@ mod tests {
     /// outside any other recorded rect, so its rows 0-2 are the choices.
     fn confirm_app() -> (App, Rect) {
         let mut app = save_app(&[("model", "opus")]);
-        app.overlay.confirm_open = true;
-        app.overlay.confirm_selected = 0;
+        // The real flow opens the dialog: Esc on the dirty overlay.
+        assert_eq!(
+            app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            Action::None
+        );
+        assert_eq!(app.overlay.confirm_selected, 0);
         let body = Rect::new(0, 20, 50, 6);
         app.overlay.confirm_body.set(body);
         (app, body)
@@ -1159,7 +1163,7 @@ mod tests {
     #[tokio::test]
     async fn submit_tasks_sends_the_planner_add_tasks_and_closes_on_accept() {
         let mut app = app();
-        app.dialog.open = true;
+        app.open_dialog();
         app.dialog.editor.set_text("add a login page");
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
@@ -1179,7 +1183,7 @@ mod tests {
             }
             other => panic!("expected an AddTasks command, got {other:?}"),
         }
-        assert!(!app.dialog.open);
+        assert!(!app.dialog_open());
         assert_eq!(app.focus, FrameFocus::Output);
         assert_eq!(app.dialog.editor.text(), "");
     }
@@ -1210,7 +1214,7 @@ mod tests {
                 }
                 other => panic!("expected an AddTasks command, got {other:?}"),
             }
-            assert!(!app.dialog.open, "{run:?}");
+            assert!(!app.dialog_open(), "{run:?}");
         }
     }
 
@@ -1220,7 +1224,7 @@ mod tests {
     async fn a_failed_add_keeps_the_dialog_open_with_the_error() {
         // The engine rejected the request: its reason lands in the dialog.
         let mut app = app();
-        app.dialog.open = true;
+        app.open_dialog();
         app.dialog.editor.set_text("add a login page");
         run_submit_family(
             &mut app,
@@ -1229,7 +1233,7 @@ mod tests {
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "planner busy"),
         )
         .await;
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "add a login page");
         assert_eq!(app.dialog.status.as_deref(), Some("planner busy"));
 
@@ -1241,7 +1245,7 @@ mod tests {
             failing_submit("nope"),
         )
         .await;
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "add a login page");
         assert_eq!(app.dialog.status.as_deref(), Some("add failed: nope"));
     }
@@ -1252,7 +1256,7 @@ mod tests {
     #[tokio::test]
     async fn inject_sends_the_inject_command_and_closes_the_modal_on_accept() {
         let mut accepted = app();
-        accepted.dialog.open = true;
+        accepted.open_inject();
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut accepted,
@@ -1271,11 +1275,11 @@ mod tests {
                 other => panic!("expected an InjectTask command, got {other:?}"),
             }
         }
-        assert!(!accepted.dialog.open);
+        assert!(!accepted.dialog_open());
         assert_eq!(accepted.focus, FrameFocus::Tasks);
         // A rejected append keeps the modal open with the engine's reason.
         let mut rejected = app();
-        rejected.dialog.open = true;
+        rejected.open_inject();
         run_submit_family(
             &mut rejected,
             std::path::Path::new("/home/user/demo"),
@@ -1283,7 +1287,7 @@ mod tests {
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "empty text"),
         )
         .await;
-        assert!(rejected.dialog.open);
+        assert!(rejected.dialog_open());
         assert_eq!(
             rejected.dialog.status.as_deref(),
             Some("could not append to TASKS.md: empty text")
@@ -1297,7 +1301,7 @@ mod tests {
             failing_submit("nope"),
         )
         .await;
-        assert!(rejected.dialog.open);
+        assert!(rejected.dialog_open());
         assert_eq!(
             rejected.dialog.status.as_deref(),
             Some("could not append to TASKS.md: inject failed: nope")
@@ -1311,7 +1315,7 @@ mod tests {
     async fn save_brief_writes_the_spec_file_and_reports_the_created_status() {
         let temp = tempfile::TempDir::new().unwrap();
         let mut app = app();
-        app.dialog.open = true;
+        app.open_dialog();
         let flow = run_submit_family(
             &mut app,
             temp.path(),
@@ -1325,7 +1329,7 @@ mod tests {
             contents,
             crate::project::brief_content("A web service for recipes.")
         );
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert_eq!(
             app.dialog.status.as_deref(),
             Some("SPEC.md created -- review it, then press Enter to start.")
@@ -1340,7 +1344,7 @@ mod tests {
         // A directory at the SPEC.md path makes the write fail.
         std::fs::create_dir(temp.path().join(SPEC_FILE)).unwrap();
         let mut app = app();
-        app.dialog.open = true;
+        app.open_dialog();
         run_submit_family(
             &mut app,
             temp.path(),
@@ -1348,7 +1352,7 @@ mod tests {
             unused_submit(),
         )
         .await;
-        assert!(app.dialog.open);
+        assert!(app.dialog_open());
         assert!(
             app.dialog
                 .status
@@ -1370,7 +1374,7 @@ mod tests {
             Action::Quit,
         ] {
             let mut app = app();
-            app.dialog.open = true;
+            app.open_dialog();
             let flow = run_submit_family(
                 &mut app,
                 std::path::Path::new("/home/user/demo"),
@@ -1379,7 +1383,7 @@ mod tests {
             )
             .await;
             assert!(matches!(flow, SubmitFlow::Keep), "{action:?}");
-            assert!(app.dialog.open, "{action:?}");
+            assert!(app.dialog_open(), "{action:?}");
             assert_eq!(app.dialog.status, None, "{action:?}");
         }
     }
@@ -1412,7 +1416,7 @@ mod tests {
             }
             other => panic!("expected a SettingsChange command, got {other:?}"),
         }
-        assert!(!app.overlay.open);
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(
             app.settings.get("model"),
@@ -1464,7 +1468,7 @@ mod tests {
             commands: Arc::clone(&commands),
         };
         save_settings(&mut app, &mut shell, &mut submit).await;
-        assert!(app.overlay.open);
+        assert!(app.settings_open());
         assert!(app.overlay.dirty());
         assert_eq!(
             app.overlay.status,
@@ -1503,7 +1507,7 @@ mod tests {
             }
             other => panic!("expected a SettingsChange command, got {other:?}"),
         }
-        assert!(!app.overlay.open);
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(
             app.settings.get("model"),
@@ -1517,10 +1521,10 @@ mod tests {
     async fn save_settings_with_no_drafts_closes_the_overlay_without_a_request() {
         let (_temp, mut shell) = shell();
         let mut app = app();
-        app.overlay.open();
+        app.open_settings();
         let mut submit = UnusedSave;
         save_settings(&mut app, &mut shell, &mut submit).await;
-        assert!(!app.overlay.open);
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
     }
 
@@ -1548,8 +1552,8 @@ mod tests {
         );
         // Pre-dispatch: identical state, the dialog gone in both.
         for app in [&mut clicked, &mut pressed] {
-            assert!(!app.overlay.confirm_open);
-            assert!(app.overlay.open);
+            assert!(!app.confirm_open());
+            assert!(app.settings_open());
             assert_eq!(
                 app.overlay.pending(),
                 vec![(
@@ -1576,8 +1580,8 @@ mod tests {
         };
         save_settings(&mut clicked, &mut shell_clicked, &mut clicked_submit).await;
         save_settings(&mut pressed, &mut shell_pressed, &mut pressed_submit).await;
-        assert!(!clicked.overlay.open);
-        assert!(!pressed.overlay.open);
+        assert!(!clicked.settings_open());
+        assert!(!pressed.settings_open());
         assert!(clicked.overlay.drafts.is_empty());
         assert!(pressed.overlay.drafts.is_empty());
         assert_eq!(clicked.settings, pressed.settings);
