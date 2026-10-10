@@ -12,13 +12,14 @@ use patok_core::event::Phase;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::app::{Action, App, MenuChoice, SOFT_STOP_PENDING, STOP_CHOICES, menu_entries};
+use crate::app::{Action, App, MenuChoice, SOFT_STOP_PENDING, menu_entries};
 use crate::choice::{ChoiceKey, ChoiceMouse, choice_area, choice_key, choice_mouse};
 use crate::hit::{
     chip_clicked, close_clicked, footer_button_code, menu_row_at, settings_row_at, theme_row_at,
 };
 use crate::overlay::{Entry, SETTINGS_CHOICES, header_fold};
 use crate::ui::{dialogs, settings};
+use crate::view::{STOP_CHOICES, StopChoice};
 
 /// Which modal is open (finding 20): one enum over the five modals plus the
 /// settings overlay's nested unsaved-changes dialog. The modal stack
@@ -366,12 +367,12 @@ fn stop_key(app: &mut App, key: KeyEvent) -> Action {
         ChoiceKey::Enter(index) => {
             app.modals.pop(Modal::Stop);
             return match STOP_CHOICES[index] {
-                crate::app::StopChoice::SoftStop => {
+                StopChoice::SoftStop => {
                     app.run.stopping = true;
                     app.status = Some(SOFT_STOP_PENDING.into());
                     Action::Quit
                 }
-                crate::app::StopChoice::Interrupt => {
+                StopChoice::Interrupt => {
                     app.run.stopping = true;
                     app.status = Some(
                         "Interrupting -- the current task is cancelled and the app keeps running."
@@ -379,7 +380,7 @@ fn stop_key(app: &mut App, key: KeyEvent) -> Action {
                     );
                     Action::Interrupt
                 }
-                crate::app::StopChoice::Cancel => Action::None,
+                StopChoice::Cancel => Action::None,
             };
         }
         ChoiceKey::Swallowed => {}

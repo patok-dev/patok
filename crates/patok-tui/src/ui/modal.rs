@@ -14,18 +14,6 @@ use super::common::base_style;
 use crate::hit::{close_button_line, close_button_rect};
 use crate::theme::Theme;
 
-/// A modal's centred rect: the one area computation every modal's `*_area`
-/// function repeated (finding 20). The caller computes and clamps the width
-/// and height first, exactly as before.
-pub(crate) fn centered(screen: Rect, width: u16, height: u16) -> Rect {
-    Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    )
-}
-
 /// A modal title's one spelling (finding 20): left-aligned on the
 /// add-task/inject-task dialog's title row, centred on every other modal's --
 /// the two forms the renderers spelled separately before.

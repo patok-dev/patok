@@ -10,10 +10,11 @@ use super::common::{
     ENTRY_INDENT, base_style, group_header_line, render_modal_footer, selected_row_style,
 };
 use super::modal::{ModalTitle, render_modal_frame};
-use crate::app::{App, DialogKind, STOP_CHOICES, menu_entries};
+use crate::app::{App, DialogKind, menu_entries};
 use crate::modal::{Modal, ModalLayer};
 use crate::overlay::Entry;
 use crate::theme::theme_modal_groups;
+use crate::view::STOP_CHOICES;
 use patok_core::event::Phase;
 
 /// The placeholder hint rendered in the empty input area of the add-task dialog
@@ -32,7 +33,7 @@ pub const INJECT_WATERMARK: &str = "Type the task; it lands as an unchecked task
 pub fn dialog_area(screen: Rect) -> Rect {
     let width = (screen.width * 9 / 10).max(60).min(screen.width);
     let height = (screen.height * 4 / 5).max(20).min(screen.height);
-    super::modal::centered(screen, width, height)
+    crate::geom::centered(screen, width, height)
 }
 
 pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
@@ -168,7 +169,7 @@ pub(crate) fn render_stop_dialog(frame: &mut Frame, app: &App) {
 pub fn menu_area(screen: Rect, running: bool) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
     let height = (menu_entries(running).len() + 3).min(usize::from(screen.height)) as u16;
-    super::modal::centered(screen, width, height)
+    crate::geom::centered(screen, width, height)
 }
 
 /// The m menu (the `m` key): a centered " Menu " modal listing the status
@@ -233,7 +234,7 @@ pub(crate) fn render_menu(frame: &mut Frame, app: &App) {
 pub fn theme_area(screen: Rect) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
     let height = 16.min(screen.height);
-    super::modal::centered(screen, width, height)
+    crate::geom::centered(screen, width, height)
 }
 
 /// The theme picker (the `t` key, T43.1, T116.1): a centered " Theme " modal

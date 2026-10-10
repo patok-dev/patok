@@ -23,7 +23,7 @@ use crate::theme::Theme;
 pub fn settings_area(screen: Rect) -> Rect {
     let width = (screen.width * 9 / 10).max(80).min(screen.width);
     let height = (screen.height * 4 / 5).max(24).min(screen.height);
-    super::modal::centered(screen, width, height)
+    crate::geom::centered(screen, width, height)
 }
 
 /// The settings body width from which the help box (T85.1) fits beside the

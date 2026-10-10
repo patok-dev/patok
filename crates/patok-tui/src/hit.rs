@@ -12,14 +12,14 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::app::FrameFocus;
-#[cfg(test)]
-use crate::app::STOP_CHOICES;
 #[cfg(test)]
 use crate::choice::choice_row_at;
 #[cfg(test)]
 use crate::overlay::SETTINGS_CHOICES;
 use crate::theme::Theme;
+use crate::view::FrameFocus;
+#[cfg(test)]
+use crate::view::STOP_CHOICES;
 
 /// One modal button's display text (T44.1, extended by T59.1): ` [ Key ] Label `
 /// -- the key bracketed in the button style, a one-word label, one space of

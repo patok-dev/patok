@@ -869,9 +869,9 @@ mod tests {
     };
     use ratatui::layout::Rect;
 
-    use crate::app::FrameFocus;
     use crate::overlay::StatusLevel;
     use crate::settings::ShellSettings;
+    use crate::view::FrameFocus;
 
     use super::{
         Action, App, CommandCall, Outcome, QueueRun, Schema, SettingsSubmit, ShutdownCall,

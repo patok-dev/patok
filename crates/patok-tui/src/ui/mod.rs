@@ -13,9 +13,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::widgets::Block;
 
-use crate::app::{App, FrameFocus};
+use crate::app::App;
 use crate::modal::ModalLayer;
 use crate::pipeline::{rail_width, render_rail};
+use crate::view::FrameFocus;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use common::fitted_hints;

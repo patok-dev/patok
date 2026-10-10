@@ -12,9 +12,11 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::Duration;
 
 use super::common::{fitted_prefix, render_hints_strip, split_hints_row};
-use crate::app::{App, FrameFocus, LineKind, OutLine, Pane, agent_display};
+use crate::app::{App, LineKind, OutLine, Pane, agent_display};
+use crate::geom::wrap_chunks;
 use crate::markdown::markdown_lines;
 use crate::theme::Theme;
+use crate::view::FrameFocus;
 
 /// The agent output frame's key hints (T71.1): the keys its focused state
 /// owns -- the scroll keys move the output, PageUp/PageDown page through it,
@@ -283,21 +285,6 @@ pub(super) fn visual_lines(theme: Theme, line: &OutLine, width: usize) -> Vec<Li
             .map(|piece| Line::styled(piece, style))
             .collect()
     }
-}
-
-/// One hard-wrap implementation: the character ranges of a `len`-long
-/// sequence cut at `width` columns -- the shared boundary walk behind the
-/// styled [`wrap_line`], the plain [`wrap`] and the dialog editor's
-/// [`crate::dialog_editor::DialogEditor::rows`]. The caller resolves its
-/// own zero width first: a zero step is an error, exactly like the slice
-/// `chunks` it replaces.
-pub(crate) fn wrap_chunks(
-    len: usize,
-    width: usize,
-) -> impl Iterator<Item = std::ops::Range<usize>> {
-    (0..len)
-        .step_by(width)
-        .map(move |start| start..(start + width).min(len))
 }
 
 /// Wraps a styled line at `width` columns, keeping each span's style.

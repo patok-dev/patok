@@ -7,7 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
 use super::common::{render_hints_strip, split_hints_row};
-use crate::app::{App, FrameFocus};
+use crate::app::App;
+use crate::view::FrameFocus;
 
 /// The task list frame's key hints (T71.1): the keys its focused state owns,
 /// the most important leading so the trailing hints drop first on a narrow

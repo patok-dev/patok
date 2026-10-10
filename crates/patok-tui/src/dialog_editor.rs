@@ -8,7 +8,7 @@ use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::ui::output::wrap_chunks;
+use crate::geom::wrap_chunks;
 
 /// One visual row of the dialog text: a character range of the editor's text.
 /// `last` marks the final row of a logical line (the cursor may sit at its end).

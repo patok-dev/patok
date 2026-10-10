@@ -5,17 +5,24 @@ mod app;
 mod choice;
 mod dialog_editor;
 mod driver;
+mod events;
+mod geom;
 mod headless;
 mod hit;
+mod keys;
 mod markdown;
 mod modal;
+mod mouse;
 mod overlay;
 mod pipeline;
 mod project;
 mod run;
 mod settings;
+mod submit;
 mod theme;
+mod theme_picker;
 mod ui;
+mod view;
 
 // The surface the `patok` binary drives: the two drivers' entries and
 // their shared outcome types.
@@ -27,8 +34,8 @@ pub use run::{Outcome, Spawner, run};
 // self dev-dependency in Cargo.toml.
 #[cfg(any(test, feature = "test-support"))]
 pub use app::{
-    Action, App, DialogKind, FrameFocus, QueueRun, SOFT_STOP_PENDING, finished_line,
-    human_duration, menu_entries, started_line,
+    Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, finished_line, human_duration,
+    menu_entries, started_line,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use hit::{
@@ -53,3 +60,5 @@ pub use ui::{
     output_title, output_title_parts, output_title_spans, render, settings_area,
     settings_body_areas, settings_confirm_area, stop_area, theme_area,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use view::FrameFocus;

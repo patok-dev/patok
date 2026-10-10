@@ -4,8 +4,8 @@
 //! dialog (T146.1) -- the area, the row hit-test, the Up/Down/Enter/Esc key
 //! handling and the mouse hover and click behaviour live here once, so the
 //! shell's key and mouse dispatch can use them without importing the render
-//! side; the renderer stays in [`crate::ui::choice`]. The owner keeps its
-//! state flat on the paths the tests read (`stop.selected`,
+//! side; the renderer stays in the render-side module `ui::choice`. The
+//! owner keeps its state flat on the paths the tests read (`stop.selected`,
 //! `confirm_selected`), so the functions operate on that field instead of
 //! owning it.
 
@@ -31,7 +31,7 @@ pub(crate) trait Choice {
 pub(crate) fn choice_area(screen: Rect) -> Rect {
     let width = (screen.width * 3 / 5).max(54).min(screen.width);
     let height = 9.min(screen.height);
-    crate::ui::modal::centered(screen, width, height)
+    crate::geom::centered(screen, width, height)
 }
 
 /// The choice row the pointer sits on (T146.1, T148.1): the row index when
