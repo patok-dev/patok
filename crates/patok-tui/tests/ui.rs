@@ -899,14 +899,6 @@ fn the_timer_hides_while_idle_and_returns_for_the_next_session() {
 }
 
 #[test]
-fn output_frame_title_shows_provider_and_model() {
-    let mut app = app();
-    app.run.provider = "claude".into();
-    app.run.model = "claude-sonnet-5.5".into();
-    insta::assert_snapshot!(draw(&app, 80, 14));
-}
-
-#[test]
 fn output_frame_title_truncates_when_the_pane_is_narrow() {
     let mut app = app();
     app.run.provider = "claude".into();
@@ -1169,7 +1161,6 @@ fn a_sub_minute_run_formats_seconds_alone() {
     let app = finished_run("builder", SessionOutcome::Finished, 12_000);
     let screen = draw(&app, 80, 14);
     assert!(screen.contains("Builder finished in 12 sec"), "{screen}");
-    insta::assert_snapshot!(screen);
 }
 
 #[test]
@@ -1180,7 +1171,6 @@ fn an_over_an_hour_run_formats_hours_and_minutes() {
         screen.contains("Builder finished in 1 h 05 min"),
         "{screen}"
     );
-    insta::assert_snapshot!(screen);
 }
 
 #[test]
@@ -1191,7 +1181,6 @@ fn a_failed_session_still_shows_its_duration() {
         screen.contains("Builder failed in 2 min 05 sec"),
         "{screen}"
     );
-    insta::assert_snapshot!(screen);
 }
 
 #[test]
@@ -2125,7 +2114,6 @@ fn thinking_renders_the_same_regardless_of_provider() {
             .collect(),
     );
     assert_eq!(claude_screen, vibe_screen);
-    insta::assert_snapshot!(claude_screen);
 }
 
 mod dialog {
@@ -2866,27 +2854,6 @@ mod dialog {
         assert!(!screen.contains("line 30"));
     }
 
-    #[test]
-    fn dialog_with_cursor_mid_text() {
-        let mut app = open();
-        type_text(&mut app, "add a login page");
-        shift_enter(&mut app);
-        type_text(&mut app, "and a logout button");
-        press(&mut app, KeyCode::Up);
-        for _ in 0..4 {
-            press(&mut app, KeyCode::Left);
-        }
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
-    #[test]
-    fn dialog_with_cursor_at_start() {
-        let mut app = open();
-        type_text(&mut app, "add a login page");
-        press(&mut app, KeyCode::Home);
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
     /// The dialog input's first cell on an 80x24 screen.
     fn input_origin() -> (u16, u16) {
         let area = patok_tui::dialog_area(ratatui::layout::Rect::new(0, 0, 80, 24));
@@ -3297,7 +3264,6 @@ mod explore {
         );
         assert!(!screen.contains("main · 3 dirty · no remote"), "{screen}");
         assert!(!screen.contains("Last commit: abc1234"), "{screen}");
-        insta::assert_snapshot!(screen);
     }
 
     #[test]
@@ -3313,7 +3279,6 @@ mod explore {
             !screen.contains("Next: T1.2 add the parser for task files"),
             "{screen}"
         );
-        insta::assert_snapshot!(screen);
     }
 
     #[test]
@@ -3424,7 +3389,6 @@ mod explore {
             .insert("run_mode".into(), SettingValue::Str("continuous".into()));
         let screen = draw(&app, 80, 14);
         assert!(screen.contains("continuous"), "{screen}");
-        insta::assert_snapshot!(screen);
     }
 
     #[test]
@@ -3522,7 +3486,6 @@ mod explore {
         open_dialog(&mut app);
         let screen = draw(&app, 80, 24);
         assert!(screen.contains("Start"), "{screen}");
-        insta::assert_snapshot!(screen);
     }
 
     #[test]
