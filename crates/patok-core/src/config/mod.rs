@@ -61,11 +61,10 @@ pub struct ConfigFiles {
 impl ConfigFiles {
     /// The user layers from the process environment.
     pub fn from_env() -> Self {
-        let var = |k: &str| std::env::var(k).ok();
-        let (xdg, home) = (var("XDG_CONFIG_HOME"), var("HOME"));
+        let dir = crate::paths::config_dir_from_env();
         Self {
-            user_global: user_global_file(xdg.as_deref(), home.as_deref()),
-            user_local: user_local_file(xdg.as_deref(), home.as_deref()),
+            user_global: dir.as_deref().map(|d| d.join(USER_FILE)),
+            user_local: dir.as_deref().map(|d| d.join(USER_LOCAL_FILE)),
         }
     }
 }
@@ -85,8 +84,7 @@ fn user_layer_file(
     xdg_config_home: Option<&str>,
     home: Option<&str>,
 ) -> Option<PathBuf> {
-    let base = crate::paths::base_dir(xdg_config_home, home, ".config")?;
-    Some(base.join("patok").join(file))
+    crate::paths::config_dir(xdg_config_home, home).map(|dir| dir.join(file))
 }
 
 /// The project-local config file: `patok.config.toml` in the project's slot of the

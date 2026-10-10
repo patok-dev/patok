@@ -98,15 +98,9 @@ impl EngineConfig {
     /// next to the config files; a missing config directory falls back to
     /// the project data directory.
     fn default_review_history(data_dir: &std::path::Path) -> PathBuf {
-        let get = |k: &str| std::env::var(k).ok();
-        match patok_core::paths::base_dir(
-            get("XDG_CONFIG_HOME").as_deref(),
-            get("HOME").as_deref(),
-            ".config",
-        ) {
-            Some(dir) => dir.join("patok").join("review-history.json"),
-            None => data_dir.join("review-history.json"),
-        }
+        patok_core::paths::config_dir_from_env()
+            .map(|dir| dir.join("review-history.json"))
+            .unwrap_or_else(|| data_dir.join("review-history.json"))
     }
 
     pub fn task_file(&self) -> PathBuf {

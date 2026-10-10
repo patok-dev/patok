@@ -184,13 +184,9 @@ pub fn next_task_number(file: &str) -> usize {
 /// task-file lock first.
 pub fn normalize_injected(text: &str, file: &str) -> String {
     let trimmed = text.trim();
-    let rest = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
-        rest
-    } else if let Some(rest) = trimmed.strip_prefix(CHECKED) {
-        // A checked input still lands as an unchecked line.
-        rest
-    } else {
-        trimmed
+    let rest = match task::split_checkbox(trimmed) {
+        Some((_, rest)) => rest,
+        None => trimmed,
     };
     let has_id = split_id(rest).is_some_and(|(_, origin, _)| origin == Some('T'));
     if has_id {
@@ -203,18 +199,18 @@ pub fn normalize_injected(text: &str, file: &str) -> String {
 /// token already there is replaced), optionally ticked. A line already checked
 /// is returned unchanged.
 fn with_progress(line: &str, token: &str, done: bool) -> String {
-    let trimmed = line.trim_start();
-    let (checkbox, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
-        (UNCHECKED, rest)
-    } else {
+    let Some((checked, rest)) = task::split_checkbox(line) else {
         return line.to_string();
     };
+    if checked {
+        return line.to_string();
+    }
     let Some((id, _, description)) = split_id(rest) else {
         return line.to_string();
     };
     let description = strip_progress_token(description.trim());
     let mut updated = String::with_capacity(line.len() + token.len());
-    updated.push_str(if done { CHECKED } else { checkbox });
+    updated.push_str(if done { CHECKED } else { UNCHECKED });
     updated.push_str(id);
     updated.push_str(": ");
     updated.push_str(token);
@@ -393,12 +389,7 @@ pub fn cleanup_text(text: &str) -> Option<String> {
     let mut checked: Vec<usize> = Vec::new();
     let mut last_group: Option<u32> = None;
     for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let (done, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
-            (false, rest)
-        } else if let Some(rest) = trimmed.strip_prefix(CHECKED) {
-            (true, rest)
-        } else {
+        let Some((done, rest)) = task::split_checkbox(line) else {
             continue;
         };
         let Some((id, _, _)) = split_id(rest) else {
@@ -535,12 +526,7 @@ pub fn remove_task(path: &Path, id: &str) -> io::Result<RemoveOutcome> {
     let mut matched = vec![false; lines.len()];
     let mut completed = false;
     for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let (checked, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
-            (false, rest)
-        } else if let Some(rest) = trimmed.strip_prefix(CHECKED) {
-            (true, rest)
-        } else {
+        let Some((checked, rest)) = task::split_checkbox(line) else {
             continue;
         };
         if split_id(rest).is_some_and(|(found, _, _)| found == id) {

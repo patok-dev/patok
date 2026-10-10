@@ -118,6 +118,19 @@ pub fn project_data_dir_from_env(project: &Path) -> Option<PathBuf> {
     )
 }
 
+/// The patok directory under the user's XDG config dir: `$XDG_CONFIG_HOME`,
+/// else `$HOME/.config`, each joined with `patok`. Empty values count as
+/// unset; `None` when neither resolves.
+pub fn config_dir(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    Some(base_dir(xdg_config_home, home, ".config")?.join("patok"))
+}
+
+/// [`config_dir`] from the process environment.
+pub fn config_dir_from_env() -> Option<PathBuf> {
+    let get = |k: &str| std::env::var(k).ok();
+    config_dir(get("XDG_CONFIG_HOME").as_deref(), get("HOME").as_deref())
+}
+
 /// The engine socket inside a runtime directory.
 pub fn socket_path(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join(SOCKET_FILE)
@@ -220,5 +233,27 @@ mod tests {
             Path::new("/home/u/.local/share/patok/projects/-a")
         );
         assert!(project_data_dir(None, None, p).is_none());
+    }
+
+    #[test]
+    fn config_dir_falls_back_to_home() {
+        // The XDG variable set wins, whatever the fallback is.
+        assert_eq!(
+            config_dir(Some("/xdg"), Some("/home/u")),
+            Some(PathBuf::from("/xdg/patok"))
+        );
+        // Unset or empty XDG falls back to `$HOME/.config`.
+        assert_eq!(
+            config_dir(None, Some("/home/u")),
+            Some(PathBuf::from("/home/u/.config/patok"))
+        );
+        assert_eq!(
+            config_dir(Some(""), Some("/home/u")),
+            Some(PathBuf::from("/home/u/.config/patok"))
+        );
+        // Neither set (or empty) resolves: no config directory.
+        assert_eq!(config_dir(None, None), None);
+        assert_eq!(config_dir(Some(""), None), None);
+        assert_eq!(config_dir(Some(""), Some("")), None);
     }
 }

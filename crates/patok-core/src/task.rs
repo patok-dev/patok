@@ -93,6 +93,20 @@ pub fn task_line(lines: &[&str], task: &Task) -> Option<usize> {
         .or_else(|| lines.iter().position(|l| is_unchecked(l) && *l == task.raw))
 }
 
+/// Splits a task line into its checked state and the text after the checkbox,
+/// ignoring leading whitespace. `None` for a line that begins with neither
+/// checkbox (uppercase `- [X]` is not a checkbox). Public for the engine's
+/// task-file rewrites.
+pub fn split_checkbox(line: &str) -> Option<(bool, &str)> {
+    if let Some(rest) = line.trim_start().strip_prefix(UNCHECKED) {
+        Some((false, rest))
+    } else {
+        line.trim_start()
+            .strip_prefix(CHECKED)
+            .map(|rest| (true, rest))
+    }
+}
+
 /// Whether the line is an unchecked task line.
 pub fn is_unchecked(line: &str) -> bool {
     line.trim_start().starts_with(UNCHECKED)
@@ -110,12 +124,7 @@ pub fn same_id(line: &str, task: &Task) -> bool {
 }
 
 fn parse_line(line: &str, number: usize) -> Option<Task> {
-    let trimmed = line.trim_start();
-    let (done, rest) = if let Some(rest) = trimmed.strip_prefix(UNCHECKED) {
-        (false, rest)
-    } else {
-        (true, trimmed.strip_prefix(CHECKED)?)
-    };
+    let (done, rest) = split_checkbox(line)?;
     let (id, origin, description) = match split_id(rest) {
         Some((id, origin, description)) => (
             id.to_string(),
@@ -204,6 +213,16 @@ mod tests {
         assert!(tasks[0].done && !tasks[1].done);
         assert_eq!(tasks[1].description, "second thing pending");
         assert_eq!(tasks[1].line, 7);
+    }
+
+    #[test]
+    fn split_checkbox_reports_state_rest_and_rejects_non_task_lines() {
+        assert_eq!(split_checkbox("- [ ] rest"), Some((false, "rest")));
+        assert_eq!(split_checkbox("- [x] rest"), Some((true, "rest")));
+        assert_eq!(split_checkbox("  - [x] indented"), Some((true, "indented")));
+        assert_eq!(split_checkbox("prose"), None);
+        // Uppercase is not a checkbox, matching `parses_task_lines_only`.
+        assert_eq!(split_checkbox("- [X] upper"), None);
     }
 
     #[test]
