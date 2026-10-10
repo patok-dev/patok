@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
 
-use patok_core::atomic_write::write_atomic;
 use patok_core::task::{self, Task};
+use patok_core::util::atomic_write::write_atomic;
 
 use patok_core::task::{CHECKED, UNCHECKED, split_id};
 

@@ -20,8 +20,8 @@ use super::daemon::{
 };
 use super::tui::{RailMode, Theme};
 use super::{ConfigFiles, EnumSpelling, project_file};
-use crate::atomic_write::write_atomic;
 use crate::update::UpdateChannel;
+use crate::util::atomic_write::write_atomic;
 
 /// A settings value as submitted by a settings change, mapped onto the field's expected
 /// type by the per-schema field registry.

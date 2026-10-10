@@ -512,7 +512,7 @@ impl ReviewHistory {
     /// Saves the history to `path`, best-effort: the error is returned for the
     /// caller to log.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        patok_core::atomic_write::write_atomic(
+        patok_core::util::atomic_write::write_atomic(
             path,
             &serde_json::to_string(self).unwrap_or_default(),
         )
@@ -623,7 +623,7 @@ impl OpenGroup {
     /// Saves the open group to `path`, best-effort: the error is returned
     /// for the caller to log.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        patok_core::atomic_write::write_atomic(
+        patok_core::util::atomic_write::write_atomic(
             path,
             &serde_json::to_string(self).unwrap_or_default(),
         )
