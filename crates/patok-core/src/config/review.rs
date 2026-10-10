@@ -1,7 +1,7 @@
 //! The review finding severities: the one shared spelling of the reviewer
 //! report's JSON buckets, the verdict computation and the multipass merge.
 
-use crate::config::config_enum;
+use super::spelling::config_enum;
 
 config_enum! {
     /// One review finding's severity: the buckets of the reviewer report's

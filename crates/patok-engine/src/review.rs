@@ -10,8 +10,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use patok_core::complexity::Complexity;
-use patok_core::config::EnumSpelling;
-use patok_core::review::Severity;
+use patok_core::config::{EnumSpelling, Severity};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

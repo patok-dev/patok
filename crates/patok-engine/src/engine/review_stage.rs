@@ -1,7 +1,7 @@
 use patok_core::complexity::{self, Complexity};
+use patok_core::config::Severity;
 use patok_core::event::{AgentRole, NoticeLevel};
 use patok_core::pipeline::{Stage, TileStatus};
-use patok_core::review::Severity;
 use patok_core::task::Task;
 use patok_providers::REVIEWER_TOOLS;
 use tokio_util::sync::CancellationToken;

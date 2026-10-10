@@ -215,11 +215,10 @@ pub(crate) use config_enum_aliased;
 mod tests {
     use super::*;
     use crate::config::{
-        AcceptPolicy, ProviderKind, ProviderName, RailMode, RunMode, Theme, UpdateChannel,
+        AcceptPolicy, ProviderKind, ProviderName, RailMode, RunMode, Severity, Theme, UpdateChannel,
     };
     use crate::event::AgentRole;
     use crate::pipeline::Stage;
-    use crate::review::Severity;
     use std::collections::HashSet;
     use std::fmt;
 
