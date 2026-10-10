@@ -233,54 +233,72 @@ impl RunState {
         matches!(self, Self::Running | Self::SessionDiscovery)
     }
 
+    /// One checked transition, the path every state change goes through: a
+    /// source matching `expected` moves to `target`; any other source -- a
+    /// transition called out of order -- is logged as a warning naming the
+    /// expected and actual state and left unchanged, so the engine keeps the
+    /// state it truly had instead of moving to the transition's target. The
+    /// `debug_assert_eq!` in each transition method still panics first in
+    /// debug builds; in release it is compiled out and the mismatched source
+    /// reaches this helper.
+    fn checked(self, expected: Self, target: Self) -> Self {
+        if self == expected {
+            return target;
+        }
+        tracing::warn!(
+            "out-of-order run-state transition: expected {expected:?}, found {self:?}; the state is left unchanged"
+        );
+        self
+    }
+
     /// The build session starts. The guards of `start_build` guarantee the
     /// idle source.
     pub(crate) fn build_started(self) -> Self {
         debug_assert_eq!(self, Self::Idle);
-        Self::Running
+        self.checked(Self::Idle, Self::Running)
     }
 
     /// The build session ends. `end_session` guarantees the source.
     pub(crate) fn build_ended(self) -> Self {
         debug_assert_eq!(self, Self::Running);
-        Self::Idle
+        self.checked(Self::Running, Self::Idle)
     }
 
     /// A planner or queue-creation run starts. The `start_*` guards
     /// guarantee the idle source.
     pub(crate) fn planning_started(self) -> Self {
         debug_assert_eq!(self, Self::Idle);
-        Self::Planning
+        self.checked(Self::Idle, Self::Planning)
     }
 
     /// A planner or queue-creation run ends; the engine is idle again.
     pub(crate) fn planning_ended(self) -> Self {
         debug_assert_eq!(self, Self::Planning);
-        Self::Idle
+        self.checked(Self::Planning, Self::Idle)
     }
 
     /// A standalone discovery round starts. The guards of `start_discovery`
     /// guarantee the idle source.
     pub(crate) fn discovery_started(self) -> Self {
         debug_assert_eq!(self, Self::Idle);
-        Self::Discovering
+        self.checked(Self::Idle, Self::Discovering)
     }
 
     /// The session's scheduled round starts in the empty-queue gap; the
     /// phase stays running.
     pub(crate) fn gap_discovery_started(self) -> Self {
         debug_assert_eq!(self, Self::Running);
-        Self::SessionDiscovery
+        self.checked(Self::Running, Self::SessionDiscovery)
     }
 
     /// A discovery round ends: a standalone one leaves the engine idle, and
     /// the session's gap round returns to the still-running session.
     pub(crate) fn discovery_ended(self) -> Self {
-        match self {
-            Self::Discovering => Self::Idle,
-            Self::SessionDiscovery => Self::Running,
-            other => other,
+        if self == Self::SessionDiscovery {
+            return self.checked(Self::SessionDiscovery, Self::Running);
         }
+        debug_assert_eq!(self, Self::Discovering);
+        self.checked(Self::Discovering, Self::Idle)
     }
 }
 
@@ -464,6 +482,30 @@ mod tests {
             RunState::SessionDiscovery.discovery_ended(),
             RunState::Running
         );
+    }
+
+    #[test]
+    fn an_out_of_order_transition_is_warned_about_and_kept() {
+        // In release the methods' debug_assert_eq! is compiled out, so a
+        // mismatched source reaches `checked`, the helper every transition
+        // routes through: it leaves the state unchanged instead of moving
+        // to the target -- a false Idle from build_ended would let a start
+        // through and strand the session.
+        assert_eq!(
+            RunState::Discovering.checked(RunState::Running, RunState::Idle),
+            RunState::Discovering
+        );
+        assert_eq!(
+            RunState::Idle.checked(RunState::Running, RunState::SessionDiscovery),
+            RunState::Idle
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "assertion")]
+    fn an_out_of_order_transition_still_panics_in_debug() {
+        let _ = RunState::Discovering.build_ended();
     }
 
     #[test]
