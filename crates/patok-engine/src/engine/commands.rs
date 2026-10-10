@@ -3,6 +3,7 @@ use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, Snapshot};
 use patok_core::task;
 use tokio_util::sync::CancellationToken;
 
+use super::state::State;
 use super::{AttachError, Attachment, Engine};
 use crate::TASK_FILE;
 use crate::taskfile;
@@ -61,6 +62,29 @@ impl QueueCreation {
 }
 
 impl Engine {
+    /// Records the task file as it is before an append-style run (a planner,
+    /// queue-creation or discovery session) and installs the run's fresh
+    /// cancel token on `state`: a missing file is created with a minimal
+    /// header first (validated in T3.6), and the lock is held only for that
+    /// read and released before the session runs, so an inject is never
+    /// blocked by the run (T77.1). Errors are user-facing rejection
+    /// reasons.
+    fn prepare_task_file_run(
+        &self,
+        state: &mut State,
+    ) -> Result<(String, CancellationToken), String> {
+        let path = self.inner.config.task_file();
+        let Ok(guard) = self.inner.task_file_lock.clone().try_lock_owned() else {
+            return Err("the task file is being updated; try again".into());
+        };
+        let before = taskfile::read_or_create(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        drop(guard);
+        let cancel = CancellationToken::new();
+        state.cancel = cancel.clone();
+        Ok((before, cancel))
+    }
+
     /// Takes the single controlling-shell slot and returns the current state plus a live feed.
     pub fn attach(&self) -> Result<Attachment, AttachError> {
         let mut state = self.state();
@@ -154,19 +178,7 @@ impl Engine {
         let unit = self.unit()?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::AddTasks)?;
-        // Record the task list as it is before the planner touches it (validated in T3.6).
-        // A missing file is created with a minimal header first. The lock is held only for
-        // that read and released before the session runs, so an inject is never blocked by
-        // the planner (T77.1); the post-session check re-acquires it for the validation.
-        let path = self.inner.config.task_file();
-        let Ok(guard) = self.inner.task_file_lock.clone().try_lock_owned() else {
-            return Err("the task file is being updated; try again".into());
-        };
-        let before = taskfile::read_or_create(&path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        drop(guard);
-        let cancel = CancellationToken::new();
-        state.cancel = cancel.clone();
+        let (before, cancel) = self.prepare_task_file_run(&mut state)?;
         // The planner announces itself before the planning flag flips (T24.1),
         // so the shell's header and output frame title show the Planner from
         // the moment the run starts.
@@ -211,17 +223,7 @@ impl Engine {
             );
             return Ok(());
         }
-        // Like the planner run: the file is recorded first under a briefly held
-        // lock, released before the session runs (T77.1).
-        let path = self.inner.config.task_file();
-        let Ok(guard) = self.inner.task_file_lock.clone().try_lock_owned() else {
-            return Err("the task file is being updated; try again".into());
-        };
-        let before = taskfile::read_or_create(&path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        drop(guard);
-        let cancel = CancellationToken::new();
-        state.cancel = cancel.clone();
+        let (before, cancel) = self.prepare_task_file_run(&mut state)?;
         // The research agent announces itself before the planning flag flips,
         // so the shell's header and output frame title show Research from the
         // moment the run starts (T24.1).
@@ -251,17 +253,7 @@ impl Engine {
         let unit = self.unit()?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::Discovery)?;
-        // Like the planner run: the file is recorded first under a briefly held
-        // lock, released before the session runs (T77.1).
-        let path = self.inner.config.task_file();
-        let Ok(guard) = self.inner.task_file_lock.clone().try_lock_owned() else {
-            return Err("the task file is being updated; try again".into());
-        };
-        let before = taskfile::read_or_create(&path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        drop(guard);
-        let cancel = CancellationToken::new();
-        state.cancel = cancel.clone();
+        let (before, cancel) = self.prepare_task_file_run(&mut state)?;
         state.run = state.run.discovery_started();
         self.emit_locked(
             &mut state,

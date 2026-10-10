@@ -73,10 +73,8 @@ impl Git {
     }
 
     /// The current HEAD's short SHA, or `None` outside a repository.
-    // The open-group record replaced the engine's last use (T123.3); only tests
-    // call it now.
-    #[allow(dead_code)]
-    pub async fn head_sha(&self) -> Option<String> {
+    #[cfg(test)]
+    pub(crate) async fn head_sha(&self) -> Option<String> {
         self.rev_parse(&["--short", "HEAD"]).await
     }
 
