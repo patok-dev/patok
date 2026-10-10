@@ -43,6 +43,9 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
         env:
           RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && steps.msrv.outputs.msrv || '' }}
+      - run: cargo clippy --workspace -- -D warnings
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && steps.msrv.outputs.msrv || '' }}
       - run: cargo test --workspace
         env:
           RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && steps.msrv.outputs.msrv || '' }}
