@@ -92,6 +92,125 @@ macro_rules! config_enum {
 }
 pub(crate) use config_enum;
 
+/// Defines one config enum together with its [`EnumSpelling`] implementation
+/// and its alias table from a single token list: the variants, their spellings,
+/// their aliases, the inherent `parse`/`as_str` forwarders, the
+/// `ACCEPTED_SPELLINGS` prose and the `Display` behaviour all come from the same
+/// place, so a variant cannot be added without a spelling and an alias cannot
+/// drift out of the parser or the prose. Each entry carries one spelling and at
+/// most one alias list -- `[alias "x"]` for a single alias, `[aliases "x", "y"]`
+/// for several; the chosen form decides "(alias ...)" versus "(aliases ...)" in
+/// the prose.
+macro_rules! config_enum_aliased {
+    (
+        $(#[$enum_meta:meta])*
+        $vis:vis enum $name:ident {
+            $(#[$first_meta:meta])*
+            $first_variant:ident => $first_spelling:expr
+            $(, [alias $first_alias:literal])?
+            $(, [aliases $first_many:literal $(, $first_rest:literal)*])?
+            $(
+                , $(#[$meta:meta])*
+                $variant:ident => $spelling:expr
+                $(, [alias $alias:literal])?
+                $(, [aliases $alias_head:literal $(, $alias_tail:literal)*])?
+            )+
+            $(,)?
+        }
+    ) => {
+        $(#[$enum_meta])*
+        $vis enum $name {
+            $(#[$first_meta])* $first_variant
+            $(, $(#[$meta])* $variant)+
+        }
+
+        // Inherent forwarders keep every existing `Type::parse` / `value.as_str()`
+        // call site resolving exactly as before.
+        impl $name {
+            /// Parses a config spelling: the canonical spellings, then the
+            /// aliases; trimmed, case-insensitive; `None` for anything
+            /// unrecognized.
+            pub fn parse(value: &str) -> Option<Self> {
+                $crate::config::EnumSpelling::parse(value).or_else(|| {
+                    let normalized = value.trim().to_lowercase();
+                    Self::ALIASES
+                        .iter()
+                        .find(|(alias, _)| normalized == *alias)
+                        .map(|(_, variant)| *variant)
+                })
+            }
+
+            /// The variant's config spelling.
+            pub fn as_str(self) -> &'static str {
+                $crate::config::EnumSpelling::as_str(self)
+            }
+
+            /// The config aliases, keyed by spelling: they parse like the
+            /// canonical spellings and appear after each variant's spelling
+            /// in [`Self::accepted`].
+            pub const ALIASES: &[(&'static str, Self)] = &[
+                $( ($first_alias, Self::$first_variant), )?
+                $( ($first_many, Self::$first_variant), $( ($first_rest, Self::$first_variant), )* )?
+                $(
+                    $( ($alias, Self::$variant), )?
+                    $( ($alias_head, Self::$variant), $( ($alias_tail, Self::$variant), )* )?
+                )+
+            ];
+
+            /// The accepted-spelling prose of the config warnings: every
+            /// spelling, each followed by its aliases in parentheses.
+            pub const ACCEPTED_SPELLINGS: &str = concat!(
+                $first_spelling
+                $(, " (alias ", $first_alias, ")")?
+                $(, " (aliases ", $first_many $(, ", ", $first_rest)*, ")")?
+                $(
+                    , ", ", $spelling
+                    $(, " (alias ", $alias, ")")?
+                    $(, " (aliases ", $alias_head $(, ", ", $alias_tail)*, ")")?
+                )+
+            );
+
+            /// Every accepted spelling in the persistence validator's order:
+            /// each variant's canonical spelling followed by its aliases.
+            pub fn accepted() -> impl Iterator<Item = &'static str> {
+                Self::VARIANTS.iter().flat_map(|&(variant, spelling)| {
+                    ::std::iter::once(spelling).chain(
+                        Self::ALIASES
+                            .iter()
+                            .filter(move |&&(_, aliased)| aliased == variant)
+                            .map(|&(alias, _)| alias),
+                    )
+                })
+            }
+        }
+
+        impl $crate::config::EnumSpelling for $name {
+            const VARIANTS: &'static [(Self, &'static str)] = &[
+                (Self::$first_variant, $first_spelling)
+                $(, (Self::$variant, $spelling))+
+            ];
+            const SPELLINGS: &'static [&'static str] =
+                &[$first_spelling $(, $spelling)+];
+
+            // An exhaustive match: adding a variant without a spelling fails to
+            // compile -- the compile-time exhaustiveness proof.
+            fn as_str(self) -> &'static str {
+                match self {
+                    Self::$first_variant => $first_spelling
+                    $(, Self::$variant => $spelling)+
+                }
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+    };
+}
+pub(crate) use config_enum_aliased;
+
 #[cfg(test)]
 mod tests {
     use super::*;

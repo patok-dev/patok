@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use patok_core::config::{DaemonEnv, DaemonSettings, ProviderKind, ProviderName};
+use patok_core::config::{DaemonEnv, DaemonSettings, EnumSpelling, ProviderKind, ProviderName};
 use patok_core::event::{EngineEvent, Phase};
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
 use patok_core::task::{self, Task};
@@ -116,6 +116,16 @@ pub(crate) fn resolve_provider(
     }
 }
 
+/// The implemented providers as the rejection message lists them: every
+/// `ProviderKind` spelling, comma-joined with "or" before the last.
+fn implemented_providers() -> String {
+    match ProviderKind::SPELLINGS {
+        [] => String::new(),
+        [only] => (*only).to_string(),
+        [init @ .., last] => format!("{} or {}", init.join(", "), last),
+    }
+}
+
 /// [`resolve_provider`] as a user-facing rejection: a resolver failure is
 /// logged and reported with the provider's error, a name this build does not
 /// implement with the fixed message.
@@ -127,7 +137,8 @@ pub(crate) fn resolve_or_reject(
     match resolve_provider(resolver, provider) {
         Ok(Some(provider)) => Ok(provider),
         Ok(None) => Err(format!(
-            "the `{name}` provider is not available in this build; use claude, codex or mistral"
+            "the `{name}` provider is not available in this build; use {}",
+            implemented_providers()
         )),
         Err(error) => {
             tracing::error!("provider {name} unavailable: {error}");
@@ -393,6 +404,11 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rejection_list_names_every_implemented_kind() {
+        assert_eq!(implemented_providers(), "claude, codex or mistral");
+    }
 
     #[test]
     fn run_state_derives_the_wire_views() {

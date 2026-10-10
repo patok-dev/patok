@@ -6,7 +6,7 @@ use std::io::Write;
 use std::time::Duration;
 
 use crossterm::style::Stylize;
-use patok_core::config::SettingValue;
+use patok_core::config::{RunMode, SettingValue};
 use patok_core::event::{EngineEvent, Phase, TaskOutcome};
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{SettingsChange, StartBuild, command_request, engine_update};
@@ -60,10 +60,10 @@ pub async fn run_until<W: Write>(
     // without waiting between tasks. Forced through the settings-change flow so it
     // validates and persists like a user change, and put back on every exit path.
     let mut restore = None;
-    if app.run_mode() != "sprint" {
+    if app.run_mode() != RunMode::Sprint.as_str() {
         let previous = app.run_mode().to_string();
         // A rejected forcing is an engine error that stops the build before it began.
-        if let Err(error) = set_run_mode(&mut client, "sprint").await {
+        if let Err(error) = set_run_mode(&mut client, RunMode::Sprint.as_str()).await {
             printer.finish(out)?;
             return Ok(HeadlessOutcome::Failed(error));
         }

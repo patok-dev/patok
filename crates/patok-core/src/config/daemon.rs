@@ -9,13 +9,12 @@
 //! persistence registry (field kind, key list, apply timing, effective values) and the
 //! settings-overlay help. Adding a setting is one entry.
 
-use std::fmt;
 use std::path::Path;
 
 use schemars::JsonSchema;
 
 use super::persist::SettingValue;
-use super::spelling::config_enum;
+use super::spelling::{config_enum, config_enum_aliased};
 use super::{ConfigFiles, EnumSpelling, Fields, load_layers, migrate_project_file, project_file};
 
 use crate::pipeline::Stage;
@@ -31,19 +30,6 @@ config_enum! {
     }
 }
 
-/// A provider name as written in config files:
-/// trimmed, case-insensitive, aliases accepted.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(rename_all = "lowercase")]
-pub enum ProviderName {
-    #[default]
-    Claude,
-    Codex,
-    OpenCode,
-    GhCopilot,
-    Mistral,
-}
-
 impl ProviderKind {
     /// The capitalized spelling, as the output frame title shows it.
     pub fn display_name(self) -> &'static str {
@@ -55,48 +41,22 @@ impl ProviderKind {
     }
 }
 
+config_enum_aliased! {
+    /// A provider name as written in config files:
+    /// trimmed, case-insensitive, aliases accepted.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+    #[schemars(rename_all = "lowercase")]
+    pub enum ProviderName {
+        #[default]
+        Claude => "claude",
+        Codex => "codex",
+        OpenCode => "opencode",
+        GhCopilot => "ghcopilot", [aliases "gh-copilot", "github-copilot", "copilot"],
+        Mistral => "mistral", [alias "vibe"],
+    }
+}
+
 impl ProviderName {
-    pub const ACCEPTED_SPELLINGS: &str = "claude, codex, opencode, ghcopilot (aliases gh-copilot, github-copilot, copilot), mistral (alias vibe)";
-
-    /// The config aliases, keyed by spelling: they parse like the canonical
-    /// spellings and appear after each variant's spelling in [`Self::accepted`].
-    pub const ALIASES: &[(&'static str, Self)] = &[
-        ("gh-copilot", Self::GhCopilot),
-        ("github-copilot", Self::GhCopilot),
-        ("copilot", Self::GhCopilot),
-        ("vibe", Self::Mistral),
-    ];
-
-    /// Parses a config spelling: the canonical spellings, then the aliases;
-    /// trimmed, case-insensitive; `None` for anything unrecognized.
-    pub fn parse(value: &str) -> Option<Self> {
-        EnumSpelling::parse(value).or_else(|| {
-            let normalized = value.trim().to_lowercase();
-            Self::ALIASES
-                .iter()
-                .find(|(alias, _)| normalized == *alias)
-                .map(|(_, variant)| *variant)
-        })
-    }
-
-    /// Every accepted spelling in the persistence validator's order: each
-    /// variant's canonical spelling followed by its aliases.
-    pub fn accepted() -> impl Iterator<Item = &'static str> {
-        Self::VARIANTS.iter().flat_map(|&(variant, spelling)| {
-            std::iter::once(spelling).chain(
-                Self::ALIASES
-                    .iter()
-                    .filter(move |&&(_, aliased)| aliased == variant)
-                    .map(|&(alias, _)| alias),
-            )
-        })
-    }
-
-    /// The primary config spelling.
-    pub fn as_str(self) -> &'static str {
-        EnumSpelling::as_str(self)
-    }
-
     /// The engine-implemented kind, or `None` for a provider this build does not ship yet.
     pub fn kind(self) -> Option<ProviderKind> {
         match self {
@@ -105,35 +65,6 @@ impl ProviderName {
             Self::Mistral => Some(ProviderKind::Mistral),
             Self::OpenCode | Self::GhCopilot => None,
         }
-    }
-}
-
-impl EnumSpelling for ProviderName {
-    const VARIANTS: &'static [(Self, &'static str)] = &[
-        (Self::Claude, "claude"),
-        (Self::Codex, "codex"),
-        (Self::OpenCode, "opencode"),
-        (Self::GhCopilot, "ghcopilot"),
-        (Self::Mistral, "mistral"),
-    ];
-    const SPELLINGS: &'static [&'static str] =
-        &["claude", "codex", "opencode", "ghcopilot", "mistral"];
-
-    // The compile-exhaustive proof: a variant without a spelling fails here.
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::OpenCode => "opencode",
-            Self::GhCopilot => "ghcopilot",
-            Self::Mistral => "mistral",
-        }
-    }
-}
-
-impl fmt::Display for ProviderName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
     }
 }
 
@@ -1510,6 +1441,16 @@ mod tests {
                 "mistral",
                 "vibe",
             ]
+        );
+    }
+
+    /// The generated prose names every spelling once, each variant's aliases in
+    /// parentheses after it, plural only when there are several.
+    #[test]
+    fn accepted_spellings_prose_names_every_spelling_and_alias() {
+        assert_eq!(
+            ProviderName::ACCEPTED_SPELLINGS,
+            "claude, codex, opencode, ghcopilot (aliases gh-copilot, github-copilot, copilot), mistral (alias vibe)"
         );
     }
 
