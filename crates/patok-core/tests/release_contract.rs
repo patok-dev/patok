@@ -1,6 +1,7 @@
-//! Cross-check for the release contract, which is written three times: here in
-//! `patok-core::update` (the reference), in `install.sh` and in the release
-//! workflow. Fails when the target triples, the archive naming or the
+//! Cross-check for the release contract, which is written four times: here in
+//! `patok-core::update` (the reference), in `install.sh`, in the release
+//! workflow and in the target triples of the CI workflow's cross-build
+//! matrix. Fails when the target triples, the archive naming or the
 //! checksum file naming drift apart.
 
 use std::collections::BTreeSet;
@@ -29,6 +30,43 @@ fn release_matrix_targets(text: &str) -> BTreeSet<&str> {
     text.lines()
         .filter_map(|line| line.trim().strip_prefix("- target:").map(str::trim))
         .collect()
+}
+
+/// The value of `target` in every `- { ..., target: <triple> }` matrix
+/// include entry in ci.yml. The other `target` spellings in that file
+/// (`with: target:`, run-command paths, `matrix.target` references) do not
+/// start with `- {` and are skipped.
+fn ci_matrix_targets(text: &str) -> BTreeSet<&str> {
+    text.lines()
+        .filter_map(|line| {
+            let entry = line.trim().strip_prefix("- {")?;
+            let after = entry.split("target: ").nth(1)?;
+            Some(after.trim().trim_end_matches('}').trim())
+        })
+        .collect()
+}
+
+/// Assert `actual` equals `expected`, naming any missing or extra triple.
+fn assert_target_set(actual: &BTreeSet<&str>, expected: &BTreeSet<&str>, context: &str) {
+    let missing: Vec<&str> = expected.difference(actual).copied().collect();
+    let extra: Vec<&str> = actual.difference(expected).copied().collect();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "{context} and patok-core supported_targets() disagree: \
+         missing {missing:?}, extra {extra:?}"
+    );
+}
+
+#[test]
+fn ci_matrix_lists_exactly_the_supported_targets() {
+    let text = repo_file(".github/workflows/ci.yml");
+    let expected: BTreeSet<&str> = supported_targets().collect();
+    let actual = ci_matrix_targets(&text);
+    assert!(
+        !actual.is_empty(),
+        "ci.yml matrix entries are no longer one-line flow mappings"
+    );
+    assert_target_set(&actual, &expected, "the CI cross-build matrix");
 }
 
 #[test]

@@ -129,8 +129,8 @@ fn select_release(releases: Vec<RawRelease>, channel: UpdateChannel) -> Option<R
 /// (os, arch, target triple) for every platform a release archive is
 /// published for. This table is the single source of truth for the release
 /// target set: [`platform_target`] and [`supported_targets`] read it, and the
-/// release-contract integration test cross-checks `install.sh` and the
-/// release workflow against it.
+/// release-contract integration test cross-checks `install.sh`, the release
+/// workflow and the CI workflow's cross-build matrix against it.
 const PLATFORM_TARGETS: [(&str, &str, &str); 3] = [
     ("linux", "x86_64", "x86_64-unknown-linux-musl"),
     ("macos", "aarch64", "aarch64-apple-darwin"),
