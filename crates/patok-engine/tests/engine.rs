@@ -1738,6 +1738,68 @@ async fn startup_cleanup_prunes_old_completed_tasks_and_broadcasts_the_list() {
     engine.shutdown_token().cancel();
 }
 
+#[tokio::test]
+async fn the_startup_sweep_removes_planted_task_file_orphans() {
+    let seed = "# Tasks\n- [ ] T1.1: still to do\n";
+    let fixture = Fixture::new(seed);
+    // Planted after the fixture's initial commit, so they stay untracked.
+    for name in [".TASKS.md.111.tmp", ".TASKS.md.98765.tmp"] {
+        std::fs::write(fixture.path().join(name), "orphan").unwrap();
+    }
+    // No unique part, so the sweep leaves it; `notes.txt` is unrelated.
+    std::fs::write(fixture.path().join(".TASKS.md.tmp"), "kept").unwrap();
+    std::fs::write(fixture.path().join("notes.txt"), "kept").unwrap();
+    let engine = fixture.engine(MockProvider::new(vec![]));
+    let mut attachment = engine.attach().unwrap();
+
+    engine.cleanup_completed_tasks().await;
+
+    assert!(!fixture.path().join(".TASKS.md.111.tmp").exists());
+    assert!(!fixture.path().join(".TASKS.md.98765.tmp").exists());
+    assert!(fixture.path().join(".TASKS.md.tmp").exists());
+    assert!(fixture.path().join("notes.txt").exists());
+    assert_eq!(
+        fixture.tasks_file(),
+        seed,
+        "the sweep never rewrites the task file"
+    );
+    // A second run removes nothing more and emits no event.
+    engine.cleanup_completed_tasks().await;
+    assert!(try_recv_all(&mut attachment.events).is_empty());
+    engine.shutdown_token().cancel();
+}
+
+#[tokio::test]
+async fn a_planted_task_file_orphan_never_lands_in_a_task_commit() {
+    // This test skips the startup sweep: it exercises the commit pathspec
+    // guard alone.
+    let fixture = Fixture::new("# Tasks\n- [ ] T1.1: add the greeting file\n");
+    std::fs::write(fixture.path().join(".TASKS.md.98765.tmp"), "orphan").unwrap();
+    let engine = fixture.engine(scripted());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, |e| {
+        matches!(
+            e,
+            EngineEvent::TaskFinished {
+                outcome: TaskOutcome::Done,
+                commit: Some(_),
+                ..
+            }
+        )
+    })
+    .await;
+
+    let names = fixture.git(&["show", "--name-only", "--format=", "HEAD"]);
+    assert!(names.contains("greeting.txt"), "{names}");
+    assert!(names.contains("TASKS.md"), "{names}");
+    assert!(!names.contains(".TASKS.md.98765.tmp"), "{names}");
+    // Excluded from the commit, not deleted from the working tree.
+    assert!(fixture.path().join(".TASKS.md.98765.tmp").exists());
+    engine.shutdown_token().cancel();
+}
+
 /// Drains every event already buffered in `rx` without waiting.
 fn try_recv_all(rx: &mut tokio::sync::broadcast::Receiver<EngineEvent>) -> Vec<EngineEvent> {
     let mut drained = vec![];

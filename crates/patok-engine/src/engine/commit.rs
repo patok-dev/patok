@@ -1,3 +1,4 @@
+use patok_core::atomic_write;
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
 
@@ -163,7 +164,13 @@ impl Engine {
         } else {
             CommitKind::Wip
         };
-        let commit = self.git().commit_all(kind, &task.description).await;
+        // The task file's temp-file glob stays out of the commit even when
+        // the startup sweep missed an orphan (a temp created after it ran).
+        let exclude = atomic_write::temp_glob(&path);
+        let commit = self
+            .git()
+            .commit_all(kind, &task.description, &[&exclude])
+            .await;
         let full = commit.as_ref().map(|commit| commit.full.clone());
         let commit = commit.map(|commit| commit.short);
         if let Some(full) = full {
