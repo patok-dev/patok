@@ -17,7 +17,7 @@ use crate::process::Parsed;
 use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 /// Name of the CLI binary this provider needs.
-pub const CLI: &str = "codex";
+pub(crate) const CLI: &str = "codex";
 
 pub struct Codex;
 
@@ -43,10 +43,6 @@ impl CliSpec for Codex {
 impl Provider for Codex {
     fn slug(&self) -> &'static str {
         ProviderKind::Codex.as_str()
-    }
-
-    fn cli_name(&self) -> &'static str {
-        CLI
     }
 
     fn supports_reviewer_model(&self) -> bool {

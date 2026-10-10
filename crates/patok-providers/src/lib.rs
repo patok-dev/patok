@@ -92,16 +92,12 @@ pub enum ProviderError {
 }
 
 /// One back-end. Every provider exposes exactly one operation -- run a session --
-/// plus the surface the engine needs to route and start it: the CLI it drives,
-/// whether that CLI is installed, and whether it runs the configured reviewer
-/// model.
+/// plus the surface the engine needs to route and start it: whether its CLI is
+/// installed, and whether it runs the configured reviewer model.
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Short provider identifier, e.g. `claude`.
     fn slug(&self) -> &'static str;
-
-    /// Name of the CLI binary this provider drives, e.g. `claude`.
-    fn cli_name(&self) -> &'static str;
 
     /// Whether the engine routes the configured reviewer model to sessions on
     /// this provider. Claude runs its reviewer with `reviewer_model`; the other
@@ -216,17 +212,6 @@ mod tests {
                 .with_reviewer_model(true)
                 .supports_reviewer_model()
         );
-    }
-
-    /// The CLI names the engine and the availability check report per provider.
-    #[test]
-    fn each_provider_names_its_cli() {
-        assert_eq!(claude::Claude.cli_name(), "claude");
-        assert_eq!(codex::Codex.cli_name(), "codex");
-        assert_eq!(vibe::Vibe.cli_name(), "vibe");
-        assert_eq!(mock::MockProvider::new(vec![]).cli_name(), "mock");
-        // A scripted provider drives no CLI, so it is always available.
-        assert!(mock::MockProvider::new(vec![]).check_available().is_ok());
     }
 
     /// Whichever side of the availability check this machine lands on, the error or the

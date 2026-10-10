@@ -105,10 +105,6 @@ impl Provider for MockProvider {
         self.slug.unwrap_or("mock")
     }
 
-    fn cli_name(&self) -> &'static str {
-        "mock"
-    }
-
     fn supports_reviewer_model(&self) -> bool {
         self.supports_reviewer_model
     }
@@ -193,7 +189,6 @@ mod tests {
         let mock = MockProvider::new(vec![]);
         assert!(!mock.supports_reviewer_model());
         assert!(mock.check_available().is_ok());
-        assert_eq!(mock.cli_name(), "mock");
         assert_eq!(mock.slug(), "mock");
         let claude_like = mock.clone().with_slug("claude").with_reviewer_model(true);
         assert!(claude_like.supports_reviewer_model());

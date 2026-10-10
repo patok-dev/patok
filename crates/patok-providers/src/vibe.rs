@@ -11,7 +11,7 @@ use crate::process::Parsed;
 use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 /// Name of the CLI binary this provider needs.
-pub const CLI: &str = "vibe";
+pub(crate) const CLI: &str = "vibe";
 
 pub struct Vibe;
 
@@ -37,10 +37,6 @@ impl CliSpec for Vibe {
 impl Provider for Vibe {
     fn slug(&self) -> &'static str {
         ProviderKind::Mistral.as_str()
-    }
-
-    fn cli_name(&self) -> &'static str {
-        CLI
     }
 
     fn supports_reviewer_model(&self) -> bool {

@@ -13,7 +13,7 @@ use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 
 /// Name of the CLI binary this provider needs.
-pub const CLI: &str = "claude";
+pub(crate) const CLI: &str = "claude";
 
 pub struct Claude;
 
@@ -21,10 +21,6 @@ pub struct Claude;
 impl Provider for Claude {
     fn slug(&self) -> &'static str {
         ProviderKind::Claude.as_str()
-    }
-
-    fn cli_name(&self) -> &'static str {
-        CLI
     }
 
     fn supports_reviewer_model(&self) -> bool {
