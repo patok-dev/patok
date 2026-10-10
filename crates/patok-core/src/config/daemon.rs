@@ -989,7 +989,7 @@ macro_rules! daemon_table {
         }
 
         /// The help text of one settings-overlay field key, from its table entry;
-        /// `None` for a key with no help text (or a composite key).
+        /// `None` for a key with no help text.
         fn field_help(key: &str) -> Option<&'static str> {
             $(
                 daemon_entry! { help, key, $entry }
@@ -1027,7 +1027,7 @@ daemon_table! {
         [strings stage_overrides "stage_overrides"],
         // Pipeline flow (section 5).
         [enum run_mode "run_mode" RunMode help "sprint (default) or continuous. The running loop keeps the mode it started with; a change applies at the next run."],
-        [stages stages "stages"],
+        [stages stages "stages" help "The pipeline stage list. Only the review stage can be disabled: enabled = false on research, plan or build is ignored with a warning, and those stages still run."],
         [bool skip_planner_for_simple "skip_planner_for_simple" help "Simple tasks go straight to the builder (default on)." default true],
         [/// Whether a Simple-classified task skips the research stage (T68.1).
          bool skip_research_for_simple "skip_research_for_simple" help "Simple tasks skip the research stage (default on)." default true],
@@ -1276,6 +1276,17 @@ pub fn load_daemon(
         merge,
     );
     let mut settings = materialize(merged);
+    // D2: only review enablement is consumed (`review_stage_enabled`), so a
+    // disabled research, plan or build entry is inert; warn instead of silently
+    // ignoring it.
+    for entry in &settings.stages {
+        if entry.stage != Stage::Review && !entry.enabled {
+            let id = entry.stage.as_str();
+            warnings.push(format!(
+                "ignoring daemon.stages `{id}` enabled = false: only the review stage can be disabled; the {id} stage still runs"
+            ));
+        }
+    }
     apply_env(&mut settings, env, &mut warnings);
     DaemonConfig {
         settings,
@@ -1288,10 +1299,11 @@ pub fn load_daemon(
 /// the description of a setting row, or of a whole overlay section when the
 /// key is a section's group id (`provider_and_model`, `pipeline`,
 /// `timeouts_and_pauses`, `git`, `isolation`, `learnings_history`). The per-field
-/// texts come from the field table's `help` entries, the group and read-only
-/// ones are hardcoded here, on the side that owns the settings it describes;
-/// the shell routes to it by the row's declared schema. `None` for a key that
-/// is not one of the overlay's daemon rows or groups.
+/// texts come from the field table's `help` entries (a composite key such as
+/// `stages` carries its help there even though the overlay shows no row for
+/// it), the group and read-only ones are hardcoded here, on the side that owns
+/// the settings it describes; the shell routes to it by the row's declared
+/// schema. `None` for a key that carries no help anywhere.
 pub fn daemon_help(key: &str) -> Option<&'static str> {
     if let Some(help) = field_help(key) {
         return Some(help);
@@ -1496,12 +1508,12 @@ mod tests {
 [[daemon.stages]]
 id = "research"
 label = "The research stage"
-enabled = false
 prompt = "custom prompt"
 [[daemon.stages]]
 id = "implement"
 [[daemon.stages]]
 id = " REVIEW "
+enabled = false
 [[daemon.stages]]
 id = "plan"
 "#,
@@ -1512,7 +1524,7 @@ id = "plan"
                 StageConfig {
                     stage: Stage::Research,
                     label: "The research stage".into(),
-                    enabled: false,
+                    enabled: true,
                     prompt: Some("custom prompt".into()),
                 },
                 StageConfig {
@@ -1524,7 +1536,7 @@ id = "plan"
                 StageConfig {
                     stage: Stage::Review,
                     label: "review".into(),
-                    enabled: true,
+                    enabled: false,
                     prompt: None,
                 },
                 StageConfig {
@@ -1598,6 +1610,87 @@ id = "doubt"
         );
     }
 
+    /// A disabled research, plan or build entry warns at load time (D2), one
+    /// warning per disabled stage naming the stage and the limit: only the
+    /// review stage can be disabled. The entries load unchanged -- the values
+    /// are not rewritten and the load carries no errors, so runs are not
+    /// refused and which stages run is unchanged.
+    #[test]
+    fn a_disabled_research_plan_or_build_stage_warns_that_only_review_can_be_disabled() {
+        let loaded = load_project(
+            r#"[daemon]
+[[daemon.stages]]
+id = "research"
+enabled = false
+[[daemon.stages]]
+id = "plan"
+enabled = false
+[[daemon.stages]]
+id = "build"
+enabled = false
+"#,
+        );
+        assert_eq!(loaded.warnings.len(), 3, "{:?}", loaded.warnings);
+        for (warning, id) in loaded.warnings.iter().zip(["research", "plan", "build"]) {
+            assert!(warning.contains(id), "{warning}");
+            assert!(
+                warning.contains("only the review stage can be disabled"),
+                "{warning}"
+            );
+        }
+        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+        assert_eq!(
+            loaded.settings.stages,
+            vec![
+                StageConfig {
+                    stage: Stage::Research,
+                    label: "research".into(),
+                    enabled: false,
+                    prompt: None,
+                },
+                StageConfig {
+                    stage: Stage::Plan,
+                    label: "plan".into(),
+                    enabled: false,
+                    prompt: None,
+                },
+                StageConfig {
+                    stage: Stage::Build,
+                    label: "build".into(),
+                    enabled: false,
+                    prompt: None,
+                },
+            ]
+        );
+    }
+
+    /// A config disabling the review stage loads with no warning (D2): review
+    /// enablement is the one stage setting the engine consumes, so the
+    /// documented disable is accepted silently. A stage a configured list
+    /// omits (research, plan, build here) stays its default enabled state and
+    /// warns nothing either.
+    #[test]
+    fn disabling_the_review_stage_loads_without_a_warning() {
+        let loaded = load_project(
+            r#"[daemon]
+[[daemon.stages]]
+id = "review"
+enabled = false
+"#,
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+        assert_eq!(
+            loaded.settings.stages,
+            vec![StageConfig {
+                stage: Stage::Review,
+                label: "review".into(),
+                enabled: false,
+                prompt: None,
+            }]
+        );
+    }
+
     /// The display names the output frame title shows, one per implemented kind.
     #[test]
     fn display_names_capitalize_the_spellings() {
@@ -1620,13 +1713,13 @@ id = "doubt"
             "agent_timeout_secs",
             "auto_push_remote",
             "pipeline",
+            "stages",
         ] {
             let help = daemon_help(key).unwrap_or_else(|| panic!("`{key}` has no help text"));
             assert!(!help.is_empty());
         }
-        // A composite key the overlay deliberately excludes stays out, as do
-        // groups of the other schema.
-        assert_eq!(daemon_help("stages"), None);
+        // The composite `stages` key carries its field-table help even though
+        // the overlay shows no row for it; groups of the other schema stay out.
         assert_eq!(daemon_help("theme"), None);
     }
 
