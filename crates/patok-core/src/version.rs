@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
-use crate::digits::is_ascii_digits;
+use crate::util::digits::is_ascii_digits;
 
 /// A parsed version: numeric core plus an optional pre-release suffix.
 #[derive(Debug, Clone, PartialEq, Eq)]

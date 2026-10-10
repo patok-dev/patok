@@ -2,7 +2,6 @@
 
 pub mod complexity;
 pub mod config;
-mod digits;
 pub mod event;
 pub mod paths;
 pub mod pipeline;
