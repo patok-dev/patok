@@ -14,17 +14,7 @@ use patok_proto::{
 };
 use patok_providers::mock::{MockProvider, Step};
 
-use support::{Setup, connect_retrying};
-
-fn setup() -> Setup {
-    let setup = support::setup();
-    std::fs::write(
-        setup.config.project_dir.join("TASKS.md"),
-        "- [ ] T1.1: add hello\n",
-    )
-    .unwrap();
-    setup
-}
+use support::{connect_retrying, setup};
 
 fn snapshot_of(update: patok_proto::EngineUpdate) -> (String, Snapshot) {
     let Some(engine_update::Payload::Info(info)) = update.payload else {
@@ -39,6 +29,11 @@ fn snapshot_of(update: patok_proto::EngineUpdate) -> (String, Snapshot) {
 #[tokio::test]
 async fn attach_build_reattach_and_soft_stop_keeps_the_engine_running() {
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![
         Step::Event(AgentEvent::Text {
@@ -736,6 +731,11 @@ async fn a_cancelled_soft_stop_continues_the_loop_over_grpc() {
 #[tokio::test]
 async fn a_second_engine_for_the_same_project_refuses_to_start() {
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let engine = Engine::new(setup.config.clone(), Arc::new(MockProvider::new(vec![])));
     let first = tokio::spawn(patok_engine::serve(engine.clone()));
@@ -752,6 +752,11 @@ async fn a_second_engine_for_the_same_project_refuses_to_start() {
 #[tokio::test]
 async fn a_stale_socket_file_is_replaced() {
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
     std::fs::write(&socket, "stale").unwrap();
@@ -769,6 +774,11 @@ async fn restart_stops_the_engine_spawns_a_fresh_one_and_reattaches() {
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let first = Engine::new(setup.config.clone(), Arc::new(MockProvider::new(vec![])));
     let old_server = tokio::spawn(patok_engine::serve(first));
@@ -852,6 +862,11 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![
         Step::Event(AgentEvent::Text {
@@ -990,6 +1005,11 @@ async fn the_plan_stage_shows_the_planner_then_the_builder_for_one_task() {
     use ratatui::backend::TestBackend;
 
     let mut setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     setup.config.plan_enabled = true;
     let socket = setup.config.socket_path();
     // The plan session streams a plan that passes the gate, then the builder follows it.
@@ -1118,6 +1138,11 @@ async fn a_session_end_reaches_an_attached_client_with_the_agent_and_duration() 
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     // The scripted sleep makes the engine-recorded duration measurably nonzero.
     let provider = MockProvider::new(vec![
@@ -1219,6 +1244,11 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     // The scheduled discovery round is continuous-mode behaviour (T103.1), so
     // this test's engine runs continuous.
@@ -1503,6 +1533,11 @@ async fn the_frame_focus_follows_the_engine_state() {
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![Step::WriteFile {
         path: "greeting.txt".into(),
@@ -1584,6 +1619,11 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
     use patok_proto::Role;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let engine = Engine::new(setup.config.clone(), Arc::new(MockProvider::new(vec![])));
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
@@ -1741,6 +1781,11 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let engine = Engine::new(setup.config.clone(), Arc::new(MockProvider::new(vec![])));
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
@@ -1961,6 +2006,11 @@ async fn shift_tab_flips_the_run_mode_over_grpc() {
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let engine = Engine::new(setup.config.clone(), Arc::new(MockProvider::new(vec![])));
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
@@ -2081,6 +2131,11 @@ async fn shift_tab_flips_the_run_mode_over_grpc() {
 #[tokio::test]
 async fn inject_task_over_the_wire_mid_build_appends_and_runs_next() {
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![
         Step::Sleep(Duration::from_millis(300)),
@@ -2181,6 +2236,11 @@ async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
     use ratatui::backend::TestBackend;
 
     let setup = setup();
+    std::fs::write(
+        setup.config.project_dir.join("TASKS.md"),
+        "- [ ] T1.1: add hello\n",
+    )
+    .unwrap();
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![]);
     let engine = Engine::new(setup.config.clone(), Arc::new(provider.clone()));

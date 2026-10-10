@@ -8,37 +8,21 @@
 //! discovery run is active (T142.1). Each chip only appears (and only
 //! clicks) in the engine state where its key is active.
 
+mod support;
+
 use std::collections::BTreeMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use patok_core::event::{EngineEvent, Phase, Snapshot};
-use patok_core::pipeline::PipelineState;
-use patok_core::task;
-use patok_tui::{Action, App, SOFT_STOP_PENDING, button_text, render};
+use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
+use patok_core::event::{EngineEvent, Phase};
+use patok_tui::{Action, App, SOFT_STOP_PENDING, button_text};
+
+use support::{draw, draw_buffer_of, mouse, press};
 
 const TASKS: &str = "## Phase 1\n- [ ] T1.1: scaffold the workspace\n";
 const COMPLETE_TASKS: &str = "## Phase 1\n- [x] T1.1: scaffold the workspace\n";
 
 fn app_with(tasks: &str) -> App {
-    let mut app = App::new(
-        Snapshot {
-            project_dir: "/home/user/demo".into(),
-            phase: Phase::Startup,
-            tasks: task::parse(tasks),
-            current_task: None,
-            planning: false,
-            discovering: false,
-            provider: "claude".into(),
-            model: String::new(),
-            settings: BTreeMap::new(),
-            pipeline: PipelineState::today(),
-            recent: vec![],
-        },
-        "0.1.0".into(),
-    );
-    // Deterministic colours: no COLORTERM auto-detection in tests.
-    app.tui.truecolor = Some(true);
-    app
+    support::app(tasks, "claude", BTreeMap::new(), Some(true))
 }
 
 /// An idle engine with one pending task, so the Enter chip says `start`.
@@ -69,33 +53,6 @@ fn discovering_app() -> App {
     let mut app = app();
     app.apply(EngineEvent::DiscoveryChanged { discovering: true });
     app
-}
-
-fn draw(app: &App, width: u16, height: u16) {
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| render(frame, app)).unwrap();
-}
-
-/// Renders the 80x14 shell and returns the buffer, for cell-level symbol
-/// assertions on the status row.
-fn draw_buffer(app: &App) -> ratatui::buffer::Buffer {
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 14)).unwrap();
-    terminal.draw(|frame| render(frame, app)).unwrap();
-    terminal.backend().buffer().clone()
-}
-
-fn press(app: &mut App, code: KeyCode) -> Action {
-    app.on_key(KeyEvent::new(code, KeyModifiers::NONE))
-}
-
-fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
-    MouseEvent {
-        kind,
-        column,
-        row,
-        modifiers: KeyModifiers::NONE,
-    }
 }
 
 fn click(app: &mut App, column: u16, row: u16) -> Action {
@@ -259,8 +216,8 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
     }
 
     // The rect's columns spell the full button text, key, brackets and label
-    // together.
-    let buffer = draw_buffer(&app());
+    // together. The 80x14 shell keeps the status row at row 13.
+    let buffer = draw_buffer_of(&app(), 80, 14);
     let row = 13;
     for (x, width, key, label) in [(51u16, 17u16, "Enter", "start"), (68, 12, "m", "menu")] {
         let symbols: String = (x..x + width)

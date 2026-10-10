@@ -12,13 +12,81 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use patok_core::config::SettingValue;
-use patok_core::event::{Phase, Snapshot};
+use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
 use patok_engine::EngineConfig;
 use patok_tui::{Action, App, render};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+
+/// The Snapshot fixture with the defaults every rendering test agrees on
+/// (the demo project dir, the startup phase, the empty provider/model and
+/// settings readout, today's pipeline, no recent events), with `tasks` as
+/// the one input.
+pub fn snapshot(tasks: &str) -> SnapshotBuilder {
+    SnapshotBuilder {
+        snapshot: Snapshot {
+            project_dir: "/home/user/demo".into(),
+            phase: Phase::Startup,
+            tasks: task::parse(tasks),
+            current_task: None,
+            planning: false,
+            discovering: false,
+            provider: String::new(),
+            model: String::new(),
+            settings: BTreeMap::new(),
+            pipeline: PipelineState::today(),
+            recent: vec![],
+        },
+    }
+}
+
+pub struct SnapshotBuilder {
+    snapshot: Snapshot,
+}
+
+impl SnapshotBuilder {
+    /// The project dir the header shows.
+    pub fn project_dir(mut self, dir: &str) -> Self {
+        self.snapshot.project_dir = dir.into();
+        self
+    }
+
+    /// The engine phase the app opens in.
+    pub fn phase(mut self, phase: Phase) -> Self {
+        self.snapshot.phase = phase;
+        self
+    }
+
+    /// The task the run state marks as current.
+    pub fn current_task(mut self, id: &str) -> Self {
+        self.snapshot.current_task = Some(id.into());
+        self
+    }
+
+    /// The provider name the header shows.
+    pub fn provider(mut self, provider: &str) -> Self {
+        self.snapshot.provider = provider.into();
+        self
+    }
+
+    /// The settings readout the header shows.
+    pub fn settings(mut self, settings: BTreeMap<String, SettingValue>) -> Self {
+        self.snapshot.settings = settings;
+        self
+    }
+
+    /// The events a reattaching shell replays.
+    pub fn recent(mut self, recent: Vec<EngineEvent>) -> Self {
+        self.snapshot.recent = recent;
+        self
+    }
+
+    pub fn build(self) -> Snapshot {
+        self.snapshot
+    }
+}
 
 /// The Snapshot fixture every rendering test builds its App from. The
 /// project dir, phase, pipeline and version are identical across files;
@@ -31,19 +99,10 @@ pub fn app(
     truecolor: Option<bool>,
 ) -> App {
     let mut app = App::new(
-        Snapshot {
-            project_dir: "/home/user/demo".into(),
-            phase: Phase::Startup,
-            tasks: task::parse(tasks),
-            current_task: None,
-            planning: false,
-            discovering: false,
-            provider: provider.into(),
-            model: String::new(),
-            settings,
-            pipeline: PipelineState::today(),
-            recent: vec![],
-        },
+        snapshot(tasks)
+            .provider(provider)
+            .settings(settings)
+            .build(),
         "0.1.0".into(),
     );
     if let Some(truecolor) = truecolor {
@@ -70,12 +129,18 @@ pub fn draw(app: &App, width: u16, height: u16) -> String {
         .join("\n")
 }
 
+/// Renders into a width x height TestBackend and returns the buffer, for
+/// cell-level symbol and style assertions.
+pub fn draw_buffer_of(app: &App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| render(frame, app)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
 /// Renders into an 80x24 TestBackend and returns the buffer, for cell-level
 /// symbol and style assertions.
 pub fn draw_buffer(app: &App) -> ratatui::buffer::Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| render(frame, app)).unwrap();
-    terminal.backend().buffer().clone()
+    draw_buffer_of(app, 80, 24)
 }
 
 pub fn press(app: &mut App, code: KeyCode) -> Action {

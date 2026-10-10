@@ -5,9 +5,7 @@ mod support;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use patok_core::event::{
-    AgentEvent, EngineEvent, Phase, SessionOutcome, Snapshot, TaskOutcome, Usage,
-};
+use patok_core::event::{AgentEvent, EngineEvent, Phase, SessionOutcome, TaskOutcome, Usage};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
 use patok_tui::{
@@ -17,7 +15,7 @@ use patok_tui::{
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use support::{ctrl, draw, draw_buffer, mouse, press};
+use support::{ctrl, draw, draw_buffer, mouse, press, snapshot};
 
 const TASKS: &str = "## Phase 1\n- [x] T1.1: scaffold the workspace\n- [ ] T1.2: add the parser for task files\n- [ ] T1.3: wire the engine to the shell\n";
 
@@ -442,18 +440,11 @@ fn a_reviewer_session_started_switches_the_frame_title_to_its_provider_and_model
 
 #[test]
 fn replayed_events_set_the_active_agent() {
-    let snapshot = Snapshot {
-        project_dir: "/p".into(),
-        phase: Phase::Running,
-        tasks: task::parse(TASKS),
-        current_task: Some("T1.2".into()),
-        planning: false,
-        discovering: false,
-        provider: String::new(),
-        model: String::new(),
-        settings: BTreeMap::new(),
-        pipeline: PipelineState::today(),
-        recent: vec![
+    let snapshot = snapshot(TASKS)
+        .project_dir("/p")
+        .phase(Phase::Running)
+        .current_task("T1.2")
+        .recent(vec![
             EngineEvent::AgentChanged {
                 agent: "planner".into(),
                 started_ms: 0,
@@ -461,8 +452,8 @@ fn replayed_events_set_the_active_agent() {
             agent(AgentEvent::Text {
                 text: "planning".into(),
             }),
-        ],
-    };
+        ])
+        .build();
     let app = App::new(snapshot, "0.1.0".into());
     assert_eq!(app.run.agent, "planner");
     assert!(
@@ -1302,18 +1293,9 @@ fn the_lifecycle_status_lines_carry_the_status_colour_in_full() {
 
 #[test]
 fn a_reattaching_shell_shows_the_finished_line_from_the_replayed_events() {
-    let snapshot = Snapshot {
-        project_dir: "/p".into(),
-        phase: Phase::Startup,
-        tasks: task::parse(TASKS),
-        current_task: None,
-        planning: false,
-        discovering: false,
-        provider: String::new(),
-        model: String::new(),
-        settings: BTreeMap::new(),
-        pipeline: PipelineState::today(),
-        recent: vec![
+    let snapshot = snapshot(TASKS)
+        .project_dir("/p")
+        .recent(vec![
             EngineEvent::PhaseChanged {
                 phase: Phase::Running,
             },
@@ -1341,8 +1323,8 @@ fn a_reattaching_shell_shows_the_finished_line_from_the_replayed_events() {
             EngineEvent::PhaseChanged {
                 phase: Phase::Startup,
             },
-        ],
-    };
+        ])
+        .build();
     let app = App::new(snapshot, "0.1.0".into());
     assert!(app.is_idle());
     assert_eq!(app.session_elapsed(), None);
@@ -1355,18 +1337,9 @@ fn a_reattaching_shell_shows_the_finished_line_from_the_replayed_events() {
 
 #[test]
 fn a_reattaching_shell_shows_the_starting_line_from_the_replayed_events() {
-    let snapshot = Snapshot {
-        project_dir: "/p".into(),
-        phase: Phase::Startup,
-        tasks: task::parse(TASKS),
-        current_task: None,
-        planning: false,
-        discovering: false,
-        provider: String::new(),
-        model: String::new(),
-        settings: BTreeMap::new(),
-        pipeline: PipelineState::today(),
-        recent: vec![
+    let snapshot = snapshot(TASKS)
+        .project_dir("/p")
+        .recent(vec![
             EngineEvent::PhaseChanged {
                 phase: Phase::Running,
             },
@@ -1399,8 +1372,8 @@ fn a_reattaching_shell_shows_the_starting_line_from_the_replayed_events() {
             EngineEvent::PhaseChanged {
                 phase: Phase::Startup,
             },
-        ],
-    };
+        ])
+        .build();
     let app = App::new(snapshot, "0.1.0".into());
     assert!(app.is_idle());
     // The replayed starting line pairs with the finished line, in order (T78.1).
@@ -1478,18 +1451,11 @@ fn an_agent_changed_with_started_ms_reanchors_the_running_timer() {
 
 #[test]
 fn reattach_replays_recent_output_without_counting_it() {
-    let snapshot = Snapshot {
-        project_dir: "/p".into(),
-        phase: Phase::Running,
-        tasks: task::parse(TASKS),
-        current_task: Some("T1.2".into()),
-        planning: false,
-        discovering: false,
-        provider: String::new(),
-        model: String::new(),
-        settings: BTreeMap::new(),
-        pipeline: PipelineState::today(),
-        recent: vec![
+    let snapshot = snapshot(TASKS)
+        .project_dir("/p")
+        .phase(Phase::Running)
+        .current_task("T1.2")
+        .recent(vec![
             EngineEvent::TaskFinished {
                 id: "T1.1".into(),
                 outcome: TaskOutcome::Done,
@@ -1502,8 +1468,8 @@ fn reattach_replays_recent_output_without_counting_it() {
             agent(AgentEvent::Text {
                 text: "replayed line".into(),
             }),
-        ],
-    };
+        ])
+        .build();
     let app = App::new(snapshot, "0.1.0".into());
     assert_eq!(app.run.completed, 0);
     assert!(draw(&app, 80, 13).contains("replayed line"));
@@ -3268,29 +3234,12 @@ mod explore {
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
     use patok_core::config::SettingValue;
-    use patok_core::event::Snapshot;
     use patok_core::scenario::{ProjectScan, Scenario, SpecState, TaskFileState};
-    use patok_core::task;
     use patok_tui::{Action, FrameFocus, QueueRun, footer_button_rects};
 
     /// An app whose task queue is `tasks`.
     fn app_with(tasks: &str) -> App {
-        App::new(
-            Snapshot {
-                project_dir: "/home/user/demo".into(),
-                phase: Phase::Startup,
-                tasks: task::parse(tasks),
-                current_task: None,
-                planning: false,
-                discovering: false,
-                provider: String::new(),
-                model: String::new(),
-                settings: BTreeMap::new(),
-                pipeline: PipelineState::today(),
-                recent: vec![],
-            },
-            "0.1.0".into(),
-        )
+        App::new(snapshot(tasks).build(), "0.1.0".into())
     }
 
     /// Project facts for one scenario.
@@ -3974,22 +3923,7 @@ mod view {
     }
 
     fn app_with(tasks: &str) -> App {
-        App::new(
-            Snapshot {
-                project_dir: "/home/user/demo".into(),
-                phase: Phase::Startup,
-                tasks: task::parse(tasks),
-                current_task: None,
-                planning: false,
-                discovering: false,
-                provider: String::new(),
-                model: String::new(),
-                settings: BTreeMap::new(),
-                pipeline: PipelineState::today(),
-                recent: vec![],
-            },
-            "0.1.0".into(),
-        )
+        App::new(snapshot(tasks).build(), "0.1.0".into())
     }
 
     #[test]
