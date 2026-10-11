@@ -69,7 +69,7 @@ impl Engine {
         let pending_after: Vec<String> = taskfile::load(&self.inner.config.task_file())
             .unwrap_or_default()
             .into_iter()
-            .filter(|t| !t.done && !t.is_malformed())
+            .filter(|t| t.is_pending())
             .map(|t| t.id)
             .collect();
         let history = ReviewHistory::load(&self.inner.config.review_history);

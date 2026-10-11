@@ -8,8 +8,8 @@
 //! (`commands`), the session loop and the shared stage skeleton (`session`),
 //! the research, plan and review stages (`research_stage`, `plan_stage`,
 //! `review_stage`), driving their agents from the pure per-agent definitions in
-//! `crate::agents`, the artifact files (`artifacts`), the task-line and
-//! open-group group machinery (`group`), and the group tracking and commit
+//! `crate::agents`, the artifact files (`artifacts`), the open-group group
+//! machinery (`group`), and the group tracking and commit
 //! finalization (`commit`).
 
 mod artifacts;

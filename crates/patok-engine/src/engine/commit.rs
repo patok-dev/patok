@@ -1,5 +1,5 @@
 use patok_core::event::NoticeLevel;
-use patok_core::task::Task;
+use patok_core::task::{Task, group_number_of};
 use patok_core::utils::atomic_write;
 
 use super::Engine;
@@ -18,7 +18,7 @@ impl Engine {
     /// reset at each session start, which makes the decision re-run for the
     /// session's first task.
     pub(crate) async fn note_group(&self, task: &Task) {
-        let number = group::leading_number(&task.id);
+        let number = task.group_number();
         {
             let state = self.state();
             if state.group_number.is_some() && state.group_number == number {
@@ -68,8 +68,8 @@ impl Engine {
         match group::OpenGroup::load(&self.inner.config.open_group) {
             Some(record) => {
                 let ancestor = git.is_ancestor(&record.base, &head).await;
-                match group::resume_decision(&record, &head, ancestor, &task.id, &task.description)
-                {
+                let hash = task.description_hash();
+                match group::resume_decision(&record, &head, ancestor, &task.id, &hash) {
                     group::ResumeDecision::Resume => (Some(record.base.clone()), Some(record)),
                     group::ResumeDecision::Fresh => (Some(head.clone()), Some(fresh())),
                 }
@@ -88,7 +88,7 @@ impl Engine {
             let Some(number) = state.group_number.as_deref() else {
                 return;
             };
-            if group::leading_number(&task.id).as_deref() != Some(number) {
+            if task.group_number().as_deref() != Some(number) {
                 return;
             }
         }
@@ -97,7 +97,7 @@ impl Engine {
             return;
         };
         record.last = full.to_string();
-        let hash = group::description_hash(&task.description);
+        let hash = task.description_hash();
         if !record
             .members
             .iter()
@@ -115,7 +115,7 @@ impl Engine {
     /// the whole group. A task outside the current group (or without a
     /// leading number) closes nothing.
     pub(crate) fn close_group(&self, task_id: &str) {
-        let number = group::leading_number(task_id);
+        let number = group_number_of(task_id);
         {
             let state = self.state();
             if number.is_none() || state.group_number != number {

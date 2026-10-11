@@ -1,35 +1,24 @@
-//! The batch-review group tracking and the task-line machinery: the leading
-//! task-ID number, the batch deferral, the five-position progress indicator
-//! and the persistent open-group record with its resume decision. Everything
-//! here is deterministic and unit-tested; the group wiring in `commit` calls
-//! into it.
+//! The batch-review group tracking: the batch deferral, the five-position
+//! progress indicator and the persistent open-group record with its resume
+//! decision. Everything here is deterministic and unit-tested; the group
+//! wiring in `commit` calls into it.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-/// The leading number of a task ID (`T1.2` -> `Some("1")`): the digits before
-/// the dot, shared by a batch-review group. `None` for malformed IDs.
-pub(crate) fn leading_number(task_id: &str) -> Option<String> {
-    let (digits, _) = task_id.rsplit_once('.')?;
-    let stripped = digits
-        .strip_prefix(|c: char| c.is_alphabetic())
-        .unwrap_or(digits);
-    (!stripped.is_empty() && stripped.chars().all(|c| c.is_ascii_digit()))
-        .then(|| stripped.to_string())
-}
+use patok_core::task::group_number_of;
 
 /// Whether a pending task after the current one shares its leading number, so
 /// batch review defers the current task's review to the group's last task. The
 /// current task's own ID never counts.
 pub(crate) fn batch_deferred(current: &str, pending_after: &[String]) -> bool {
-    let Some(number) = leading_number(current) else {
+    let Some(number) = group_number_of(current) else {
         return false;
     };
     pending_after
         .iter()
-        .any(|id| id != current && leading_number(id).as_deref() == Some(number.as_str()))
+        .any(|id| id != current && group_number_of(id).as_deref() == Some(number.as_str()))
 }
 
 /// The five-position progress indicator written into the task line: Research, Plan, a
@@ -102,18 +91,6 @@ impl OpenGroup {
     }
 }
 
-/// The SHA-256 hex digest of a task description: the description's identity
-/// for group membership, stable across restarts.
-pub(crate) fn description_hash(description: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(description.as_bytes());
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 /// Whether an interrupted batch-review group resumes or starts fresh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResumeDecision {
@@ -136,14 +113,13 @@ pub(crate) fn resume_decision(
     head: &str,
     base_is_ancestor: bool,
     task_id: &str,
-    description: &str,
+    description_hash: &str,
 ) -> ResumeDecision {
-    let number_matches = leading_number(task_id).is_some_and(|number| number == record.number);
-    let hash = description_hash(description);
+    let number_matches = group_number_of(task_id).is_some_and(|number| number == record.number);
     let is_member = record
         .members
         .iter()
-        .any(|(id, member_hash)| id == task_id && member_hash == &hash);
+        .any(|(id, member_hash)| id == task_id && member_hash == description_hash);
     let is_unrun = !record.members.iter().any(|(id, _)| id == task_id);
     if number_matches && head == record.last && base_is_ancestor && (is_member || is_unrun) {
         ResumeDecision::Resume
@@ -156,13 +132,14 @@ pub(crate) fn resume_decision(
 mod tests {
     use super::*;
 
+    /// The description hash of a one-line task with the given description,
+    /// built through the parser like a real task.
+    fn hashed(description: &str) -> String {
+        patok_core::task::parse(&format!("- [ ] T1.1: {description}\n"))[0].description_hash()
+    }
+
     #[test]
-    fn leading_numbers_and_batch_deferral() {
-        assert_eq!(leading_number("T1.2"), Some("1".into()));
-        assert_eq!(leading_number("D12.3"), Some("12".into()));
-        assert_eq!(leading_number("1.2"), Some("1".into()));
-        assert_eq!(leading_number("T1"), None);
-        assert_eq!(leading_number("TASK"), None);
+    fn batch_deferral_shares_the_leading_number() {
         assert!(batch_deferred("T1.1", &["T1.2".into(), "T1.3".into()]));
         assert!(!batch_deferred("T1.1", &["T2.1".into()]));
         // The current task never defers itself.
@@ -189,7 +166,7 @@ mod tests {
             base: "b1a20c1d0e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b".into(),
             last: "7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e".into(),
             members: vec![
-                ("T1.1".into(), description_hash("first task description")),
+                ("T1.1".into(), hashed("first task description")),
                 ("T1.2".into(), "0123456789abcdef0123456789abcdef".into()),
             ],
         };
@@ -204,72 +181,69 @@ mod tests {
         OpenGroup::clear(&path).unwrap();
         assert_eq!(OpenGroup::load(&path), None);
         assert!(OpenGroup::clear(&path).is_ok());
-        // The description hash is deterministic and distinguishes descriptions.
-        assert_eq!(description_hash("a task"), description_hash("a task"));
-        assert_ne!(description_hash("a"), description_hash("b"));
     }
 
     #[test]
     fn an_interrupted_group_resumes_for_a_member_task() {
-        let description = "resume the interrupted group";
+        let hash = hashed("resume the interrupted group");
         let record = OpenGroup {
             number: "1".into(),
             base: "base".into(),
             last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
+            members: vec![("T1.2".into(), hash.clone())],
         };
         assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", description),
+            resume_decision(&record, "c0ffee", true, "T1.2", &hash),
             ResumeDecision::Resume
         );
     }
 
     #[test]
     fn a_moved_head_starts_a_fresh_group() {
-        let description = "resume the interrupted group";
+        let hash = hashed("resume the interrupted group");
         let record = OpenGroup {
             number: "1".into(),
             base: "base".into(),
             last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
+            members: vec![("T1.2".into(), hash.clone())],
         };
         assert_eq!(
-            resume_decision(&record, "head moved on", true, "T1.2", description),
+            resume_decision(&record, "head moved on", true, "T1.2", &hash),
             ResumeDecision::Fresh
         );
     }
 
     #[test]
     fn a_base_that_is_not_an_ancestor_starts_a_fresh_group() {
-        let description = "resume the interrupted group";
+        let hash = hashed("resume the interrupted group");
         let record = OpenGroup {
             number: "1".into(),
             base: "abandoned".into(),
             last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
+            members: vec![("T1.2".into(), hash.clone())],
         };
         assert_eq!(
-            resume_decision(&record, "c0ffee", false, "T1.2", description),
+            resume_decision(&record, "c0ffee", false, "T1.2", &hash),
             ResumeDecision::Fresh
         );
     }
 
     #[test]
     fn a_different_leading_number_starts_a_fresh_group() {
-        let description = "a task of another number";
+        let hash = hashed("a task of another number");
         let record = OpenGroup {
             number: "2".into(),
             base: "base".into(),
             last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
+            members: vec![("T1.2".into(), hash.clone())],
         };
         assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", description),
+            resume_decision(&record, "c0ffee", true, "T1.2", &hash),
             ResumeDecision::Fresh
         );
         // A malformed task ID has no leading number, so it starts fresh too.
         assert_eq!(
-            resume_decision(&record, "c0ffee", true, "no-dot", description),
+            resume_decision(&record, "c0ffee", true, "no-dot", &hash),
             ResumeDecision::Fresh
         );
     }
@@ -280,10 +254,16 @@ mod tests {
             number: "1".into(),
             base: "base".into(),
             last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash("old description"))],
+            members: vec![("T1.2".into(), hashed("old description"))],
         };
         assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", "a reworded description"),
+            resume_decision(
+                &record,
+                "c0ffee",
+                true,
+                "T1.2",
+                &hashed("a reworded description")
+            ),
             ResumeDecision::Fresh
         );
     }
@@ -297,7 +277,7 @@ mod tests {
             members: vec![("T1.1".into(), "0123456789abcdef0123456789abcdef".into())],
         };
         assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", "the next task"),
+            resume_decision(&record, "c0ffee", true, "T1.2", &hashed("the next task")),
             ResumeDecision::Resume
         );
     }

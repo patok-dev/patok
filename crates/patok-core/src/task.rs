@@ -4,6 +4,7 @@
 //! other line is ignored by the parser and preserved on rewrite.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::utils::digits::is_ascii_digits;
 
@@ -34,6 +35,30 @@ impl Task {
     pub fn is_malformed(&self) -> bool {
         self.id == MALFORMED_ID
     }
+
+    /// Whether the task is not done and well-formed: the task the build loop
+    /// picks next.
+    pub fn is_pending(&self) -> bool {
+        !self.done && !self.is_malformed()
+    }
+
+    /// The leading number of the task ID (`T1.2` -> `Some("1")`): the digits
+    /// before the dot, shared by a batch-review group. `None` for malformed IDs.
+    pub fn group_number(&self) -> Option<String> {
+        group_number_of(&self.id)
+    }
+
+    /// The SHA-256 hex digest of the description: the description's identity
+    /// for group membership, stable across restarts.
+    pub fn description_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.description.as_bytes());
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
 }
 
 /// Parses every task line in `text`, in file order.
@@ -46,7 +71,18 @@ pub fn parse(text: &str) -> Vec<Task> {
 
 /// The first pending, well-formed task in file order.
 pub fn next_pending(tasks: &[Task]) -> Option<&Task> {
-    tasks.iter().find(|t| !t.done && !t.is_malformed())
+    tasks.iter().find(|t| t.is_pending())
+}
+
+/// The leading number of a task ID (`T1.2` -> `Some("1")`): the digits
+/// before the dot, shared by a batch-review group. `None` for malformed IDs.
+/// The free twin of [`Task::group_number`] for callers that hold only an ID.
+pub fn group_number_of(task_id: &str) -> Option<String> {
+    let (digits, _) = task_id.rsplit_once('.')?;
+    let stripped = digits
+        .strip_prefix(|c: char| c.is_alphabetic())
+        .unwrap_or(digits);
+    is_ascii_digits(stripped).then(|| stripped.to_string())
 }
 
 /// Returns `text` with `task` flipped to checked, or `None` when no matching unchecked line
@@ -323,6 +359,48 @@ mod tests {
         let tasks = parse("- [x] T1.1: a\n- [ ] free text\n- [ ] T1.2: b\n");
         assert_eq!(next_pending(&tasks).unwrap().id, "T1.2");
         assert!(next_pending(&parse("- [x] T1.1: a\n")).is_none());
+    }
+
+    #[test]
+    fn is_pending_rejects_done_and_malformed_tasks() {
+        let pending = &parse("- [ ] T1.1: a\n")[0];
+        let done = &parse("- [x] T1.1: a\n")[0];
+        let malformed = &parse("- [ ] no id here\n")[0];
+        assert!(pending.is_pending());
+        assert!(!done.is_pending());
+        assert!(!malformed.is_pending());
+    }
+
+    #[test]
+    fn group_number_is_the_leading_id_number() {
+        let tasks = parse("- [ ] T1.2: a\n- [ ] D12.3: b\n- [ ] 1.2: c\n");
+        assert_eq!(tasks[0].group_number(), Some("1".into()));
+        assert_eq!(tasks[1].group_number(), Some("12".into()));
+        assert_eq!(tasks[2].group_number(), Some("1".into()));
+        assert_eq!(group_number_of("T1.2"), Some("1".into()));
+        assert_eq!(group_number_of("D12.3"), Some("12".into()));
+        assert_eq!(group_number_of("1.2"), Some("1".into()));
+        assert_eq!(group_number_of("T1"), None);
+        assert_eq!(group_number_of("TASK"), None);
+        // A malformed task line has the placeholder ID, so no group number.
+        let malformed = &parse("- [ ] no id here\n")[0];
+        assert_eq!(malformed.group_number(), None);
+    }
+
+    #[test]
+    fn description_hash_is_deterministic_and_distinguishes() {
+        let first = &parse("- [ ] T1.1: a task description\n")[0];
+        let second = &parse("- [x] T9.9: a task description\n")[0];
+        let other = &parse("- [ ] T1.2: another description\n")[0];
+        let hash = first.description_hash();
+        assert_eq!(hash, second.description_hash());
+        assert_ne!(hash, other.description_hash());
+        // A SHA-256 hex digest: 64 lowercase ASCII hex characters.
+        assert_eq!(hash.len(), 64);
+        assert!(
+            hash.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]
