@@ -362,11 +362,6 @@ impl Engine {
         !state.attached && state.run == RunState::Idle && !pending
     }
 
-    /// Adds `ids` to the run's UI-added task IDs (append-tasks flow).
-    pub(crate) fn record_ui_added(&self, ids: &[String]) {
-        self.inner.task_list.record_ui_added(ids);
-    }
-
     /// The IDs this engine appended through the append-tasks flow during the session, in the
     /// order they were added. Completing one of them postpones the next discovery round by
     /// the cooldown, checked where the task finishes in `run_task`.

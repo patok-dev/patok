@@ -1,21 +1,24 @@
 use std::time::Instant;
 
 use patok_core::config::RunMode;
-use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, TaskOutcome};
+use patok_core::event::{AgentRole, EngineEvent, TaskOutcome};
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
 
 use super::Engine;
 use super::commands::QueueCreation;
 use super::group;
-use crate::agents::{Agent, AppendPlannerAgent, DiscoveryAgent, ResearchQueueAgent};
 use crate::context::SessionContext;
-use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use crate::step::add_task::AddTaskStep;
+use crate::step::agent_run::StageExit;
 use crate::step::build::{BuildOutcome, BuildStep};
 use crate::step::commit::CommitStep;
+use crate::step::discovery::DiscoveryStep;
 use crate::step::plan::{PlanOutcome, PlanStep};
-use crate::step::research::{ResearchOutcome, ResearchStep, write_research_report};
+use crate::step::queue_research::QueueResearchStep;
+use crate::step::research::{ResearchOutcome, ResearchStep};
 use crate::step::review::{ReviewStage, ReviewStep};
+use crate::step::validate_append::ValidateAppendStep;
 use crate::task_list::AppendMode;
 
 impl Engine {
@@ -125,7 +128,9 @@ impl Engine {
         }
     }
 
-    /// One planner session. `before` is the task file as it was before the run;
+    /// One planner session: [`AddTaskStep`] runs the append-tasks planner and,
+    /// when the session completed, [`ValidateAppendStep`] validates the file
+    /// afterwards. `before` is the task file as it was before the run;
     /// `start` is the moment the run was announced in `start_add_tasks`. The run
     /// uses the settings snapshot taken when it was started. The task-file lock
     /// is free for the whole session and re-acquired only for the post-session
@@ -138,29 +143,11 @@ impl Engine {
         ctx: SessionContext,
         start: Instant,
     ) {
-        // The append-tasks planner is the active agent for the whole run (T11.1), so the
-        // shell's output frame shows the planner title while it streams.
-        let agent = AppendPlannerAgent::new(&request);
-        let exit = run_stage(
-            &ctx,
-            ctx.provider(),
-            ctx.model(),
-            StageStart::Announced(start),
-            agent.role(),
-            AgentPrompt::of(&agent),
-            StageWords {
-                capture: false,
-                could_not_start: "planner could not start".into(),
-                default_failure: "planner failed".into(),
-                cancelled_notice: Some("Planner cancelled.".into()),
-                failure_level: NoticeLevel::Error,
-                failure_prefix: "planner: ".into(),
-                failure_suffix: String::new(),
-            },
-        )
-        .await;
+        let exit = AddTaskStep::new(&ctx).run(&request, start).await;
         if let StageExit::Completed(_) = exit {
-            self.check_planner_result(&before).await;
+            let _ = ValidateAppendStep::new(&ctx)
+                .run(&before, AppendMode::Tasks, AgentRole::Planner, true)
+                .await;
         }
 
         {
@@ -172,9 +159,11 @@ impl Engine {
         self.inner.planning_done.notify_waiters();
     }
 
-    /// One research queue-creation run (T69.1): the Research agent investigates
-    /// the project and appends the resulting tasks. `before` is the task file
-    /// as it was before the run; `start` is the moment the run was announced in
+    /// One research queue-creation run (T69.1): [`QueueResearchStep`] runs the
+    /// Research agent, which investigates the project and appends the
+    /// resulting tasks, and [`ValidateAppendStep`] validates the file
+    /// afterwards. `before` is the task file as it was before the run;
+    /// `start` is the moment the run was announced in
     /// [`Engine::start_queue_creation`]. The appended tasks pass the same
     /// append-tasks validation as the planner's and are recorded as UI-added;
     /// the report lands under the research report stem of the run's kind.
@@ -185,49 +174,16 @@ impl Engine {
         ctx: SessionContext,
         start: Instant,
     ) {
-        // The research agent is the active agent for the whole run (T11.1), so
-        // the shell's output frame shows the research title while it streams.
-        let agent = match kind {
-            QueueCreation::Bootstrap => ResearchQueueAgent::bootstrap(),
-            QueueCreation::Scan => ResearchQueueAgent::scan(),
-        };
-        let exit = run_stage(
-            &ctx,
-            ctx.provider(),
-            ctx.model(),
-            StageStart::Announced(start),
-            agent.role(),
-            AgentPrompt::of(&agent),
-            StageWords {
-                capture: true,
-                could_not_start: "research agent could not start".into(),
-                default_failure: "research failed".into(),
-                cancelled_notice: Some("Research cancelled.".into()),
-                failure_level: NoticeLevel::Error,
-                failure_prefix: "research: ".into(),
-                failure_suffix: String::new(),
-            },
-        )
-        .await;
-        if let StageExit::Completed(events) = exit {
-            // The appended tasks pass the existing append-tasks validation,
-            // count as UI-added like the planner's, and reconcile the queue;
-            // only a pass saves the research report, so a rejected run
+        let step = QueueResearchStep::new(&ctx);
+        if let Some(report) = step.run(kind, start).await {
+            // Only a pass saves the research report, so a rejected run
             // re-runs rather than being covered by the reuse window.
-            if self
-                .check_appended(&before, AgentRole::Research, AppendMode::Tasks, true)
+            if ValidateAppendStep::new(&ctx)
+                .run(&before, AppendMode::Tasks, AgentRole::Research, true)
                 .await
                 .is_ok()
             {
-                let report = agent.validate(&events).unwrap_or_default();
-                if report.trim().is_empty() {
-                    self.notice(
-                        NoticeLevel::Warning,
-                        "the research run returned no report; nothing was saved",
-                    );
-                } else {
-                    write_research_report(&ctx, kind.stem(), &report);
-                }
+                step.save(kind, &report);
             }
         }
 
@@ -240,39 +196,28 @@ impl Engine {
         self.inner.planning_done.notify_waiters();
     }
 
-    /// One discovery session. `before` is the task file as it was before the run; the run
+    /// One discovery session: [`DiscoveryStep`] runs the discovery agent and,
+    /// when the session completed, [`ValidateAppendStep`] validates the file
+    /// afterwards. `before` is the task file as it was before the run; the run
     /// uses the settings snapshot taken when it was started, with the task-file lock free
     /// for its whole duration (T77.1). Returns how many tasks the round appended once it
     /// completes, or `None` when it did not run to completion (error, cancelled or
-    /// failed); only completed rounds move the schedule.
+    /// failed); only completed rounds move the schedule. A round whose session
+    /// completed but was rejected still counts as completed, with zero tasks
+    /// appended, so the schedule records it.
     pub(crate) async fn run_discovery(
         &self,
         before: String,
         ctx: &SessionContext,
     ) -> Option<usize> {
-        // The discovery agent is the active agent for the whole round (T11.1), so the
-        // shell's output frame shows its title while it streams.
-        let agent = DiscoveryAgent::new();
-        let exit = run_stage(
-            ctx,
-            ctx.provider(),
-            ctx.model(),
-            StageStart::Announce,
-            agent.role(),
-            AgentPrompt::of(&agent),
-            StageWords {
-                capture: false,
-                could_not_start: "discovery could not start".into(),
-                default_failure: "discovery failed".into(),
-                cancelled_notice: Some("Discovery cancelled.".into()),
-                failure_level: NoticeLevel::Error,
-                failure_prefix: "discovery: ".into(),
-                failure_suffix: String::new(),
-            },
-        )
-        .await;
-        let added = match exit {
-            StageExit::Completed(_) => Some(self.check_discovery_result(&before).await.len()),
+        let added = match DiscoveryStep::new(ctx).run().await {
+            StageExit::Completed(_) => Some(
+                ValidateAppendStep::new(ctx)
+                    .run(&before, AppendMode::Discovery, AgentRole::Discovery, false)
+                    .await
+                    .unwrap_or_default()
+                    .len(),
+            ),
             _ => None,
         };
 
@@ -291,71 +236,6 @@ impl Engine {
         }
         self.inner.discovery_done.notify_waiters();
         added
-    }
-
-    /// Validates the task file after a completed planner session; restores `before` and
-    /// reports an error on violation, otherwise reports how many tasks were added and
-    /// remembers the appended IDs as this session's UI-added task IDs.
-    async fn check_planner_result(&self, before: &str) {
-        let _ = self
-            .check_appended(before, AgentRole::Planner, AppendMode::Tasks, true)
-            .await;
-    }
-
-    /// Validates the task file after a completed discovery session: like the planner check,
-    /// but the appended tasks must carry `D`-prefixed IDs and are not recorded as UI-added
-    /// task IDs. Returns the IDs the round appended.
-    async fn check_discovery_result(&self, before: &str) -> Vec<String> {
-        self.check_appended(before, AgentRole::Discovery, AppendMode::Discovery, false)
-            .await
-            .unwrap_or_default()
-    }
-
-    /// The shared post-session check of an append-style run: the whole check --
-    /// read, validate and, on a violation, restore, with the lines injected
-    /// through `inject_task` during the session kept out of the accounting
-    /// (T77.1) -- runs in the task list under its file lock. On violation an
-    /// error is reported; otherwise the number of tasks added is. Returns
-    /// the IDs that were appended, or the rejection reason on a violation
-    /// (the queue-creation run saves its research report only on a pass, so
-    /// a rejected run re-runs).
-    async fn check_appended(
-        &self,
-        before: &str,
-        role: AgentRole,
-        mode: AppendMode,
-        record_ui_added: bool,
-    ) -> Result<Vec<String>, String> {
-        match self
-            .inner
-            .task_list
-            .check_appended(before, mode, role)
-            .await
-        {
-            Ok(ids) => {
-                if record_ui_added {
-                    self.record_ui_added(&ids);
-                }
-                match ids.len() {
-                    0 => self.notice(NoticeLevel::Info, "No tasks added."),
-                    1 => self.notice(NoticeLevel::Info, "1 task added."),
-                    n => self.notice(NoticeLevel::Info, format!("{n} tasks added.")),
-                }
-                Ok(ids)
-            }
-            Err(rejection) => {
-                let restored = if rejection.restored {
-                    "the previous task file was restored"
-                } else {
-                    "restoring the previous task file failed"
-                };
-                self.notice(
-                    NoticeLevel::Error,
-                    format!("{role} result rejected: {}; {restored}.", rejection.reason),
-                );
-                Err(rejection.reason)
-            }
-        }
     }
 
     /// Runs one task's build session, preceded by the research step (T68.1) and
