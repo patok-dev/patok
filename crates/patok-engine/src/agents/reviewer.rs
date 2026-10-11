@@ -1,83 +1,152 @@
-//! The review stage's pure logic:
-//! the claims trimming rule, the review report's verdict and findings parsing,
-//! the verdict computation, the skip decision in precedence order, the
-//! five-position progress indicator, the persistent learned-confidence
-//! history and the persistent open-group record with its resume decision.
-//! Everything here is deterministic and unit-tested; the engine wiring in
-//! `engine.rs` calls into it.
+//! The reviewer agents: the reviewer prompts, the review report's verdict
+//! and findings parsing, the verdict computation, the multipass findings
+//! merge, the skip decision in precedence order, the persistent
+//! learned-confidence history, and the agents that drive the combined,
+//! per-file and integration review sessions.
 
 use std::collections::HashSet;
 use std::path::Path;
 
 use patok_core::complexity::Complexity;
 use patok_core::config::{EnumSpelling, Severity};
+use patok_core::event::{AgentEvent, AgentRole};
+use patok_core::task::Task;
+use patok_providers::{REVIEWER_TOOLS, Tool};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-/// Findings above this many lines in the verification-results section of the
-/// claims trigger the trim.
-const VERIFICATION_TRIM_LINES: usize = 100;
-/// The head and tail the trimmed verification section keeps.
-const TRIM_HEAD: usize = 20;
-const TRIM_TAIL: usize = 10;
-/// Substrings that keep a trimmed middle line in the section.
-const TRIM_KEEP: [&str; 4] = ["failed", "error", "panic", "assert"];
+use super::{Agent, SPEC_FILE, captured_text};
+use crate::TASK_FILE;
 
-/// The claims file's build-claims section, from its heading to the end of the
-/// text (`None` when the builder's final message has no such heading). The
-/// heading matches case-insensitively at any level.
-pub fn claims_section(text: &str) -> Option<&str> {
-    crate::markdown::section(text, "Build Claims").map(|found| &text[found.start..])
+/// Appended to the CLI's own system prompt for the review stage's
+/// reviewer sessions.
+const REVIEWER_SYSTEM: &str = "You are the Reviewer agent in an autonomous build loop. \
+Review and validate these claims. Find the gaps. \
+You are a fresh-context combined review-and-fix agent: you did not build this work, and nothing about it is trusted until you verified it. \
+You may read files, search the project, edit and write files and run shell commands. \
+Do not modify the spec file, the task list or the project instruction file, and write no file other than your review report. \
+First pass: thorough validation. Second pass: assume bugs remain and find what was missed.";
+
+/// The review report every reviewer session must end its final message with
+///: a verdict line and the findings JSON.
+const REVIEW_REPORT: &str = "End your final message with the review report, and nothing after it:\n\n\
+Verdict: PASS\n\n\
+```json\n\
+{\"high\": [], \"medium\": [], \"low\": []}\n\
+```\n\n\
+The verdict line is exactly `Verdict: PASS` when the work is validated and `Verdict: FAIL` when it is not. \
+The JSON block holds one array per severity: high, medium and low. Each finding carries its severity (the bucket it sits in), the file, the line, the issue, whether you fixed it (\"fixed\": true or false), a category, the source evidence and a confidence between 0.0 and 1.0. \
+An empty array is correct when you found nothing at that severity. The report is the last thing in your final message.";
+
+/// The reviewer's job in order and the severity calibration, shared by the reviewer prompt variants.
+const REVIEW_RULES: &str = "Your job, in order:\n\n\
+1. Read the build claims (the fallback above when they are missing) and verify every claim against the code. The builder's claims are untrusted assertions: check each one against what the code actually does.\n\
+2. Run the project's build and tests yourself, independently; never trust the builder's verification. Stack checks: Rust (cargo check, cargo clippy, cargo test), Python (compile and pytest), Node/TS (type-check and tests), Docker (config only, never start services); skip a check with a reason when the tool is unavailable.\n\
+3. Scrutinize the Gaps and Assumptions: uncertainties and untested edge cases are where bugs hide.\n\
+4. Fix every HIGH and MEDIUM issue you find, surgically, in the same pass: fix exactly the issue and nothing around it, no surrounding refactors, no separate fix loop. LOW issues are report-only.\n\
+5. Re-run the checks after fixing.\n\n\
+Severity calibration: HIGH (security holes, unhandled failures on external or user input, logic errors, crash paths) is always reported and fixed; MEDIUM (missing error handling at trust boundaries, resource leaks, off-by-one) is reported and fixed; LOW (style consistent with the codebase, local naming) is reported only. Borderlines: an unhandled error on user-controlled input is HIGH, not MEDIUM; an ignored return value with no production effect is LOW, not MEDIUM.\n\n\
+Report bugs, panics, security issues, logic errors, missing boundary error handling, claims that contradict the code, races and leaks. Skip style, minor naming, missing docs, conventions matching the project and theoretical improvements.";
+
+/// The user prompt of the review stage's reviewer session: a fresh-context combined review-and-fix agent. The
+/// user prompt carries the task, the build claims (with the plan and the
+/// changed-file list as the labelled fallback when the claims are missing),
+/// the git diff when it is non-empty and at most 50 KB (otherwise the
+/// changed-file list), the pass number and the spec and task file names.
+fn reviewer(
+    task: &Task,
+    claims: Option<&str>,
+    plan: Option<&str>,
+    changed_files: &[String],
+    diff: Option<&str>,
+    pass: u32,
+) -> String {
+    let claims_block = match claims {
+        Some(claims) => format!(
+            "The build claims the builder wrote (untrusted; verify every claim):\n\n{claims}"
+        ),
+        None => format!(
+            "No build claims were found; the plan the builder worked from and the changed files are the fallback:\n\n{plan}\n\nChanged files:\n{files}",
+            plan = plan.unwrap_or("no plan was recorded"),
+            files = file_list(changed_files),
+        ),
+    };
+    let changes_block = match diff {
+        Some(diff) => format!("The git diff of the work under review:\n\n```diff\n{diff}\n```"),
+        None => format!(
+            "The diff is empty or too large to carry; the changed files are:\n\n{files}",
+            files = file_list(changed_files),
+        ),
+    };
+    format!(
+        "Review and validate the work done for the task below.\n\n\
+         Task {id}: {description}\n\n\
+         The full task list is in {TASK_FILE} for context; treat it as read-only. The spec is {SPEC_FILE} when it exists in the project root.\n\n\
+         {claims_block}\n\n\
+         {changes_block}\n\n\
+         Pass {pass}.\n\n\
+         {REVIEW_RULES}\n\n\
+         {REVIEW_REPORT}",
+        id = task.id,
+        description = task.description,
+    )
 }
 
-/// Trims an over-long verification-results section of the build claims: a section over 100 lines is reduced to its first 20
-/// lines, a "trimmed N lines" marker, any middle lines mentioning failed,
-/// error, panic or assert (case-insensitively), and its last 10 lines.
-/// Everything else in the claims is untouched.
-pub fn trim_claims(claims: &str) -> String {
-    let Some(bounds) = crate::markdown::section(claims, "Verification Results") else {
-        return claims.to_string();
-    };
-    // The section's content: every line after its heading, up to the next one.
-    let content: Vec<&str> = claims[bounds.start..bounds.end].lines().skip(1).collect();
-    if content.len() <= VERIFICATION_TRIM_LINES {
-        return claims.to_string();
-    }
-    let heading_end = bounds.start + bounds.heading.len() + 1;
-    let mut trimmed = String::with_capacity(claims.len());
-    trimmed.push_str(&claims[..heading_end]);
-    for line in &content[..TRIM_HEAD] {
-        trimmed.push_str(line);
-        trimmed.push('\n');
-    }
-    let middle = &content[TRIM_HEAD..content.len() - TRIM_TAIL];
-    let kept: Vec<&&str> = middle
+/// The per-file reviewer session of a multipass review: one file at a time, single-file concerns only, and report-only -- the
+/// integration session decides what gets fixed.
+fn reviewer_file(task: &Task, file: &str, pass: u32) -> String {
+    format!(
+        "Review one file of the work done for the task below.\n\n\
+         Task {id}: {description}\n\n\
+         The file to examine is exactly this one: {file}. Review it on its own merits: single-file concerns only (bugs, panics, security issues, logic errors, missing boundary error handling inside the file). Cross-file and integration concerns belong to the integration pass, not this one.\n\n\
+         Do not edit any file: this pass is report-only. Every finding you report carries \"fixed\": false.\n\n\
+         The spec is {SPEC_FILE} when it exists in the project root; the task list is {TASK_FILE}, both read-only.\n\n\
+         Pass {pass}.\n\n\
+         Report bugs, panics, security issues, logic errors and missing boundary error handling; skip style, minor naming, missing docs and conventions matching the project.\n\n\
+         {REVIEW_REPORT}",
+        id = task.id,
+        description = task.description,
+    )
+}
+
+/// The integration reviewer session of a multipass review: it receives the merged, de-duplicated per-file findings and
+/// focuses on what per-file passes cannot see -- cross-file issues -- before
+/// producing the final report.
+fn reviewer_integration(
+    task: &Task,
+    findings_json: &str,
+    changed_files: &[String],
+    pass: u32,
+) -> String {
+    format!(
+        "Review the integration of the work done for the task below; you are the final pass.\n\n\
+         Task {id}: {description}\n\n\
+         The per-file reviews already reported these findings (merged and de-duplicated):\n\n\
+         ```json\n{findings_json}\n```\n\n\
+         Do not re-report those findings; they are already recorded. Focus on what the per-file passes cannot see: cross-file issues, wiring, contracts between files, and anything in the gaps of the work.\n\n\
+         The changed files are:\n{files}\n\n\
+         The spec is {SPEC_FILE} when it exists in the project root; the task list is {TASK_FILE}, both read-only.\n\n\
+         Pass {pass}.\n\n\
+         {REVIEW_RULES}\n\n\
+         {REVIEW_REPORT}",
+        id = task.id,
+        description = task.description,
+        files = file_list(changed_files),
+    )
+}
+
+/// One changed file per line, as a bulleted list.
+fn file_list(files: &[String]) -> String {
+    files
         .iter()
-        .filter(|line| {
-            let lower = line.to_lowercase();
-            TRIM_KEEP.iter().any(|needle| lower.contains(needle))
-        })
-        .collect();
-    trimmed.push_str(&format!(
-        "[trimmed {} lines of verification output]\n",
-        middle.len() - kept.len()
-    ));
-    for line in kept {
-        trimmed.push_str(line);
-        trimmed.push('\n');
-    }
-    for line in &content[content.len() - TRIM_TAIL..] {
-        trimmed.push_str(line);
-        trimmed.push('\n');
-    }
-    trimmed.push_str(&claims[bounds.end..]);
-    trimmed
+        .map(|file| format!("- {file}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// One finding of the review report's JSON block. Every field is optional at the JSON level -- the
 /// reviewer is an LLM -- but the severity buckets are positional.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Finding {
+pub(crate) struct Finding {
     #[serde(default)]
     pub file: String,
     #[serde(default)]
@@ -98,7 +167,7 @@ pub struct Finding {
 
 /// The findings JSON block of a review report: one bucket per severity.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Findings {
+pub(crate) struct Findings {
     #[serde(default)]
     pub high: Vec<Finding>,
     #[serde(default)]
@@ -109,7 +178,7 @@ pub struct Findings {
 
 impl Findings {
     /// The findings of `severity`.
-    pub fn bucket(&self, severity: Severity) -> &[Finding] {
+    pub(crate) fn bucket(&self, severity: Severity) -> &[Finding] {
         match severity {
             Severity::High => &self.high,
             Severity::Medium => &self.medium,
@@ -118,10 +187,29 @@ impl Findings {
     }
 }
 
+/// Merges `findings` into `merged`, de-duplicated by file and issue.
+pub(crate) fn merge_findings(merged: &mut Findings, findings: Findings) {
+    for severity in [Severity::High, Severity::Medium, Severity::Low] {
+        let bucket = match severity {
+            Severity::High => &mut merged.high,
+            Severity::Medium => &mut merged.medium,
+            Severity::Low => &mut merged.low,
+        };
+        for finding in findings.bucket(severity) {
+            if !bucket
+                .iter()
+                .any(|existing| existing.file == finding.file && existing.issue == finding.issue)
+            {
+                bucket.push(finding.clone());
+            }
+        }
+    }
+}
+
 /// A parsed review report: the case-insensitive `Verdict: PASS` line, when
 /// present, and the findings JSON block.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ReportParse {
+pub(crate) struct ReportParse {
     /// `Some(true)` for a pass verdict line, `Some(false)` for fail, `None`
     /// when the report has no verdict line.
     pub verdict_pass: Option<bool>,
@@ -135,7 +223,7 @@ pub struct ReportParse {
 /// high/medium/low buckets. A report with neither is still a parse (both
 /// fields `None`); an absent or invalid JSON block counts as one HIGH finding
 /// in the verdict computation.
-pub fn parse_report(text: &str) -> ReportParse {
+pub(crate) fn parse_report(text: &str) -> ReportParse {
     let verdict_pass = text.lines().rev().find_map(|line| {
         let verdict = line.trim_start().to_ascii_lowercase();
         let rest = verdict
@@ -217,14 +305,14 @@ fn balanced_objects(text: &str) -> Vec<&str> {
 
 /// One finding counted against the verdict, with the bucket it came from.
 #[derive(Clone, Debug, PartialEq)]
-pub struct QualifyingFinding {
+pub(crate) struct QualifyingFinding {
     pub severity: Severity,
     pub finding: Finding,
 }
 
 /// The computed verdict of one review.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Verdict {
+pub(crate) struct Verdict {
     pub passed: bool,
     /// HIGH and MEDIUM findings at or above the confidence threshold.
     pub qualifying: Vec<QualifyingFinding>,
@@ -243,7 +331,7 @@ pub struct Verdict {
 /// findings JSON block, counts as one HIGH finding -- so only a PASS verdict
 /// can carry those. Findings below the threshold are excluded from the
 /// computation and returned for manual review, whatever their severity.
-pub fn compute_verdict(report: Option<&str>, threshold: f64) -> Verdict {
+pub(crate) fn compute_verdict(report: Option<&str>, threshold: f64) -> Verdict {
     let Some(report) = report.filter(|report| !report.trim().is_empty()) else {
         return Verdict {
             passed: false,
@@ -302,7 +390,7 @@ pub fn compute_verdict(report: Option<&str>, threshold: f64) -> Verdict {
 
 /// Whether `file` is generated output (an insta snapshot or a lockfile): it
 /// has no single-file concerns for a per-file reviewer to find.
-pub fn is_generated(file: &str) -> bool {
+pub(crate) fn is_generated(file: &str) -> bool {
     let name = file.rsplit('/').next().unwrap_or(file);
     name.ends_with(".snap")
         || name.ends_with(".snap.new")
@@ -325,7 +413,7 @@ fn missing_report() -> QualifyingFinding {
 
 /// Why the review stage was skipped, in the spec's precedence order: each variant carries the reason recorded with the skip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SkipReason {
+pub(crate) enum SkipReason {
     /// `review_in_loop` is off: the task is validated by the builder's own
     /// verification alone.
     ReviewInLoopOff,
@@ -344,7 +432,7 @@ pub enum SkipReason {
 
 impl SkipReason {
     /// The human-readable reason recorded with the skip.
-    pub fn reason(self) -> &'static str {
+    pub(crate) fn reason(self) -> &'static str {
         match self {
             Self::ReviewInLoopOff => {
                 "review in loop is off; the task is validated by the builder's own verification"
@@ -361,7 +449,7 @@ impl SkipReason {
 
 /// The inputs of the review skip decision, snapshotted per task.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SkipInputs {
+pub(crate) struct SkipInputs {
     pub review_in_loop: bool,
     /// The task is deferred by batch review: a pending task after it shares its
     /// leading task-ID number.
@@ -377,7 +465,7 @@ pub struct SkipInputs {
 }
 
 /// Decides whether the review runs, recording why when it does not.
-pub fn skip_review(inputs: &SkipInputs) -> Option<SkipReason> {
+pub(crate) fn skip_review(inputs: &SkipInputs) -> Option<SkipReason> {
     if !inputs.review_in_loop {
         return Some(SkipReason::ReviewInLoopOff);
     }
@@ -404,53 +492,6 @@ pub fn skip_review(inputs: &SkipInputs) -> Option<SkipReason> {
         return Some(SkipReason::StageDisabled);
     }
     None
-}
-
-/// The leading number of a task ID (`T1.2` -> `Some("1")`): the digits before
-/// the dot, shared by a batch-review group. `None` for malformed IDs.
-pub fn leading_number(task_id: &str) -> Option<String> {
-    let (digits, _) = task_id.rsplit_once('.')?;
-    let stripped = digits
-        .strip_prefix(|c: char| c.is_alphabetic())
-        .unwrap_or(digits);
-    (!stripped.is_empty() && stripped.chars().all(|c| c.is_ascii_digit()))
-        .then(|| stripped.to_string())
-}
-
-/// Whether a pending task after the current one shares its leading number, so
-/// batch review defers the current task's review to the group's last task. The
-/// current task's own ID never counts.
-pub fn batch_deferred(current: &str, pending_after: &[String]) -> bool {
-    let Some(number) = leading_number(current) else {
-        return false;
-    };
-    pending_after
-        .iter()
-        .any(|id| id != current && leading_number(id).as_deref() == Some(number.as_str()))
-}
-
-/// The five-position progress indicator written into the task line: Research, Plan, a
-/// plan-self-review sub-slot, Build, Review -- each the stage letters when it
-/// ran or `-` when skipped, the sub-slot `.` in this build -- followed by `!`
-/// when the task was not validated.
-pub fn progress(
-    ran_research: bool,
-    ran_plan: bool,
-    ran_build: bool,
-    ran_review: bool,
-    validated: bool,
-) -> String {
-    let mut token = String::from("[");
-    token.push(if ran_research { 'R' } else { '-' });
-    token.push(if ran_plan { 'P' } else { '-' });
-    token.push('.');
-    token.push(if ran_build { 'B' } else { '-' });
-    token.push(if ran_review { 'R' } else { '-' });
-    if !validated {
-        token.push('!');
-    }
-    token.push(']');
-    token
 }
 
 /// The clusters cap of the persistent learned-confidence history.
@@ -495,13 +536,13 @@ impl Cluster {
 /// The persistent learned-confidence history: stored globally per user as JSON, matched by complexity tier
 /// plus Jaccard word overlap (keyword mode; no embedding service exists yet).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ReviewHistory {
+pub(crate) struct ReviewHistory {
     clusters: Vec<Cluster>,
 }
 
 impl ReviewHistory {
     /// Loads the history from `path`; a missing file is an empty history.
-    pub fn load(path: &Path) -> Self {
+    pub(crate) fn load(path: &Path) -> Self {
         std::fs::read_to_string(path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
@@ -510,7 +551,7 @@ impl ReviewHistory {
 
     /// Saves the history to `path`, best-effort: the error is returned for the
     /// caller to log.
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+    pub(crate) fn save(&self, path: &Path) -> std::io::Result<()> {
         patok_core::utils::atomic_write::write_atomic(
             path,
             &serde_json::to_string(self).unwrap_or_default(),
@@ -520,7 +561,7 @@ impl ReviewHistory {
     /// The consecutive review passes of the best-matching cluster for the task
     /// shape: the same tier (Simple or Medium only) and Jaccard word overlap
     /// at or above the matching similarity. `None` when nothing matches.
-    pub fn match_shape(&self, description: &str, tier: Complexity) -> Option<u32> {
+    pub(crate) fn match_shape(&self, description: &str, tier: Complexity) -> Option<u32> {
         if tier == Complexity::Complex {
             return None;
         }
@@ -538,7 +579,7 @@ impl ReviewHistory {
     /// passes and the consecutive passes; a fail increments the fails, resets
     /// the consecutive passes and stores the date. With no match a new cluster
     /// is created; at the cap the least-observed cluster is evicted.
-    pub fn record(&mut self, description: &str, tier: Complexity, passed: bool, date: &str) {
+    pub(crate) fn record(&mut self, description: &str, tier: Complexity, passed: bool, date: &str) {
         let Some(tier) = tier_name(tier) else {
             return;
         };
@@ -593,102 +634,6 @@ impl ReviewHistory {
     }
 }
 
-/// The batch-review group currently open across restarts: the shared leading
-/// task-ID number, the group's base and last full commit SHAs, and the
-/// (task ID, description hash) of every task committed into the group.
-/// Stored as `open-group.json` in the data dir; a missing or corrupt file
-/// means no open group.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct OpenGroup {
-    /// The group's leading task-ID number (`"1"` for `T1.2`).
-    pub number: String,
-    /// The full SHA of the commit the group started at.
-    pub base: String,
-    /// The full SHA of the group's last commit.
-    pub last: String,
-    /// `(task_id, description_hash)` per task committed into the group.
-    pub members: Vec<(String, String)>,
-}
-
-impl OpenGroup {
-    /// Loads the open group from `path`; a missing or corrupt file is no
-    /// open group.
-    pub fn load(path: &Path) -> Option<Self> {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-    }
-
-    /// Saves the open group to `path`, best-effort: the error is returned
-    /// for the caller to log.
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        patok_core::utils::atomic_write::write_atomic(
-            path,
-            &serde_json::to_string(self).unwrap_or_default(),
-        )
-    }
-
-    /// Clears the open-group record by deleting its file; a missing file is
-    /// already clear.
-    pub fn clear(path: &Path) -> std::io::Result<()> {
-        match std::fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        }
-    }
-}
-
-/// The SHA-256 hex digest of a task description: the description's identity
-/// for group membership, stable across restarts.
-pub fn description_hash(description: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(description.as_bytes());
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-/// Whether an interrupted batch-review group resumes or starts fresh.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResumeDecision {
-    /// Reuse the open group's base so the review still diffs every commit
-    /// of the group.
-    Resume,
-    /// Start a fresh group at the current HEAD.
-    Fresh,
-}
-
-/// Decides whether the open group resumes: the task's leading number matches
-/// the record, `head` equals the record's `last`, the record's `base` is an
-/// ancestor of HEAD, and the task is a member (its (id, description hash) is
-/// in `members`) or a not-yet-run task of the same number (its ID is absent
-/// from `members`). Anything else -- a moved HEAD, a non-ancestor base, a
-/// different number, or a reused ID whose description hash differs -- starts
-/// a fresh group.
-pub fn resume_decision(
-    record: &OpenGroup,
-    head: &str,
-    base_is_ancestor: bool,
-    task_id: &str,
-    description: &str,
-) -> ResumeDecision {
-    let number_matches = leading_number(task_id).is_some_and(|number| number == record.number);
-    let hash = description_hash(description);
-    let is_member = record
-        .members
-        .iter()
-        .any(|(id, member_hash)| id == task_id && member_hash == &hash);
-    let is_unrun = !record.members.iter().any(|(id, _)| id == task_id);
-    if number_matches && head == record.last && base_is_ancestor && (is_member || is_unrun) {
-        ResumeDecision::Resume
-    } else {
-        ResumeDecision::Fresh
-    }
-}
-
 /// The stored spelling of a tier; `None` for Complex (never clustered).
 fn tier_name(tier: Complexity) -> Option<&'static str> {
     match tier {
@@ -724,8 +669,189 @@ const STOPWORDS: &[&str] = &[
     "this", "to", "was", "were", "when", "which", "with",
 ];
 
+/// The payload one reviewer session produces: the report as captured and its
+/// computed verdict. The verdict's `passed` flag is the accept/reject; the
+/// report and the below-threshold findings travel with it even on a fail.
+pub(crate) struct ReviewOutcome {
+    /// The review report as captured.
+    pub report: String,
+    /// The computed verdict (passed flag, qualifying and below-threshold findings).
+    pub verdict: Verdict,
+}
+
+/// The kind of reviewer session one [`ReviewerAgent`] drives.
+enum ReviewKind {
+    /// The single-pass combined review-and-fix session, and the multipass
+    /// review's integration session.
+    Combined {
+        claims: Option<String>,
+        plan: Option<String>,
+        changed: Vec<String>,
+        diff: Option<String>,
+    },
+    /// The multipass review's integration session over the merged per-file
+    /// findings.
+    Integration {
+        findings_json: String,
+        changed: Vec<String>,
+    },
+}
+
+/// The review stage's combined and integration reviewer agent: its session's
+/// final message is the review report, and its validation computes the
+/// verdict over it.
+pub(crate) struct ReviewerAgent {
+    task: Task,
+    kind: ReviewKind,
+    pass: u32,
+    threshold: f64,
+}
+
+impl ReviewerAgent {
+    /// The single-pass combined reviewer (pass 1).
+    pub(crate) fn combined(
+        task: &Task,
+        claims: Option<&str>,
+        plan: Option<&str>,
+        changed: &[String],
+        diff: Option<&str>,
+        pass: u32,
+        threshold: f64,
+    ) -> Self {
+        Self {
+            task: task.clone(),
+            kind: ReviewKind::Combined {
+                claims: claims.map(String::from),
+                plan: plan.map(String::from),
+                changed: changed.to_vec(),
+                diff: diff.map(String::from),
+            },
+            pass,
+            threshold,
+        }
+    }
+
+    /// The multipass review's integration reviewer (pass 2) over the merged,
+    /// de-duplicated per-file findings.
+    pub(crate) fn integration(
+        task: &Task,
+        findings_json: &str,
+        changed: &[String],
+        pass: u32,
+        threshold: f64,
+    ) -> Self {
+        Self {
+            task: task.clone(),
+            kind: ReviewKind::Integration {
+                findings_json: findings_json.into(),
+                changed: changed.to_vec(),
+            },
+            pass,
+            threshold,
+        }
+    }
+}
+
+impl Agent for ReviewerAgent {
+    type Session = ReviewOutcome;
+
+    fn role(&self) -> AgentRole {
+        AgentRole::Reviewer
+    }
+
+    fn system_prompt(&self) -> &'static str {
+        REVIEWER_SYSTEM
+    }
+
+    fn user_prompt(&self) -> String {
+        match &self.kind {
+            ReviewKind::Combined {
+                claims,
+                plan,
+                changed,
+                diff,
+            } => reviewer(
+                &self.task,
+                claims.as_deref(),
+                plan.as_deref(),
+                changed,
+                diff.as_deref(),
+                self.pass,
+            ),
+            ReviewKind::Integration {
+                findings_json,
+                changed,
+            } => reviewer_integration(&self.task, findings_json, changed, self.pass),
+        }
+    }
+
+    fn label(&self) -> String {
+        "review".into()
+    }
+
+    fn tools(&self) -> &'static [Tool] {
+        REVIEWER_TOOLS
+    }
+
+    fn validate(&self, events: &[AgentEvent]) -> Result<Self::Session, String> {
+        let report = captured_text(events);
+        let verdict = compute_verdict(Some(&report), self.threshold);
+        Ok(ReviewOutcome { report, verdict })
+    }
+}
+
+/// The multipass review's per-file reviewer: one file at a time, report-only
+/// (the integration session decides what gets fixed), so its session's payload
+/// is the parsed findings of its report.
+pub(crate) struct FileReviewerAgent {
+    task: Task,
+    file: String,
+    pass: u32,
+}
+
+impl FileReviewerAgent {
+    pub(crate) fn new(task: &Task, file: &str, pass: u32) -> Self {
+        Self {
+            task: task.clone(),
+            file: file.into(),
+            pass,
+        }
+    }
+}
+
+impl Agent for FileReviewerAgent {
+    type Session = Option<Findings>;
+
+    fn role(&self) -> AgentRole {
+        AgentRole::Reviewer
+    }
+
+    fn system_prompt(&self) -> &'static str {
+        REVIEWER_SYSTEM
+    }
+
+    fn user_prompt(&self) -> String {
+        reviewer_file(&self.task, &self.file, self.pass)
+    }
+
+    fn label(&self) -> String {
+        "review".into()
+    }
+
+    fn tools(&self) -> &'static [Tool] {
+        REVIEWER_TOOLS
+    }
+
+    fn validate(&self, events: &[AgentEvent]) -> Result<Self::Session, String> {
+        Ok(parse_report(&captured_text(events)).findings)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::agents::test_task;
+
     #[test]
     fn generated_files_are_not_per_file_review_units() {
         use super::is_generated;
@@ -734,66 +860,105 @@ mod tests {
         assert!(!is_generated("crates/x/src/ui.rs"));
     }
 
-    use super::*;
-
     #[test]
-    fn claims_section_starts_at_the_heading() {
-        let text = "Summary first.\n\n## Build Claims\n## Files Changed\nCREATE a\n";
-        assert_eq!(
-            claims_section(text),
-            Some("## Build Claims\n## Files Changed\nCREATE a\n")
+    fn the_reviewer_system_prompt_states_the_stage_rules() {
+        // The reviewer framing.
+        assert!(REVIEWER_SYSTEM.contains("Review and validate these claims. Find the gaps."));
+        assert!(REVIEWER_SYSTEM.contains("fresh-context combined review-and-fix agent"));
+        // The two passes: thorough validation, then assuming bugs remain.
+        assert!(REVIEWER_SYSTEM.contains("First pass: thorough validation"));
+        assert!(
+            REVIEWER_SYSTEM.contains("Second pass: assume bugs remain and find what was missed")
         );
-        assert_eq!(claims_section("no headings"), None);
-        // Case-insensitive at any level.
-        assert!(claims_section("#### build claims\nx").is_some());
+        // The tool surface and the no-modify rules.
+        assert!(REVIEWER_SYSTEM.contains("run shell commands"));
+        assert!(REVIEWER_SYSTEM.contains("Do not modify the spec file, the task list"));
     }
 
     #[test]
-    fn a_short_verification_section_is_kept_whole() {
-        let claims = "## Verification Results\n1. cargo test\n2. cargo clippy\n";
-        assert_eq!(trim_claims(claims), claims);
-        // A claims without the section is untouched.
-        assert_eq!(
-            trim_claims("## Files Changed\nCREATE a\n"),
-            "## Files Changed\nCREATE a\n"
+    fn the_reviewer_prompt_carries_the_claims_the_diff_and_the_rules() {
+        let claims = "## Files Changed\nCREATE a.txt\n\n## Claims\n- [ ] it works";
+        let p = reviewer(
+            &test_task(),
+            Some(claims),
+            None,
+            &["src/a.rs".into(), "src/b.rs".into()],
+            Some("+++ b/src/a.rs\n+hello"),
+            1,
         );
+        // The task id and description.
+        assert!(p.contains("Task T8.1: Add the per-task plan stage"));
+        // The claims block, the diff and the pass number.
+        assert!(p.contains(claims));
+        assert!(p.contains("untrusted; verify every claim"));
+        assert!(p.contains("```diff\n+++ b/src/a.rs\n+hello\n```"));
+        assert!(p.contains("Pass 1."));
+        // The spec and task file names.
+        assert!(p.contains(SPEC_FILE) && p.contains(TASK_FILE));
+        // The verify-independently, surgical-fix and no-separate-fix-loop rules.
+        assert!(p.contains("never trust the builder's verification"));
+        assert!(p.contains("independently"));
+        assert!(p.contains("surgically, in the same pass"));
+        assert!(p.contains("no separate fix loop"));
+        assert!(p.contains("no surrounding refactors"));
+        // The verdict line and the findings JSON contract.
+        assert!(p.contains("Verdict: PASS"));
+        assert!(p.contains("Verdict: FAIL"));
+        assert!(p.contains("{\"high\": [], \"medium\": [], \"low\": []}"));
+        assert!(p.contains("confidence between 0.0 and 1.0"));
+        assert!(p.contains("whether you fixed it"));
+        // The format rules are real newlines, not literal escape sequences.
+        assert!(!p.contains("\\n"));
     }
 
     #[test]
-    fn an_over_long_verification_section_is_trimmed() {
-        let mut section = String::from("## Verification Results\n");
-        for i in 0..120 {
-            section.push_str(&format!("line {i} of the output\n"));
-        }
-        section.push_str("## Claims\n- [ ] it works\n");
-        let trimmed = trim_claims(&section);
-        // The head and tail survive.
-        assert!(trimmed.contains("line 0 of the output"));
-        assert!(trimmed.contains("line 19 of the output"));
-        assert!(trimmed.contains("line 119 of the output"));
-        assert!(trimmed.contains("line 110 of the output"));
-        // The middle is gone except the marker and the kept lines.
-        assert!(trimmed.contains("[trimmed 90 lines of verification output]"));
-        assert!(!trimmed.contains("line 50 of the output"));
-        // The sections around the trimmed one are untouched.
-        assert!(trimmed.contains("## Claims\n- [ ] it works"));
-        assert!(trimmed.starts_with("## Verification Results\n"));
-        assert_eq!(trimmed.matches("## Verification Results").count(), 1);
+    fn the_reviewer_prompt_falls_back_to_the_plan_and_the_file_list() {
+        let p = reviewer(
+            &test_task(),
+            None,
+            Some("## File Operations\nCREATE a.txt"),
+            &["src/a.rs".into()],
+            None,
+            2,
+        );
+        assert!(p.contains("No build claims were found"));
+        assert!(p.contains("## File Operations\nCREATE a.txt"));
+        assert!(p.contains("- src/a.rs"));
+        assert!(p.contains("The diff is empty or too large to carry"));
+        assert!(p.contains("Pass 2."));
     }
 
     #[test]
-    fn middle_lines_mentioning_failures_survive_the_trim() {
-        let mut section = String::from("## Verification Results\n");
-        for i in 0..110 {
-            if i == 50 {
-                section.push_str("error: assertion failed in the middle\n");
-            } else {
-                section.push_str(&format!("line {i}\n"));
-            }
-        }
-        let trimmed = trim_claims(&section);
-        assert!(trimmed.contains("error: assertion failed in the middle"));
-        assert!(trimmed.contains("[trimmed 79 lines of verification output]"));
+    fn the_per_file_reviewer_prompt_is_report_only() {
+        let p = reviewer_file(&test_task(), "src/a.rs", 1);
+        assert!(p.contains("Task T8.1: Add the per-task plan stage"));
+        assert!(p.contains("exactly this one: src/a.rs"));
+        assert!(p.contains("single-file concerns only"));
+        // Report-only: no edits, every finding fixed false.
+        assert!(p.contains("Do not edit any file: this pass is report-only"));
+        assert!(p.contains("\"fixed\": false"));
+        assert!(p.contains("Verdict: PASS"));
+        assert!(p.contains(SPEC_FILE) && p.contains(TASK_FILE));
+        assert!(!p.contains("verify every claim"));
+    }
+
+    #[test]
+    fn the_integration_prompt_carries_the_merged_findings() {
+        let p = reviewer_integration(
+            &test_task(),
+            "{\"high\": [\"a leak\"], \"medium\": [], \"low\": []}",
+            &["src/a.rs".into()],
+            2,
+        );
+        assert!(p.contains("Task T8.1: Add the per-task plan stage"));
+        assert!(p.contains("{\"high\": [\"a leak\"], \"medium\": [], \"low\": []}"));
+        assert!(p.contains("Do not re-report those findings"));
+        assert!(p.contains("cross-file issues"));
+        assert!(p.contains("- src/a.rs"));
+        // It reviews and fixes like the main pass: the shared rules travel along.
+        assert!(p.contains("never trust the builder's verification"));
+        assert!(p.contains("no separate fix loop"));
+        assert!(p.contains("Verdict: PASS"));
     }
 
     #[test]
@@ -862,7 +1027,7 @@ mod tests {
     fn the_verdict_passes_on_zero_qualifying_highs_and_mediums() {
         let report = "Verdict: FAIL\n{\"high\": [], \"medium\": [], \"low\": [{\"issue\": \"style\", \"confidence\": 1.0}]}";
         assert!(compute_verdict(Some(report), 0.5).passed);
-        // A pass verdict with leftover qualifying findings still passes.
+        // A pass verdict with a leftover qualifying finding still passes.
         let report = "Verdict: PASS\n{\"high\": [{\"issue\": \"x\", \"confidence\": 1.0}]}";
         assert!(compute_verdict(Some(report), 0.5).passed);
     }
@@ -976,30 +1141,6 @@ mod tests {
     }
 
     #[test]
-    fn leading_numbers_and_batch_deferral() {
-        assert_eq!(leading_number("T1.2"), Some("1".into()));
-        assert_eq!(leading_number("D12.3"), Some("12".into()));
-        assert_eq!(leading_number("1.2"), Some("1".into()));
-        assert_eq!(leading_number("T1"), None);
-        assert_eq!(leading_number("TASK"), None);
-        assert!(batch_deferred("T1.1", &["T1.2".into(), "T1.3".into()]));
-        assert!(!batch_deferred("T1.1", &["T2.1".into()]));
-        // The current task never defers itself.
-        assert!(!batch_deferred("T1.1", &["T1.1".into()]));
-        // A single-task group is never deferred.
-        assert!(!batch_deferred("T1.1", &["T2.1".into(), "T3.1".into()]));
-    }
-
-    #[test]
-    fn the_progress_token_has_five_positions_and_the_exclamation() {
-        assert_eq!(progress(true, true, true, true, true), "[RP.BR]");
-        assert_eq!(progress(false, false, true, false, true), "[--.B-]");
-        assert_eq!(progress(true, true, true, true, false), "[RP.BR!]");
-        assert_eq!(progress(false, false, true, false, false), "[--.B-!]");
-        assert_eq!(progress(true, true, false, false, false), "[RP.--!]");
-    }
-
-    #[test]
     fn the_review_history_matches_and_records() {
         let mut history = ReviewHistory::default();
         // An empty history yields no skip.
@@ -1092,128 +1233,6 @@ mod tests {
     }
 
     #[test]
-    fn the_open_group_round_trips_through_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("open-group.json");
-        let group = OpenGroup {
-            number: "1".into(),
-            base: "b1a20c1d0e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b".into(),
-            last: "7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e".into(),
-            members: vec![
-                ("T1.1".into(), description_hash("first task description")),
-                ("T1.2".into(), "0123456789abcdef0123456789abcdef".into()),
-            ],
-        };
-        group.save(&path).unwrap();
-        assert_eq!(OpenGroup::load(&path), Some(group));
-        // A missing file (a closed group, a fresh install) is no open group.
-        assert_eq!(OpenGroup::load(&dir.path().join("missing.json")), None);
-        // A corrupt file is no open group either.
-        std::fs::write(dir.path().join("corrupt.json"), "not json").unwrap();
-        assert_eq!(OpenGroup::load(&dir.path().join("corrupt.json")), None);
-        // Clearing deletes the record; clearing again is already clear.
-        OpenGroup::clear(&path).unwrap();
-        assert_eq!(OpenGroup::load(&path), None);
-        assert!(OpenGroup::clear(&path).is_ok());
-        // The description hash is deterministic and distinguishes descriptions.
-        assert_eq!(description_hash("a task"), description_hash("a task"));
-        assert_ne!(description_hash("a"), description_hash("b"));
-    }
-
-    #[test]
-    fn an_interrupted_group_resumes_for_a_member_task() {
-        let description = "resume the interrupted group";
-        let record = OpenGroup {
-            number: "1".into(),
-            base: "base".into(),
-            last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
-        };
-        assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", description),
-            ResumeDecision::Resume
-        );
-    }
-
-    #[test]
-    fn a_moved_head_starts_a_fresh_group() {
-        let description = "resume the interrupted group";
-        let record = OpenGroup {
-            number: "1".into(),
-            base: "base".into(),
-            last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
-        };
-        assert_eq!(
-            resume_decision(&record, "head moved on", true, "T1.2", description),
-            ResumeDecision::Fresh
-        );
-    }
-
-    #[test]
-    fn a_base_that_is_not_an_ancestor_starts_a_fresh_group() {
-        let description = "resume the interrupted group";
-        let record = OpenGroup {
-            number: "1".into(),
-            base: "abandoned".into(),
-            last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
-        };
-        assert_eq!(
-            resume_decision(&record, "c0ffee", false, "T1.2", description),
-            ResumeDecision::Fresh
-        );
-    }
-
-    #[test]
-    fn a_different_leading_number_starts_a_fresh_group() {
-        let description = "a task of another number";
-        let record = OpenGroup {
-            number: "2".into(),
-            base: "base".into(),
-            last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash(description))],
-        };
-        assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", description),
-            ResumeDecision::Fresh
-        );
-        // A malformed task ID has no leading number, so it starts fresh too.
-        assert_eq!(
-            resume_decision(&record, "c0ffee", true, "no-dot", description),
-            ResumeDecision::Fresh
-        );
-    }
-
-    #[test]
-    fn a_reused_task_id_with_a_new_description_starts_a_fresh_group() {
-        let record = OpenGroup {
-            number: "1".into(),
-            base: "base".into(),
-            last: "c0ffee".into(),
-            members: vec![("T1.2".into(), description_hash("old description"))],
-        };
-        assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", "a reworded description"),
-            ResumeDecision::Fresh
-        );
-    }
-
-    #[test]
-    fn a_not_yet_run_task_of_the_same_number_resumes() {
-        let record = OpenGroup {
-            number: "1".into(),
-            base: "base".into(),
-            last: "c0ffee".into(),
-            members: vec![("T1.1".into(), "0123456789abcdef0123456789abcdef".into())],
-        };
-        assert_eq!(
-            resume_decision(&record, "c0ffee", true, "T1.2", "the next task"),
-            ResumeDecision::Resume
-        );
-    }
-
-    #[test]
     fn the_cluster_cap_evicts_the_least_observed() {
         let mut history = ReviewHistory::default();
         // 200 mutually dissimilar shapes fill the history without matching.
@@ -1234,5 +1253,39 @@ mod tests {
             "2026-01-01",
         );
         assert_eq!(history.clusters.len(), 200);
+    }
+
+    #[test]
+    fn multipass_findings_merge_and_de_duplicate_by_file_and_issue() {
+        let mut merged = Findings::default();
+        let finding = |file: &str, issue: &str| Finding {
+            file: file.into(),
+            issue: issue.into(),
+            confidence: 0.9,
+            ..Finding::default()
+        };
+        for (file, issue) in [
+            ("a.rs", "a leak"),
+            ("a.rs", "a leak"),
+            ("a.rs", "another"),
+            ("b.rs", "a leak"),
+        ] {
+            let mut findings = Findings::default();
+            findings.high.push(finding(file, issue));
+            merge_findings(&mut merged, findings);
+        }
+        assert_eq!(merged.high.len(), 3, "{merged:?}");
+        assert_eq!(merged.medium.len(), 0);
+        assert!(
+            merged
+                .high
+                .iter()
+                .any(|f| f.file == "a.rs" && f.issue == "another")
+        );
+        // The same finding in a different severity bucket is its own entry.
+        let mut findings = Findings::default();
+        findings.medium.push(finding("a.rs", "a leak"));
+        merge_findings(&mut merged, findings);
+        assert_eq!(merged.medium.len(), 1);
     }
 }

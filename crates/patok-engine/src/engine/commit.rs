@@ -3,8 +3,9 @@ use patok_core::task::Task;
 use patok_core::utils::atomic_write;
 
 use super::Engine;
+use super::group;
 use crate::git::{CommitKind, Git};
-use crate::{review, taskfile};
+use crate::taskfile;
 
 impl Engine {
     /// Records the task's batch-review group: a contiguous run of
@@ -17,7 +18,7 @@ impl Engine {
     /// reset at each session start, which makes the decision re-run for the
     /// session's first task.
     pub(crate) async fn note_group(&self, task: &Task) {
-        let number = review::leading_number(&task.id);
+        let number = group::leading_number(&task.id);
         {
             let state = self.state();
             if state.group_number.is_some() && state.group_number == number {
@@ -49,7 +50,7 @@ impl Engine {
         &self,
         task: &Task,
         number: Option<&str>,
-    ) -> (Option<String>, Option<review::OpenGroup>) {
+    ) -> (Option<String>, Option<group::OpenGroup>) {
         let git = self.git();
         let head = git.head_full_sha().await;
         let Some(number) = number else {
@@ -58,19 +59,19 @@ impl Engine {
         let Some(head) = head else {
             return (None, None); // no commits yet: nothing to record
         };
-        let fresh = || review::OpenGroup {
+        let fresh = || group::OpenGroup {
             number: number.to_string(),
             base: head.clone(),
             last: head.clone(),
             members: Vec::new(),
         };
-        match review::OpenGroup::load(&self.inner.config.open_group) {
+        match group::OpenGroup::load(&self.inner.config.open_group) {
             Some(record) => {
                 let ancestor = git.is_ancestor(&record.base, &head).await;
-                match review::resume_decision(&record, &head, ancestor, &task.id, &task.description)
+                match group::resume_decision(&record, &head, ancestor, &task.id, &task.description)
                 {
-                    review::ResumeDecision::Resume => (Some(record.base.clone()), Some(record)),
-                    review::ResumeDecision::Fresh => (Some(head.clone()), Some(fresh())),
+                    group::ResumeDecision::Resume => (Some(record.base.clone()), Some(record)),
+                    group::ResumeDecision::Fresh => (Some(head.clone()), Some(fresh())),
                 }
             }
             None => (Some(head.clone()), Some(fresh())),
@@ -87,16 +88,16 @@ impl Engine {
             let Some(number) = state.group_number.as_deref() else {
                 return;
             };
-            if review::leading_number(&task.id).as_deref() != Some(number) {
+            if group::leading_number(&task.id).as_deref() != Some(number) {
                 return;
             }
         }
         let path = self.inner.config.open_group.clone();
-        let Some(mut record) = review::OpenGroup::load(&path) else {
+        let Some(mut record) = group::OpenGroup::load(&path) else {
             return;
         };
         record.last = full.to_string();
-        let hash = review::description_hash(&task.description);
+        let hash = group::description_hash(&task.description);
         if !record
             .members
             .iter()
@@ -114,7 +115,7 @@ impl Engine {
     /// the whole group. A task outside the current group (or without a
     /// leading number) closes nothing.
     pub(crate) fn close_group(&self, task_id: &str) {
-        let number = review::leading_number(task_id);
+        let number = group::leading_number(task_id);
         {
             let state = self.state();
             if number.is_none() || state.group_number != number {
@@ -122,7 +123,7 @@ impl Engine {
             }
         }
         let path = self.inner.config.open_group.clone();
-        if let Err(error) = review::OpenGroup::clear(&path) {
+        if let Err(error) = group::OpenGroup::clear(&path) {
             tracing::warn!("cannot delete the open group {}: {error}", path.display());
         }
     }

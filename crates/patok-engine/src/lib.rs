@@ -1,13 +1,11 @@
 //! The engine process: owns the task queue, git, history log and provider supervision, and
 //! serves the gRPC protocol to the shell over a Unix socket.
 
+mod agents;
 mod artifact;
 mod engine;
 mod git;
 mod markdown;
-mod plan;
-mod prompt;
-mod review;
 mod schedule;
 mod server;
 pub mod taskfile;

@@ -1,13 +1,12 @@
-use patok_core::event::{AgentRole, NoticeLevel};
+use patok_core::event::NoticeLevel;
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
-use patok_providers::PLAN_TOOLS;
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
 use super::session::{AgentPrompt, StageExit, StageStart, StageWords};
 use super::state::Unit;
-use crate::{plan, prompt};
+use crate::agents::{Agent, PlanAgent};
 
 /// The outcome of one task's plan stage (T10.1).
 #[derive(Debug)]
@@ -39,20 +38,15 @@ impl Engine {
             tiles.set(Stage::Research, TileStatus::Done);
             tiles.set(Stage::Plan, TileStatus::Active);
         });
-        let mut prompt_text = prompt::plan(task, research);
+        let mut agent = PlanAgent::new(task, research);
         for attempt in 1..=2 {
             // Every attempt is one planner session with its own timing, so a retried
             // plan leaves its own finished line (T42.1) and starting line (T78.1).
             let exit = self
                 .run_stage(
                     StageStart::Announce,
-                    AgentRole::Planner,
-                    AgentPrompt {
-                        prompt: prompt_text,
-                        system_prompt: prompt::PLAN_SYSTEM,
-                        label: "plan".into(),
-                        tools: PLAN_TOOLS,
-                    },
+                    agent.role(),
+                    AgentPrompt::of(&agent),
                     cancel.clone(),
                     unit,
                     StageWords {
@@ -71,9 +65,8 @@ impl Engine {
                 StageExit::Failed => return PlanStage::Failed,
                 StageExit::Completed(events) => events,
             };
-            let text = plan::captured_text(&events);
-            match plan::gate_plan(&text) {
-                Ok(()) => return PlanStage::Accepted(text),
+            match agent.validate(&events) {
+                Ok(text) => return PlanStage::Accepted(text),
                 Err(reason) if attempt == 2 => {
                     self.notice(
                         NoticeLevel::Error,
@@ -85,7 +78,7 @@ impl Engine {
                     return PlanStage::Failed;
                 }
                 Err(reason) => {
-                    prompt_text = prompt::plan_retry(task, &text, &reason, research);
+                    agent = agent.retry(&events, &reason);
                 }
             }
         }

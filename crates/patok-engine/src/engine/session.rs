@@ -5,20 +5,21 @@ use patok_core::config::RunMode;
 use patok_core::event::{AgentEvent, AgentRole, EngineEvent, NoticeLevel, TaskOutcome};
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::{self, Task};
-use patok_providers::{
-    BUILDER_TOOLS, DISCOVERY_TOOLS, ExitKind, PLANNER_TOOLS, ProviderError, RESEARCH_TOOLS,
-    SessionRequest, SessionResult, Tool,
-};
+use patok_providers::{ExitKind, ProviderError, SessionRequest, SessionResult, Tool};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
 use super::commands::QueueCreation;
+use super::group;
 use super::plan_stage::PlanStage;
 use super::research_stage::ResearchStage;
 use super::review_stage::ReviewStage;
 use super::state::Unit;
-use crate::{plan, prompt, review, taskfile};
+use crate::agents::{
+    self, Agent, AppendPlannerAgent, BuilderAgent, DiscoveryAgent, ResearchQueueAgent,
+};
+use crate::taskfile;
 
 /// One append-style run's validator for [`Engine::check_appended`]: the
 /// `before` text, the `after` text and the chunks injected during the run,
@@ -34,6 +35,18 @@ pub(crate) struct AgentPrompt {
     /// The session's tool allowlist, provider-neutral; the provider maps each
     /// entry to its own CLI's tool name(s).
     pub(crate) tools: &'static [Tool],
+}
+
+impl AgentPrompt {
+    /// One agent's prompt bundle, straight from its [`Agent`] interface.
+    pub(crate) fn of(agent: &impl Agent) -> Self {
+        Self {
+            prompt: agent.user_prompt(),
+            system_prompt: agent.system_prompt(),
+            label: agent.label(),
+            tools: agent.tools(),
+        }
+    }
 }
 
 /// How the shared stage session's starting line is produced (finding 17 in
@@ -322,16 +335,12 @@ impl Engine {
     ) {
         // The append-tasks planner is the active agent for the whole run (T11.1), so the
         // shell's output frame shows the planner title while it streams.
+        let agent = AppendPlannerAgent::new(&request);
         let exit = self
             .run_stage(
                 StageStart::Announced(start),
-                AgentRole::Planner,
-                AgentPrompt {
-                    prompt: prompt::planner(&request),
-                    system_prompt: prompt::PLANNER_SYSTEM,
-                    label: "planner".into(),
-                    tools: PLANNER_TOOLS,
-                },
+                agent.role(),
+                AgentPrompt::of(&agent),
                 cancel,
                 &unit,
                 StageWords {
@@ -374,19 +383,15 @@ impl Engine {
     ) {
         // The research agent is the active agent for the whole run (T11.1), so
         // the shell's output frame shows the research title while it streams.
+        let agent = match kind {
+            QueueCreation::Bootstrap => ResearchQueueAgent::bootstrap(),
+            QueueCreation::Scan => ResearchQueueAgent::scan(),
+        };
         let exit = self
             .run_stage(
                 StageStart::Announced(start),
-                AgentRole::Research,
-                AgentPrompt {
-                    prompt: match kind {
-                        QueueCreation::Bootstrap => prompt::research_queue_bootstrap(),
-                        QueueCreation::Scan => prompt::research_queue_scan(),
-                    },
-                    system_prompt: prompt::RESEARCH_QUEUE_SYSTEM,
-                    label: "research".into(),
-                    tools: RESEARCH_TOOLS,
-                },
+                agent.role(),
+                AgentPrompt::of(&agent),
                 cancel,
                 &unit,
                 StageWords {
@@ -415,7 +420,7 @@ impl Engine {
                 .await
                 .is_ok()
             {
-                let report = plan::captured_text(&events);
+                let report = agent.validate(&events).unwrap_or_default();
                 if report.trim().is_empty() {
                     self.notice(
                         NoticeLevel::Warning,
@@ -449,16 +454,12 @@ impl Engine {
     ) -> Option<usize> {
         // The discovery agent is the active agent for the whole round (T11.1), so the
         // shell's output frame shows its title while it streams.
+        let agent = DiscoveryAgent::new();
         let exit = self
             .run_stage(
                 StageStart::Announce,
-                AgentRole::Discovery,
-                AgentPrompt {
-                    prompt: prompt::discovery(),
-                    system_prompt: prompt::DISCOVERY_SYSTEM,
-                    label: "discovery".into(),
-                    tools: DISCOVERY_TOOLS,
-                },
+                agent.role(),
+                AgentPrompt::of(&agent),
                 cancel,
                 unit,
                 StageWords {
@@ -635,7 +636,7 @@ impl Engine {
             None
         };
         let progress = |ran_review: bool, validated: bool| {
-            review::progress(ran_research, plan.is_some(), true, ran_review, validated)
+            group::progress(ran_research, plan.is_some(), true, ran_review, validated)
         };
 
         // The builder takes over from the planner (T11.1); also announced when the plan
@@ -650,16 +651,12 @@ impl Engine {
 
         // The builder's final message carries the build claims section the review
         // stage reviews, so the events are captured like the plan stage's.
+        let agent = BuilderAgent::new(&task, plan.as_deref(), research.as_deref());
         let exit = self
             .run_stage(
                 StageStart::Announce,
-                AgentRole::Builder,
-                AgentPrompt {
-                    prompt: prompt::builder(&task, plan.as_deref(), research.as_deref()),
-                    system_prompt: prompt::SYSTEM,
-                    label: task.id.clone(),
-                    tools: BUILDER_TOOLS,
-                },
+                agent.role(),
+                AgentPrompt::of(&agent),
                 cancel.clone(),
                 unit,
                 StageWords {
@@ -682,10 +679,11 @@ impl Engine {
             StageExit::Completed(builder_events) => {
                 // The builder succeeded: its final message's build claims section
                 // becomes the claims artifact, with the
-                // verification-results trimming applied.
-                let final_text = plan::captured_text(&builder_events);
-                if let Some(claims) = review::claims_section(&final_text) {
-                    self.write_claims_file(&task.id, &review::trim_claims(claims));
+                // verification-results trimming applied. The builder agent's
+                // validation is trivial acceptance, so this arm cannot fire.
+                let final_text = agent.validate(&builder_events).unwrap_or_default();
+                if let Some(claims) = agents::claims_section(&final_text) {
+                    self.write_claims_file(&task.id, &agents::trim_claims(claims));
                 }
                 // The build tile is done once the builder session completed: the
                 // stages before the running one are always done, so review never renders with the build

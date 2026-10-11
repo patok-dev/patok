@@ -1,15 +1,18 @@
 use patok_core::complexity::{self, Complexity};
-use patok_core::config::Severity;
-use patok_core::event::{AgentRole, NoticeLevel};
+use patok_core::event::NoticeLevel;
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
-use patok_providers::REVIEWER_TOOLS;
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
+use super::group;
 use super::session::{AgentPrompt, StageExit, StageStart, StageWords};
 use super::state::{Unit, resolve_provider};
-use crate::{artifact, plan, prompt, review, taskfile};
+use crate::agents::{
+    Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs,
+    compute_verdict, is_generated, merge_findings, skip_review,
+};
+use crate::{artifact, taskfile};
 
 /// The largest git diff the reviewer prompt carries:
 /// 50 KB; a larger or empty diff falls back to the changed-file list.
@@ -32,31 +35,19 @@ pub(crate) enum ReviewStage {
 
 /// The outcome of the reviewer sessions of one review.
 enum ReviewRun {
-    /// The final review report.
-    Report(String),
+    /// The final review report and its computed verdict.
+    Outcome(ReviewOutcome),
     /// The reviewer session failed: a missing report counts as one HIGH finding.
     Failed,
     /// A reviewer session was cancelled.
     Cancelled,
 }
 
-/// Merges `findings` into `merged`, de-duplicated by file and issue.
-fn merge_findings(merged: &mut review::Findings, findings: review::Findings) {
-    for severity in [Severity::High, Severity::Medium, Severity::Low] {
-        let bucket = match severity {
-            Severity::High => &mut merged.high,
-            Severity::Medium => &mut merged.medium,
-            Severity::Low => &mut merged.low,
-        };
-        for finding in findings.bucket(severity) {
-            if !bucket
-                .iter()
-                .any(|existing| existing.file == finding.file && existing.issue == finding.issue)
-            {
-                bucket.push(finding.clone());
-            }
-        }
-    }
+/// How one reviewer session ended other than completing: a cancelled or
+/// failed session, before the agent's own validation.
+enum ReviewExit {
+    Cancelled,
+    Failed,
 }
 
 impl Engine {
@@ -81,12 +72,12 @@ impl Engine {
             .filter(|t| !t.done && !t.is_malformed())
             .map(|t| t.id)
             .collect();
-        let history = review::ReviewHistory::load(&self.inner.config.review_history);
+        let history = ReviewHistory::load(&self.inner.config.review_history);
         // The raw deferral decides the group's close beside the skip rule:
         // the batch deferral is not the group's last task, and its skip is
         // not a completed review.
-        let deferred = review::batch_deferred(&task.id, &pending_after);
-        let inputs = review::SkipInputs {
+        let deferred = group::batch_deferred(&task.id, &pending_after);
+        let inputs = SkipInputs {
             review_in_loop: unit.settings.review_in_loop,
             batch_deferred: unit.settings.batch_review && deferred,
             skip_review_for_simple: unit.settings.skip_review_for_simple,
@@ -96,7 +87,7 @@ impl Engine {
             history_consecutive_passes: history.match_shape(&task.description, complexity),
             stage_enabled: unit.review_stage_enabled(),
         };
-        if let Some(reason) = review::skip_review(&inputs) {
+        if let Some(reason) = skip_review(&inputs) {
             tracing::info!("review skipped for {}: {}", task.id, reason.reason());
             self.notice(
                 NoticeLevel::Info,
@@ -147,18 +138,35 @@ impl Engine {
         // so a snapshot-heavy change does not run dozens of per-file sessions.
         let reviewable: Vec<String> = changed
             .iter()
-            .filter(|file| !review::is_generated(file))
+            .filter(|file| !is_generated(file))
             .cloned()
             .collect();
         let run = if unit.settings.review_multipass_threshold > 0
             && reviewable.len() as u64 > unit.settings.review_multipass_threshold
         {
-            self.multipass_review(task, unit, cancel, &reviewable, &changed)
+            match self
+                .multipass_review(task, unit, cancel, &reviewable, &changed)
                 .await
+            {
+                Ok(outcome) => ReviewRun::Outcome(outcome),
+                Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
+                Err(ReviewExit::Failed) => ReviewRun::Failed,
+            }
         } else {
-            let prompt =
-                prompt::reviewer(task, claims.as_deref(), plan, &changed, diff.as_deref(), 1);
-            self.one_review(task, unit, cancel, &prompt).await
+            let agent = ReviewerAgent::combined(
+                task,
+                claims.as_deref(),
+                plan,
+                &changed,
+                diff.as_deref(),
+                1,
+                unit.settings.confidence_threshold,
+            );
+            match self.one_review(task, unit, cancel, &agent).await {
+                Ok(outcome) => ReviewRun::Outcome(outcome),
+                Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
+                Err(ReviewExit::Failed) => ReviewRun::Failed,
+            }
         };
         let after = self.file_hashes(&changed);
         let applied: Vec<String> = changed
@@ -178,27 +186,24 @@ impl Engine {
             );
         }
 
-        let result = match run {
+        // The verdict.
+        let (report, verdict) = match run {
             ReviewRun::Cancelled => {
                 self.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
                 self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
                 return ReviewStage::Cancelled;
             }
-            ReviewRun::Report(report) => (report, true),
+            ReviewRun::Outcome(outcome) => (outcome.report, outcome.verdict),
             ReviewRun::Failed => {
                 // The reviewer agent must succeed: a failed session counts as
                 // a missing report (one HIGH finding).
                 tracing::error!("the reviewer session failed for {}", task.id);
-                (String::new(), false)
+                (
+                    String::new(),
+                    compute_verdict(None, unit.settings.confidence_threshold),
+                )
             }
         };
-
-        // The verdict.
-        let report = result.0;
-        let verdict = review::compute_verdict(
-            result.1.then_some(report.as_str()),
-            unit.settings.confidence_threshold,
-        );
         for below in &verdict.below_threshold {
             tracing::warn!(
                 "below-confidence {} finding for {} (confidence {:.2}): {}",
@@ -277,14 +282,16 @@ impl Engine {
 
     /// One reviewer session: announced as the active agent (T11.1), recorded
     /// with the reviewer allowlist, its raw stream written to the history log,
-    /// and its captured final message taken as the review report.
-    async fn one_review(
+    /// and its captured final message validated by the agent (the combined and
+    /// integration reviewers compute the verdict over it, the per-file
+    /// reviewer parses its findings out of it).
+    async fn one_review<A: Agent>(
         &self,
         task: &Task,
         unit: &Unit,
         cancel: &CancellationToken,
-        prompt: &str,
-    ) -> ReviewRun {
+        agent: &A,
+    ) -> Result<A::Session, ReviewExit> {
         // The starting line names the provider the review actually runs on
         // (mistral when the reviewer provider is mistral), so the unit resolves first
         // (T78.1).
@@ -292,13 +299,8 @@ impl Engine {
         let exit = self
             .run_stage(
                 StageStart::Announce,
-                AgentRole::Reviewer,
-                AgentPrompt {
-                    prompt: prompt.to_string(),
-                    system_prompt: prompt::REVIEWER_SYSTEM,
-                    label: "review".into(),
-                    tools: REVIEWER_TOOLS,
-                },
+                agent.role(),
+                AgentPrompt::of(agent),
                 cancel.clone(),
                 &reviewer_unit,
                 StageWords {
@@ -313,9 +315,9 @@ impl Engine {
             )
             .await;
         match exit {
-            StageExit::Completed(events) => ReviewRun::Report(plan::captured_text(&events)),
-            StageExit::Cancelled => ReviewRun::Cancelled,
-            StageExit::Failed => ReviewRun::Failed,
+            StageExit::Completed(events) => agent.validate(&events).map_err(|_| ReviewExit::Failed),
+            StageExit::Cancelled => Err(ReviewExit::Cancelled),
+            StageExit::Failed => Err(ReviewExit::Failed),
         }
     }
 
@@ -330,27 +332,29 @@ impl Engine {
         cancel: &CancellationToken,
         reviewable: &[String],
         changed: &[String],
-    ) -> ReviewRun {
-        let mut merged = review::Findings::default();
+    ) -> Result<ReviewOutcome, ReviewExit> {
+        let mut merged = Findings::default();
         for file in reviewable {
-            let prompt = prompt::reviewer_file(task, file, 1);
-            let run = self.one_review(task, unit, cancel, &prompt).await;
-            match run {
-                ReviewRun::Cancelled => return ReviewRun::Cancelled,
-                ReviewRun::Failed => {
+            let agent = FileReviewerAgent::new(task, file, 1);
+            match self.one_review(task, unit, cancel, &agent).await {
+                Err(ReviewExit::Cancelled) => return Err(ReviewExit::Cancelled),
+                Err(ReviewExit::Failed) => {
                     // A failed file review is skipped and the loop continues.
                     continue;
                 }
-                ReviewRun::Report(report) => {
-                    if let Some(findings) = review::parse_report(&report).findings {
-                        merge_findings(&mut merged, findings);
-                    }
-                }
+                Ok(Some(findings)) => merge_findings(&mut merged, findings),
+                Ok(None) => {}
             }
         }
         let findings_json = serde_json::to_string_pretty(&merged).unwrap_or_default();
-        let prompt = prompt::reviewer_integration(task, &findings_json, changed, 2);
-        self.one_review(task, unit, cancel, &prompt).await
+        let agent = ReviewerAgent::integration(
+            task,
+            &findings_json,
+            changed,
+            2,
+            unit.settings.confidence_threshold,
+        );
+        self.one_review(task, unit, cancel, &agent).await
     }
 
     /// The SHA-256 content hashes of `files` (missing files hash to none):
@@ -378,7 +382,7 @@ impl Engine {
         let path = self.inner.config.review_history.clone();
         let date = artifact::unix_now().as_secs().to_string();
         tokio::spawn(async move {
-            let mut history = review::ReviewHistory::load(&path);
+            let mut history = ReviewHistory::load(&path);
             history.record(&description, complexity, passed, &date);
             if let Err(error) = history.save(&path) {
                 tracing::warn!(
@@ -387,44 +391,5 @@ impl Engine {
                 );
             }
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn multipass_findings_merge_and_de_duplicate_by_file_and_issue() {
-        let mut merged = review::Findings::default();
-        let finding = |file: &str, issue: &str| review::Finding {
-            file: file.into(),
-            issue: issue.into(),
-            confidence: 0.9,
-            ..review::Finding::default()
-        };
-        for (file, issue) in [
-            ("a.rs", "a leak"),
-            ("a.rs", "a leak"),
-            ("a.rs", "another"),
-            ("b.rs", "a leak"),
-        ] {
-            let mut findings = review::Findings::default();
-            findings.high.push(finding(file, issue));
-            merge_findings(&mut merged, findings);
-        }
-        assert_eq!(merged.high.len(), 3, "{merged:?}");
-        assert_eq!(merged.medium.len(), 0);
-        assert!(
-            merged
-                .high
-                .iter()
-                .any(|f| f.file == "a.rs" && f.issue == "another")
-        );
-        // The same finding in a different severity bucket is its own entry.
-        let mut findings = review::Findings::default();
-        findings.medium.push(finding("a.rs", "a leak"));
-        merge_findings(&mut merged, findings);
-        assert_eq!(merged.medium.len(), 1);
     }
 }

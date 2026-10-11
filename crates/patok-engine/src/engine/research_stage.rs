@@ -1,14 +1,13 @@
 use patok_core::complexity::{self, Complexity};
-use patok_core::event::{AgentRole, NoticeLevel};
+use patok_core::event::NoticeLevel;
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
-use patok_providers::RESEARCH_TOOLS;
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
 use super::session::{AgentPrompt, StageExit, StageStart, StageWords};
 use super::state::Unit;
-use crate::{plan, prompt};
+use crate::agents::{Agent, ResearchAgent};
 
 /// The outcome of one task's research stage (T68.1).
 #[derive(Debug)]
@@ -56,16 +55,12 @@ impl Engine {
         // The research session is the running stage: its tile is active with the
         // later stages still pending.
         self.update_tiles(|tiles| tiles.set(Stage::Research, TileStatus::Active));
+        let agent = ResearchAgent::new(task);
         let exit = self
             .run_stage(
                 StageStart::Announce,
-                AgentRole::Research,
-                AgentPrompt {
-                    prompt: prompt::research(task),
-                    system_prompt: prompt::RESEARCH_SYSTEM,
-                    label: "research".into(),
-                    tools: RESEARCH_TOOLS,
-                },
+                agent.role(),
+                AgentPrompt::of(&agent),
                 cancel.clone(),
                 unit,
                 StageWords {
@@ -84,7 +79,11 @@ impl Engine {
             StageExit::Failed => return ResearchStage::Failed,
             StageExit::Completed(events) => events,
         };
-        let report = plan::captured_text(&events);
+        // The research agent's validation is trivial acceptance, so this arm
+        // cannot fire; it stays dead-safe.
+        let Ok(report) = agent.validate(&events) else {
+            return ResearchStage::Failed;
+        };
         if report.trim().is_empty() {
             self.notice(
                 NoticeLevel::Warning,

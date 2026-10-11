@@ -7,14 +7,17 @@
 //! central settings and reload (`settings`), the command entry points
 //! (`commands`), the session loop and the shared stage skeleton (`session`),
 //! the research, plan and review stages (`research_stage`, `plan_stage`,
-//! `review_stage`), the artifact files (`artifacts`), and the group tracking and
-//! commit finalization (`commit`).
+//! `review_stage`), driving their agents from the pure per-agent definitions in
+//! `crate::agents`, the artifact files (`artifacts`), the task-line and
+//! open-group group machinery (`group`), and the group tracking and commit
+//! finalization (`commit`).
 
 mod artifacts;
 mod bus;
 mod commands;
 mod commit;
 mod config;
+mod group;
 mod pipeline;
 mod plan_stage;
 mod research_stage;
