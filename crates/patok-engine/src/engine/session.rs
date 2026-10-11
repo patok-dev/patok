@@ -1,19 +1,16 @@
 use std::time::Instant;
 
 use patok_core::config::RunMode;
-use patok_core::event::{AgentRole, EngineEvent, TaskOutcome};
+use patok_core::event::{EngineEvent, TaskOutcome};
 use patok_core::task::Task;
 
 use super::Engine;
 use super::commands::QueueCreation;
 use crate::context::SessionContext;
+use crate::pipeline::add_task::AddTaskPipeline;
 use crate::pipeline::build::BuildPipeline;
-use crate::step::add_task::AddTaskStep;
-use crate::step::agent_run::StageExit;
-use crate::step::discovery::DiscoveryStep;
-use crate::step::queue_research::QueueResearchStep;
-use crate::step::validate_append::ValidateAppendStep;
-use crate::task_list::AppendMode;
+use crate::pipeline::discovery::DiscoveryPipeline;
+use crate::pipeline::queue_creation::QueueCreationPipeline;
 
 impl Engine {
     /// The session-level build loop: pending tasks are
@@ -122,11 +119,11 @@ impl Engine {
         }
     }
 
-    /// One planner session: [`AddTaskStep`] runs the append-tasks planner and,
-    /// when the session completed, [`ValidateAppendStep`] validates the file
-    /// afterwards. `before` is the task file as it was before the run;
-    /// `start` is the moment the run was announced in `start_add_tasks`. The run
-    /// uses the settings snapshot taken when it was started. The task-file lock
+    /// One planner session: [`AddTaskPipeline`] owns the run's flow --
+    /// the append-tasks planner step and, when the session completed,
+    /// the post-session append validation -- on the session's settings
+    /// snapshot in `ctx`. `before` is the task file as it was before the run;
+    /// `start` is the moment the run was announced in `start_add_tasks`. The task-file lock
     /// is free for the whole session and re-acquired only for the post-session
     /// check, so an inject during the session is neither blocked nor lost
     /// (T77.1).
@@ -137,12 +134,9 @@ impl Engine {
         ctx: SessionContext,
         start: Instant,
     ) {
-        let exit = AddTaskStep::new(&ctx).run(&request, start).await;
-        if let StageExit::Completed(_) = exit {
-            let _ = ValidateAppendStep::new(&ctx)
-                .run(&before, AppendMode::Tasks, AgentRole::Planner, true)
-                .await;
-        }
+        AddTaskPipeline::new(&ctx)
+            .run(&request, &before, start)
+            .await;
 
         {
             let mut state = self.state();
@@ -153,11 +147,12 @@ impl Engine {
         self.inner.planning_done.notify_waiters();
     }
 
-    /// One research queue-creation run (T69.1): [`QueueResearchStep`] runs the
-    /// Research agent, which investigates the project and appends the
-    /// resulting tasks, and [`ValidateAppendStep`] validates the file
-    /// afterwards. `before` is the task file as it was before the run;
-    /// `start` is the moment the run was announced in
+    /// One research queue-creation run (T69.1): [`QueueCreationPipeline`]
+    /// owns the run's flow -- the Research agent session, which
+    /// investigates the project and appends the resulting tasks, the
+    /// post-session append validation and the report save, which happens
+    /// only when the validation passed. `before` is the task file as it was
+    /// before the run; `start` is the moment the run was announced in
     /// [`Engine::start_queue_creation`]. The appended tasks pass the same
     /// append-tasks validation as the planner's and are recorded as UI-added;
     /// the report lands under the research report stem of the run's kind.
@@ -168,18 +163,9 @@ impl Engine {
         ctx: SessionContext,
         start: Instant,
     ) {
-        let step = QueueResearchStep::new(&ctx);
-        if let Some(report) = step.run(kind, start).await {
-            // Only a pass saves the research report, so a rejected run
-            // re-runs rather than being covered by the reuse window.
-            if ValidateAppendStep::new(&ctx)
-                .run(&before, AppendMode::Tasks, AgentRole::Research, true)
-                .await
-                .is_ok()
-            {
-                step.save(kind, &report);
-            }
-        }
+        QueueCreationPipeline::new(&ctx)
+            .run(kind, &before, start)
+            .await;
 
         {
             let mut state = self.state();
@@ -190,11 +176,12 @@ impl Engine {
         self.inner.planning_done.notify_waiters();
     }
 
-    /// One discovery session: [`DiscoveryStep`] runs the discovery agent and,
-    /// when the session completed, [`ValidateAppendStep`] validates the file
-    /// afterwards. `before` is the task file as it was before the run; the run
-    /// uses the settings snapshot taken when it was started, with the task-file lock free
-    /// for its whole duration (T77.1). Returns how many tasks the round appended once it
+    /// One discovery session: [`DiscoveryPipeline`] owns the round's
+    /// flow -- the discovery agent session and, when it completed, the
+    /// post-session append validation -- on the session's settings
+    /// snapshot in `ctx`. `before` is the task file as it was before the
+    /// run, with the task-file lock free for the round's whole duration
+    /// (T77.1). Returns how many tasks the round appended once it
     /// completes, or `None` when it did not run to completion (error, cancelled or
     /// failed); only completed rounds move the schedule. A round whose session
     /// completed but was rejected still counts as completed, with zero tasks
@@ -204,16 +191,7 @@ impl Engine {
         before: String,
         ctx: &SessionContext,
     ) -> Option<usize> {
-        let added = match DiscoveryStep::new(ctx).run().await {
-            StageExit::Completed(_) => Some(
-                ValidateAppendStep::new(ctx)
-                    .run(&before, AppendMode::Discovery, AgentRole::Discovery, false)
-                    .await
-                    .unwrap_or_default()
-                    .len(),
-            ),
-            _ => None,
-        };
+        let added = DiscoveryPipeline::new(ctx).run(&before).await;
 
         {
             let mut state = self.state();
