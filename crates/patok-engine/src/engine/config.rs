@@ -15,6 +15,7 @@ use super::state::{Central, Inner, Resolver, RunState, State, Tiles, resolve_or_
 use super::stop::Stop;
 use crate::TASK_FILE;
 use crate::schedule::DiscoverySchedule;
+use crate::task_list::TaskList;
 
 const BROADCAST_CAPACITY: usize = 4096;
 
@@ -203,6 +204,7 @@ impl Engine {
             Duration::from_secs(central.settings.discovery_cooldown_cap_secs),
             Instant::now(),
         );
+        let task_list = Arc::new(TaskList::new(config.task_file()));
         Self {
             inner: Arc::new(Inner {
                 config,
@@ -216,9 +218,6 @@ impl Engine {
                     recent: VecDeque::new(),
                     attached: false,
                     stop: Stop::default(),
-                    tasks: Vec::new(),
-                    ui_added_ids: Vec::new(),
-                    injected: Vec::new(),
                     schedule,
                     cancel: CancellationToken::new(),
                     pipeline: PipelineState::today(),
@@ -232,7 +231,7 @@ impl Engine {
                 planning_done: Notify::new(),
                 discovery_done: Notify::new(),
                 soft_stop_cancelled: Notify::new(),
-                task_file_lock: Arc::new(tokio::sync::Mutex::new(())),
+                task_list,
                 shutdown: CancellationToken::new(),
             }),
         }

@@ -12,7 +12,7 @@ use crate::agents::{
     Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
-use crate::{artifact, taskfile};
+use crate::artifact;
 
 /// The largest git diff the reviewer prompt carries:
 /// 50 KB; a larger or empty diff falls back to the changed-file list.
@@ -66,12 +66,7 @@ impl Engine {
     ) -> ReviewStage {
         let complexity = complexity::classify(&task.description);
         // The skip decision, recorded with its reason.
-        let pending_after: Vec<String> = taskfile::load(&self.inner.config.task_file())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|t| t.is_pending())
-            .map(|t| t.id)
-            .collect();
+        let pending_after: Vec<String> = self.inner.task_list.pending_ids();
         let history = ReviewHistory::load(&self.inner.config.review_history);
         // The raw deferral decides the group's close beside the skip rule:
         // the batch deferral is not the group's last task, and its skip is

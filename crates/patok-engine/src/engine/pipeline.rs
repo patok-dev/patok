@@ -5,7 +5,6 @@ use patok_core::pipeline::{PipelineState, Tile, TileStatus};
 use super::Engine;
 use super::commands::StartCommand;
 use super::state::{RunState, State, Tiles};
-use crate::taskfile;
 
 impl Engine {
     /// The shared preamble of the four `start_*` commands (finding 17 in
@@ -43,16 +42,17 @@ impl Engine {
     }
 
     /// Re-reads the task file and merges it into the queue; broadcasts the new list when it
-    /// changed. Returns whether it did.
+    /// changed. Returns whether it did. The change detection lives in the
+    /// task list; the running-task id still comes from the held state lock
+    /// (state first, task list second).
     pub(crate) fn reconcile_locked(&self, state: &mut State) -> bool {
-        let Ok(file) = taskfile::load(&self.inner.config.task_file()) else {
+        let Some(merged) = self
+            .inner
+            .task_list
+            .reconcile(state.current_task.as_deref())
+        else {
             return false;
         };
-        let merged = taskfile::reconcile(&state.tasks, file, state.current_task.as_deref());
-        if merged == state.tasks {
-            return false;
-        }
-        state.tasks = merged.clone();
         self.emit_locked(state, EngineEvent::TasksChanged { tasks: merged });
         true
     }

@@ -8,13 +8,16 @@ mod git;
 mod markdown;
 mod schedule;
 mod server;
-pub mod taskfile;
+mod task_list;
 
 pub use engine::{Engine, EngineConfig, QueueCreation};
 /// The settings-change wire mapping, generated with the shell direction in
 /// `patok-wire` from one key-to-case list (finding 10).
 pub use patok_wire::from_proto;
 pub use server::{prepare_runtime_dir, serve};
+/// The pure task-file functions, re-exported under their historical name
+/// (section 5 of docs/private/engine-restructure.md).
+pub use task_list::file as taskfile;
 
 /// Name of the task file in the project root.
 pub use patok_core::scenario::TASK_FILE;

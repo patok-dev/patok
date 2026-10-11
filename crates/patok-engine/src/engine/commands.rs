@@ -1,12 +1,11 @@
 use patok_core::config::daemon_readout;
 use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, Snapshot};
-use patok_core::task;
 use tokio_util::sync::CancellationToken;
 
 use super::state::State;
 use super::{AttachError, Attachment, Engine};
 use crate::TASK_FILE;
-use crate::taskfile;
+use crate::taskfile::RemoveOutcome;
 
 /// Which `start_*` command is asking: the four entry points share one guard
 /// preamble and differ only in the wording of two of its rejections (finding
@@ -73,13 +72,7 @@ impl Engine {
         &self,
         state: &mut State,
     ) -> Result<(String, CancellationToken), String> {
-        let path = self.inner.config.task_file();
-        let Ok(guard) = self.inner.task_file_lock.clone().try_lock_owned() else {
-            return Err("the task file is being updated; try again".into());
-        };
-        let before = taskfile::read_or_create(&path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        drop(guard);
+        let before = self.inner.task_list.snapshot_before()?;
         let cancel = CancellationToken::new();
         state.cancel = cancel.clone();
         Ok((before, cancel))
@@ -110,7 +103,7 @@ impl Engine {
         let snapshot = Snapshot {
             project_dir: self.inner.config.project_dir.display().to_string(),
             phase: state.run.phase(),
-            tasks: state.tasks.clone(),
+            tasks: self.inner.task_list.tasks(),
             current_task: state.current_task.clone(),
             planning: state.run.is_planning(),
             discovering: state.run.is_discovering(),
@@ -135,14 +128,15 @@ impl Engine {
     /// settings are snapshotted here and the whole session runs on that unit. Errors are user-facing rejection reasons.
     pub fn start_build(&self) -> Result<(), String> {
         let unit = self.unit()?;
-        let path = self.inner.config.task_file();
-        let tasks =
-            taskfile::load(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let path = self.inner.task_list.path();
+        let pending = self
+            .inner
+            .task_list
+            .next_pending()
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::Build)?;
-        let task = task::next_pending(&tasks)
-            .ok_or_else(|| format!("no pending tasks in {TASK_FILE}"))?
-            .clone();
+        let task = pending.ok_or_else(|| format!("no pending tasks in {TASK_FILE}"))?;
         let cancel = CancellationToken::new();
         state.cancel = cancel.clone();
         // A new session starts a new batch-review group: the same leading number recurring after a different task ran
@@ -279,6 +273,8 @@ impl Engine {
     /// free for the whole duration of every agent session, followed by an
     /// immediate reconcile, so the new line reaches the in-memory queue and
     /// the attached shells right away, without waiting for the mtime poll.
+    /// The exact chunk written is recorded in the task list's
+    /// injected-chunk ledger, which the next append-style check drains.
     /// Accepted in every engine state (nothing about the running task
     /// changes: `reconcile` protects it, and the queue only picks the line
     /// up when it starts its next task). Errors are user-facing rejection
@@ -294,23 +290,7 @@ impl Engine {
         if text.trim().contains('\n') {
             return Err("the task line must be a single line".into());
         }
-        let path = self.inner.config.task_file();
-        let _guard = self.inner.task_file_lock.clone().lock_owned().await;
-        // The file is read under the same lock the append follows, so two
-        // rapid injects get distinct numbers; a missing file reads as empty
-        // and the append creates it.
-        let file = match std::fs::read_to_string(&path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            other => other.map_err(|e| format!("cannot read {}: {e}", path.display()))?,
-        };
-        let line = taskfile::normalize_injected(text, &file);
-        let chunk = taskfile::append_line(&path, &line)
-            .map_err(|e| format!("cannot append to {}: {e}", path.display()))?;
-        {
-            let mut state = self.state();
-            state.injected.push(chunk);
-        }
-        drop(_guard);
+        self.inner.task_list.inject(text).await?;
         self.reconcile();
         Ok(())
     }
@@ -326,7 +306,7 @@ impl Engine {
     /// state: removing a *pending* task while a build runs is required
     /// behavior, and the running and completed tasks are protected anyway.
     /// Known race, same class as the add/inject race: `begin_next_task`
-    /// loads the file without this lock, so a start concurrent with a
+    /// loads the file without the lock, so a start concurrent with a
     /// removal can still pick the removed task; the consequence is the
     /// session's finalize `write_progress` reporting a missing line, a
     /// documented no-op warning. Errors are user-facing rejection reasons.
@@ -335,10 +315,10 @@ impl Engine {
         if id.is_empty() {
             return Err("the task id is empty".into());
         }
-        let path = self.inner.config.task_file();
-        let guard = self.inner.task_file_lock.clone().lock_owned().await;
-        // Reading `current_task` under the file lock shrinks the race
-        // window against `begin_next_task` (see the doc comment above).
+        // Reading `current_task` before taking the task-list lock keeps the
+        // lock order engine state first; `begin_next_task` loads the file
+        // without the lock either way, so the documented race above and its
+        // consequence are unchanged.
         {
             let state = self.state();
             if state.current_task.as_deref() == Some(id) {
@@ -347,19 +327,19 @@ impl Engine {
                 ));
             }
         }
-        match taskfile::remove_task(&path, id) {
-            Ok(taskfile::RemoveOutcome::Removed) => {}
-            Ok(taskfile::RemoveOutcome::Completed) => {
+        let path = self.inner.task_list.path();
+        match self.inner.task_list.remove(id).await {
+            Ok(RemoveOutcome::Removed) => {}
+            Ok(RemoveOutcome::Completed) => {
                 return Err(format!("task {id} is completed and cannot be removed"));
             }
-            Ok(taskfile::RemoveOutcome::NotFound) => {
+            Ok(RemoveOutcome::NotFound) => {
                 return Err(format!("no task with id {id} in {TASK_FILE}"));
             }
             Err(e) => {
                 return Err(format!("cannot update {}: {e}", path.display()));
             }
         }
-        drop(guard);
         self.reconcile();
         Ok(())
     }

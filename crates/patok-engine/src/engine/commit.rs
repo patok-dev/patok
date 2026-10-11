@@ -5,7 +5,6 @@ use patok_core::utils::atomic_write;
 use super::Engine;
 use super::group;
 use crate::git::{CommitKind, Git};
-use crate::taskfile;
 
 impl Engine {
     /// Records the task's batch-review group: a contiguous run of
@@ -142,22 +141,24 @@ impl Engine {
         validated: bool,
     ) -> Option<String> {
         let path = self.inner.config.task_file();
+        match self
+            .inner
+            .task_list
+            .write_progress(task, token, validated)
+            .await
         {
-            let _guard = self.inner.task_file_lock.lock().await;
-            match taskfile::write_progress(&path, task, token, validated) {
-                Ok(true) => {}
-                Ok(false) => self.notice(
-                    NoticeLevel::Warning,
-                    format!(
-                        "{} was not found as an unchecked task; not ticked.",
-                        task.id
-                    ),
+            Ok(true) => {}
+            Ok(false) => self.notice(
+                NoticeLevel::Warning,
+                format!(
+                    "{} was not found as an unchecked task; not ticked.",
+                    task.id
                 ),
-                Err(e) => self.notice(
-                    NoticeLevel::Error,
-                    format!("cannot update {}: {e}", path.display()),
-                ),
-            }
+            ),
+            Err(e) => self.notice(
+                NoticeLevel::Error,
+                format!("cannot update {}: {e}", path.display()),
+            ),
         }
         self.reconcile();
         let kind = if validated {

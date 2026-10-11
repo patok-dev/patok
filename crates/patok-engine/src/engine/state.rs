@@ -5,7 +5,6 @@ use std::time::Duration;
 use patok_core::config::{DaemonEnv, DaemonSettings, EnumSpelling, ProviderKind, ProviderName};
 use patok_core::event::{EngineEvent, Phase};
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
-use patok_core::task::{self, Task};
 use patok_providers::{Provider, ProviderError};
 use tokio::sync::{Notify, broadcast, watch};
 use tokio_util::sync::CancellationToken;
@@ -14,7 +13,7 @@ use super::Engine;
 use super::config::EngineConfig;
 use super::stop::Stop;
 use crate::schedule::DiscoverySchedule;
-use crate::taskfile;
+use crate::task_list::TaskList;
 
 /// The engine's run state: which unit of work owns the engine. At most one
 /// unit runs, and the scheduled round inside a build session's empty-queue
@@ -57,16 +56,6 @@ pub(crate) struct State {
     pub(crate) attached: bool,
     /// The pending stop, if any.
     pub(crate) stop: Stop,
-    /// The in-memory task queue, kept in step with the task file by `reconcile_locked`.
-    pub(crate) tasks: Vec<Task>,
-    /// The IDs this engine appended through the append-tasks flow during the session.
-    pub(crate) ui_added_ids: Vec<String>,
-    /// The exact chunks appended through `inject_task` since the last
-    /// append-style check drained them (T77.1): the append-style runs filter
-    /// these out of their appended region before validating it, so a line
-    /// injected mid-session neither rejects the run nor counts as its task,
-    /// and a rejected run's restore re-appends them.
-    pub(crate) injected: Vec<String>,
     /// The discovery cooldown schedule.
     pub(crate) schedule: DiscoverySchedule,
     /// Cancels the running agent ("stop now").
@@ -169,11 +158,13 @@ pub(crate) struct Inner {
     /// Notified when a pending soft stop is cancelled, so the shutdown
     /// handshake's stream can end instead of lingering.
     pub(crate) soft_stop_cancelled: Notify,
-    /// Serialises the engine's short atomic task-file operations (the startup
-    /// cleanup, the progress write, the inject append and the append-style
-    /// runs' read/validate/restore checks); it is never held across an agent
-    /// session, so an inject is never blocked by one (T77.1).
-    pub(crate) task_file_lock: Arc<tokio::sync::Mutex<()>>,
+    /// The engine's task list: the task-file path, the in-memory queue, the
+    /// async file lock that serialises short atomic file operations (the
+    /// startup cleanup, the progress write, the inject append and the
+    /// append-style runs' read/validate/restore checks; it is never held
+    /// across an agent session, so an inject is never blocked by one,
+    /// T77.1), the injected chunks and the UI-added task IDs.
+    pub(crate) task_list: Arc<TaskList>,
     /// Cancelled when the engine process should exit.
     pub(crate) shutdown: CancellationToken,
 }
@@ -391,31 +382,30 @@ impl Engine {
     /// Whether the engine counts as idle for self-shutdown: no shell
     /// attached, no build running, no planning or discovery run, nothing pending.
     pub fn is_idle(&self) -> bool {
-        let pending = taskfile::load(&self.inner.config.task_file())
-            .is_ok_and(|tasks| task::next_pending(&tasks).is_some());
+        let pending = self
+            .inner
+            .task_list
+            .next_pending()
+            .is_ok_and(|t| t.is_some());
         let state = self.state();
         !state.attached && state.run == RunState::Idle && !pending
     }
 
-    /// Adds `ids` to the session's UI-added task IDs (append-tasks flow).
+    /// Adds `ids` to the run's UI-added task IDs (append-tasks flow).
     pub(crate) fn record_ui_added(&self, ids: &[String]) {
-        if ids.is_empty() {
-            return;
-        }
-        let mut state = self.state();
-        state.ui_added_ids.extend(ids.iter().cloned());
+        self.inner.task_list.record_ui_added(ids);
     }
 
     /// The IDs this engine appended through the append-tasks flow during the session, in the
     /// order they were added. Completing one of them postpones the next discovery round by
     /// the cooldown, checked where the task finishes in `run_task`.
     pub fn ui_added_task_ids(&self) -> Vec<String> {
-        self.state().ui_added_ids.clone()
+        self.inner.task_list.ui_added_ids()
     }
 
     /// Whether `id` was appended through the UI's append-tasks flow this session.
     pub fn is_ui_added(&self, id: &str) -> bool {
-        self.state().ui_added_ids.iter().any(|i| i == id)
+        self.inner.task_list.is_ui_added(id)
     }
 }
 

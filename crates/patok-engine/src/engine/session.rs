@@ -4,7 +4,7 @@ use std::time::Instant;
 use patok_core::config::RunMode;
 use patok_core::event::{AgentEvent, AgentRole, EngineEvent, NoticeLevel, TaskOutcome};
 use patok_core::pipeline::{Stage, TileStatus};
-use patok_core::task::{self, Task};
+use patok_core::task::Task;
 use patok_providers::{ExitKind, ProviderError, SessionRequest, SessionResult, Tool};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -19,12 +19,7 @@ use super::state::Unit;
 use crate::agents::{
     self, Agent, AppendPlannerAgent, BuilderAgent, DiscoveryAgent, ResearchQueueAgent,
 };
-use crate::taskfile;
-
-/// One append-style run's validator for [`Engine::check_appended`]: the
-/// `before` text, the `after` text and the chunks injected during the run,
-/// returning the appended IDs or the rejection reason.
-type AppendValidator = fn(&str, &str, &[String]) -> Result<Vec<String>, String>;
+use crate::task_list::AppendMode;
 
 /// One agent session's prompt bundle: the user prompt, the system prompt, the transcript
 /// label and the tool allowlist.
@@ -143,9 +138,7 @@ impl Engine {
     /// Picks the first pending task, marks it current and announces it; `None` when none
     /// remain (a task added externally mid-session is picked up here like any other).
     fn begin_next_task(&self) -> Option<Task> {
-        let path = self.inner.config.task_file();
-        let tasks = taskfile::load(&path).ok()?;
-        let task = task::next_pending(&tasks)?.clone();
+        let task = self.inner.task_list.next_pending().ok().flatten()?;
         let mut state = self.state();
         state.current_task = Some(task.id.clone());
         self.emit_locked(
@@ -187,11 +180,7 @@ impl Engine {
         cancel: CancellationToken,
         unit: &Unit,
     ) -> Option<usize> {
-        let path = self.inner.config.task_file();
-        let before = {
-            let _guard = self.inner.task_file_lock.lock().await;
-            taskfile::read_or_create(&path).ok()?
-        };
+        let before = self.inner.task_list.read_before().await?;
         {
             let mut state = self.state();
             state.run = state.run.gap_discovery_started();
@@ -411,12 +400,7 @@ impl Engine {
             // only a pass saves the research report, so a rejected run
             // re-runs rather than being covered by the reuse window.
             if self
-                .check_appended(
-                    &before,
-                    AgentRole::Research,
-                    taskfile::validate_append_ignoring,
-                    true,
-                )
+                .check_appended(&before, AgentRole::Research, AppendMode::Tasks, true)
                 .await
                 .is_ok()
             {
@@ -500,12 +484,7 @@ impl Engine {
     /// remembers the appended IDs as this session's UI-added task IDs.
     async fn check_planner_result(&self, before: &str) {
         let _ = self
-            .check_appended(
-                before,
-                AgentRole::Planner,
-                taskfile::validate_append_ignoring,
-                true,
-            )
+            .check_appended(before, AgentRole::Planner, AppendMode::Tasks, true)
             .await;
     }
 
@@ -513,50 +492,32 @@ impl Engine {
     /// but the appended tasks must carry `D`-prefixed IDs and are not recorded as UI-added
     /// task IDs. Returns the IDs the round appended.
     async fn check_discovery_result(&self, before: &str) -> Vec<String> {
-        self.check_appended(
-            before,
-            AgentRole::Discovery,
-            taskfile::validate_discovery_append_ignoring,
-            false,
-        )
-        .await
-        .unwrap_or_default()
+        self.check_appended(before, AgentRole::Discovery, AppendMode::Discovery, false)
+            .await
+            .unwrap_or_default()
     }
 
-    /// The shared post-session check of an append-style run: the original text must be
-    /// unchanged except for appended unchecked tasks with unique, well-formed IDs of the
-    /// session's prefix (`validate`) and the lines injected through `inject_task` during
-    /// the session, which the validator filters out of the appended region (T77.1). The
-    /// whole check runs under the task-file lock -- read, validate and, on a violation,
-    /// restore -- which is the only time the run holds it. On violation the previous file
-    /// is restored (keeping the injected lines) and an error reported; otherwise the number
-    /// of tasks added is reported. Returns the IDs that were appended, or the rejection
-    /// reason on a violation (the queue-creation run saves its research report only on a
-    /// pass, so a rejected run re-runs).
+    /// The shared post-session check of an append-style run: the whole check --
+    /// read, validate and, on a violation, restore, with the lines injected
+    /// through `inject_task` during the session kept out of the accounting
+    /// (T77.1) -- runs in the task list under its file lock. On violation an
+    /// error is reported; otherwise the number of tasks added is. Returns
+    /// the IDs that were appended, or the rejection reason on a violation
+    /// (the queue-creation run saves its research report only on a pass, so
+    /// a rejected run re-runs).
     async fn check_appended(
         &self,
         before: &str,
         role: AgentRole,
-        validate: AppendValidator,
+        mode: AppendMode,
         record_ui_added: bool,
     ) -> Result<Vec<String>, String> {
-        let path = self.inner.config.task_file();
-        let _guard = self.inner.task_file_lock.lock().await;
-        // The chunks injected since the run started are taken out of the
-        // accounting here, inside the same lock hold that reads and validates
-        // the file, so an inject cannot slip between the drain and the check.
-        let injected: Vec<String> = {
-            let mut state = self.state();
-            std::mem::take(&mut state.injected)
-        };
-        let verdict = match std::fs::read_to_string(&path) {
-            Ok(after) => validate(before, &after, &injected),
-            Err(e) => Err(format!(
-                "cannot read {} after the {role} session: {e}",
-                path.display()
-            )),
-        };
-        match verdict {
+        match self
+            .inner
+            .task_list
+            .check_appended(before, mode, role)
+            .await
+        {
             Ok(ids) => {
                 if record_ui_added {
                     self.record_ui_added(&ids);
@@ -568,19 +529,17 @@ impl Engine {
                 }
                 Ok(ids)
             }
-            Err(reason) => {
-                let restored = match taskfile::restore_keeping(&path, before, &injected) {
-                    Ok(()) => "the previous task file was restored",
-                    Err(e) => {
-                        tracing::error!("cannot restore {}: {e}", path.display());
-                        "restoring the previous task file failed"
-                    }
+            Err(rejection) => {
+                let restored = if rejection.restored {
+                    "the previous task file was restored"
+                } else {
+                    "restoring the previous task file failed"
                 };
                 self.notice(
                     NoticeLevel::Error,
-                    format!("{role} result rejected: {reason}; {restored}."),
+                    format!("{role} result rejected: {}; {restored}.", rejection.reason),
                 );
-                Err(reason)
+                Err(rejection.reason)
             }
         }
     }
@@ -729,7 +688,7 @@ impl Engine {
         commit: Option<String>,
     ) -> TaskOutcome {
         let mut state = self.state();
-        if outcome == TaskOutcome::Done && state.ui_added_ids.contains(&task.id) {
+        if outcome == TaskOutcome::Done && self.inner.task_list.is_ui_added(&task.id) {
             state.schedule.ui_added_task_completed(Instant::now());
         }
         self.emit_locked(
