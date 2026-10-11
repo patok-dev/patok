@@ -1,3 +1,10 @@
+//! The session context (section 8 of docs/private/engine-restructure.md):
+//! the session's unit-of-work snapshot -- the resolved provider, the
+//! model override, the merged settings and the cancel token -- plus a
+//! private handle on the engine internals. It is the only bridge from
+//! the sessions, pipelines and steps to the engine's bus, tile,
+//! task-list and state paths, exposed through narrow methods.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

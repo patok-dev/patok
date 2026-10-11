@@ -1,25 +1,25 @@
-//! Engine state and the single-task build flow.
-//!
-//! The responsibilities are split one file each: configuration and construction
-//! (`config`), the shared state vocabulary and the status queries (`state`), the
-//! stop state (`stop`), the event bus (`bus`), the run-state application, queue
-//! reconcile and stage tiles (`pipeline`), the task-file watcher (`watch`), the
-//! central settings and reload (`settings`) and the command entry points
-//! (`commands`). The per-task build flow -- its steps, their order, every tile
-//! update, the progress token and the batch-review group wiring -- lives in
-//! `crate::pipeline`, and the session loop -- the build session and the
-//! append-style runs -- in `crate::session`; both are reached through the
-//! session context `crate::context`, which also holds the research, plan,
-//! build, review and commit steps and the shared agent-run skeleton they
-//! run on.
+//! The engine facade: a cheaply cloneable [`Engine`] handle on the shared
+//! `Inner`, plus the attach slot it hands the controlling shell
+//! ([`Attachment`], [`AttachError`]). The directory holds the facade files
+//! only, one responsibility each: construction and configuration
+//! (`config`), the shared state vocabulary and the status queries
+//! (`state`), the stop state (`stop`), the event bus (`bus`), the
+//! command entry points (`commands`), the central settings and reload
+//! (`settings`), the task-file watcher (`watch`) and the start guards,
+//! run-state application, queue reconcile, rail refresh and tile updates
+//! (`tiles`). In the crate's model the engine owns the task list
+//! (`crate::task_list`), a session (`crate::session`) owns one unit of
+//! work, a pipeline (`crate::pipeline`) orders pipeline steps
+//! (`crate::step`), and each step pairs an agent (`crate::agents`) with
+//! a provider.
 
 mod bus;
 mod commands;
 mod config;
-mod pipeline;
 mod settings;
 mod state;
 mod stop;
+mod tiles;
 mod watch;
 
 pub use self::commands::QueueCreation;

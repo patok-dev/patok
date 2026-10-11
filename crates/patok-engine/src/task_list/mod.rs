@@ -1,8 +1,11 @@
-//! The task-file abstraction (section 5 of docs/private/engine-restructure.md):
-//! one shared owner of the task-file path, the in-memory queue, the async file
-//! lock, the injected chunks and the UI-added task IDs. [`TaskList`] emits no
-//! events and writes no notices -- it returns what happened and the caller
-//! emits -- so the lock order stays engine state first and task list second.
+//! The task list (section 5 of docs/private/engine-restructure.md): one
+//! shared owner of every task-file concern of the task queue -- the
+//! task-file path, the in-memory queue, the async file lock, the
+//! injected chunks and the UI-added task IDs. [`TaskList`] emits no
+//! events and writes no notices -- it returns what happened and the
+//! caller emits -- so the lock order stays engine state first and task
+//! list second. The pure text and file functions of `file` stay public
+//! as `patok_engine::taskfile`.
 
 use std::io;
 use std::path::{Path, PathBuf};

@@ -1,7 +1,11 @@
 //! The sessions (section 12 of docs/private/engine-restructure.md): one
-//! session is one engine-owning unit of work, its kind says which one runs,
-//! and every engine-side path is reached through the session context, never
-//! the engine directly.
+//! session is one engine-owning unit of work, its [`SessionKind`] says
+//! which pipeline runs, and every engine-side path is reached through
+//! the session context, never the engine directly. The build session
+//! loops the task list's pending tasks through [`BuildPipeline`] -- with
+//! the continuous-mode discovery round when the queue runs empty -- and
+//! the append kinds (add-tasks, queue creation, discovery) run their
+//! pipeline once.
 
 use std::time::Instant;
 

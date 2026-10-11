@@ -1,5 +1,13 @@
-//! The engine process: owns the task queue, git, history log and provider supervision, and
-//! serves the gRPC protocol to the shell over a Unix socket.
+//! The engine process: it serves the gRPC protocol to the shell over a
+//! Unix socket and runs the build loop around seven abstractions. A
+//! Task (`patok_core::task`) is one line of work; the TaskList
+//! (`task_list/`) owns every task-file concern of the queue. A Session
+//! (`session.rs`) is one engine-owning unit of work driven through its
+//! SessionContext (`context.rs`): the build session loops the pending
+//! tasks, the append kinds run their pipeline once. A Pipeline
+//! (`pipeline/`) orders its PipelineSteps (`step/`), and each step
+//! pairs an Agent (`agents/`) with a Provider (`patok-providers`) or
+//! performs one engine action.
 
 mod agents;
 mod artifact;

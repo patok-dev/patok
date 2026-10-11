@@ -58,9 +58,9 @@ impl<'a> ResearchStep<'a> {
         None
     }
 
-    /// Whether `run` would start a research session for `task` (run_task asks
-    /// before its tile update; the check is deterministic next to `run`'s
-    /// own).
+    /// Whether `run` would start a research session for `task` (the build
+    /// pipeline asks before its research-tile update; the check is
+    /// deterministic next to `run`'s own).
     pub(crate) fn runs_session(&self, task: &Task) -> bool {
         self.without_session(task).is_none()
     }
