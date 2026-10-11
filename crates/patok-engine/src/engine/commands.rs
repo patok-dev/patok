@@ -5,6 +5,7 @@ use tokio_util::sync::CancellationToken;
 use super::state::State;
 use super::{AttachError, Attachment, Engine};
 use crate::TASK_FILE;
+use crate::step::research::reusable_research_report;
 use crate::taskfile::RemoveOutcome;
 
 /// Which `start_*` command is asking: the four entry points share one guard
@@ -206,7 +207,7 @@ impl Engine {
         Self::check_start(&state, StartCommand::QueueCreation)?;
         // A fresh same-kind research report is reused: no session (the T68.1
         // reuse window covers the queue-creation reports).
-        if self.reusable_research_report(kind.stem()).is_some() {
+        if reusable_research_report(&ctx, kind.stem()).is_some() {
             self.emit_locked(
                 &mut state,
                 EngineEvent::Notice {

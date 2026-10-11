@@ -8,14 +8,13 @@ use patok_core::task::Task;
 use super::Engine;
 use super::commands::QueueCreation;
 use super::group;
-use super::plan_stage::PlanStage;
-use super::research_stage::ResearchStage;
 use super::review_stage::ReviewStage;
-use crate::agents::{
-    self, Agent, AppendPlannerAgent, BuilderAgent, DiscoveryAgent, ResearchQueueAgent,
-};
+use crate::agents::{Agent, AppendPlannerAgent, DiscoveryAgent, ResearchQueueAgent};
 use crate::context::SessionContext;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use crate::step::build::{BuildOutcome, BuildStep};
+use crate::step::plan::{PlanOutcome, PlanStep};
+use crate::step::research::{ResearchOutcome, ResearchStep, write_research_report};
 use crate::task_list::AppendMode;
 
 impl Engine {
@@ -226,7 +225,7 @@ impl Engine {
                         "the research run returned no report; nothing was saved",
                     );
                 } else {
-                    self.write_research_report(kind.stem(), &report);
+                    write_research_report(&ctx, kind.stem(), &report);
                 }
             }
         }
@@ -358,47 +357,56 @@ impl Engine {
         }
     }
 
-    /// Runs one task's build session, preceded by the research stage (T68.1) and
-    /// the plan stage when it is enabled (`plan_enabled`, T10.1). Emits `TaskFinished`
+    /// Runs one task's build session, preceded by the research step (T68.1) and
+    /// the plan step when it is enabled (`plan_enabled`, T10.1). Emits `TaskFinished`
     /// with the outcome and returns it; the session-level loop decides what happens
-    /// next. All sessions run on the session's settings snapshot in `ctx`.
+    /// next. All sessions run on the session's settings snapshot in `ctx`, and
+    /// every tile update of the three steps happens here: the steps themselves
+    /// never touch tiles.
     async fn run_task(&self, task: Task, ctx: &SessionContext) -> TaskOutcome {
         // The batch-review group of this task is noted first: a new leading
         // number starts or resumes a group through the open-group record,
         // capturing the base its last review diffs across.
         self.note_group(&task, ctx).await;
 
-        // The research stage (T68.1): one research session runs before the task is
-        // planned (or built, with the plan stage off), unless a fresh report is on
+        // The research step (T68.1): one research session runs before the task is
+        // planned (or built, with the plan step off), unless a fresh report is on
         // disk to reuse or the task is Simple with the skip key on. A failed session
-        // is non-blocking: the pipeline continues without a report.
+        // is non-blocking: the pipeline continues without a report. The research
+        // tile is active only when a session runs, so a reused or skipped report
+        // never flips it.
+        let research_step = ResearchStep::new(ctx);
+        if research_step.runs_session(&task) {
+            ctx.update_tiles(|tiles| tiles.set(Stage::Research, TileStatus::Active));
+        }
         let mut ran_research = true;
-        let research = match self.research_stage(&task, ctx).await {
-            ResearchStage::Cancelled => {
+        let research = match research_step.run(&task).await {
+            ResearchOutcome::Cancelled => {
                 return self.finish_task(&task, TaskOutcome::Cancelled, None);
             }
-            ResearchStage::Report(text) => Some(text),
-            ResearchStage::Skipped => {
+            ResearchOutcome::Report(text) => Some(text),
+            ResearchOutcome::Skipped => {
                 ran_research = false;
                 None
             }
-            ResearchStage::Failed => None,
+            ResearchOutcome::Failed => None,
         };
 
-        // The plan stage: behind the `plan_enabled` key, one plan session with the
+        // The plan step: behind the `plan_enabled` key, one plan session with the
         // read-only allowlist runs before the builder session. A plan rejected twice
         // fails the task without a builder session, a commit or a task-file tick.
         // The research report is the plan prompt's prior artifact (T68.1).
         let plan = if ctx.settings().plan_enabled {
-            match self.run_plan_stage(&task, ctx, research.as_deref()).await {
-                PlanStage::Accepted(text) => {
-                    self.write_plan_file(&task.id, &text);
-                    Some(text)
-                }
-                PlanStage::Cancelled => {
+            ctx.update_tiles(|tiles| {
+                tiles.set(Stage::Research, TileStatus::Done);
+                tiles.set(Stage::Plan, TileStatus::Active);
+            });
+            match PlanStep::new(ctx).run(&task, research.as_deref()).await {
+                PlanOutcome::Accepted(text) => Some(text),
+                PlanOutcome::Cancelled => {
                     return self.finish_task(&task, TaskOutcome::Cancelled, None);
                 }
-                PlanStage::Failed => {
+                PlanOutcome::Failed => {
                     return self.finish_task(&task, TaskOutcome::Failed, None);
                 }
             }
@@ -410,53 +418,28 @@ impl Engine {
         };
 
         // The builder takes over from the planner (T11.1); also announced when the plan
-        // stage is disabled, so the shell never shows a stale agent. The research and
+        // step is disabled, so the shell never shows a stale agent. The research and
         // plan tiles are done and the build tile active from here on -- also when a
-        // stage was skipped, so the stages before the running one are always done.
+        // step was skipped, so the stages before the running one are always done.
         ctx.update_tiles(|tiles| {
             tiles.set(Stage::Research, TileStatus::Done);
             tiles.set(Stage::Plan, TileStatus::Done);
             tiles.set(Stage::Build, TileStatus::Active);
         });
 
-        // The builder's final message carries the build claims section the review
-        // stage reviews, so the events are captured like the plan stage's.
-        let agent = BuilderAgent::new(&task, plan.as_deref(), research.as_deref());
-        let exit = run_stage(
-            ctx,
-            ctx.provider(),
-            ctx.model(),
-            StageStart::Announce,
-            agent.role(),
-            AgentPrompt::of(&agent),
-            StageWords {
-                capture: true,
-                could_not_start: format!("agent could not start for {}", task.id),
-                default_failure: "agent failed".into(),
-                cancelled_notice: Some("Agent cancelled; nothing committed.".into()),
-                failure_level: NoticeLevel::Error,
-                failure_prefix: format!("{}: ", task.id),
-                failure_suffix: String::new(),
-            },
-        )
-        .await;
-
-        let (outcome, commit) = match exit {
-            StageExit::Failed => {
+        let (outcome, commit) = match BuildStep::new(ctx)
+            .run(&task, plan.as_deref(), research.as_deref())
+            .await
+        {
+            BuildOutcome::Failed => {
                 let commit = self
                     .finalize(&task, ctx, &progress(false, false), false)
                     .await;
                 (TaskOutcome::Failed, commit)
             }
-            StageExit::Completed(builder_events) => {
-                // The builder succeeded: its final message's build claims section
-                // becomes the claims artifact, with the
-                // verification-results trimming applied. The builder agent's
-                // validation is trivial acceptance, so this arm cannot fire.
-                let final_text = agent.validate(&builder_events).unwrap_or_default();
-                if let Some(claims) = agents::claims_section(&final_text) {
-                    self.write_claims_file(&task.id, &agents::trim_claims(claims));
-                }
+            BuildOutcome::Completed { claims } => {
+                // The claims text travels to the review step in T180.3.
+                let _ = claims;
                 // The build tile is done once the builder session completed: the
                 // stages before the running one are always done, so review never renders with the build
                 // still in-progress.
@@ -486,7 +469,7 @@ impl Engine {
                     }
                 }
             }
-            StageExit::Cancelled => (TaskOutcome::Cancelled, None),
+            BuildOutcome::Cancelled => (TaskOutcome::Cancelled, None),
         };
 
         self.finish_task(&task, outcome, commit)
