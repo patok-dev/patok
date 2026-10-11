@@ -3,5 +3,7 @@
 
 pub(crate) mod agent_run;
 pub(crate) mod build;
+pub(crate) mod commit;
 pub(crate) mod plan;
 pub(crate) mod research;
+pub(crate) mod review;

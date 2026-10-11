@@ -1,35 +1,47 @@
 use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
-use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
 
-use super::Engine;
-use super::group;
 use crate::agents::{
     Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
 use crate::artifact;
 use crate::context::SessionContext;
+use crate::engine::group::batch_deferred;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 
 /// The largest git diff the reviewer prompt carries:
 /// 50 KB; a larger or empty diff falls back to the changed-file list.
 const DIFF_LIMIT_BYTES: usize = 50 * 1024;
 
-/// The outcome of one task's review stage.
+/// The build claims prerequisite gate: a claims text under
+/// this many bytes warns and the reviewer falls back to the plan and files.
+const CLAIMS_MIN_BYTES: usize = 10;
+
+/// The outcome of one task's review step, together with whether the task
+/// was batch-deferred: the deferral is not the group's last task, so the
+/// caller keeps the group's record open for its real last task. Every
+/// variant carries `deferred` (section 9); only a passed or skipped
+/// review closes the group, so the failed and cancelled fields have no
+/// reader today.
 #[derive(Debug)]
 pub(crate) enum ReviewStage {
     /// The review passed: the task is validated.
-    Passed,
+    Passed { deferred: bool },
     /// The review failed: a stage failure with suggestions, leading to WIP.
-    Failed,
+    Failed {
+        #[expect(dead_code)]
+        deferred: bool,
+    },
     /// A reviewer session was cancelled.
-    Cancelled,
-    /// The stage was skipped by one of the spec's skip rules; the reason was
-    /// recorded with the skip notice, and any skip treats the task as
-    /// validated.
-    Skipped,
+    Cancelled {
+        #[expect(dead_code)]
+        deferred: bool,
+    },
+    /// Skipped by one of the spec's skip rules; the reason was recorded
+    /// with the skip notice, and any skip treats the task as validated.
+    Skipped { deferred: bool },
 }
 
 /// The outcome of the reviewer sessions of one review.
@@ -49,19 +61,34 @@ enum ReviewExit {
     Failed,
 }
 
-impl Engine {
-    /// The review stage: decides by the skip
-    /// rules in precedence order -- each recorded with its reason and every
-    /// skip treating the task as validated -- and, when it runs, drives the
-    /// fresh-context reviewer sessions that review and fix in one pass, then
-    /// computes the verdict. No crash-recovery checkpoint is written for the
-    /// stage.
-    pub(crate) async fn review_stage(
+/// The per-task review step: decides by the skip
+/// rules in precedence order -- each recorded with its reason and every
+/// skip treating the task as validated -- and, when it runs, drives the
+/// fresh-context reviewer sessions that review and fix in one pass, then
+/// computes the verdict, writes the review file and records the
+/// learned-confidence outcome. `plan` and `claims` are the prior plan and
+/// build-claims artifacts the build flow hands it (`claims` comes from the
+/// build step, not from disk, section 11), and `group_base` is the SHA the
+/// batch-review group diffs across. The step sets no tiles and does not
+/// close the group: both are the caller's. No crash-recovery checkpoint is
+/// written for the step.
+pub(crate) struct ReviewStep<'a> {
+    ctx: &'a SessionContext,
+}
+
+impl<'a> ReviewStep<'a> {
+    pub(crate) fn new(ctx: &'a SessionContext) -> Self {
+        Self { ctx }
+    }
+
+    pub(crate) async fn run(
         &self,
         task: &Task,
-        ctx: &SessionContext,
         plan: Option<&str>,
+        claims: Option<&str>,
+        group_base: Option<&str>,
     ) -> ReviewStage {
+        let ctx = self.ctx;
         let complexity = complexity::classify(&task.description);
         // The skip decision, recorded with its reason.
         let pending_after: Vec<String> = ctx.task_list().pending_ids();
@@ -69,7 +96,7 @@ impl Engine {
         // The raw deferral decides the group's close beside the skip rule:
         // the batch deferral is not the group's last task, and its skip is
         // not a completed review.
-        let deferred = group::batch_deferred(&task.id, &pending_after);
+        let deferred = batch_deferred(&task.id, &pending_after);
         let inputs = SkipInputs {
             review_in_loop: ctx.settings().review_in_loop,
             batch_deferred: ctx.settings().batch_review && deferred,
@@ -86,46 +113,61 @@ impl Engine {
                 NoticeLevel::Info,
                 format!("Review skipped for {}: {}.", task.id, reason.reason()),
             );
-            // A skipped stage renders done on the rail like the research and
-            // plan stages do; the dash lives in the task-line indicator.
             // A skip other than the batch deferral validated the task, so
-            // the group's last task closes the record; the deferral leaves
-            // it open for the group's real last task.
-            if !deferred {
-                self.close_group(&task.id);
-            }
-            ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
-            return ReviewStage::Skipped;
+            // the caller closes the group's record for the group's last
+            // task; the deferral leaves it open for the group's real last
+            // task.
+            return ReviewStage::Skipped { deferred };
         }
 
-        // The claims prerequisite gate: a warning only.
-        let claims = self.claims_file(&task.id);
+        // The claims prerequisite gate: a warning only, applied to the
+        // claims text the build step returned -- a missing or too-short
+        // section falls back to the plan and the changed-file list.
+        let claims = match claims {
+            Some(text) if text.len() >= CLAIMS_MIN_BYTES => Some(text),
+            Some(_) => {
+                ctx.notice(
+                    NoticeLevel::Warning,
+                    format!(
+                        "the build claims for {} are under {CLAIMS_MIN_BYTES} bytes; the reviewer falls back to the plan and the changed files",
+                        task.id
+                    ),
+                );
+                None
+            }
+            None => {
+                ctx.notice(
+                    NoticeLevel::Warning,
+                    format!(
+                        "no build claims found for {}; the reviewer falls back to the plan and the changed files",
+                        task.id
+                    ),
+                );
+                None
+            }
+        };
 
         // The changed files: from the working tree,
-        // and against the batch group's base so the group's last review spans
-        // every commit of the group. No files changed fails the review.
-        let base = ctx.group_base();
+        // and against the batch group's base (passed in by the caller) so
+        // the group's last review spans every commit of the group. No files
+        // changed fails the review.
         let git = ctx.git();
-        let changed = git.changed_files(base.as_deref()).await;
+        let changed = git.changed_files(group_base).await;
         if changed.is_empty() {
             ctx.notice(
                 NoticeLevel::Error,
                 format!("{}: no changed files to review", task.id),
             );
-            ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
-            return ReviewStage::Failed;
+            return ReviewStage::Failed { deferred };
         }
         // The reviewer receives the diff when it is non-empty and at most
         // 50 KB, otherwise the changed-file list.
-        let diff = git.diff(base.as_deref()).await;
+        let diff = git.diff(group_base).await;
         let diff = (!diff.trim().is_empty() && diff.len() <= DIFF_LIMIT_BYTES).then_some(diff);
-
-        // The review tile is active while the reviewer sessions run (T49.1).
-        ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Active));
 
         // Applied fixes are inferred from per-file content hashes taken before
         // and after the reviewer, over the same changed-file set.
-        let before = self.file_hashes(&changed);
+        let before = file_hashes(ctx, &changed);
         // Generated files (snapshots, lockfiles) are no unit for a per-file
         // pass: they neither trigger multipass nor get a reviewer of their own,
         // so a snapshot-heavy change does not run dozens of per-file sessions.
@@ -145,7 +187,7 @@ impl Engine {
         } else {
             let agent = ReviewerAgent::combined(
                 task,
-                claims.as_deref(),
+                claims,
                 plan,
                 &changed,
                 diff.as_deref(),
@@ -158,7 +200,7 @@ impl Engine {
                 Err(ReviewExit::Failed) => ReviewRun::Failed,
             }
         };
-        let after = self.file_hashes(&changed);
+        let after = file_hashes(ctx, &changed);
         let applied: Vec<String> = changed
             .iter()
             .zip(before.iter().zip(after.iter()))
@@ -180,8 +222,7 @@ impl Engine {
         let (report, verdict) = match run {
             ReviewRun::Cancelled => {
                 ctx.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
-                ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
-                return ReviewStage::Cancelled;
+                return ReviewStage::Cancelled { deferred };
             }
             ReviewRun::Outcome(outcome) => (outcome.report, outcome.verdict),
             ReviewRun::Failed => {
@@ -203,21 +244,17 @@ impl Engine {
                 below.finding.issue
             );
         }
-        let review_path = self.write_review_file(&task.id, &report);
+        let review_path = write_review_file(ctx, &task.id, &report);
         // The pass/fail outcome is recorded in the persistent learned-confidence
         // history in the background.
-        self.record_review_outcome(task, complexity, verdict.passed);
+        record_review_outcome(ctx, task, complexity, verdict.passed);
 
-        ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
         if verdict.passed {
             ctx.notice(NoticeLevel::Info, format!("Review passed for {}.", task.id));
             // The group's last task completed its review validated: the
-            // record goes. A failed review keeps it so the rerun still
-            // diffs the whole group.
-            if !deferred {
-                self.close_group(&task.id);
-            }
-            ReviewStage::Passed
+            // caller closes the record. A failed review keeps it so the
+            // rerun still diffs the whole group.
+            ReviewStage::Passed { deferred }
         } else {
             let report = review_path
                 .map(|path| path.display().to_string())
@@ -229,45 +266,72 @@ impl Engine {
                     task.id, report
                 ),
             );
-            ReviewStage::Failed
+            ReviewStage::Failed { deferred }
         }
     }
+}
 
-    /// The SHA-256 content hashes of `files` (missing files hash to none):
-    /// taken before and after the reviewer, they infer the applied fixes.
-    fn file_hashes(&self, files: &[String]) -> Vec<Option<String>> {
-        use sha2::{Digest, Sha256};
-        files
-            .iter()
-            .map(|file| {
-                std::fs::read(self.inner.config.project_dir.join(file))
-                    .ok()
-                    .map(|bytes| format!("{:x}", Sha256::digest(&bytes)))
-            })
-            .collect()
-    }
+/// The SHA-256 content hashes of `files` (missing files hash to none):
+/// taken before and after the reviewer, they infer the applied fixes.
+fn file_hashes(ctx: &SessionContext, files: &[String]) -> Vec<Option<String>> {
+    use sha2::{Digest, Sha256};
+    files
+        .iter()
+        .map(|file| {
+            std::fs::read(ctx.project_dir().join(file))
+                .ok()
+                .map(|bytes| format!("{:x}", Sha256::digest(&bytes)))
+        })
+        .collect()
+}
 
-    /// Records one review outcome in the persistent learned-confidence history
-    /// in the background, for the
-    /// simple and medium shapes the feature matches on.
-    fn record_review_outcome(&self, task: &Task, complexity: Complexity, passed: bool) {
-        if complexity == Complexity::Complex {
-            return;
+/// Writes the review report to the project data directory as
+/// `reviews/<task id>-<timestamp>.md`, returning
+/// its path for the failure notice.
+fn write_review_file(
+    ctx: &SessionContext,
+    task_id: &str,
+    report: &str,
+) -> Option<std::path::PathBuf> {
+    let dir = ctx.data_dir().join("reviews");
+    match artifact::write_artifact(&dir, task_id, report) {
+        Ok(path) => {
+            ctx.notice(
+                NoticeLevel::Info,
+                format!("Review report written to {}", path.display()),
+            );
+            Some(path)
         }
-        let description = task.description.clone();
-        let path = self.inner.config.review_history.clone();
-        let date = artifact::unix_now().as_secs().to_string();
-        tokio::spawn(async move {
-            let mut history = ReviewHistory::load(&path);
-            history.record(&description, complexity, passed, &date);
-            if let Err(error) = history.save(&path) {
-                tracing::warn!(
-                    "cannot write the review history {}: {error}",
-                    path.display()
-                );
-            }
-        });
+        Err(e) => {
+            ctx.notice(
+                NoticeLevel::Warning,
+                format!("cannot write {}: {}", e.path.display(), e.error),
+            );
+            None
+        }
     }
+}
+
+/// Records one review outcome in the persistent learned-confidence history
+/// in the background, for the
+/// simple and medium shapes the feature matches on.
+fn record_review_outcome(ctx: &SessionContext, task: &Task, complexity: Complexity, passed: bool) {
+    if complexity == Complexity::Complex {
+        return;
+    }
+    let description = task.description.clone();
+    let path = ctx.review_history_path().to_path_buf();
+    let date = artifact::unix_now().as_secs().to_string();
+    tokio::spawn(async move {
+        let mut history = ReviewHistory::load(&path);
+        history.record(&description, complexity, passed, &date);
+        if let Err(error) = history.save(&path) {
+            tracing::warn!(
+                "cannot write the review history {}: {error}",
+                path.display()
+            );
+        }
+    });
 }
 
 /// One reviewer session: announced as the active agent (T11.1), recorded

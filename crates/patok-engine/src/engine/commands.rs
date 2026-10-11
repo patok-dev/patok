@@ -305,7 +305,7 @@ impl Engine {
     /// Known race, same class as the add/inject race: `begin_next_task`
     /// loads the file without the lock, so a start concurrent with a
     /// removal can still pick the removed task; the consequence is the
-    /// session's finalize `write_progress` reporting a missing line, a
+    /// session's commit step `write_progress` reporting a missing line, a
     /// documented no-op warning. Errors are user-facing rejection reasons.
     pub async fn remove_task(&self, id: &str) -> Result<(), String> {
         let id = id.trim();

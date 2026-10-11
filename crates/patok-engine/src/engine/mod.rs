@@ -5,23 +5,19 @@
 //! stop state (`stop`), the event bus (`bus`), the run-state application, queue
 //! reconcile and stage tiles (`pipeline`), the task-file watcher (`watch`), the
 //! central settings and reload (`settings`), the command entry points
-//! (`commands`), the session loop (`session`), and
-//! the review stage (`review_stage`), driving its agent from the pure
-//! per-agent definitions in `crate::agents`, the review and claims-read
-//! artifact helpers (`artifacts`), the open-group group machinery (`group`),
-//! and the group tracking and commit finalization (`commit`). The research,
-//! plan and build steps of the build flow live in `crate::step` (reached
-//! through the session context `crate::context`), which also holds the shared
-//! agent-run skeleton they run on.
+//! (`commands`), the session loop (`session`), the open-group group
+//! machinery (`group`), and the group tracking and commit recording
+//! (`commit`). The research, plan, build, review and commit steps of the
+//! build flow live in `crate::step` (reached through the session context
+//! `crate::context`), which also holds the shared agent-run skeleton they
+//! run on.
 
-mod artifacts;
 mod bus;
 mod commands;
 mod commit;
 mod config;
-mod group;
+pub(crate) mod group;
 mod pipeline;
-mod review_stage;
 mod session;
 mod settings;
 mod state;

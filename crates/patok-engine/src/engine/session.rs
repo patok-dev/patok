@@ -8,13 +8,14 @@ use patok_core::task::Task;
 use super::Engine;
 use super::commands::QueueCreation;
 use super::group;
-use super::review_stage::ReviewStage;
 use crate::agents::{Agent, AppendPlannerAgent, DiscoveryAgent, ResearchQueueAgent};
 use crate::context::SessionContext;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 use crate::step::build::{BuildOutcome, BuildStep};
+use crate::step::commit::CommitStep;
 use crate::step::plan::{PlanOutcome, PlanStep};
 use crate::step::research::{ResearchOutcome, ResearchStep, write_research_report};
+use crate::step::review::{ReviewStage, ReviewStep};
 use crate::task_list::AppendMode;
 
 impl Engine {
@@ -361,7 +362,8 @@ impl Engine {
     /// the plan step when it is enabled (`plan_enabled`, T10.1). Emits `TaskFinished`
     /// with the outcome and returns it; the session-level loop decides what happens
     /// next. All sessions run on the session's settings snapshot in `ctx`, and
-    /// every tile update of the three steps happens here: the steps themselves
+    /// every tile update of the four steps happens here (the review tile is
+    /// active on entering the review step, section 11): the steps themselves
     /// never touch tiles.
     async fn run_task(&self, task: Task, ctx: &SessionContext) -> TaskOutcome {
         // The batch-review group of this task is noted first: a new leading
@@ -433,37 +435,48 @@ impl Engine {
         {
             BuildOutcome::Failed => {
                 let commit = self
-                    .finalize(&task, ctx, &progress(false, false), false)
+                    .commit_task(&task, ctx, &progress(false, false), false)
                     .await;
                 (TaskOutcome::Failed, commit)
             }
             BuildOutcome::Completed { claims } => {
-                // The claims text travels to the review step in T180.3.
-                let _ = claims;
                 // The build tile is done once the builder session completed: the
                 // stages before the running one are always done, so review never renders with the build
                 // still in-progress.
                 ctx.update_tiles(|tiles| tiles.set(Stage::Build, TileStatus::Done));
-                // The review stage: the review pipeline
-                // slot between the builder and the commit finalization.
-                let review = self.review_stage(&task, ctx, plan.as_deref()).await;
+                // The review tile is active from entering the review step,
+                // before the skip decision and the diff (section 11).
+                ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Active));
+                let base = ctx.group_base();
+                let review = ReviewStep::new(ctx)
+                    .run(&task, plan.as_deref(), claims.as_deref(), base.as_deref())
+                    .await;
+                ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
                 match review {
-                    ReviewStage::Cancelled => {
+                    ReviewStage::Cancelled { .. } => {
                         return self.finish_task(&task, TaskOutcome::Cancelled, None);
                     }
-                    ReviewStage::Passed => {
-                        let commit = self.finalize(&task, ctx, &progress(true, true), true).await;
-                        (TaskOutcome::Done, commit)
-                    }
-                    ReviewStage::Skipped => {
+                    ReviewStage::Passed { deferred } => {
+                        if !deferred {
+                            self.close_group(&task.id);
+                        }
                         let commit = self
-                            .finalize(&task, ctx, &progress(false, true), true)
+                            .commit_task(&task, ctx, &progress(true, true), true)
                             .await;
                         (TaskOutcome::Done, commit)
                     }
-                    ReviewStage::Failed => {
+                    ReviewStage::Skipped { deferred } => {
+                        if !deferred {
+                            self.close_group(&task.id);
+                        }
                         let commit = self
-                            .finalize(&task, ctx, &progress(true, false), false)
+                            .commit_task(&task, ctx, &progress(false, true), true)
+                            .await;
+                        (TaskOutcome::Done, commit)
+                    }
+                    ReviewStage::Failed { .. } => {
+                        let commit = self
+                            .commit_task(&task, ctx, &progress(true, false), false)
                             .await;
                         (TaskOutcome::Failed, commit)
                     }
@@ -473,6 +486,22 @@ impl Engine {
         };
 
         self.finish_task(&task, outcome, commit)
+    }
+
+    /// Runs the commit step and records the group commit of its commit; the
+    /// short SHA feeds the task-finished event.
+    async fn commit_task(
+        &self,
+        task: &Task,
+        ctx: &SessionContext,
+        token: &str,
+        validated: bool,
+    ) -> Option<String> {
+        let commit = CommitStep::new(ctx).run(task, token, validated).await;
+        if let Some(commit) = &commit {
+            self.record_group_commit(task, &commit.full);
+        }
+        commit.map(|commit| commit.short)
     }
 
     /// Ends one task: records the outcome and clears the current task. A completed

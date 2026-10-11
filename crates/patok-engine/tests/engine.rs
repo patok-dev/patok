@@ -2740,9 +2740,10 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_review() {
     );
     // Plan pending, then active in the plan session, then done while the builder
     // runs; the build tile goes done when the builder session completes, so the
-    // stages before the running one are always done. The review stage is skipped
-    // (review off), so its tile goes done with the skip; then everything is
-    // muted again.
+    // stages before the running one are always done. The review tile is active
+    // from entering the review step (section 11), before the skip decision; the
+    // review stage is skipped (review off), so its tile goes done with the
+    // skip; then everything is muted again.
     let walked: Vec<_> = rail.iter().map(walk).collect();
     assert_eq!(
         walked,
@@ -2755,6 +2756,7 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_review() {
             (TileStatus::Active, TileStatus::Pending, TileStatus::Pending,),
             (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Active,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
             (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],
@@ -2775,8 +2777,9 @@ async fn a_build_without_the_plan_stage_walks_build_directly() {
 
     // The plan stage is disabled: the plan tile is still done once the builder
     // runs, so the stages before the running one are never stale. The build tile
-    // goes done when the builder session completes. The review stage is skipped
-    // (review off), so its tile goes done with the skip.
+    // goes done when the builder session completes. The review tile is active
+    // from entering the review step (section 11), before the skip decision; the
+    // review stage is skipped (review off), so its tile goes done with the skip.
     let walked: Vec<_> = rail(&events).iter().map(walk).collect();
     assert_eq!(
         walked,
@@ -2788,6 +2791,7 @@ async fn a_build_without_the_plan_stage_walks_build_directly() {
             ),
             (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Active,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
             (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],

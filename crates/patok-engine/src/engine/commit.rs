@@ -1,11 +1,9 @@
-use patok_core::event::NoticeLevel;
 use patok_core::task::{Task, group_number_of};
-use patok_core::utils::atomic_write;
 
 use super::Engine;
 use super::group;
 use crate::context::SessionContext;
-use crate::git::{CommitKind, Git};
+use crate::git::Git;
 
 impl Engine {
     /// Records the task's batch-review group: a contiguous run of
@@ -78,7 +76,7 @@ impl Engine {
     /// the new commit's full SHA and the task joins `members`. A missing
     /// record (the group already closed, or no HEAD when it started) is left
     /// alone.
-    fn record_group_commit(&self, task: &Task, full: &str) {
+    pub(crate) fn record_group_commit(&self, task: &Task, full: &str) {
         {
             let state = self.state();
             let Some(number) = state.group_number.as_deref() else {
@@ -121,72 +119,6 @@ impl Engine {
         let path = self.inner.config.open_group.clone();
         if let Err(error) = group::OpenGroup::clear(&path) {
             tracing::warn!("cannot delete the open group {}: {error}", path.display());
-        }
-    }
-
-    /// Commit finalization: the five-position
-    /// progress token is written into the task line under the task-file lock
-    /// as the last mutation before the commit, the task is marked done only
-    /// when validated, and the commit is `feat` or `WIP` accordingly. The
-    /// builder-failure and review-failure paths finalize the same way with
-    /// their own token and `validated` false. No crash-recovery checkpoint is
-    /// written for the review stage.
-    pub(crate) async fn finalize(
-        &self,
-        task: &Task,
-        ctx: &SessionContext,
-        token: &str,
-        validated: bool,
-    ) -> Option<String> {
-        let path = self.inner.config.task_file();
-        match self
-            .inner
-            .task_list
-            .write_progress(task, token, validated)
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => self.notice(
-                NoticeLevel::Warning,
-                format!(
-                    "{} was not found as an unchecked task; not ticked.",
-                    task.id
-                ),
-            ),
-            Err(e) => self.notice(
-                NoticeLevel::Error,
-                format!("cannot update {}: {e}", path.display()),
-            ),
-        }
-        ctx.reconcile();
-        let kind = if validated {
-            CommitKind::Feat
-        } else {
-            CommitKind::Wip
-        };
-        // The task file's temp-file glob stays out of the commit even when
-        // the startup sweep missed an orphan (a temp created after it ran).
-        let exclude = atomic_write::temp_glob(&path);
-        let commit = self
-            .git()
-            .commit_all(kind, &task.description, &[&exclude])
-            .await;
-        let full = commit.as_ref().map(|commit| commit.full.clone());
-        let commit = commit.map(|commit| commit.short);
-        if let Some(full) = full {
-            self.record_group_commit(task, &full);
-        }
-        self.report_commit(commit.as_deref());
-        commit
-    }
-
-    fn report_commit(&self, commit: Option<&str>) {
-        match commit {
-            Some(sha) => self.notice(NoticeLevel::Info, format!("Committed {sha}")),
-            None => self.notice(
-                NoticeLevel::Info,
-                "Not committed (not a git repository, nothing to commit, or the commit failed).",
-            ),
         }
     }
 
