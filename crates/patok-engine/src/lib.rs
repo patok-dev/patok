@@ -10,6 +10,7 @@ mod markdown;
 mod pipeline;
 mod schedule;
 mod server;
+mod session;
 mod step;
 mod task_list;
 

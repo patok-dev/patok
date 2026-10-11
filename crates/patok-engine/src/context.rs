@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use patok_core::config::DaemonSettings;
-use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, SessionOutcome};
+use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, SessionOutcome, TaskOutcome};
 use patok_core::pipeline::Stage;
+use patok_core::task::Task;
 use patok_providers::Provider;
 use tokio_util::sync::CancellationToken;
 
@@ -190,6 +191,142 @@ impl SessionContext {
         let mut state = self.inner.state.lock().expect("engine state lock");
         state.group_number = number;
         state.group_base = base;
+    }
+
+    /// Whether a stop is pending: no new task starts.
+    pub(crate) fn stop_pending(&self) -> bool {
+        self.inner
+            .state
+            .lock()
+            .expect("engine state lock")
+            .stop
+            .is_pending()
+    }
+
+    /// Marks `task` current, announces it (`TaskStarted`) and starts its
+    /// tiles over -- under one state lock, atomically with the
+    /// announcement.
+    pub(crate) fn begin_task(&self, task: &Task) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        state.current_task = Some(task.id.clone());
+        engine.emit_locked(
+            &mut state,
+            EngineEvent::TaskStarted {
+                id: task.id.clone(),
+                description: task.description.clone(),
+            },
+        );
+        engine.task_tiles_started_locked(&mut state);
+    }
+
+    /// Ends one task under one state lock: a completed UI-added task
+    /// postpones the next discovery round (the cooldown rule),
+    /// `TaskFinished` carries the outcome and commit, the current task is
+    /// cleared and the tiles muted. The UI-added check reads the task list
+    /// while the state lock is held (state first, task list second -- the
+    /// engine's lock order).
+    pub(crate) fn finish_task(&self, task: &Task, outcome: TaskOutcome, commit: Option<String>) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        if outcome == TaskOutcome::Done && self.inner.task_list.is_ui_added(&task.id) {
+            state.schedule.ui_added_task_completed(Instant::now());
+        }
+        engine.emit_locked(
+            &mut state,
+            EngineEvent::TaskFinished {
+                id: task.id.clone(),
+                outcome,
+                commit,
+            },
+        );
+        state.current_task = None;
+        engine.task_tiles_finished_locked(&mut state);
+    }
+
+    /// Ends the build session: nothing is current, the run state returns to
+    /// idle through the phase-aware apply, and the rail is refreshed (a
+    /// safety refresh -- the task end already muted its tiles).
+    pub(crate) fn build_ended(&self) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        state.current_task = None;
+        let run = state.run.build_ended();
+        engine.apply_run_state(&mut state, run);
+        engine.refresh_pipeline_locked(&mut state);
+    }
+
+    /// Whether the discovery cooldown has elapsed, so a round may run.
+    pub(crate) fn discovery_due(&self) -> bool {
+        self.inner
+            .state
+            .lock()
+            .expect("engine state lock")
+            .schedule
+            .is_eligible(Instant::now())
+    }
+
+    /// The session's gap round starts: the run-state transition (deliberately
+    /// not through the phase-aware apply -- the phase stays running), the
+    /// `DiscoveryChanged { discovering: true }` event and the rail refresh,
+    /// under one state lock.
+    pub(crate) fn gap_discovery_started(&self) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        state.run = state.run.gap_discovery_started();
+        engine.emit_locked(
+            &mut state,
+            EngineEvent::DiscoveryChanged { discovering: true },
+        );
+        engine.refresh_pipeline_locked(&mut state);
+    }
+
+    /// A discovery round ended: the run-state transition, the
+    /// `discovery_ran` flag (only a round that ran to completion marks the
+    /// DISCOVER tile done), the reconcile, the rail refresh and the
+    /// `DiscoveryChanged { discovering: false }` event under one state
+    /// lock; the `discovery_done` notification fires after the lock is
+    /// dropped.
+    pub(crate) fn discovery_ended(&self, added: Option<usize>) {
+        let engine = self.engine();
+        {
+            let mut state = self.inner.state.lock().expect("engine state lock");
+            state.run = state.run.discovery_ended();
+            // Only a round that ran to completion marks the DISCOVER tile
+            // done; a cancelled or failed one does not.
+            state.discovery_ran |= added.is_some();
+            engine.reconcile_locked(&mut state);
+            engine.refresh_pipeline_locked(&mut state);
+            engine.emit_locked(
+                &mut state,
+                EngineEvent::DiscoveryChanged { discovering: false },
+            );
+        }
+        self.inner.discovery_done.notify_waiters();
+    }
+
+    /// Records a finished discovery round in the cooldown schedule; a round
+    /// that did not complete leaves the schedule alone.
+    pub(crate) fn record_round(&self, added: Option<usize>) {
+        if let Some(added) = added {
+            let mut state = self.inner.state.lock().expect("engine state lock");
+            state.schedule.round_finished(Instant::now(), added);
+        }
+    }
+
+    /// A planner or queue-creation run ended: the run-state transition, the
+    /// reconcile and the `PlanningChanged { planning: false }` event under
+    /// one state lock; the `planning_done` notification fires after the
+    /// lock is dropped.
+    pub(crate) fn planning_ended(&self) {
+        let engine = self.engine();
+        {
+            let mut state = self.inner.state.lock().expect("engine state lock");
+            state.run = state.run.planning_ended();
+            engine.reconcile_locked(&mut state);
+            engine.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: false });
+        }
+        self.inner.planning_done.notify_waiters();
     }
 
     /// The reviewer session's provider and model when the reviewer provider

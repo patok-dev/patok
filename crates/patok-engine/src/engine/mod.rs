@@ -4,10 +4,11 @@
 //! (`config`), the shared state vocabulary and the status queries (`state`), the
 //! stop state (`stop`), the event bus (`bus`), the run-state application, queue
 //! reconcile and stage tiles (`pipeline`), the task-file watcher (`watch`), the
-//! central settings and reload (`settings`), the command entry points
-//! (`commands`), and the session loop (`session`). The per-task build flow --
-//! its steps, their order, every tile update, the progress token and the
-//! batch-review group wiring -- lives in `crate::pipeline`, reached through the
+//! central settings and reload (`settings`) and the command entry points
+//! (`commands`). The per-task build flow -- its steps, their order, every tile
+//! update, the progress token and the batch-review group wiring -- lives in
+//! `crate::pipeline`, and the session loop -- the build session and the
+//! append-style runs -- in `crate::session`; both are reached through the
 //! session context `crate::context`, which also holds the research, plan,
 //! build, review and commit steps and the shared agent-run skeleton they
 //! run on.
@@ -16,7 +17,6 @@ mod bus;
 mod commands;
 mod config;
 mod pipeline;
-mod session;
 mod settings;
 mod state;
 mod stop;

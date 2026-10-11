@@ -220,7 +220,8 @@ impl RunState {
         self.checked(Self::Idle, Self::Running)
     }
 
-    /// The build session ends. `end_session` guarantees the source.
+    /// The build session ends. The session's end in `crate::session`
+    /// guarantees the source.
     pub(crate) fn build_ended(self) -> Self {
         debug_assert_eq!(self, Self::Running);
         self.checked(Self::Running, Self::Idle)
@@ -364,7 +365,7 @@ impl Engine {
 
     /// The IDs this engine appended through the append-tasks flow during the session, in the
     /// order they were added. Completing one of them postpones the next discovery round by
-    /// the cooldown, checked where the task finishes in `run_task`.
+    /// the cooldown, checked where the task finishes in `crate::session`.
     pub fn ui_added_task_ids(&self) -> Vec<String> {
         self.inner.task_list.ui_added_ids()
     }

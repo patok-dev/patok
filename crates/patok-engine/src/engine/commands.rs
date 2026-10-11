@@ -5,6 +5,7 @@ use tokio_util::sync::CancellationToken;
 use super::state::State;
 use super::{AttachError, Attachment, Engine};
 use crate::TASK_FILE;
+use crate::session::{Session, SessionKind};
 use crate::step::research::reusable_research_report;
 use crate::taskfile::RemoveOutcome;
 
@@ -159,8 +160,11 @@ impl Engine {
         self.task_tiles_started_locked(&mut state);
         drop(state);
 
-        let engine = self.clone();
-        tokio::spawn(async move { engine.run_session(task, ctx).await });
+        tokio::spawn(async move {
+            Session::new(SessionKind::Build { first: task }, ctx)
+                .run()
+                .await
+        });
         Ok(())
     }
 
@@ -189,9 +193,19 @@ impl Engine {
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });
         drop(state);
 
-        let engine = self.clone();
         let request = request.to_string();
-        tokio::spawn(async move { engine.run_planner(request, before, ctx, start).await });
+        tokio::spawn(async move {
+            Session::new(
+                SessionKind::AddTasks {
+                    request,
+                    before,
+                    start,
+                },
+                ctx,
+            )
+            .run()
+            .await
+        });
         Ok(())
     }
 
@@ -231,8 +245,18 @@ impl Engine {
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });
         drop(state);
 
-        let engine = self.clone();
-        tokio::spawn(async move { engine.run_queue_creation(kind, before, ctx, start).await });
+        tokio::spawn(async move {
+            Session::new(
+                SessionKind::QueueCreation {
+                    kind,
+                    before,
+                    start,
+                },
+                ctx,
+            )
+            .run()
+            .await
+        });
         Ok(())
     }
 
@@ -253,10 +277,10 @@ impl Engine {
         self.refresh_pipeline_locked(&mut state);
         drop(state);
 
-        let engine = self.clone();
         tokio::spawn(async move {
-            let added = engine.run_discovery(before, &ctx).await;
-            engine.record_round(added);
+            Session::new(SessionKind::Discovery { before }, ctx)
+                .run()
+                .await
         });
         Ok(())
     }
@@ -302,8 +326,8 @@ impl Engine {
     /// reaches the attached shells right away. Accepted in every engine
     /// state: removing a *pending* task while a build runs is required
     /// behavior, and the running and completed tasks are protected anyway.
-    /// Known race, same class as the add/inject race: `begin_next_task`
-    /// loads the file without the lock, so a start concurrent with a
+    /// Known race, same class as the add/inject race: the Session's
+    /// next-task pick loads the file without the lock, so a start concurrent with a
     /// removal can still pick the removed task; the consequence is the
     /// session's commit step `write_progress` reporting a missing line, a
     /// documented no-op warning. Errors are user-facing rejection reasons.
@@ -313,9 +337,9 @@ impl Engine {
             return Err("the task id is empty".into());
         }
         // Reading `current_task` before taking the task-list lock keeps the
-        // lock order engine state first; `begin_next_task` loads the file
-        // without the lock either way, so the documented race above and its
-        // consequence are unchanged.
+        // lock order engine state first; the Session's next-task pick loads
+        // the file without the lock either way, so the documented race
+        // above and its consequence are unchanged.
         {
             let state = self.state();
             if state.current_task.as_deref() == Some(id) {
