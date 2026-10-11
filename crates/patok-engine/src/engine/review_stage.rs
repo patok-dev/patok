@@ -2,17 +2,16 @@ use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
-use tokio_util::sync::CancellationToken;
 
 use super::Engine;
 use super::group;
-use super::session::{AgentPrompt, StageExit, StageStart, StageWords};
-use super::state::{Unit, resolve_provider};
 use crate::agents::{
     Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
 use crate::artifact;
+use crate::context::SessionContext;
+use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 
 /// The largest git diff the reviewer prompt carries:
 /// 50 KB; a larger or empty diff falls back to the changed-file list.
@@ -60,31 +59,30 @@ impl Engine {
     pub(crate) async fn review_stage(
         &self,
         task: &Task,
-        unit: &Unit,
-        cancel: &CancellationToken,
+        ctx: &SessionContext,
         plan: Option<&str>,
     ) -> ReviewStage {
         let complexity = complexity::classify(&task.description);
         // The skip decision, recorded with its reason.
-        let pending_after: Vec<String> = self.inner.task_list.pending_ids();
-        let history = ReviewHistory::load(&self.inner.config.review_history);
+        let pending_after: Vec<String> = ctx.task_list().pending_ids();
+        let history = ReviewHistory::load(ctx.review_history_path());
         // The raw deferral decides the group's close beside the skip rule:
         // the batch deferral is not the group's last task, and its skip is
         // not a completed review.
         let deferred = group::batch_deferred(&task.id, &pending_after);
         let inputs = SkipInputs {
-            review_in_loop: unit.settings.review_in_loop,
-            batch_deferred: unit.settings.batch_review && deferred,
-            skip_review_for_simple: unit.settings.skip_review_for_simple,
+            review_in_loop: ctx.settings().review_in_loop,
+            batch_deferred: ctx.settings().batch_review && deferred,
+            skip_review_for_simple: ctx.settings().skip_review_for_simple,
             complexity: Some(complexity),
             builder_clean: true,
-            review_confidence_threshold: unit.settings.review_confidence_threshold,
+            review_confidence_threshold: ctx.settings().review_confidence_threshold,
             history_consecutive_passes: history.match_shape(&task.description, complexity),
-            stage_enabled: unit.review_stage_enabled(),
+            stage_enabled: ctx.review_stage_enabled(),
         };
         if let Some(reason) = skip_review(&inputs) {
             tracing::info!("review skipped for {}: {}", task.id, reason.reason());
-            self.notice(
+            ctx.notice(
                 NoticeLevel::Info,
                 format!("Review skipped for {}: {}.", task.id, reason.reason()),
             );
@@ -96,7 +94,7 @@ impl Engine {
             if !deferred {
                 self.close_group(&task.id);
             }
-            self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
+            ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
             return ReviewStage::Skipped;
         }
 
@@ -106,15 +104,15 @@ impl Engine {
         // The changed files: from the working tree,
         // and against the batch group's base so the group's last review spans
         // every commit of the group. No files changed fails the review.
-        let base = self.state().group_base.clone();
-        let git = self.git();
+        let base = ctx.group_base();
+        let git = ctx.git();
         let changed = git.changed_files(base.as_deref()).await;
         if changed.is_empty() {
-            self.notice(
+            ctx.notice(
                 NoticeLevel::Error,
                 format!("{}: no changed files to review", task.id),
             );
-            self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
+            ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
             return ReviewStage::Failed;
         }
         // The reviewer receives the diff when it is non-empty and at most
@@ -123,7 +121,7 @@ impl Engine {
         let diff = (!diff.trim().is_empty() && diff.len() <= DIFF_LIMIT_BYTES).then_some(diff);
 
         // The review tile is active while the reviewer sessions run (T49.1).
-        self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Active));
+        ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Active));
 
         // Applied fixes are inferred from per-file content hashes taken before
         // and after the reviewer, over the same changed-file set.
@@ -136,13 +134,10 @@ impl Engine {
             .filter(|file| !is_generated(file))
             .cloned()
             .collect();
-        let run = if unit.settings.review_multipass_threshold > 0
-            && reviewable.len() as u64 > unit.settings.review_multipass_threshold
+        let run = if ctx.settings().review_multipass_threshold > 0
+            && reviewable.len() as u64 > ctx.settings().review_multipass_threshold
         {
-            match self
-                .multipass_review(task, unit, cancel, &reviewable, &changed)
-                .await
-            {
+            match multipass_review(ctx, task, &reviewable, &changed).await {
                 Ok(outcome) => ReviewRun::Outcome(outcome),
                 Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
                 Err(ReviewExit::Failed) => ReviewRun::Failed,
@@ -155,9 +150,9 @@ impl Engine {
                 &changed,
                 diff.as_deref(),
                 1,
-                unit.settings.confidence_threshold,
+                ctx.settings().confidence_threshold,
             );
-            match self.one_review(task, unit, cancel, &agent).await {
+            match one_review(ctx, task, &agent).await {
                 Ok(outcome) => ReviewRun::Outcome(outcome),
                 Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
                 Err(ReviewExit::Failed) => ReviewRun::Failed,
@@ -184,8 +179,8 @@ impl Engine {
         // The verdict.
         let (report, verdict) = match run {
             ReviewRun::Cancelled => {
-                self.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
-                self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
+                ctx.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
+                ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
                 return ReviewStage::Cancelled;
             }
             ReviewRun::Outcome(outcome) => (outcome.report, outcome.verdict),
@@ -195,7 +190,7 @@ impl Engine {
                 tracing::error!("the reviewer session failed for {}", task.id);
                 (
                     String::new(),
-                    compute_verdict(None, unit.settings.confidence_threshold),
+                    compute_verdict(None, ctx.settings().confidence_threshold),
                 )
             }
         };
@@ -213,9 +208,9 @@ impl Engine {
         // history in the background.
         self.record_review_outcome(task, complexity, verdict.passed);
 
-        self.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
+        ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
         if verdict.passed {
-            self.notice(NoticeLevel::Info, format!("Review passed for {}.", task.id));
+            ctx.notice(NoticeLevel::Info, format!("Review passed for {}.", task.id));
             // The group's last task completed its review validated: the
             // record goes. A failed review keeps it so the rerun still
             // diffs the whole group.
@@ -227,7 +222,7 @@ impl Engine {
             let report = review_path
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "the review report".into());
-            self.notice(
+            ctx.notice(
                 NoticeLevel::Error,
                 format!(
                     "review failed for {}: HIGH/MEDIUM issues remain, check report at {}",
@@ -236,120 +231,6 @@ impl Engine {
             );
             ReviewStage::Failed
         }
-    }
-
-    /// The reviewer session the review runs on when the reviewer provider names
-    /// a provider this build implements (`reviewer_provider`): that provider,
-    /// resolved like any other unit of work. A provider that supports the
-    /// reviewer model (the claude provider) runs with the configured one
-    /// (`reviewer_model`); the other providers keep their default model.
-    fn reviewer_unit(&self, unit: &Unit) -> Unit {
-        let mut reviewer = unit.clone();
-        if let Some(resolver) = self.inner.resolver.as_ref() {
-            match resolve_provider(resolver, &reviewer.settings.reviewer_provider) {
-                Ok(Some(provider)) => {
-                    reviewer.provider = provider;
-                    reviewer.model = reviewer
-                        .provider
-                        .supports_reviewer_model()
-                        .then(|| reviewer.settings.reviewer_model.clone());
-                }
-                // A name this build does not implement: keep the configured
-                // provider silently, exactly like today.
-                Ok(None) => {}
-                Err(error) => {
-                    let name = reviewer.settings.reviewer_provider;
-                    tracing::warn!(
-                        "the {name} reviewer provider is unavailable ({error}); \
-                         the reviewer runs on the configured provider"
-                    );
-                }
-            }
-        } else if reviewer.settings.reviewer_provider.kind().is_some() {
-            let name = reviewer.settings.reviewer_provider;
-            tracing::warn!(
-                "the {name} reviewer provider has no resolver; \
-                 the reviewer runs on the fixed provider"
-            );
-        }
-        reviewer
-    }
-
-    /// One reviewer session: announced as the active agent (T11.1), recorded
-    /// with the reviewer allowlist, its raw stream written to the history log,
-    /// and its captured final message validated by the agent (the combined and
-    /// integration reviewers compute the verdict over it, the per-file
-    /// reviewer parses its findings out of it).
-    async fn one_review<A: Agent>(
-        &self,
-        task: &Task,
-        unit: &Unit,
-        cancel: &CancellationToken,
-        agent: &A,
-    ) -> Result<A::Session, ReviewExit> {
-        // The starting line names the provider the review actually runs on
-        // (mistral when the reviewer provider is mistral), so the unit resolves first
-        // (T78.1).
-        let reviewer_unit = self.reviewer_unit(unit);
-        let exit = self
-            .run_stage(
-                StageStart::Announce,
-                agent.role(),
-                AgentPrompt::of(agent),
-                cancel.clone(),
-                &reviewer_unit,
-                StageWords {
-                    capture: true,
-                    could_not_start: format!("reviewer could not start for {}", task.id),
-                    default_failure: "review failed".into(),
-                    cancelled_notice: None,
-                    failure_level: NoticeLevel::Error,
-                    failure_prefix: format!("review for {}: ", task.id),
-                    failure_suffix: String::new(),
-                },
-            )
-            .await;
-        match exit {
-            StageExit::Completed(events) => agent.validate(&events).map_err(|_| ReviewExit::Failed),
-            StageExit::Cancelled => Err(ReviewExit::Cancelled),
-            StageExit::Failed => Err(ReviewExit::Failed),
-        }
-    }
-
-    /// The multipass review: one report-only reviewer
-    /// session per changed file (a failed file review is skipped, the loop
-    /// continues), then one integration reviewer session over the merged,
-    /// de-duplicated findings that produces the final report.
-    async fn multipass_review(
-        &self,
-        task: &Task,
-        unit: &Unit,
-        cancel: &CancellationToken,
-        reviewable: &[String],
-        changed: &[String],
-    ) -> Result<ReviewOutcome, ReviewExit> {
-        let mut merged = Findings::default();
-        for file in reviewable {
-            let agent = FileReviewerAgent::new(task, file, 1);
-            match self.one_review(task, unit, cancel, &agent).await {
-                Err(ReviewExit::Cancelled) => return Err(ReviewExit::Cancelled),
-                Err(ReviewExit::Failed) => {
-                    // A failed file review is skipped and the loop continues.
-                    continue;
-                }
-                Ok(Some(findings)) => merge_findings(&mut merged, findings),
-                Ok(None) => {}
-            }
-        }
-        let findings_json = serde_json::to_string_pretty(&merged).unwrap_or_default();
-        let agent = ReviewerAgent::integration(
-            task,
-            &findings_json,
-            changed,
-            2,
-            unit.settings.confidence_threshold,
-        );
-        self.one_review(task, unit, cancel, &agent).await
     }
 
     /// The SHA-256 content hashes of `files` (missing files hash to none):
@@ -387,4 +268,77 @@ impl Engine {
             }
         });
     }
+}
+
+/// One reviewer session: announced as the active agent (T11.1), recorded
+/// with the reviewer allowlist, its raw stream written to the history log,
+/// and its captured final message validated by the agent (the combined and
+/// integration reviewers compute the verdict over it, the per-file
+/// reviewer parses its findings out of it).
+async fn one_review<A: Agent>(
+    ctx: &SessionContext,
+    task: &Task,
+    agent: &A,
+) -> Result<A::Session, ReviewExit> {
+    // The starting line names the provider the review actually runs on
+    // (mistral when the reviewer provider is mistral), so the reviewer
+    // pair resolves first (T78.1).
+    let (provider, model) = ctx.reviewer();
+    let exit = run_stage(
+        ctx,
+        &provider,
+        model.as_deref(),
+        StageStart::Announce,
+        agent.role(),
+        AgentPrompt::of(agent),
+        StageWords {
+            capture: true,
+            could_not_start: format!("reviewer could not start for {}", task.id),
+            default_failure: "review failed".into(),
+            cancelled_notice: None,
+            failure_level: NoticeLevel::Error,
+            failure_prefix: format!("review for {}: ", task.id),
+            failure_suffix: String::new(),
+        },
+    )
+    .await;
+    match exit {
+        StageExit::Completed(events) => agent.validate(&events).map_err(|_| ReviewExit::Failed),
+        StageExit::Cancelled => Err(ReviewExit::Cancelled),
+        StageExit::Failed => Err(ReviewExit::Failed),
+    }
+}
+
+/// The multipass review: one report-only reviewer
+/// session per changed file (a failed file review is skipped, the loop
+/// continues), then one integration reviewer session over the merged,
+/// de-duplicated findings that produces the final report.
+async fn multipass_review(
+    ctx: &SessionContext,
+    task: &Task,
+    reviewable: &[String],
+    changed: &[String],
+) -> Result<ReviewOutcome, ReviewExit> {
+    let mut merged = Findings::default();
+    for file in reviewable {
+        let agent = FileReviewerAgent::new(task, file, 1);
+        match one_review(ctx, task, &agent).await {
+            Err(ReviewExit::Cancelled) => return Err(ReviewExit::Cancelled),
+            Err(ReviewExit::Failed) => {
+                // A failed file review is skipped and the loop continues.
+                continue;
+            }
+            Ok(Some(findings)) => merge_findings(&mut merged, findings),
+            Ok(None) => {}
+        }
+    }
+    let findings_json = serde_json::to_string_pretty(&merged).unwrap_or_default();
+    let agent = ReviewerAgent::integration(
+        task,
+        &findings_json,
+        changed,
+        2,
+        ctx.settings().confidence_threshold,
+    );
+    one_review(ctx, task, &agent).await
 }

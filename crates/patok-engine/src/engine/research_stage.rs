@@ -2,12 +2,11 @@ use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
-use tokio_util::sync::CancellationToken;
 
 use super::Engine;
-use super::session::{AgentPrompt, StageExit, StageStart, StageWords};
-use super::state::Unit;
 use crate::agents::{Agent, ResearchAgent};
+use crate::context::SessionContext;
+use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 
 /// The outcome of one task's research stage (T68.1).
 #[derive(Debug)]
@@ -32,48 +31,43 @@ impl Engine {
     /// (the pipeline continues without a report); a cancelled one ends the
     /// task. The shell is told the research agent is active for the whole
     /// stage (T11.1).
-    pub(crate) async fn research_stage(
-        &self,
-        task: &Task,
-        cancel: &CancellationToken,
-        unit: &Unit,
-    ) -> ResearchStage {
+    pub(crate) async fn research_stage(&self, task: &Task, ctx: &SessionContext) -> ResearchStage {
         // A fresh report on disk is reused: no session.
         if let Some(report) = self.reusable_research_report(&task.id) {
-            self.notice(
+            ctx.notice(
                 NoticeLevel::Info,
                 format!("Reusing the research report for {}.", task.id),
             );
             return ResearchStage::Report(report);
         }
         // A Simple task skips the stage when the key says so.
-        if unit.settings.skip_research_for_simple
+        if ctx.settings().skip_research_for_simple
             && complexity::classify(&task.description) == Complexity::Simple
         {
             return ResearchStage::Skipped;
         }
         // The research session is the running stage: its tile is active with the
         // later stages still pending.
-        self.update_tiles(|tiles| tiles.set(Stage::Research, TileStatus::Active));
+        ctx.update_tiles(|tiles| tiles.set(Stage::Research, TileStatus::Active));
         let agent = ResearchAgent::new(task);
-        let exit = self
-            .run_stage(
-                StageStart::Announce,
-                agent.role(),
-                AgentPrompt::of(&agent),
-                cancel.clone(),
-                unit,
-                StageWords {
-                    capture: true,
-                    could_not_start: format!("research agent could not start for {}", task.id),
-                    default_failure: "research failed".into(),
-                    cancelled_notice: Some("Research cancelled; nothing committed.".into()),
-                    failure_level: NoticeLevel::Warning,
-                    failure_prefix: format!("research for {}: ", task.id),
-                    failure_suffix: "; continuing without a report".into(),
-                },
-            )
-            .await;
+        let exit = run_stage(
+            ctx,
+            ctx.provider(),
+            ctx.model(),
+            StageStart::Announce,
+            agent.role(),
+            AgentPrompt::of(&agent),
+            StageWords {
+                capture: true,
+                could_not_start: format!("research agent could not start for {}", task.id),
+                default_failure: "research failed".into(),
+                cancelled_notice: Some("Research cancelled; nothing committed.".into()),
+                failure_level: NoticeLevel::Warning,
+                failure_prefix: format!("research for {}: ", task.id),
+                failure_suffix: "; continuing without a report".into(),
+            },
+        )
+        .await;
         let events = match exit {
             StageExit::Cancelled => return ResearchStage::Cancelled,
             StageExit::Failed => return ResearchStage::Failed,
@@ -85,7 +79,7 @@ impl Engine {
             return ResearchStage::Failed;
         };
         if report.trim().is_empty() {
-            self.notice(
+            ctx.notice(
                 NoticeLevel::Warning,
                 format!(
                     "research for {} returned no report; continuing without one",

@@ -6,9 +6,11 @@ use patok_core::config::{
     daemon_field_value, load_daemon, set_daemon_field,
 };
 use patok_core::event::EngineEvent;
+use tokio_util::sync::CancellationToken;
 
 use super::Engine;
-use super::state::{Unit, resolve_or_reject};
+use super::state::resolve_or_reject;
+use crate::context::SessionContext;
 
 /// How often the config files' modification times are checked.
 const CONFIG_FILE_POLL: Duration = Duration::from_secs(2);
@@ -20,11 +22,15 @@ impl Engine {
         self.central().settings.clone()
     }
 
-    /// The unit-of-work snapshot the starting commands validate and run with: the fixed
-    /// provider on `Engine::new` engines, else the central settings re-resolved through
-    /// the resolver. Errors are user-facing rejection reasons, exactly like a startup
-    /// resolution failure.
-    pub(crate) fn unit(&self) -> Result<Unit, String> {
+    /// The session context the starting commands validate and run with: the
+    /// unit-of-work snapshot -- the fixed provider on `Engine::new` engines,
+    /// else the central settings re-resolved through the resolver -- plus the
+    /// run's cancel token. Errors are user-facing rejection reasons, exactly
+    /// like a startup resolution failure.
+    pub(crate) fn session_context(
+        &self,
+        cancel: CancellationToken,
+    ) -> Result<SessionContext, String> {
         let central = self.central();
         let provider = match self.inner.resolver.as_ref() {
             Some(resolver) => {
@@ -37,11 +43,13 @@ impl Engine {
             }
             None => self.inner.provider.clone()?,
         };
-        Ok(Unit {
+        Ok(SessionContext::new(
+            self.inner.clone(),
             provider,
-            model: central.model.clone(),
-            settings: central.settings.clone(),
-        })
+            central.model.clone(),
+            central.settings.clone(),
+            cancel,
+        ))
     }
 
     /// Applies one settings-overlay change to a daemon-schema field: validated exactly as an on-disk field, persisted to the resolved layer

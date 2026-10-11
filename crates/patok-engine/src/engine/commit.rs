@@ -4,6 +4,7 @@ use patok_core::utils::atomic_write;
 
 use super::Engine;
 use super::group;
+use crate::context::SessionContext;
 use crate::git::{CommitKind, Git};
 
 impl Engine {
@@ -16,24 +17,20 @@ impl Engine {
     /// record is written so the group survives a restart. The group state is
     /// reset at each session start, which makes the decision re-run for the
     /// session's first task.
-    pub(crate) async fn note_group(&self, task: &Task) {
+    pub(crate) async fn note_group(&self, task: &Task, ctx: &SessionContext) {
         let number = task.group_number();
-        {
-            let state = self.state();
-            if state.group_number.is_some() && state.group_number == number {
-                return;
-            }
+        let current = ctx.group_number();
+        if current.is_some() && current == number {
+            return;
         }
         let (base, record) = self.group_base(task, number.as_deref()).await;
         if let Some(record) = &record {
-            let path = self.inner.config.open_group.clone();
-            if let Err(error) = record.save(&path) {
+            let path = ctx.open_group_path();
+            if let Err(error) = record.save(path) {
                 tracing::warn!("cannot write the open group {}: {error}", path.display());
             }
         }
-        let mut state = self.state();
-        state.group_number = number;
-        state.group_base = base;
+        ctx.set_group(number, base);
     }
 
     /// The base a new batch-review group diffs against, and the open-group
@@ -137,6 +134,7 @@ impl Engine {
     pub(crate) async fn finalize(
         &self,
         task: &Task,
+        ctx: &SessionContext,
         token: &str,
         validated: bool,
     ) -> Option<String> {
@@ -160,7 +158,7 @@ impl Engine {
                 format!("cannot update {}: {e}", path.display()),
             ),
         }
-        self.reconcile();
+        ctx.reconcile();
         let kind = if validated {
             CommitKind::Feat
         } else {

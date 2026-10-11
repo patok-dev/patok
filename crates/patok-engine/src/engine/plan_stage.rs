@@ -1,12 +1,11 @@
 use patok_core::event::NoticeLevel;
 use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
-use tokio_util::sync::CancellationToken;
 
 use super::Engine;
-use super::session::{AgentPrompt, StageExit, StageStart, StageWords};
-use super::state::Unit;
 use crate::agents::{Agent, PlanAgent};
+use crate::context::SessionContext;
+use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 
 /// The outcome of one task's plan stage (T10.1).
 #[derive(Debug)]
@@ -28,13 +27,12 @@ impl Engine {
     pub(crate) async fn run_plan_stage(
         &self,
         task: &Task,
-        cancel: &CancellationToken,
-        unit: &Unit,
+        ctx: &SessionContext,
         research: Option<&str>,
     ) -> PlanStage {
         // The plan session is the running stage: its tile is active with the
         // build tile still pending.
-        self.update_tiles(|tiles| {
+        ctx.update_tiles(|tiles| {
             tiles.set(Stage::Research, TileStatus::Done);
             tiles.set(Stage::Plan, TileStatus::Active);
         });
@@ -42,24 +40,24 @@ impl Engine {
         for attempt in 1..=2 {
             // Every attempt is one planner session with its own timing, so a retried
             // plan leaves its own finished line (T42.1) and starting line (T78.1).
-            let exit = self
-                .run_stage(
-                    StageStart::Announce,
-                    agent.role(),
-                    AgentPrompt::of(&agent),
-                    cancel.clone(),
-                    unit,
-                    StageWords {
-                        capture: true,
-                        could_not_start: format!("plan agent could not start for {}", task.id),
-                        default_failure: "plan failed".into(),
-                        cancelled_notice: Some("Plan cancelled; nothing committed.".into()),
-                        failure_level: NoticeLevel::Error,
-                        failure_prefix: format!("plan for {}: ", task.id),
-                        failure_suffix: String::new(),
-                    },
-                )
-                .await;
+            let exit = run_stage(
+                ctx,
+                ctx.provider(),
+                ctx.model(),
+                StageStart::Announce,
+                agent.role(),
+                AgentPrompt::of(&agent),
+                StageWords {
+                    capture: true,
+                    could_not_start: format!("plan agent could not start for {}", task.id),
+                    default_failure: "plan failed".into(),
+                    cancelled_notice: Some("Plan cancelled; nothing committed.".into()),
+                    failure_level: NoticeLevel::Error,
+                    failure_prefix: format!("plan for {}: ", task.id),
+                    failure_suffix: String::new(),
+                },
+            )
+            .await;
             let events = match exit {
                 StageExit::Cancelled => return PlanStage::Cancelled,
                 StageExit::Failed => return PlanStage::Failed,
@@ -68,7 +66,7 @@ impl Engine {
             match agent.validate(&events) {
                 Ok(text) => return PlanStage::Accepted(text),
                 Err(reason) if attempt == 2 => {
-                    self.notice(
+                    ctx.notice(
                         NoticeLevel::Error,
                         format!(
                             "{}: the plan was rejected twice ({reason}); the task was not built",

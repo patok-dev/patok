@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use patok_core::event::{AgentEvent, AgentRole, EngineEvent, NoticeLevel, SessionOutcome};
-use patok_providers::{ExitKind, ProviderError, SessionResult};
 
 use super::Engine;
 use super::state::State;
@@ -100,19 +99,5 @@ impl Engine {
             outcome,
             duration_ms: start.elapsed().as_millis() as u64,
         });
-    }
-
-    /// The finished line's outcome of one agent session.
-    pub(crate) fn session_outcome(
-        session: &Result<SessionResult, ProviderError>,
-    ) -> SessionOutcome {
-        match session {
-            Err(_) => SessionOutcome::Failed,
-            Ok(result) => match result.exit {
-                ExitKind::Completed => SessionOutcome::Finished,
-                ExitKind::Cancelled => SessionOutcome::Cancelled,
-                ExitKind::Failed | ExitKind::TimedOut => SessionOutcome::Failed,
-            },
-        }
     }
 }

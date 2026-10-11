@@ -5,7 +5,9 @@
 //! stop state (`stop`), the event bus (`bus`), the run-state application, queue
 //! reconcile and stage tiles (`pipeline`), the task-file watcher (`watch`), the
 //! central settings and reload (`settings`), the command entry points
-//! (`commands`), the session loop and the shared stage skeleton (`session`),
+//! (`commands`), the session loop (`session`), the shared agent-run skeleton
+//! the stages run on (`crate::step::agent_run`, reached through the session
+//! context `crate::context`), and
 //! the research, plan and review stages (`research_stage`, `plan_stage`,
 //! `review_stage`), driving their agents from the pure per-agent definitions in
 //! `crate::agents`, the artifact files (`artifacts`), the open-group group
@@ -30,14 +32,12 @@ mod watch;
 
 pub use self::commands::QueueCreation;
 pub use self::config::EngineConfig;
-pub(crate) use self::state::RunState;
+pub(crate) use self::state::{Inner, RunState, Tiles, resolve_provider};
 
 use std::sync::Arc;
 
 use patok_core::event::{EngineEvent, Snapshot};
 use tokio::sync::broadcast;
-
-use self::state::Inner;
 
 /// Cheaply cloneable handle on the engine's state.
 #[derive(Clone)]

@@ -3,11 +3,13 @@
 
 mod agents;
 mod artifact;
+mod context;
 mod engine;
 mod git;
 mod markdown;
 mod schedule;
 mod server;
+mod step;
 mod task_list;
 
 pub use engine::{Engine, EngineConfig, QueueCreation};

@@ -71,11 +71,11 @@ impl Engine {
     fn prepare_task_file_run(
         &self,
         state: &mut State,
-    ) -> Result<(String, CancellationToken), String> {
+        cancel: CancellationToken,
+    ) -> Result<String, String> {
         let before = self.inner.task_list.snapshot_before()?;
-        let cancel = CancellationToken::new();
-        state.cancel = cancel.clone();
-        Ok((before, cancel))
+        state.cancel = cancel;
+        Ok(before)
     }
 
     /// Takes the single controlling-shell slot and returns the current state plus a live feed.
@@ -125,9 +125,11 @@ impl Engine {
     /// Starts the build on the first pending task. The session-level loop then continues with the next pending task after each finish until
     /// none remain, and in continuous mode runs one discovery round if the cooldown has
     /// elapsed. The central
-    /// settings are snapshotted here and the whole session runs on that unit. Errors are user-facing rejection reasons.
+    /// settings are snapshotted here and the whole session runs on that session
+    /// context. Errors are user-facing rejection reasons.
     pub fn start_build(&self) -> Result<(), String> {
-        let unit = self.unit()?;
+        let cancel = CancellationToken::new();
+        let ctx = self.session_context(cancel.clone())?;
         let path = self.inner.task_list.path();
         let pending = self
             .inner
@@ -137,7 +139,6 @@ impl Engine {
         let mut state = self.state();
         Self::check_start(&state, StartCommand::Build)?;
         let task = pending.ok_or_else(|| format!("no pending tasks in {TASK_FILE}"))?;
-        let cancel = CancellationToken::new();
         state.cancel = cancel.clone();
         // A new session starts a new batch-review group: the same leading number recurring after a different task ran
         // starts a fresh group with a fresh base, and an interrupted group
@@ -158,7 +159,7 @@ impl Engine {
         drop(state);
 
         let engine = self.clone();
-        tokio::spawn(async move { engine.run_session(task, cancel, unit).await });
+        tokio::spawn(async move { engine.run_session(task, ctx).await });
         Ok(())
     }
 
@@ -169,18 +170,19 @@ impl Engine {
         if request.is_empty() {
             return Err("the request is empty".into());
         }
-        let unit = self.unit()?;
+        let cancel = CancellationToken::new();
+        let ctx = self.session_context(cancel.clone())?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::AddTasks)?;
-        let (before, cancel) = self.prepare_task_file_run(&mut state)?;
+        let before = self.prepare_task_file_run(&mut state, cancel)?;
         // The planner announces itself before the planning flag flips (T24.1),
         // so the shell's header and output frame title show the Planner from
         // the moment the run starts.
         let start = self.announce_session_locked(
             &mut state,
             AgentRole::Planner,
-            unit.provider.slug(),
-            unit.model.as_deref(),
+            ctx.provider().slug(),
+            ctx.model(),
         );
         state.run = state.run.planning_started();
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });
@@ -188,11 +190,7 @@ impl Engine {
 
         let engine = self.clone();
         let request = request.to_string();
-        tokio::spawn(async move {
-            engine
-                .run_planner(request, before, cancel, unit, start)
-                .await
-        });
+        tokio::spawn(async move { engine.run_planner(request, before, ctx, start).await });
         Ok(())
     }
 
@@ -202,7 +200,8 @@ impl Engine {
     /// session (the T68.1 reuse window). Errors are user-facing rejection
     /// reasons.
     pub fn start_queue_creation(&self, kind: QueueCreation) -> Result<(), String> {
-        let unit = self.unit()?;
+        let cancel = CancellationToken::new();
+        let ctx = self.session_context(cancel.clone())?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::QueueCreation)?;
         // A fresh same-kind research report is reused: no session (the T68.1
@@ -217,26 +216,22 @@ impl Engine {
             );
             return Ok(());
         }
-        let (before, cancel) = self.prepare_task_file_run(&mut state)?;
+        let before = self.prepare_task_file_run(&mut state, cancel)?;
         // The research agent announces itself before the planning flag flips,
         // so the shell's header and output frame title show Research from the
         // moment the run starts (T24.1).
         let start = self.announce_session_locked(
             &mut state,
             AgentRole::Research,
-            unit.provider.slug(),
-            unit.model.as_deref(),
+            ctx.provider().slug(),
+            ctx.model(),
         );
         state.run = state.run.planning_started();
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });
         drop(state);
 
         let engine = self.clone();
-        tokio::spawn(async move {
-            engine
-                .run_queue_creation(kind, before, cancel, unit, start)
-                .await
-        });
+        tokio::spawn(async move { engine.run_queue_creation(kind, before, ctx, start).await });
         Ok(())
     }
 
@@ -244,10 +239,11 @@ impl Engine {
     /// `D`-prefixed tasks to the task file. Errors are user-facing
     /// rejection reasons.
     pub fn start_discovery(&self) -> Result<(), String> {
-        let unit = self.unit()?;
+        let cancel = CancellationToken::new();
+        let ctx = self.session_context(cancel.clone())?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::Discovery)?;
-        let (before, cancel) = self.prepare_task_file_run(&mut state)?;
+        let before = self.prepare_task_file_run(&mut state, cancel)?;
         state.run = state.run.discovery_started();
         self.emit_locked(
             &mut state,
@@ -258,7 +254,7 @@ impl Engine {
 
         let engine = self.clone();
         tokio::spawn(async move {
-            let added = engine.run_discovery(before, cancel, &unit).await;
+            let added = engine.run_discovery(before, &ctx).await;
             engine.record_round(added);
         });
         Ok(())
