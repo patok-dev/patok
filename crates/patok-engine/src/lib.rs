@@ -7,6 +7,7 @@ mod context;
 mod engine;
 mod git;
 mod markdown;
+mod pipeline;
 mod schedule;
 mod server;
 mod step;

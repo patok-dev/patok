@@ -2,22 +2,16 @@ use std::time::Instant;
 
 use patok_core::config::RunMode;
 use patok_core::event::{AgentRole, EngineEvent, TaskOutcome};
-use patok_core::pipeline::{Stage, TileStatus};
 use patok_core::task::Task;
 
 use super::Engine;
 use super::commands::QueueCreation;
-use super::group;
 use crate::context::SessionContext;
+use crate::pipeline::build::BuildPipeline;
 use crate::step::add_task::AddTaskStep;
 use crate::step::agent_run::StageExit;
-use crate::step::build::{BuildOutcome, BuildStep};
-use crate::step::commit::CommitStep;
 use crate::step::discovery::DiscoveryStep;
-use crate::step::plan::{PlanOutcome, PlanStep};
 use crate::step::queue_research::QueueResearchStep;
-use crate::step::research::{ResearchOutcome, ResearchStep};
-use crate::step::review::{ReviewStage, ReviewStep};
 use crate::step::validate_append::ValidateAppendStep;
 use crate::task_list::AppendMode;
 
@@ -238,150 +232,16 @@ impl Engine {
         added
     }
 
-    /// Runs one task's build session, preceded by the research step (T68.1) and
-    /// the plan step when it is enabled (`plan_enabled`, T10.1). Emits `TaskFinished`
-    /// with the outcome and returns it; the session-level loop decides what happens
-    /// next. All sessions run on the session's settings snapshot in `ctx`, and
-    /// every tile update of the four steps happens here (the review tile is
-    /// active on entering the review step, section 11): the steps themselves
-    /// never touch tiles.
+    /// Runs one task's build session: [`BuildPipeline`] owns the task's
+    /// per-task build flow -- the research, plan, build, review and commit
+    /// steps, their order, every tile update, the progress token and the
+    /// batch-review group wiring -- on the session's settings snapshot in
+    /// `ctx`. This ends the task through `finish_task`, which emits
+    /// `TaskFinished` with the outcome; the session-level loop decides what
+    /// happens next.
     async fn run_task(&self, task: Task, ctx: &SessionContext) -> TaskOutcome {
-        // The batch-review group of this task is noted first: a new leading
-        // number starts or resumes a group through the open-group record,
-        // capturing the base its last review diffs across.
-        self.note_group(&task, ctx).await;
-
-        // The research step (T68.1): one research session runs before the task is
-        // planned (or built, with the plan step off), unless a fresh report is on
-        // disk to reuse or the task is Simple with the skip key on. A failed session
-        // is non-blocking: the pipeline continues without a report. The research
-        // tile is active only when a session runs, so a reused or skipped report
-        // never flips it.
-        let research_step = ResearchStep::new(ctx);
-        if research_step.runs_session(&task) {
-            ctx.update_tiles(|tiles| tiles.set(Stage::Research, TileStatus::Active));
-        }
-        let mut ran_research = true;
-        let research = match research_step.run(&task).await {
-            ResearchOutcome::Cancelled => {
-                return self.finish_task(&task, TaskOutcome::Cancelled, None);
-            }
-            ResearchOutcome::Report(text) => Some(text),
-            ResearchOutcome::Skipped => {
-                ran_research = false;
-                None
-            }
-            ResearchOutcome::Failed => None,
-        };
-
-        // The plan step: behind the `plan_enabled` key, one plan session with the
-        // read-only allowlist runs before the builder session. A plan rejected twice
-        // fails the task without a builder session, a commit or a task-file tick.
-        // The research report is the plan prompt's prior artifact (T68.1).
-        let plan = if ctx.settings().plan_enabled {
-            ctx.update_tiles(|tiles| {
-                tiles.set(Stage::Research, TileStatus::Done);
-                tiles.set(Stage::Plan, TileStatus::Active);
-            });
-            match PlanStep::new(ctx).run(&task, research.as_deref()).await {
-                PlanOutcome::Accepted(text) => Some(text),
-                PlanOutcome::Cancelled => {
-                    return self.finish_task(&task, TaskOutcome::Cancelled, None);
-                }
-                PlanOutcome::Failed => {
-                    return self.finish_task(&task, TaskOutcome::Failed, None);
-                }
-            }
-        } else {
-            None
-        };
-        let progress = |ran_review: bool, validated: bool| {
-            group::progress(ran_research, plan.is_some(), true, ran_review, validated)
-        };
-
-        // The builder takes over from the planner (T11.1); also announced when the plan
-        // step is disabled, so the shell never shows a stale agent. The research and
-        // plan tiles are done and the build tile active from here on -- also when a
-        // step was skipped, so the stages before the running one are always done.
-        ctx.update_tiles(|tiles| {
-            tiles.set(Stage::Research, TileStatus::Done);
-            tiles.set(Stage::Plan, TileStatus::Done);
-            tiles.set(Stage::Build, TileStatus::Active);
-        });
-
-        let (outcome, commit) = match BuildStep::new(ctx)
-            .run(&task, plan.as_deref(), research.as_deref())
-            .await
-        {
-            BuildOutcome::Failed => {
-                let commit = self
-                    .commit_task(&task, ctx, &progress(false, false), false)
-                    .await;
-                (TaskOutcome::Failed, commit)
-            }
-            BuildOutcome::Completed { claims } => {
-                // The build tile is done once the builder session completed: the
-                // stages before the running one are always done, so review never renders with the build
-                // still in-progress.
-                ctx.update_tiles(|tiles| tiles.set(Stage::Build, TileStatus::Done));
-                // The review tile is active from entering the review step,
-                // before the skip decision and the diff (section 11).
-                ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Active));
-                let base = ctx.group_base();
-                let review = ReviewStep::new(ctx)
-                    .run(&task, plan.as_deref(), claims.as_deref(), base.as_deref())
-                    .await;
-                ctx.update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
-                match review {
-                    ReviewStage::Cancelled { .. } => {
-                        return self.finish_task(&task, TaskOutcome::Cancelled, None);
-                    }
-                    ReviewStage::Passed { deferred } => {
-                        if !deferred {
-                            self.close_group(&task.id);
-                        }
-                        let commit = self
-                            .commit_task(&task, ctx, &progress(true, true), true)
-                            .await;
-                        (TaskOutcome::Done, commit)
-                    }
-                    ReviewStage::Skipped { deferred } => {
-                        if !deferred {
-                            self.close_group(&task.id);
-                        }
-                        let commit = self
-                            .commit_task(&task, ctx, &progress(false, true), true)
-                            .await;
-                        (TaskOutcome::Done, commit)
-                    }
-                    ReviewStage::Failed { .. } => {
-                        let commit = self
-                            .commit_task(&task, ctx, &progress(true, false), false)
-                            .await;
-                        (TaskOutcome::Failed, commit)
-                    }
-                }
-            }
-            BuildOutcome::Cancelled => (TaskOutcome::Cancelled, None),
-        };
-
+        let (outcome, commit) = BuildPipeline::new(ctx).run(&task).await;
         self.finish_task(&task, outcome, commit)
-    }
-
-    /// Runs the commit step and records the group commit of its commit; the
-    /// short SHA feeds the task-finished event.
-    async fn commit_task(
-        &self,
-        task: &Task,
-        ctx: &SessionContext,
-        token: &str,
-        validated: bool,
-    ) -> Option<String> {
-        let commit = CommitStep::new(ctx).run(task, token, validated).await;
-        if let Some(commit) = &commit {
-            self.record_group_commit(task, &commit.full);
-        }
-        commit.map(|commit| commit.short)
     }
 
     /// Ends one task: records the outcome and clears the current task. A completed

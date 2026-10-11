@@ -1,7 +1,7 @@
 //! The batch-review group tracking: the batch deferral, the five-position
 //! progress indicator and the persistent open-group record with its resume
 //! decision. Everything here is deterministic and unit-tested; the group
-//! wiring in `commit` calls into it.
+//! wiring in `BuildPipeline` calls into it.
 
 use std::path::Path;
 

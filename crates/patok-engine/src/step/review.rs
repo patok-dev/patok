@@ -8,7 +8,7 @@ use crate::agents::{
 };
 use crate::artifact;
 use crate::context::SessionContext;
-use crate::engine::group::batch_deferred;
+use crate::pipeline::group::batch_deferred;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 
 /// The largest git diff the reviewer prompt carries:

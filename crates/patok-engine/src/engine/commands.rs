@@ -143,7 +143,7 @@ impl Engine {
         state.cancel = cancel.clone();
         // A new session starts a new batch-review group: the same leading number recurring after a different task ran
         // starts a fresh group with a fresh base, and an interrupted group
-        // resumes through the open-group record (see `note_group`).
+        // resumes through the open-group record (see `BuildPipeline::note_group`).
         state.group_number = None;
         state.group_base = None;
         state.current_task = Some(task.id.clone());
