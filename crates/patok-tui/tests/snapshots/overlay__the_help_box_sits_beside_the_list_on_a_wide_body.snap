@@ -18,23 +18,23 @@ expression: screen
        │      planner model  opus                                                          █│                                      ││      │
        │      builder provider  ‹ claude ›                                                 █│                                      ││      │
        │      builder model  opus                                                          █│                                      ││      │
-       │      reviewer provider  ‹ claude ›                                                █│                                      ││      │
-       │      reviewer model  sonnet                                                       █│                                      ││      │
-       │      discovery provider  ‹ claude ›                                               █│                                      ││      │
-       │      discovery model  opus                                                        █│                                      ││      │
-       │  ▾ Pipeline                                                                       █│                                      ││      │
-       │      run mode  ‹ sprint ›                                                         █│                                      ││      │
+       │      reviewer provider  ‹ claude ›                                                ││                                      ││      │
+       │      reviewer model  sonnet                                                       ││                                      ││      │
+       │      discovery provider  ‹ claude ›                                               ││                                      ││      │
+       │      discovery model  opus                                                        ││                                      ││      │
+       │      learning extraction model  (not set)                                         ││                                      ││      │
+       │      learning extraction provider  ‹ claude ›                                     ││                                      ││      │
+       │      local model  (not set)                                                       ││                                      ││      │
+       │      model catalog refresh  (not set)                                             ││                                      ││      │
+       │  ▾ Pipeline                                                                       ││                                      ││      │
+       │      run mode  ‹ sprint ›                                                         ││                                      ││      │
        │      [ ] plan enabled                                                             ││                                      ││      │
        │      [ ] skip planner for simple                                                  ││                                      ││      │
        │      [ ] skip research for simple                                                 ││                                      ││      │
        │      [ ] skip review for simple                                                   ││                                      ││      │
        │      review confidence threshold  5                                               ││                                      ││      │
        │      review multipass threshold  8                                                ││                                      ││      │
-       │      [ ] batch review                                                             ││                                      ││      │
-       │      [ ] planner lookahead                                                        ││                                      ││      │
-       │      [ ] review in loop                                                           ││                                      ││      │
-       │      confidence threshold  0.5                                                    ││                                      ││      │
-       │  ▾ Timeouts and pauses                                                            │└──────────────────────────────────────┘│      │
+       │      [ ] batch review                                                             │└──────────────────────────────────────┘│      │
        │                                                                                                                            │      │
        │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                                                                   [ Esc ] Close │      │
        └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘      │

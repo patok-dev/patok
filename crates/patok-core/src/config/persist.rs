@@ -5,14 +5,23 @@
 //! fields resolve to the user-local `config.local.toml`. Writes validate types and
 //! reject unknown field names;
 //! optional-string fields written as the empty string become null (the key is removed).
+//! The daemon field registry itself (`daemon_field`, `DAEMON_FIELDS`,
+//! `IMMEDIATE_DAEMON_FIELDS`, `daemon_field_value`) is generated from the field table
+//! in `daemon.rs`; this module keeps the write path and the readout built on top of it.
 
 use std::fmt;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::daemon::DaemonSettings;
-use super::{ConfigFiles, project_file};
+use super::daemon::{
+    DAEMON_FIELDS, DaemonSettings, FieldKind, IMMEDIATE_DAEMON_FIELDS, ProviderName, daemon_field,
+    daemon_field_value,
+};
+use super::tui::{RailMode, Theme};
+use super::{ConfigFiles, EnumSpelling, project_file};
+use crate::update::UpdateChannel;
+use crate::utils::atomic_write::write_atomic;
 
 /// A settings value as submitted by a settings change, mapped onto the field's expected
 /// type by the per-schema field registry.
@@ -75,7 +84,8 @@ pub enum ApplyTiming {
 }
 
 /// A persistence failure; `message` is user-facing.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 pub struct PersistError {
     pub message: String,
 }
@@ -88,208 +98,20 @@ impl PersistError {
     }
 }
 
-impl fmt::Display for PersistError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for PersistError {}
-
-/// What a field accepts.
-enum FieldKind {
-    Bool,
-    Uint,
-    /// An unsigned integer that must be greater than zero, validated exactly like the
-    /// on-disk parser of the same field ("a whole number of seconds greater than zero").
-    PositiveUint,
-    Port,
-    Float,
-    /// A non-optional string; an empty string is rejected.
-    Str,
-    /// An optional string; the empty string removes the key so the default applies.
-    OptStr,
-    /// An enumerated field and its accepted spellings (trimmed, lowercased).
-    Enum(&'static [&'static str]),
-    /// An unsigned integer with an inclusive range.
-    Range(u64, u64),
-    /// A known key of the other (composite) shape that the settings-change flow cannot
-    /// write as a single value.
-    Composite,
-}
-
-const PROVIDERS: &[&str] = &[
-    "claude",
-    "codex",
-    "opencode",
-    "ghcopilot",
-    "gh-copilot",
-    "github-copilot",
-    "copilot",
-    "mistral",
-    "vibe",
-];
-
-/// The daemon field registry: every `[daemon]` key and what it accepts.
-fn daemon_field(name: &str) -> Option<FieldKind> {
-    Some(match name {
-        "provider" => FieldKind::Enum(PROVIDERS),
-        "model"
-        | "local_model"
-        | "build_command"
-        | "auto_push_remote"
-        | "on_task_complete_hook"
-        | "history_dir" => FieldKind::OptStr,
-        "research_model"
-        | "planner_model"
-        | "builder_model"
-        | "reviewer_model"
-        | "discovery_model"
-        | "learning_extraction_model"
-        | "embedding_model" => FieldKind::Str,
-        "research_provider"
-        | "planner_provider"
-        | "builder_provider"
-        | "reviewer_provider"
-        | "discovery_provider"
-        | "learning_extraction_provider" => FieldKind::Enum(PROVIDERS),
-        "model_catalog_refresh_secs"
-        | "review_confidence_threshold"
-        | "plan_revision_cycles"
-        | "review_multipass_threshold"
-        | "planning_iterations"
-        | "pause_between_tasks_secs"
-        | "pause_between_agents_secs"
-        | "pause_between_cycles_secs"
-        | "engine_idle_timeout_secs"
-        | "max_learning_injection"
-        | "min_learning_injection"
-        | "history_search_results"
-        | "history_retention_tasks"
-        | "observatory_retention_days"
-        | "embedding_timeout_ms" => FieldKind::Uint,
-        "agent_timeout_secs" | "discovery_cooldown_secs" | "discovery_cooldown_cap_secs" => {
-            FieldKind::PositiveUint
-        }
-        "run_mode" => FieldKind::Enum(&["sprint", "continuous"]),
-        "plan_revision_accept_policy" => {
-            FieldKind::Enum(&["no-high", "no-high-medium", "no-findings"])
-        }
-        "confidence_threshold" => FieldKind::Float,
-        "embedding_port" => FieldKind::Port,
-        "skip_planner_for_simple"
-        | "skip_research_for_simple"
-        | "skip_review_for_simple"
-        | "batch_review"
-        | "planner_lookahead"
-        | "review_in_loop"
-        | "semgrep_enabled"
-        | "require_human_approval"
-        | "plan_enabled"
-        | "adaptive_pauses"
-        | "phase_isolation"
-        | "enforce_phase_rbac"
-        | "semantic_match_enabled"
-        | "show_retrieval_panel" => FieldKind::Bool,
-        "stages" | "catalog_url_overrides" | "stage_overrides" | "semgrep_rulesets" | "plugins" => {
-            FieldKind::Composite
-        }
-        _ => return None,
-    })
-}
-
 /// The tui field registry: every `[tui]` key and what it accepts.
 fn tui_field(name: &str) -> Option<FieldKind> {
     Some(match name {
-        "theme" => FieldKind::Enum(super::tui::THEME_KEYS),
+        "theme" => FieldKind::Enum(Theme::SPELLINGS),
         "truecolor" | "preview_wrap" => FieldKind::Bool,
         "agent_pane_split" => FieldKind::Range(
             super::tui::AGENT_PANE_SPLIT_MIN,
             super::tui::AGENT_PANE_SPLIT_MAX,
         ),
-        "update_channel" => FieldKind::Enum(&["stable", "dev"]),
-        "rail_mode" => FieldKind::Enum(&["compact", "normal", "detailed"]),
+        "update_channel" => FieldKind::Enum(UpdateChannel::SPELLINGS),
+        "rail_mode" => FieldKind::Enum(RailMode::SPELLINGS),
         _ => return None,
     })
 }
-
-/// Every non-composite `[daemon]` key, in registry order: exactly the fields the
-/// settings-change flow can carry as a single value. Composite keys (`stages`,
-/// `catalog_url_overrides`, `stage_overrides`, `semgrep_rulesets`, `plugins`) have no
-/// single-value shape, so the diff skips them.
-const DAEMON_FIELDS: &[&str] = &[
-    // Routing (section 4).
-    "provider",
-    "model",
-    "local_model",
-    "model_catalog_refresh_secs",
-    "research_model",
-    "planner_model",
-    "builder_model",
-    "reviewer_model",
-    "discovery_model",
-    "learning_extraction_model",
-    "research_provider",
-    "planner_provider",
-    "builder_provider",
-    "reviewer_provider",
-    "discovery_provider",
-    "learning_extraction_provider",
-    // Pipeline flow (section 5).
-    "run_mode",
-    "skip_planner_for_simple",
-    "skip_research_for_simple",
-    "skip_review_for_simple",
-    "review_confidence_threshold",
-    "batch_review",
-    "planner_lookahead",
-    "plan_revision_cycles",
-    "plan_revision_accept_policy",
-    "review_in_loop",
-    "review_multipass_threshold",
-    "confidence_threshold",
-    "semgrep_enabled",
-    "build_command",
-    "planning_iterations",
-    "require_human_approval",
-    "auto_push_remote",
-    "on_task_complete_hook",
-    "discovery_cooldown_secs",
-    "discovery_cooldown_cap_secs",
-    "plan_enabled",
-    // Timing (section 6).
-    "agent_timeout_secs",
-    "pause_between_tasks_secs",
-    "pause_between_agents_secs",
-    "pause_between_cycles_secs",
-    "adaptive_pauses",
-    "engine_idle_timeout_secs",
-    // Isolation and security (section 7).
-    "phase_isolation",
-    "enforce_phase_rbac",
-    // Learnings, history and embeddings (section 8).
-    "history_dir",
-    "max_learning_injection",
-    "min_learning_injection",
-    "history_search_results",
-    "history_retention_tasks",
-    "observatory_retention_days",
-    "semantic_match_enabled",
-    "embedding_model",
-    "embedding_port",
-    "embedding_timeout_ms",
-    "show_retrieval_panel",
-];
-
-/// Daemon fields read at the point of use, so a change applies immediately: everything else parameterizes a unit of work and takes
-/// effect at the next such start. A new field joins whichever list matches how it is
-/// actually consumed.
-const IMMEDIATE_DAEMON_FIELDS: &[&str] = &[
-    "observatory_retention_days",
-    "auto_push_remote",
-    "on_task_complete_hook",
-    "show_retrieval_panel",
-];
 
 /// When a change to `field` takes effect; `None` for a name
 /// outside the daemon registry (including composite keys).
@@ -301,78 +123,6 @@ pub fn daemon_apply_timing(field: &str) -> Option<ApplyTiming> {
         ApplyTiming::Immediate
     } else {
         ApplyTiming::NextUnitOfWork
-    })
-}
-
-/// The field's effective (post-merge, post-normalization) value, as reported back with a
-/// [`crate::config::ApplyTiming`] broadcast; `None` for a name outside the registry or a
-/// composite key.
-pub fn daemon_field_value(settings: &DaemonSettings, field: &str) -> Option<SettingValue> {
-    let string = |value: Option<&str>| SettingValue::Str(value.unwrap_or_default().into());
-    Some(match field {
-        "provider" => SettingValue::Str(settings.provider.as_str().into()),
-        "model" => string(settings.model.as_deref()),
-        "local_model" => string(settings.local_model.as_deref()),
-        "build_command" => string(settings.build_command.as_deref()),
-        "auto_push_remote" => string(settings.auto_push_remote.as_deref()),
-        "on_task_complete_hook" => string(settings.on_task_complete_hook.as_deref()),
-        "history_dir" => string(settings.history_dir.as_deref()),
-        "research_model" => SettingValue::Str(settings.research_model.clone()),
-        "planner_model" => SettingValue::Str(settings.planner_model.clone()),
-        "builder_model" => SettingValue::Str(settings.builder_model.clone()),
-        "reviewer_model" => SettingValue::Str(settings.reviewer_model.clone()),
-        "discovery_model" => SettingValue::Str(settings.discovery_model.clone()),
-        "learning_extraction_model" => {
-            SettingValue::Str(settings.learning_extraction_model.clone())
-        }
-        "research_provider" => SettingValue::Str(settings.research_provider.as_str().into()),
-        "planner_provider" => SettingValue::Str(settings.planner_provider.as_str().into()),
-        "builder_provider" => SettingValue::Str(settings.builder_provider.as_str().into()),
-        "reviewer_provider" => SettingValue::Str(settings.reviewer_provider.as_str().into()),
-        "discovery_provider" => SettingValue::Str(settings.discovery_provider.as_str().into()),
-        "learning_extraction_provider" => {
-            SettingValue::Str(settings.learning_extraction_provider.as_str().into())
-        }
-        "run_mode" => SettingValue::Str(settings.run_mode.as_str().into()),
-        "plan_revision_accept_policy" => {
-            SettingValue::Str(settings.plan_revision_accept_policy.as_str().into())
-        }
-        "confidence_threshold" => SettingValue::Float(settings.confidence_threshold),
-        "model_catalog_refresh_secs" => SettingValue::Uint(settings.model_catalog_refresh_secs),
-        "review_confidence_threshold" => SettingValue::Uint(settings.review_confidence_threshold),
-        "plan_revision_cycles" => SettingValue::Uint(settings.plan_revision_cycles),
-        "review_multipass_threshold" => SettingValue::Uint(settings.review_multipass_threshold),
-        "planning_iterations" => SettingValue::Uint(settings.planning_iterations),
-        "discovery_cooldown_secs" => SettingValue::Uint(settings.discovery_cooldown_secs),
-        "discovery_cooldown_cap_secs" => SettingValue::Uint(settings.discovery_cooldown_cap_secs),
-        "agent_timeout_secs" => SettingValue::Uint(settings.agent_timeout_secs),
-        "pause_between_tasks_secs" => SettingValue::Uint(settings.pause_between_tasks_secs),
-        "pause_between_agents_secs" => SettingValue::Uint(settings.pause_between_agents_secs),
-        "pause_between_cycles_secs" => SettingValue::Uint(settings.pause_between_cycles_secs),
-        "engine_idle_timeout_secs" => SettingValue::Uint(settings.engine_idle_timeout_secs),
-        "max_learning_injection" => SettingValue::Uint(settings.max_learning_injection),
-        "min_learning_injection" => SettingValue::Uint(settings.min_learning_injection),
-        "history_search_results" => SettingValue::Uint(settings.history_search_results),
-        "history_retention_tasks" => SettingValue::Uint(settings.history_retention_tasks),
-        "observatory_retention_days" => SettingValue::Uint(settings.observatory_retention_days),
-        "embedding_port" => SettingValue::Uint(u64::from(settings.embedding_port)),
-        "embedding_timeout_ms" => SettingValue::Uint(settings.embedding_timeout_ms),
-        "embedding_model" => SettingValue::Str(settings.embedding_model.clone()),
-        "skip_planner_for_simple" => SettingValue::Bool(settings.skip_planner_for_simple),
-        "skip_research_for_simple" => SettingValue::Bool(settings.skip_research_for_simple),
-        "skip_review_for_simple" => SettingValue::Bool(settings.skip_review_for_simple),
-        "batch_review" => SettingValue::Bool(settings.batch_review),
-        "planner_lookahead" => SettingValue::Bool(settings.planner_lookahead),
-        "review_in_loop" => SettingValue::Bool(settings.review_in_loop),
-        "semgrep_enabled" => SettingValue::Bool(settings.semgrep_enabled),
-        "require_human_approval" => SettingValue::Bool(settings.require_human_approval),
-        "plan_enabled" => SettingValue::Bool(settings.plan_enabled),
-        "adaptive_pauses" => SettingValue::Bool(settings.adaptive_pauses),
-        "phase_isolation" => SettingValue::Bool(settings.phase_isolation),
-        "enforce_phase_rbac" => SettingValue::Bool(settings.enforce_phase_rbac),
-        "semantic_match_enabled" => SettingValue::Bool(settings.semantic_match_enabled),
-        "show_retrieval_panel" => SettingValue::Bool(settings.show_retrieval_panel),
-        _ => return None,
     })
 }
 
@@ -440,8 +190,13 @@ fn validate(
         (FieldKind::Port, _) => Err(PersistError::new(format!(
             "{schema}.{name} must be a port number (1-65535), got {got}"
         ))),
-        (FieldKind::Float, SettingValue::Float(f)) => Ok(Some(f.into())),
-        (FieldKind::Float, _) => reject("a number"),
+        (FieldKind::FloatRange(min, max), SettingValue::Float(f)) if (*min..=*max).contains(&f) => {
+            Ok(Some(f.into()))
+        }
+        (FieldKind::FloatRange(min, max), SettingValue::Float(f)) => Err(PersistError::new(
+            format!("{schema}.{name} must be a number between {min} and {max}, got {f}"),
+        )),
+        (FieldKind::FloatRange(..), _) => reject("a number"),
         (FieldKind::Str, SettingValue::Str(s)) if !s.trim().is_empty() => Ok(Some(s.into())),
         (FieldKind::Str, _) => Err(PersistError::new(format!(
             "{schema}.{name} must be a non-empty string, got {got}"
@@ -474,6 +229,21 @@ fn validate(
             }
         }
         (FieldKind::Enum(..), _) => reject("one of the documented values"),
+        (FieldKind::Provider, SettingValue::Str(s)) => {
+            let normalized = s.trim().to_lowercase();
+            if ProviderName::parse(&normalized).is_some() {
+                Ok(Some(normalized.into()))
+            } else {
+                Err(PersistError::new(format!(
+                    "{schema}.{name} must be one of {}, got {s:?}",
+                    ProviderName::accepted()
+                        .map(|a| format!("`{a}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )))
+            }
+        }
+        (FieldKind::Provider, _) => reject("one of the documented values"),
     }
 }
 
@@ -590,28 +360,6 @@ fn write_field(
         .map_err(|e| PersistError::new(format!("cannot write {}: {e}", path.display())))
 }
 
-/// Writes through a temporary file in the same directory, then renames over the target
-/// (same pattern as the task file).
-fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut tmp = path.to_path_buf();
-    let unique = std::process::id()
-        ^ std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-    tmp.set_file_name(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("config"),
-        unique
-    ));
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -719,6 +467,50 @@ mod tests {
         );
         assert_eq!(daemon_field_value(&settings, "stages"), None);
         assert_eq!(daemon_field_value(&settings, "no_such_key"), None);
+    }
+
+    /// The provider fields accept the same spellings as the on-disk parser,
+    /// including every alias; the rejection message names them all, and an
+    /// alias persists normalized as submitted, exactly as before.
+    #[test]
+    fn provider_fields_validate_like_the_disk_parser() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut warnings = Vec::new();
+        let error = set_daemon_field(
+            dir.path(),
+            "provider",
+            SettingValue::Str("bogus".into()),
+            &mut warnings,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message,
+            "daemon.provider must be one of `claude`, `codex`, `opencode`, `ghcopilot`, \
+             `gh-copilot`, `github-copilot`, `copilot`, `mistral`, `vibe`, got \"bogus\""
+        );
+        assert!(!dir.path().join("patok.config.toml").exists());
+        // Aliases persist normalized, as submitted.
+        set_daemon_field(
+            dir.path(),
+            "provider",
+            SettingValue::Str("vibe".into()),
+            &mut warnings,
+        )
+        .unwrap();
+        set_daemon_field(
+            dir.path(),
+            "research_provider",
+            SettingValue::Str(" GitHub-Copilot ".into()),
+            &mut warnings,
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(dir.path().join("patok.config.toml")).unwrap();
+        assert!(text.contains("provider = \"vibe\""), "{text}");
+        assert!(
+            text.contains("research_provider = \"github-copilot\""),
+            "{text}"
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

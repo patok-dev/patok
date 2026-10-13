@@ -10,19 +10,26 @@ publish = false
 anyhow.workspace = true
 crossterm.workspace = true
 futures.workspace = true
-hyper-util.workspace = true
 patok-core.workspace = true
 patok-proto.workspace = true
+patok-wire.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tonic.workspace = true
-tower.workspace = true
+
+[features]
+# The internals the crate's own integration tests reach through
+# `patok_tui::…`. Enabled only through the self dev-dependency below (and
+# the crate's own cfg(test) builds); never in a normal or release build,
+# so the library a dependent crate links stays the small binary surface.
+test-support = []
 
 [dev-dependencies]
 insta.workspace = true
 patok-engine.workspace = true
-patok-providers.workspace = true
+patok-providers = { path = "../patok-providers", features = ["test-support"] }
+patok-tui = { path = ".", features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

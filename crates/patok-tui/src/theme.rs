@@ -75,6 +75,7 @@
 
 use crate::app::LineKind;
 use patok_core::config::Theme as ThemeKey;
+use patok_core::event::AgentRole;
 use ratatui::style::Color;
 
 /// The agent output line colours (T108.1): structurally separate from the
@@ -171,20 +172,25 @@ const ORCHESTRATOR_NAME_ANCHOR: (u8, u8, u8) = (0xE0, 0x6C, 0x9A);
 /// Any other agent's name: the neutral gray, the result family.
 const OTHER_NAME_ANCHOR: (u8, u8, u8) = RESULT_ANCHOR;
 
+/// One RGB triple as the terminal emits it: 24-bit colour when the
+/// truecolor setting (or its detection) picked RGB, the nearest xterm-256
+/// index otherwise -- the single emission choice for the palette classes,
+/// the agent line kinds and the agent names.
+fn emission(rgb: (u8, u8, u8), truecolor: bool) -> Color {
+    if truecolor {
+        Color::Rgb(rgb.0, rgb.1, rgb.2)
+    } else {
+        Color::Indexed(rgb_to_indexed(rgb))
+    }
+}
+
 impl AgentNames {
     /// Resolves the agent name colours for a palette theme (T110.1): every
     /// agent keeps its canonical anchor; the theme's background only adjusts
     /// each anchor's lightness until the pair reads, exactly like the agent
     /// line kinds (T108.1). The truecolor setting picks the emission.
     fn resolve(background: (u8, u8, u8), truecolor: bool) -> AgentNames {
-        let colour = |rgb: (u8, u8, u8)| {
-            if truecolor {
-                Color::Rgb(rgb.0, rgb.1, rgb.2)
-            } else {
-                Color::Indexed(rgb_to_indexed(rgb))
-            }
-        };
-        let name = |anchor: (u8, u8, u8)| colour(adjust_lightness(anchor, background));
+        let name = |anchor: (u8, u8, u8)| emission(adjust_lightness(anchor, background), truecolor);
         AgentNames {
             planner: name(PLANNER_NAME_ANCHOR),
             builder: name(BUILDER_NAME_ANCHOR),
@@ -212,14 +218,7 @@ impl AgentText {
     /// each anchor's lightness until the pair reads. The truecolor setting
     /// picks the emission, exactly like the classes.
     fn resolve(background: (u8, u8, u8), truecolor: bool) -> AgentText {
-        let colour = |rgb: (u8, u8, u8)| {
-            if truecolor {
-                Color::Rgb(rgb.0, rgb.1, rgb.2)
-            } else {
-                Color::Indexed(rgb_to_indexed(rgb))
-            }
-        };
-        let line = |anchor: (u8, u8, u8)| colour(adjust_lightness(anchor, background));
+        let line = |anchor: (u8, u8, u8)| emission(adjust_lightness(anchor, background), truecolor);
         AgentText {
             thinking: line(THINKING_ANCHOR),
             tool: line(TOOL_ANCHOR),
@@ -470,15 +469,17 @@ impl Theme {
     /// every built-in theme, only adjusted for readability on the theme's
     /// background. Unknown agents fall back to the neutral `other` colour.
     /// Used only by the output frame title's agent type name (T117.1).
+    /// The wire still carries the agent name as a string, so the spelling is
+    /// parsed here.
     pub fn agent_name_color(theme: Theme, agent: &str) -> Color {
-        match agent {
-            "planner" => theme.agent_names.planner,
-            "builder" => theme.agent_names.builder,
-            "reviewer" => theme.agent_names.reviewer,
-            "research" => theme.agent_names.research,
-            "discovery" => theme.agent_names.discovery,
-            "orchestrator" => theme.agent_names.orchestrator,
-            _ => theme.agent_names.other,
+        match AgentRole::parse(agent) {
+            Some(AgentRole::Planner) => theme.agent_names.planner,
+            Some(AgentRole::Builder) => theme.agent_names.builder,
+            Some(AgentRole::Reviewer) => theme.agent_names.reviewer,
+            Some(AgentRole::Research) => theme.agent_names.research,
+            Some(AgentRole::Discovery) => theme.agent_names.discovery,
+            Some(AgentRole::Orchestrator) => theme.agent_names.orchestrator,
+            None => theme.agent_names.other,
         }
     }
 }
@@ -947,39 +948,32 @@ impl Palette {
     /// (T108.1). The truecolor setting picks the emission, exactly like the
     /// agent text roles.
     fn theme(&self, classes: &Classes, truecolor: bool) -> Theme {
-        let colour = |role: (u8, u8, u8)| {
-            if truecolor {
-                Color::Rgb(role.0, role.1, role.2)
-            } else {
-                Color::Indexed(rgb_to_indexed(role))
-            }
-        };
         Theme {
-            background: colour(classes.background),
-            foreground: colour(classes.foreground),
-            normal_text: colour(classes.normal_text),
-            muted_text: colour(classes.muted_text),
-            highlighted_text: colour(classes.highlighted_text),
+            background: emission(classes.background, truecolor),
+            foreground: emission(classes.foreground, truecolor),
+            normal_text: emission(classes.normal_text, truecolor),
+            muted_text: emission(classes.muted_text, truecolor),
+            highlighted_text: emission(classes.highlighted_text, truecolor),
             agent_text: match classes.agent_text {
                 Some(rgb) => AgentText {
-                    thinking: colour(rgb.thinking),
-                    tool: colour(rgb.tool),
-                    result: colour(rgb.result),
-                    error: colour(rgb.error),
-                    notice: colour(rgb.notice),
-                    pane_status: colour(rgb.pane_status),
-                    heading: colour(rgb.heading),
+                    thinking: emission(rgb.thinking, truecolor),
+                    tool: emission(rgb.tool, truecolor),
+                    result: emission(rgb.result, truecolor),
+                    error: emission(rgb.error, truecolor),
+                    notice: emission(rgb.notice, truecolor),
+                    pane_status: emission(rgb.pane_status, truecolor),
+                    heading: emission(rgb.heading, truecolor),
                 },
                 None => AgentText::resolve(self.background, truecolor),
             },
             agent_names: AgentNames::resolve(self.background, truecolor),
-            chip_neutral: colour(classes.chip_neutral),
-            contrast_text: colour(classes.contrast_text),
-            success: colour(classes.success),
-            chip_planning: colour(classes.chip_planning),
-            chip_discovering: colour(classes.chip_discovering),
-            accent: colour(classes.accent),
-            scrollbar_rail: colour(classes.scrollbar_rail),
+            chip_neutral: emission(classes.chip_neutral, truecolor),
+            contrast_text: emission(classes.contrast_text, truecolor),
+            success: emission(classes.success, truecolor),
+            chip_planning: emission(classes.chip_planning, truecolor),
+            chip_discovering: emission(classes.chip_discovering, truecolor),
+            accent: emission(classes.accent, truecolor),
+            scrollbar_rail: emission(classes.scrollbar_rail, truecolor),
         }
     }
 }

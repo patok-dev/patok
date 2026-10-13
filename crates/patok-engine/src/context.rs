@@ -1,0 +1,380 @@
+//! The session context (section 8 of docs/private/engine-restructure.md):
+//! the session's unit-of-work snapshot -- the resolved provider, the
+//! model override, the merged settings and the cancel token -- plus a
+//! private handle on the engine internals. It is the only bridge from
+//! the sessions, pipelines and steps to the engine's bus, tile,
+//! task-list and state paths, exposed through narrow methods.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use patok_core::config::DaemonSettings;
+use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, SessionOutcome, TaskOutcome};
+use patok_core::pipeline::Stage;
+use patok_core::task::Task;
+use patok_providers::Provider;
+use tokio_util::sync::CancellationToken;
+
+use crate::Engine;
+use crate::engine::{Inner, Tiles, resolve_provider};
+use crate::git::Git;
+use crate::task_list::TaskList;
+
+/// One session's context (section 8 of docs/private/engine-restructure.md):
+/// the unit-of-work snapshot taken at the session's start -- the provider,
+/// the model and the merged settings it relies on -- plus the session's
+/// cancel token and a private handle on the engine internals. The steps and
+/// pipelines borrow `&SessionContext`; it is the only bridge to the engine's
+/// bus, tile and reconcile paths, exposed through these narrow methods.
+#[derive(Clone)]
+pub(crate) struct SessionContext {
+    inner: Arc<Inner>,
+    provider: Arc<dyn Provider>,
+    model: Option<String>,
+    settings: DaemonSettings,
+    cancel: CancellationToken,
+}
+
+impl SessionContext {
+    pub(crate) fn new(
+        inner: Arc<Inner>,
+        provider: Arc<dyn Provider>,
+        model: Option<String>,
+        settings: DaemonSettings,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            inner,
+            provider,
+            model,
+            settings,
+            cancel,
+        }
+    }
+
+    /// The facade over this context's internals handle, for delegation to the
+    /// engine's existing bus, tile and reconcile paths.
+    fn engine(&self) -> Engine {
+        Engine {
+            inner: self.inner.clone(),
+        }
+    }
+
+    /// The provider the session's runs use, unless a run names its own (the
+    /// review stage's reviewer provider).
+    pub(crate) fn provider(&self) -> &Arc<dyn Provider> {
+        &self.provider
+    }
+
+    /// The session's model override, if one is configured.
+    pub(crate) fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    /// The session's settings snapshot, taken when it started.
+    pub(crate) fn settings(&self) -> &DaemonSettings {
+        &self.settings
+    }
+
+    /// The idle timeout of one agent session (`agent_timeout_secs`).
+    pub(crate) fn agent_timeout(&self) -> Duration {
+        Duration::from_secs(self.settings.agent_timeout_secs)
+    }
+
+    /// Whether the review stage is enabled in the pipeline stage list (an
+    /// absent entry is disabled).
+    pub(crate) fn review_stage_enabled(&self) -> bool {
+        self.settings
+            .stages
+            .iter()
+            .find(|entry| entry.stage == Stage::Review)
+            .is_some_and(|entry| entry.enabled)
+    }
+
+    /// The token that cancels the session's running agent.
+    pub(crate) fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel
+    }
+
+    /// Records the event for replay and pushes it to the attached shell.
+    pub(crate) fn emit(&self, event: EngineEvent) {
+        self.engine().emit(event);
+    }
+
+    /// Emits one notice to the attached shell.
+    pub(crate) fn notice(&self, level: NoticeLevel, text: impl Into<String>) {
+        self.engine().notice(level, text);
+    }
+
+    /// Announces `role`'s agent as the engine's active agent and returns the
+    /// instant the session's duration is measured from.
+    pub(crate) fn announce_agent(
+        &self,
+        role: AgentRole,
+        provider: &str,
+        model: Option<&str>,
+    ) -> Instant {
+        self.engine().announce_session(role, provider, model)
+    }
+
+    /// Pushes one agent session's end to the attached shells and the replayed
+    /// recent events.
+    pub(crate) fn finish_agent(&self, role: AgentRole, start: Instant, outcome: SessionOutcome) {
+        self.engine().finish_session(role, start, outcome);
+    }
+
+    /// One stage-tile update followed by the rail refresh -- the single
+    /// update path every tile change goes through.
+    pub(crate) fn update_tiles(&self, update: impl FnOnce(&mut Tiles)) {
+        self.engine().update_tiles(update);
+    }
+
+    /// The engine's task list: the task-file path, the in-memory queue and
+    /// the file lock guarding it.
+    pub(crate) fn task_list(&self) -> &TaskList {
+        &self.inner.task_list
+    }
+
+    /// Re-reads the task file, merges it into the queue and broadcasts the
+    /// new list when it changed; returns whether it did.
+    pub(crate) fn reconcile(&self) -> bool {
+        self.engine().reconcile()
+    }
+
+    /// A git handle on the session's project directory.
+    pub(crate) fn git(&self) -> Git {
+        Git::new(&self.inner.config.project_dir)
+    }
+
+    /// The project directory the session builds in.
+    pub(crate) fn project_dir(&self) -> &Path {
+        &self.inner.config.project_dir
+    }
+
+    /// The session's persistent per-project data directory.
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.inner.config.data_dir
+    }
+
+    /// The directory holding the agents' history logs.
+    pub(crate) fn history_dir(&self) -> PathBuf {
+        self.data_dir().join("history")
+    }
+
+    /// The persistent learned-confidence history file.
+    pub(crate) fn review_history_path(&self) -> &Path {
+        &self.inner.config.review_history
+    }
+
+    /// The open-group record (`open-group.json`): the batch-review group open
+    /// across restarts.
+    pub(crate) fn open_group_path(&self) -> &Path {
+        &self.inner.config.open_group
+    }
+
+    /// The leading task-ID number of the current batch-review group.
+    pub(crate) fn group_number(&self) -> Option<String> {
+        self.inner
+            .state
+            .lock()
+            .expect("engine state lock")
+            .group_number
+            .clone()
+    }
+
+    /// The full SHA the current batch-review group diffs across.
+    pub(crate) fn group_base(&self) -> Option<String> {
+        self.inner
+            .state
+            .lock()
+            .expect("engine state lock")
+            .group_base
+            .clone()
+    }
+
+    /// Writes the batch-review group's number and base in one state update.
+    pub(crate) fn set_group(&self, number: Option<String>, base: Option<String>) {
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        state.group_number = number;
+        state.group_base = base;
+    }
+
+    /// Whether a stop is pending: no new task starts.
+    pub(crate) fn stop_pending(&self) -> bool {
+        self.inner
+            .state
+            .lock()
+            .expect("engine state lock")
+            .stop
+            .is_pending()
+    }
+
+    /// Marks `task` current, announces it (`TaskStarted`) and starts its
+    /// tiles over -- under one state lock, atomically with the
+    /// announcement.
+    pub(crate) fn begin_task(&self, task: &Task) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        state.current_task = Some(task.id.clone());
+        engine.emit_locked(
+            &mut state,
+            EngineEvent::TaskStarted {
+                id: task.id.clone(),
+                description: task.description.clone(),
+            },
+        );
+        engine.task_tiles_started_locked(&mut state);
+    }
+
+    /// Ends one task under one state lock: a completed UI-added task
+    /// postpones the next discovery round (the cooldown rule),
+    /// `TaskFinished` carries the outcome and commit, the current task is
+    /// cleared and the tiles muted. The UI-added check reads the task list
+    /// while the state lock is held (state first, task list second -- the
+    /// engine's lock order).
+    pub(crate) fn finish_task(&self, task: &Task, outcome: TaskOutcome, commit: Option<String>) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        if outcome == TaskOutcome::Done && self.inner.task_list.is_ui_added(&task.id) {
+            state.schedule.ui_added_task_completed(Instant::now());
+        }
+        engine.emit_locked(
+            &mut state,
+            EngineEvent::TaskFinished {
+                id: task.id.clone(),
+                outcome,
+                commit,
+            },
+        );
+        state.current_task = None;
+        engine.task_tiles_finished_locked(&mut state);
+    }
+
+    /// Ends the build session: nothing is current, the run state returns to
+    /// idle through the phase-aware apply, and the rail is refreshed (a
+    /// safety refresh -- the task end already muted its tiles).
+    pub(crate) fn build_ended(&self) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        state.current_task = None;
+        let run = state.run.build_ended();
+        engine.apply_run_state(&mut state, run);
+        engine.refresh_pipeline_locked(&mut state);
+    }
+
+    /// Whether the discovery cooldown has elapsed, so a round may run.
+    pub(crate) fn discovery_due(&self) -> bool {
+        self.inner
+            .state
+            .lock()
+            .expect("engine state lock")
+            .schedule
+            .is_eligible(Instant::now())
+    }
+
+    /// The session's gap round starts: the run-state transition (deliberately
+    /// not through the phase-aware apply -- the phase stays running), the
+    /// `DiscoveryChanged { discovering: true }` event and the rail refresh,
+    /// under one state lock.
+    pub(crate) fn gap_discovery_started(&self) {
+        let engine = self.engine();
+        let mut state = self.inner.state.lock().expect("engine state lock");
+        state.run = state.run.gap_discovery_started();
+        engine.emit_locked(
+            &mut state,
+            EngineEvent::DiscoveryChanged { discovering: true },
+        );
+        engine.refresh_pipeline_locked(&mut state);
+    }
+
+    /// A discovery round ended: the run-state transition, the
+    /// `discovery_ran` flag (only a round that ran to completion marks the
+    /// DISCOVER tile done), the reconcile, the rail refresh and the
+    /// `DiscoveryChanged { discovering: false }` event under one state
+    /// lock; the `discovery_done` notification fires after the lock is
+    /// dropped.
+    pub(crate) fn discovery_ended(&self, added: Option<usize>) {
+        let engine = self.engine();
+        {
+            let mut state = self.inner.state.lock().expect("engine state lock");
+            state.run = state.run.discovery_ended();
+            // Only a round that ran to completion marks the DISCOVER tile
+            // done; a cancelled or failed one does not.
+            state.discovery_ran |= added.is_some();
+            engine.reconcile_locked(&mut state);
+            engine.refresh_pipeline_locked(&mut state);
+            engine.emit_locked(
+                &mut state,
+                EngineEvent::DiscoveryChanged { discovering: false },
+            );
+        }
+        self.inner.discovery_done.notify_waiters();
+    }
+
+    /// Records a finished discovery round in the cooldown schedule; a round
+    /// that did not complete leaves the schedule alone.
+    pub(crate) fn record_round(&self, added: Option<usize>) {
+        if let Some(added) = added {
+            let mut state = self.inner.state.lock().expect("engine state lock");
+            state.schedule.round_finished(Instant::now(), added);
+        }
+    }
+
+    /// A planner or queue-creation run ended: the run-state transition, the
+    /// reconcile and the `PlanningChanged { planning: false }` event under
+    /// one state lock; the `planning_done` notification fires after the
+    /// lock is dropped.
+    pub(crate) fn planning_ended(&self) {
+        let engine = self.engine();
+        {
+            let mut state = self.inner.state.lock().expect("engine state lock");
+            state.run = state.run.planning_ended();
+            engine.reconcile_locked(&mut state);
+            engine.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: false });
+        }
+        self.inner.planning_done.notify_waiters();
+    }
+
+    /// The reviewer session's provider and model when the reviewer provider
+    /// names a provider this build implements (`reviewer_provider`): that
+    /// provider, resolved like any other unit of work. A provider that
+    /// supports the reviewer model (the claude provider) runs with the
+    /// configured one (`reviewer_model`); the other providers keep their
+    /// default model. A name this build does not implement keeps the
+    /// configured pair silently; an unavailable provider warns and falls back
+    /// to the configured pair, as does a configured reviewer provider on a
+    /// fixed-provider engine without a resolver.
+    pub(crate) fn reviewer(&self) -> (Arc<dyn Provider>, Option<String>) {
+        let configured = (self.provider.clone(), self.model.clone());
+        let Some(resolver) = self.inner.resolver.as_ref() else {
+            if self.settings.reviewer_provider.kind().is_some() {
+                let name = &self.settings.reviewer_provider;
+                tracing::warn!(
+                    "the {name} reviewer provider has no resolver; \
+                     the reviewer runs on the fixed provider"
+                );
+            }
+            return configured;
+        };
+        match resolve_provider(resolver, &self.settings.reviewer_provider) {
+            Ok(Some(provider)) => {
+                let model = provider
+                    .supports_reviewer_model()
+                    .then(|| self.settings.reviewer_model.clone());
+                (provider, model)
+            }
+            // A name this build does not implement: keep the configured
+            // provider silently, exactly like today.
+            Ok(None) => configured,
+            Err(error) => {
+                let name = &self.settings.reviewer_provider;
+                tracing::warn!(
+                    "the {name} reviewer provider is unavailable ({error}); \
+                     the reviewer runs on the configured provider"
+                );
+                configured
+            }
+        }
+    }
+}

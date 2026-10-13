@@ -2,27 +2,38 @@
 //! stream-json output.
 
 use async_trait::async_trait;
+use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, Usage, preview};
 use serde_json::Value;
 
-use crate::process::{self, LineParser, Parsed, ProcessSpec};
-use crate::{Provider, ProviderError, SessionRequest, SessionResult};
+use crate::cli;
+use crate::process::{self, Parsed, ProcessSpec};
+use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
-const TOOL_PREVIEW: usize = 120;
-const RESULT_PREVIEW: usize = 200;
 const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
+
+/// Name of the CLI binary this provider needs.
+pub(crate) const CLI: &str = "claude";
 
 pub struct Claude;
 
 #[async_trait]
 impl Provider for Claude {
     fn slug(&self) -> &'static str {
-        "claude"
+        ProviderKind::Claude.as_str()
+    }
+
+    fn supports_reviewer_model(&self) -> bool {
+        true
+    }
+
+    fn check_available(&self) -> Result<(), ProviderError> {
+        cli::check_cli_on_path(CLI)
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
         let spec = ProcessSpec {
-            program: "claude".into(),
+            program: CLI.into(),
             args: build_args(&request),
             // Marks a nested Claude session; emptied so the child does not refuse to start.
             env: vec![("CLAUDECODE", "")],
@@ -50,9 +61,29 @@ fn build_args(request: &SessionRequest) -> Vec<String> {
         args.extend(["--append-system-prompt".into(), system.into()]);
     }
     if !request.allowed_tools.is_empty() {
-        args.extend(["--allowedTools".into(), request.allowed_tools.join(",")]);
+        let tools: Vec<&str> = request
+            .allowed_tools
+            .iter()
+            .flat_map(|tool| claude_tools(*tool).iter().copied())
+            .collect();
+        args.extend(["--allowedTools".into(), tools.join(",")]);
     }
     args
+}
+
+/// Maps a role allowlist tool to the Claude CLI's own name for it.
+fn claude_tools(tool: Tool) -> &'static [&'static str] {
+    match tool {
+        Tool::Bash => &["Bash"],
+        Tool::Edit => &["Edit"],
+        Tool::Write => &["Write"],
+        Tool::Read => &["Read"],
+        Tool::Glob => &["Glob"],
+        Tool::Grep => &["Grep"],
+        Tool::NotebookEdit => &["NotebookEdit"],
+        Tool::WebFetch => &["WebFetch"],
+        Tool::WebSearch => &["WebSearch"],
+    }
 }
 
 /// Translates Claude's stream-json lines into normalised events. Stateful: text arrives twice
@@ -63,11 +94,7 @@ pub struct StreamParser {
     last_turn_input: Option<u64>,
 }
 
-impl LineParser for StreamParser {
-    fn parse_line(&mut self, line: &str) -> Parsed {
-        self.parse(line)
-    }
-}
+crate::cli::forward_line_parser!(StreamParser);
 
 impl StreamParser {
     pub fn parse(&mut self, line: &str) -> Parsed {
@@ -224,15 +251,15 @@ fn user(value: &Value) -> Vec<AgentEvent> {
         let failed = block["is_error"].as_bool().unwrap_or(false);
         events.push(if failed {
             AgentEvent::Stderr {
-                text: preview(&text, RESULT_PREVIEW),
+                text: preview(&text, cli::RESULT_PREVIEW),
             }
         } else if !stderr.is_empty() {
             AgentEvent::Stderr {
-                text: preview(stderr, RESULT_PREVIEW),
+                text: preview(stderr, cli::RESULT_PREVIEW),
             }
         } else {
             AgentEvent::ToolResult {
-                output: preview(&text, RESULT_PREVIEW),
+                output: preview(&text, cli::RESULT_PREVIEW),
             }
         });
     }
@@ -269,9 +296,7 @@ fn rate_limit(value: &Value) -> Vec<AgentEvent> {
 }
 
 fn error_text(value: &Value) -> String {
-    ["message", "error", "output", "subtype"]
-        .iter()
-        .find_map(|k| value[*k].as_str().filter(|s| !s.is_empty()))
+    cli::first_non_empty(value, &["message", "error", "output", "subtype"])
         .unwrap_or("unknown error")
         .to_string()
 }
@@ -304,11 +329,7 @@ fn tool_preview(name: &str, input: &Value) -> String {
             "prompt",
         ],
     };
-    let text = keys
-        .iter()
-        .find_map(|k| input[*k].as_str())
-        .map_or_else(|| input.to_string(), str::to_string);
-    preview(&text, TOOL_PREVIEW)
+    cli::preview_input(input, keys)
 }
 
 fn field(usage: &Value, key: &str) -> u64 {
@@ -580,32 +601,30 @@ mod tests {
 
     #[test]
     fn args_include_model_system_prompt_and_tools_only_when_set() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut request = SessionRequest {
-            model: None,
-            prompt: "p".into(),
-            system_prompt: None,
-            project_dir: ".".into(),
-            events: tx,
-            log_dir: ".".into(),
-            label: "t".into(),
-            idle_timeout: std::time::Duration::from_secs(1),
-            cancel: Default::default(),
-            allowed_tools: vec![],
-        };
+        let (mut request, _rx) = crate::test_util::request("p", None, &[]);
         assert!(!build_args(&request).contains(&"--model".to_string()));
         request.model = Some("opus".into());
         request.system_prompt = Some("s".into());
-        request.allowed_tools = vec!["Read".into(), "Bash".into()];
+        request.allowed_tools = vec![Tool::Read, Tool::Bash];
         let args = build_args(&request).join(" ");
         assert!(args.contains("--model opus"));
         assert!(args.contains("--append-system-prompt s"));
         assert!(args.contains("--allowedTools Read,Bash"));
-        request.allowed_tools = crate::PLANNER_TOOLS
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        request.allowed_tools = crate::PLANNER_TOOLS.to_vec();
         let args = build_args(&request).join(" ");
         assert!(args.contains("--allowedTools Read,Glob,Grep,Edit,Write"));
+    }
+
+    #[test]
+    fn role_tools_map_to_their_claude_names() {
+        assert_eq!(claude_tools(Tool::Bash), ["Bash"]);
+        assert_eq!(claude_tools(Tool::Edit), ["Edit"]);
+        assert_eq!(claude_tools(Tool::Write), ["Write"]);
+        assert_eq!(claude_tools(Tool::Read), ["Read"]);
+        assert_eq!(claude_tools(Tool::Glob), ["Glob"]);
+        assert_eq!(claude_tools(Tool::Grep), ["Grep"]);
+        assert_eq!(claude_tools(Tool::NotebookEdit), ["NotebookEdit"]);
+        assert_eq!(claude_tools(Tool::WebFetch), ["WebFetch"]);
+        assert_eq!(claude_tools(Tool::WebSearch), ["WebSearch"]);
     }
 }

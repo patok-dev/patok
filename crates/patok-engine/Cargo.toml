@@ -11,6 +11,7 @@ anyhow.workspace = true
 patok-core.workspace = true
 patok-proto.workspace = true
 patok-providers.workspace = true
+patok-wire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -23,6 +24,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 hyper-util.workspace = true
+patok-providers = { path = "../patok-providers", features = ["test-support"] }
 tempfile.workspace = true
 tower.workspace = true
 

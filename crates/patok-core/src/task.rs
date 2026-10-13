@@ -4,9 +4,18 @@
 //! other line is ignored by the parser and preserved on rewrite.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::utils::digits::is_ascii_digits;
 
 /// Placeholder ID of a task line whose ID does not match the ID pattern.
 pub const MALFORMED_ID: &str = "TASK";
+
+/// The unchecked checkbox prefix that begins every task line, after optional whitespace.
+pub const UNCHECKED: &str = "- [ ] ";
+
+/// The checked checkbox prefix of a completed task line.
+pub const CHECKED: &str = "- [x] ";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
@@ -26,6 +35,30 @@ impl Task {
     pub fn is_malformed(&self) -> bool {
         self.id == MALFORMED_ID
     }
+
+    /// Whether the task is not done and well-formed: the task the build loop
+    /// picks next.
+    pub fn is_pending(&self) -> bool {
+        !self.done && !self.is_malformed()
+    }
+
+    /// The leading number of the task ID (`T1.2` -> `Some("1")`): the digits
+    /// before the dot, shared by a batch-review group. `None` for malformed IDs.
+    pub fn group_number(&self) -> Option<String> {
+        group_number_of(&self.id)
+    }
+
+    /// The SHA-256 hex digest of the description: the description's identity
+    /// for group membership, stable across restarts.
+    pub fn description_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.description.as_bytes());
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
 }
 
 /// Parses every task line in `text`, in file order.
@@ -38,7 +71,18 @@ pub fn parse(text: &str) -> Vec<Task> {
 
 /// The first pending, well-formed task in file order.
 pub fn next_pending(tasks: &[Task]) -> Option<&Task> {
-    tasks.iter().find(|t| !t.done && !t.is_malformed())
+    tasks.iter().find(|t| t.is_pending())
+}
+
+/// The leading number of a task ID (`T1.2` -> `Some("1")`): the digits
+/// before the dot, shared by a batch-review group. `None` for malformed IDs.
+/// The free twin of [`Task::group_number`] for callers that hold only an ID.
+pub fn group_number_of(task_id: &str) -> Option<String> {
+    let (digits, _) = task_id.rsplit_once('.')?;
+    let stripped = digits
+        .strip_prefix(|c: char| c.is_alphabetic())
+        .unwrap_or(digits);
+    is_ascii_digits(stripped).then(|| stripped.to_string())
 }
 
 /// Returns `text` with `task` flipped to checked, or `None` when no matching unchecked line
@@ -47,22 +91,7 @@ pub fn next_pending(tasks: &[Task]) -> Option<&Task> {
 /// unchecked line whose full text equals the original.
 pub fn mark_done(text: &str, task: &Task) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    let by_line = task.line.checked_sub(1).filter(|&i| {
-        lines
-            .get(i)
-            .is_some_and(|l| is_unchecked(l) && same_id(l, task))
-    });
-    let index = by_line
-        .or_else(|| {
-            (!task.is_malformed())
-                .then(|| {
-                    lines
-                        .iter()
-                        .position(|l| is_unchecked(l) && same_id(l, task))
-                })
-                .flatten()
-        })
-        .or_else(|| lines.iter().position(|l| is_unchecked(l) && *l == task.raw))?;
+    let index = task_line(&lines, task)?;
 
     let mut out = String::with_capacity(text.len() + 1);
     for (i, line) in lines.iter().enumerate() {
@@ -76,28 +105,62 @@ pub fn mark_done(text: &str, task: &Task) -> Option<String> {
     Some(out)
 }
 
-fn is_unchecked(line: &str) -> bool {
-    line.trim_start().starts_with("- [ ] ")
+/// The index of `task`'s unchecked line in `lines`, by the same tiers as [`mark_done`]:
+/// the recorded line number, the first unchecked line with the same `ID:` prefix, then a
+/// line whose full text equals the original. An already-checked line is not matched.
+/// Public for the engine's progress rewrite, which shares the matching but not the rewrite.
+pub fn task_line(lines: &[&str], task: &Task) -> Option<usize> {
+    task.line
+        .checked_sub(1)
+        .filter(|&i| {
+            lines
+                .get(i)
+                .is_some_and(|l| is_unchecked(l) && same_id(l, task))
+        })
+        .or_else(|| {
+            (!task.is_malformed())
+                .then(|| {
+                    lines
+                        .iter()
+                        .position(|l| is_unchecked(l) && same_id(l, task))
+                })
+                .flatten()
+        })
+        .or_else(|| lines.iter().position(|l| is_unchecked(l) && *l == task.raw))
+}
+
+/// Splits a task line into its checked state and the text after the checkbox,
+/// ignoring leading whitespace. `None` for a line that begins with neither
+/// checkbox (uppercase `- [X]` is not a checkbox). Public for the engine's
+/// task-file rewrites.
+pub fn split_checkbox(line: &str) -> Option<(bool, &str)> {
+    if let Some(rest) = line.trim_start().strip_prefix(UNCHECKED) {
+        Some((false, rest))
+    } else {
+        line.trim_start()
+            .strip_prefix(CHECKED)
+            .map(|rest| (true, rest))
+    }
+}
+
+/// Whether the line is an unchecked task line.
+pub fn is_unchecked(line: &str) -> bool {
+    line.trim_start().starts_with(UNCHECKED)
 }
 
 /// Whether the line's text after the checkbox starts with `<task id>:`. For malformed tasks the
 /// recorded line is only trusted when its full text still matches the original.
-fn same_id(line: &str, task: &Task) -> bool {
+pub fn same_id(line: &str, task: &Task) -> bool {
     if task.is_malformed() {
         return line == task.raw;
     }
-    let rest = line.trim_start().strip_prefix("- [ ] ").unwrap_or("");
+    let rest = line.trim_start().strip_prefix(UNCHECKED).unwrap_or("");
     rest.strip_prefix(task.id.as_str())
         .is_some_and(|r| r.starts_with(':'))
 }
 
 fn parse_line(line: &str, number: usize) -> Option<Task> {
-    let trimmed = line.trim_start();
-    let (done, rest) = if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
-        (false, rest)
-    } else {
-        (true, trimmed.strip_prefix("- [x] ")?)
-    };
+    let (done, rest) = split_checkbox(line)?;
     let (id, origin, description) = match split_id(rest) {
         Some((id, origin, description)) => (
             id.to_string(),
@@ -165,8 +228,7 @@ pub fn split_id(rest: &str) -> Option<(&str, Option<char>, &str)> {
     let letter = id.chars().next().filter(|c| matches!(c, 'T' | 'H' | 'D'));
     let digits = if letter.is_some() { &id[1..] } else { id };
     let (major, minor) = digits.split_once('.')?;
-    let is_number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    (is_number(major) && is_number(minor)).then_some((
+    (is_ascii_digits(major) && is_ascii_digits(minor)).then_some((
         id,
         letter.filter(|c| *c != 'H'),
         description,
@@ -187,6 +249,16 @@ mod tests {
         assert!(tasks[0].done && !tasks[1].done);
         assert_eq!(tasks[1].description, "second thing pending");
         assert_eq!(tasks[1].line, 7);
+    }
+
+    #[test]
+    fn split_checkbox_reports_state_rest_and_rejects_non_task_lines() {
+        assert_eq!(split_checkbox("- [ ] rest"), Some((false, "rest")));
+        assert_eq!(split_checkbox("- [x] rest"), Some((true, "rest")));
+        assert_eq!(split_checkbox("  - [x] indented"), Some((true, "indented")));
+        assert_eq!(split_checkbox("prose"), None);
+        // Uppercase is not a checkbox, matching `parses_task_lines_only`.
+        assert_eq!(split_checkbox("- [X] upper"), None);
     }
 
     #[test]
@@ -287,6 +359,48 @@ mod tests {
         let tasks = parse("- [x] T1.1: a\n- [ ] free text\n- [ ] T1.2: b\n");
         assert_eq!(next_pending(&tasks).unwrap().id, "T1.2");
         assert!(next_pending(&parse("- [x] T1.1: a\n")).is_none());
+    }
+
+    #[test]
+    fn is_pending_rejects_done_and_malformed_tasks() {
+        let pending = &parse("- [ ] T1.1: a\n")[0];
+        let done = &parse("- [x] T1.1: a\n")[0];
+        let malformed = &parse("- [ ] no id here\n")[0];
+        assert!(pending.is_pending());
+        assert!(!done.is_pending());
+        assert!(!malformed.is_pending());
+    }
+
+    #[test]
+    fn group_number_is_the_leading_id_number() {
+        let tasks = parse("- [ ] T1.2: a\n- [ ] D12.3: b\n- [ ] 1.2: c\n");
+        assert_eq!(tasks[0].group_number(), Some("1".into()));
+        assert_eq!(tasks[1].group_number(), Some("12".into()));
+        assert_eq!(tasks[2].group_number(), Some("1".into()));
+        assert_eq!(group_number_of("T1.2"), Some("1".into()));
+        assert_eq!(group_number_of("D12.3"), Some("12".into()));
+        assert_eq!(group_number_of("1.2"), Some("1".into()));
+        assert_eq!(group_number_of("T1"), None);
+        assert_eq!(group_number_of("TASK"), None);
+        // A malformed task line has the placeholder ID, so no group number.
+        let malformed = &parse("- [ ] no id here\n")[0];
+        assert_eq!(malformed.group_number(), None);
+    }
+
+    #[test]
+    fn description_hash_is_deterministic_and_distinguishes() {
+        let first = &parse("- [ ] T1.1: a task description\n")[0];
+        let second = &parse("- [x] T9.9: a task description\n")[0];
+        let other = &parse("- [ ] T1.2: another description\n")[0];
+        let hash = first.description_hash();
+        assert_eq!(hash, second.description_hash());
+        assert_ne!(hash, other.description_hash());
+        // A SHA-256 hex digest: 64 lowercase ASCII hex characters.
+        assert_eq!(hash.len(), 64);
+        assert!(
+            hash.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]

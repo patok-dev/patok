@@ -13,19 +13,30 @@
 mod daemon;
 mod merge;
 mod persist;
+mod review;
 mod schema;
+mod spelling;
 mod tui;
 
 pub use daemon::{
-    AcceptPolicy, DaemonConfig, DaemonEnv, DaemonSettings, ProviderKind, ProviderName, RunMode,
-    Stage, daemon_help, load_daemon,
+    AcceptPolicy, DAEMON_FIELDS, DaemonConfig, DaemonEnv, DaemonSettings, FieldKind, ProviderKind,
+    ProviderName, RunMode, StageConfig, daemon_field, daemon_field_value, daemon_help,
+    daemon_label, load_daemon,
 };
 pub use persist::{
     ApplyTiming, PersistError, SettingValue, daemon_apply_timing, daemon_changed_fields,
-    daemon_field_value, daemon_readout, set_daemon_field, set_tui_field,
+    daemon_readout, set_daemon_field, set_tui_field,
 };
+pub use review::Severity;
 pub use schema::{daemon_json_schema, tui_json_schema};
-pub use tui::{RailMode, THEME_KEYS, Theme, TuiSettings, UpdateChannel, load_tui, tui_help};
+pub use spelling::EnumSpelling;
+// Reachable crate-wide, so the enums outside the config tree (the agent role
+// and the pipeline stage) share the same spelling macro.
+pub(crate) use spelling::config_enum;
+pub use tui::{RailMode, THEME_KEYS, Theme, TuiSettings, load_tui, tui_help};
+// The update channel is an updater concept the config schema also exposes; the single
+// definition lives with the updater and is re-exported here for the config consumers.
+pub use crate::update::UpdateChannel;
 
 use std::path::{Path, PathBuf};
 
@@ -53,11 +64,10 @@ pub struct ConfigFiles {
 impl ConfigFiles {
     /// The user layers from the process environment.
     pub fn from_env() -> Self {
-        let var = |k: &str| std::env::var(k).ok();
-        let (xdg, home) = (var("XDG_CONFIG_HOME"), var("HOME"));
+        let dir = crate::paths::config_dir_from_env();
         Self {
-            user_global: user_global_file(xdg.as_deref(), home.as_deref()),
-            user_local: user_local_file(xdg.as_deref(), home.as_deref()),
+            user_global: dir.as_deref().map(|d| d.join(USER_FILE)),
+            user_local: dir.as_deref().map(|d| d.join(USER_LOCAL_FILE)),
         }
     }
 }
@@ -77,11 +87,7 @@ fn user_layer_file(
     xdg_config_home: Option<&str>,
     home: Option<&str>,
 ) -> Option<PathBuf> {
-    let base = match xdg_config_home.filter(|v| !v.is_empty()) {
-        Some(dir) => PathBuf::from(dir),
-        None => Path::new(home.filter(|v| !v.is_empty())?).join(".config"),
-    };
-    Some(base.join("patok").join(file))
+    crate::paths::config_dir(xdg_config_home, home).map(|dir| dir.join(file))
 }
 
 /// The project-local config file: `patok.config.toml` in the project's slot of the
@@ -166,6 +172,41 @@ pub(crate) fn read_layer_table(
     owned_table
 }
 
+/// Loads and merges one schema's layers over the empty layer: the user-global
+/// and user-local files, then the project file at `project_path` when one is
+/// given. Each file's `owned` table is parsed by `parse` and merged on top of
+/// the accumulated layers by `merge`; `warnings` collects the shared
+/// skip-and-fallback warnings of `read_layer_table` and `parse`.
+pub(crate) fn load_layers<L, P>(
+    files: &ConfigFiles,
+    project_path: Option<&Path>,
+    owned: &str,
+    ignored: &str,
+    warnings: &mut Vec<String>,
+    mut parse: P,
+    merge: impl Fn(L, L) -> L,
+) -> L
+where
+    L: Default,
+    P: FnMut(&toml::Table, &Path, &mut Vec<String>) -> L,
+{
+    let mut merged = L::default();
+    for path in [
+        files.user_global.as_deref(),
+        files.user_local.as_deref(),
+        project_path,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let Some(table) = read_layer_table(path, owned, ignored, warnings) else {
+            continue;
+        };
+        merged = merge(merged, parse(&table, path, warnings));
+    }
+    merged
+}
+
 /// Per-field extraction with failure handling: a wrong
 /// type falls back to that field's default (the `None` of the raw layer) with a warning
 /// naming the field and the source file; every other field is kept.
@@ -243,16 +284,19 @@ impl Fields<'_> {
         parsed
     }
 
-    /// A port number (1-65535).
+    /// A port number (1-65535), on top of [`Fields::uint`]: the range beyond
+    /// `u16::MAX` is the only rejection `uint` cannot report itself.
     pub fn port(&mut self, key: &str, value: &toml::Value) -> Option<u16> {
-        let parsed = value
-            .as_integer()
-            .and_then(|i| u16::try_from(i).ok())
-            .filter(|p| *p > 0);
-        if parsed.is_none() {
-            self.wrong_type(key, "a port number (1-65535)", value);
+        let Some(number) = self.uint(key, value, "a port number (1-65535)", true) else {
+            return None; // uint already warned
+        };
+        match u16::try_from(number) {
+            Ok(port) => Some(port),
+            Err(_) => {
+                self.wrong_type(key, "a port number (1-65535)", value);
+                None
+            }
         }
-        parsed
     }
 
     /// A string field; an empty string means "unset" and also yields `None`.

@@ -11,9 +11,9 @@ expression: screen
      │  ▸ Pipeline                                                                            │────┘
 [  Re│  ▸ Timeouts and pauses                                                                 │────┐
      │  ▸ Git                                                                                 │    │
-[ Dis│▶ ▸ Display and theme                                                                   │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
+[ Dis│  ▸ Isolation and security                                                              │    │
+     │  ▸ Learnings, history and embeddings                                                   │    │
+     │▶ ▸ Display and theme                                                                   │    │
      │                                                                                        │    │
      │                                                                                        │    │
      │                                                                                        │    │

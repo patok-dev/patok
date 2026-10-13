@@ -24,17 +24,31 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         toolchain: [stable, msrv]
-    env:
-      # rust-toolchain.toml pins current stable; the msrv leg overrides it.
-      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && '1.96' || '' }}
     steps:
       - uses: actions/checkout@v4
+      # rust-toolchain.toml pins current stable; the msrv leg overrides it
+      # with the rust-version declared in Cargo.toml.
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+          test -n "$msrv"
+          echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
       - name: Install MSRV toolchain
         if: matrix.toolchain == 'msrv'
-        run: rustup toolchain install 1.96 --profile minimal --component clippy
+        run: rustup toolchain install "${{ steps.msrv.outputs.msrv }}" --profile minimal --component clippy
       - uses: Swatinem/rust-cache@v2
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && steps.msrv.outputs.msrv || '' }}
       - run: cargo clippy --all-targets -- -D warnings
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && steps.msrv.outputs.msrv || '' }}
+      - run: cargo clippy --workspace -- -D warnings
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && steps.msrv.outputs.msrv || '' }}
       - run: cargo test --workspace
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain == 'msrv' && steps.msrv.outputs.msrv || '' }}
 
   install-script:
     runs-on: ubuntu-latest
@@ -54,19 +68,13 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
           - { os: macos-15-intel, target: x86_64-apple-darwin }
           - { os: macos-latest, target: aarch64-apple-darwin }
     steps:
       - uses: actions/checkout@v4
-      - name: Install musl tools
-        if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: rustup target add ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/cross-build
         with:
-          key: ${{ matrix.target }}
-      - run: cargo build --release -p patok --target ${{ matrix.target }}
+          target: ${{ matrix.target }}
       - run: target/${{ matrix.target }}/release/patok --version
       - name: Check static linkage
         if: contains(matrix.target, 'musl')

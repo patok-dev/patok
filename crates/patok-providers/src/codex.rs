@@ -8,63 +8,60 @@
 //! config override.
 
 use async_trait::async_trait;
+use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
-use crate::process::{self, LineParser, Parsed, ProcessSpec};
-use crate::{Provider, ProviderError, SessionRequest, SessionResult, cli_in};
-
-const TOOL_PREVIEW: usize = 120;
-const RESULT_PREVIEW: usize = 200;
+use crate::cli::{self, CliSpec};
+use crate::process::Parsed;
+use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 /// Name of the CLI binary this provider needs.
-pub const CLI: &str = "codex";
+pub(crate) const CLI: &str = "codex";
 
 pub struct Codex;
 
 impl Codex {
-    /// Fails with a clear error naming the CLI when `codex` is not on `PATH`. Run before a
-    /// session starts.
-    pub fn check_available() -> Result<(), ProviderError> {
-        Self::check_available_in(std::env::var_os("PATH").as_deref())
-    }
-
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        if cli_in(CLI, path) {
-            Ok(())
-        } else {
-            Err(ProviderError::CliNotFound { cli: CLI.into() })
-        }
+        cli::check_available_in(CLI, path)
+    }
+}
+
+impl CliSpec for Codex {
+    const CLI: &'static str = CLI;
+    type Parser = StreamParser;
+    fn slug() -> &'static str {
+        ProviderKind::Codex.as_str()
+    }
+    fn build_args(request: &SessionRequest) -> Vec<String> {
+        build_args(request)
     }
 }
 
 #[async_trait]
 impl Provider for Codex {
     fn slug(&self) -> &'static str {
-        "codex"
+        ProviderKind::Codex.as_str()
+    }
+
+    fn supports_reviewer_model(&self) -> bool {
+        false
+    }
+
+    fn check_available(&self) -> Result<(), ProviderError> {
+        cli::check_available::<Codex>()
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
-        Self::check_available()?;
-        let spec = ProcessSpec {
-            program: CLI.into(),
-            args: build_args(&request),
-            env: vec![],
-            stdin: String::new(),
-        };
-        let model = request.model.clone().unwrap_or_default();
-        process::run(spec, &request, StreamParser, self.slug(), &model).await
+        cli::run_session::<Codex>(request).await
     }
 }
 
 /// Codex exec has no system-prompt flag and takes the prompt as a positional argument,
 /// so the system prompt is prepended to it.
 fn build_args(request: &SessionRequest) -> Vec<String> {
-    let prompt = match request.system_prompt.as_deref().filter(|s| !s.is_empty()) {
-        Some(system) => format!("{system}\n\n{}", request.prompt),
-        None => request.prompt.clone(),
-    };
+    let prompt = cli::prepend_system_prompt(request);
     let mut args: Vec<String> = vec![
         "exec".into(),
         // The JSONL event stream.
@@ -92,54 +89,27 @@ fn build_args(request: &SessionRequest) -> Vec<String> {
     args
 }
 
-/// Maps role allowlist names (Claude tool names) to Codex's tool names: commands and
-/// file reads/searches run through its shell tool, edits through apply_patch.
-fn codex_tools(allowed: &[String]) -> Vec<&'static str> {
-    let mut tools: Vec<&'static str> = vec![];
-    for name in allowed {
-        let mapped: &[&'static str] = match name.as_str() {
-            "Bash" | "Read" | "Glob" | "Grep" => &["shell"],
-            "Edit" | "Write" => &["apply_patch"],
-            "WebSearch" => &["web_search"],
-            // WebFetch, NotebookEdit and unknown names have no Codex equivalent.
-            _ => &[],
-        };
-        for tool in mapped {
-            if !tools.contains(tool) {
-                tools.push(tool);
-            }
-        }
-    }
-    tools
+/// Maps role allowlist tools to Codex's tool names: commands and file
+/// reads/searches run through its shell tool, edits through apply_patch.
+fn codex_tools(allowed: &[Tool]) -> Vec<&'static str> {
+    cli::map_tools(allowed, |tool| match tool {
+        Tool::Bash | Tool::Read | Tool::Glob | Tool::Grep => &["shell"],
+        Tool::Edit | Tool::Write => &["apply_patch"],
+        Tool::WebSearch => &["web_search"],
+        // WebFetch and NotebookEdit have no Codex equivalent.
+        Tool::WebFetch | Tool::NotebookEdit => &[],
+    })
 }
 
 /// Translates Codex's `--json` JSONL entries into normalised events.
 #[derive(Default)]
 pub struct StreamParser;
 
-impl LineParser for StreamParser {
-    fn parse_line(&mut self, line: &str) -> Parsed {
-        self.parse(line)
-    }
-}
+crate::cli::forward_line_parser!(StreamParser);
 
 impl StreamParser {
     pub fn parse(&mut self, line: &str) -> Parsed {
-        let line = line.trim();
-        match serde_json::from_str::<Value>(line) {
-            Ok(value) if value.is_object() => Parsed {
-                events: events_for(&value),
-                json: true,
-            },
-            _ if line.is_empty() => Parsed {
-                events: vec![],
-                json: false,
-            },
-            _ => Parsed {
-                events: vec![AgentEvent::Stderr { text: line.into() }],
-                json: false,
-            },
-        }
+        cli::parse_line(line, events_for)
     }
 }
 
@@ -201,20 +171,10 @@ fn tool_events(item: &Value, completed: bool) -> Vec<AgentEvent> {
     let status = item["status"].as_str().unwrap_or_default();
     if status == "completed" {
         vec![AgentEvent::ToolResult {
-            output: preview(&tool_output(item), RESULT_PREVIEW),
+            output: preview(&tool_output(item), cli::RESULT_PREVIEW),
         }]
     } else {
-        let output = tool_output(item);
-        vec![AgentEvent::Stderr {
-            text: preview(
-                &if output.is_empty() {
-                    format!("{name} {status}")
-                } else {
-                    output
-                },
-                RESULT_PREVIEW,
-            ),
-        }]
+        vec![cli::failed_tool_stderr(&name, status, &tool_output(item))]
     }
 }
 
@@ -232,12 +192,10 @@ fn tool_name(item: &Value) -> String {
 }
 
 fn tool_input(item: &Value) -> String {
-    let text = item["command"]
-        .as_str()
+    let text = cli::first_str(item, &["command", "query"])
         .map(str::to_string)
-        .or_else(|| item["query"].as_str().map(str::to_string))
         .unwrap_or_else(|| change_summary(item).unwrap_or_else(|| item.to_string()));
-    preview(&text, TOOL_PREVIEW)
+    preview(&text, cli::TOOL_PREVIEW)
 }
 
 fn tool_output(item: &Value) -> String {
@@ -381,20 +339,8 @@ mod tests {
         );
     }
 
-    fn request(prompt: &str, system: Option<&str>, tools: &[&str]) -> SessionRequest {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        SessionRequest {
-            model: None,
-            prompt: prompt.into(),
-            system_prompt: system.map(str::to_string),
-            project_dir: ".".into(),
-            events: tx,
-            log_dir: ".".into(),
-            label: "t".into(),
-            idle_timeout: std::time::Duration::from_secs(1),
-            cancel: Default::default(),
-            allowed_tools: tools.iter().map(ToString::to_string).collect(),
-        }
+    fn request(prompt: &str, system: Option<&str>, tools: &[Tool]) -> SessionRequest {
+        crate::test_util::request(prompt, system, tools).0
     }
 
     #[test]
@@ -431,23 +377,18 @@ mod tests {
         assert!(planner.contains(&"tools.web_search=false".to_string()));
         let research = build_args(&request("r", None, crate::RESEARCH_TOOLS));
         assert!(research.contains(&"tools.web_search=true".to_string()));
-        // The mapping itself: Claude role names to codex tool names, unmapped dropped.
+        // The mapping itself: role tools to codex tool names, unmapped dropped.
         assert_eq!(
-            codex_tools(&["Read", "Glob", "Grep", "Edit", "Write"].map(ToString::to_string)),
+            codex_tools(&[Tool::Read, Tool::Glob, Tool::Grep, Tool::Edit, Tool::Write]),
             ["shell", "apply_patch"]
         );
         assert_eq!(
-            codex_tools(
-                &crate::BUILDER_TOOLS
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            ),
+            codex_tools(crate::BUILDER_TOOLS),
             ["shell", "apply_patch", "web_search"]
         );
         // WebFetch and NotebookEdit have no codex equivalent.
         assert_eq!(
-            codex_tools(&["WebFetch", "NotebookEdit"].map(ToString::to_string)),
+            codex_tools(&[Tool::WebFetch, Tool::NotebookEdit]),
             [] as [&'static str; 0]
         );
     }

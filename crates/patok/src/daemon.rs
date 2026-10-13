@@ -28,15 +28,24 @@ fn socket(project: &Path) -> PathBuf {
 
 /// Connects to the running engine, if any.
 pub(crate) async fn try_connect(project: &Path) -> Option<Client> {
-    patok_tui::client::connect(&socket(project)).await.ok()
+    patok_proto::client::connect(&socket(project)).await.ok()
+}
+
+/// Attaches to the running engine, spawning one when there is none; the flag tells the
+/// caller which happened, for its status line.
+async fn connect_or_spawn(project: &Path) -> anyhow::Result<(Client, bool)> {
+    match try_connect(project).await {
+        Some(client) => Ok((client, false)),
+        None => {
+            let client = spawn_and_connect(project).await?;
+            Ok((client, true))
+        }
+    }
 }
 
 /// `patok` / `patok run`: attach to the engine, spawning it first when needed, then run the UI.
 pub async fn run_shell(project: &Path) -> anyhow::Result<()> {
-    let client = match try_connect(project).await {
-        Some(client) => client,
-        None => spawn_and_connect(project).await?,
-    };
+    let (client, _) = connect_or_spawn(project).await?;
     let spawner: patok_tui::Spawner = {
         let project = project.to_path_buf();
         Arc::new(move || {
@@ -71,17 +80,12 @@ pub async fn run_headless(project: &Path, color: bool) -> anyhow::Result<()> {
     // startup must still stop the session, not kill this process with the engine
     // already detached.
     let interrupt = install_signal_watchers().await?;
-    let client = match try_connect(project).await {
-        Some(client) => {
-            println!("Connected to the running engine for {}.", project.display());
-            client
-        }
-        None => {
-            let client = spawn_and_connect(project).await?;
-            println!("Started the engine for {}.", project.display());
-            client
-        }
-    };
+    let (client, spawned) = connect_or_spawn(project).await?;
+    if spawned {
+        println!("Started the engine for {}.", project.display());
+    } else {
+        println!("Connected to the running engine for {}.", project.display());
+    }
     println!("Headless -- starting the build; press Ctrl-C to interrupt.");
     let mut stdout = std::io::stdout().lock();
     let outcome = patok_tui::run_until(client, &mut stdout, interrupt, color).await?;

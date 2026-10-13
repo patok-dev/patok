@@ -51,3 +51,4 @@ patok-engine = { path = "crates/patok-engine" }
 patok-proto = { path = "crates/patok-proto" }
 patok-providers = { path = "crates/patok-providers" }
 patok-tui = { path = "crates/patok-tui" }
+patok-wire = { path = "crates/patok-wire" }

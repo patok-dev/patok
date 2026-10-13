@@ -13,6 +13,27 @@ pub fn escape_path(path: &Path) -> String {
         .join("-")
 }
 
+/// The env-injectable base-directory resolution shared by the runtime dir, the
+/// project data dir, the user config layers and the default review history:
+/// `primary` when set and non-empty, else `fallback` (set and non-empty) joined
+/// with `fallback_subdir` (used as-is when the subdir is empty). Empty values
+/// count as unset; `None` when neither resolves.
+pub fn base_dir(
+    primary: Option<&str>,
+    fallback: Option<&str>,
+    fallback_subdir: &str,
+) -> Option<PathBuf> {
+    if let Some(dir) = primary.filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let base = PathBuf::from(fallback.filter(|v| !v.is_empty())?);
+    Some(if fallback_subdir.is_empty() {
+        base
+    } else {
+        base.join(fallback_subdir)
+    })
+}
+
 /// Longest socket path we allow. `sun_path` holds 104 bytes on macOS and 108 on Linux, including
 /// the terminating NUL.
 const MAX_SOCKET_PATH: usize = 100;
@@ -25,12 +46,8 @@ const SOCKET_FILE: &str = "engine.sock";
 /// directory name keeps a readable tail of the escaped path and ends in a stable 64-bit hash of
 /// the whole of it, so distinct projects still get distinct names.
 pub fn runtime_dir(xdg_runtime_dir: Option<&str>, tmpdir: Option<&str>, project: &Path) -> PathBuf {
-    let root = [xdg_runtime_dir, tmpdir]
-        .into_iter()
-        .flatten()
-        .find(|v| !v.is_empty())
-        .unwrap_or("/tmp");
-    let base = Path::new(root).join("patok");
+    let root = base_dir(xdg_runtime_dir, tmpdir, "").unwrap_or_else(|| PathBuf::from("/tmp"));
+    let base = root.join("patok");
     let escaped = escape_path(project);
     // "<base>/<name>/<socket file>"
     let overhead = base.as_os_str().len() + 1 + 1 + SOCKET_FILE.len();
@@ -73,10 +90,7 @@ pub fn project_data_dir(
     home: Option<&str>,
     project: &Path,
 ) -> Option<PathBuf> {
-    let root = match xdg_data_home.filter(|v| !v.is_empty()) {
-        Some(dir) => PathBuf::from(dir),
-        None => Path::new(home.filter(|v| !v.is_empty())?).join(".local/share"),
-    };
+    let root = base_dir(xdg_data_home, home, ".local/share")?;
     Some(
         root.join("patok")
             .join("projects")
@@ -104,6 +118,19 @@ pub fn project_data_dir_from_env(project: &Path) -> Option<PathBuf> {
     )
 }
 
+/// The patok directory under the user's XDG config dir: `$XDG_CONFIG_HOME`,
+/// else `$HOME/.config`, each joined with `patok`. Empty values count as
+/// unset; `None` when neither resolves.
+pub fn config_dir(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    Some(base_dir(xdg_config_home, home, ".config")?.join("patok"))
+}
+
+/// [`config_dir`] from the process environment.
+pub fn config_dir_from_env() -> Option<PathBuf> {
+    let get = |k: &str| std::env::var(k).ok();
+    config_dir(get("XDG_CONFIG_HOME").as_deref(), get("HOME").as_deref())
+}
+
 /// The engine socket inside a runtime directory.
 pub fn socket_path(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join(SOCKET_FILE)
@@ -112,6 +139,39 @@ pub fn socket_path(runtime_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_dir_is_the_one_xdg_or_fallback_resolution() {
+        const SUB: &str = ".config";
+        // The XDG variable set wins, whatever the fallback is.
+        assert_eq!(
+            base_dir(Some("/xdg"), Some("/home/u"), SUB),
+            Some(PathBuf::from("/xdg"))
+        );
+        assert_eq!(
+            base_dir(Some("/xdg"), None, SUB),
+            Some(PathBuf::from("/xdg"))
+        );
+        // Unset: the fallback (HOME) gets the subdir appended.
+        assert_eq!(
+            base_dir(None, Some("/home/u"), SUB),
+            Some(PathBuf::from("/home/u/.config"))
+        );
+        // Empty counts as unset: the fallback is used, and without one
+        // there is no base directory at all.
+        assert_eq!(
+            base_dir(Some(""), Some("/home/u"), SUB),
+            Some(PathBuf::from("/home/u/.config"))
+        );
+        assert_eq!(base_dir(None, None, SUB), None);
+        assert_eq!(base_dir(Some(""), None, SUB), None);
+        assert_eq!(base_dir(Some(""), Some(""), SUB), None);
+        // An empty subdir uses the fallback as-is (the runtime dir's TMPDIR form).
+        assert_eq!(
+            base_dir(None, Some("/tmpdir"), ""),
+            Some(PathBuf::from("/tmpdir"))
+        );
+    }
 
     #[test]
     fn escapes_dashes_and_separators() {
@@ -173,5 +233,27 @@ mod tests {
             Path::new("/home/u/.local/share/patok/projects/-a")
         );
         assert!(project_data_dir(None, None, p).is_none());
+    }
+
+    #[test]
+    fn config_dir_falls_back_to_home() {
+        // The XDG variable set wins, whatever the fallback is.
+        assert_eq!(
+            config_dir(Some("/xdg"), Some("/home/u")),
+            Some(PathBuf::from("/xdg/patok"))
+        );
+        // Unset or empty XDG falls back to `$HOME/.config`.
+        assert_eq!(
+            config_dir(None, Some("/home/u")),
+            Some(PathBuf::from("/home/u/.config/patok"))
+        );
+        assert_eq!(
+            config_dir(Some(""), Some("/home/u")),
+            Some(PathBuf::from("/home/u/.config/patok"))
+        );
+        // Neither set (or empty) resolves: no config directory.
+        assert_eq!(config_dir(None, None), None);
+        assert_eq!(config_dir(Some(""), None), None);
+        assert_eq!(config_dir(Some(""), Some("")), None);
     }
 }

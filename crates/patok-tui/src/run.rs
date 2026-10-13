@@ -10,7 +10,7 @@ use crossterm::event::{Event as TermEvent, EventStream};
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use patok_core::config::{SettingValue, Theme as ThemeKey};
-use patok_core::event::{EngineEvent, Snapshot};
+use patok_core::event::Snapshot;
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{
     AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, InjectTask,
@@ -23,6 +23,8 @@ use tonic::Streaming;
 use tonic::transport::Channel;
 
 use crate::app::{Action, App, QueueRun};
+use crate::driver::CommandCall;
+use crate::driver::Update;
 use crate::overlay::Schema;
 use crate::project;
 use crate::settings::{ShellSettings, to_proto};
@@ -173,7 +175,7 @@ where
             .into_inner();
         // The drain draws render with a fresh clock, so the timer does not sit on
         // the stale tick from before the restart.
-        app.now.set(Instant::now());
+        app.clock.now.set(Instant::now());
         while let Some(update) = progress
             .message()
             .await
@@ -187,7 +189,7 @@ where
     terminal.draw(|frame| ui::render(frame, app))?;
     *client = spawn().await.context("could not start a fresh engine")?;
     let (mut fresh, fresh_updates) = attach(client).await?;
-    fresh.completed = app.completed;
+    fresh.run.completed = app.run.completed;
     fresh.status = Some("Engine restarted.".into());
     *app = fresh;
     *updates = fresh_updates;
@@ -256,7 +258,7 @@ where
     match action {
         // The `d` key: the shell leaves, the engine keeps running.
         Action::Detach => Ok(ShutdownFlow::Detach(Outcome::Detached {
-            completed: app.completed,
+            completed: app.run.completed,
         })),
         // A quit (the first `q` while busy): a SOFT-scope shutdown -- the
         // current task finishes, no further task starts, the engine keeps
@@ -296,9 +298,6 @@ where
         _ => Ok(ShutdownFlow::Keep),
     }
 }
-
-/// The submit RPC's result, as the shared dispatch asks the engine for it.
-type CommandCall = Result<tonic::Response<patok_proto::CommandResponse>, tonic::Status>;
 
 /// Whether the shared submit dispatch consumed the action.
 enum SubmitFlow {
@@ -373,21 +372,15 @@ where
         // agent session. The modal closes with the focus back on the task
         // list; a rejection keeps it open on the input with the error.
         Action::InjectTask(text) => {
-            let command = CommandRequest {
-                action: Some(command_request::Action::InjectTask(InjectTask {
-                    text: text.clone(),
-                })),
-            };
-            let error = match submit(command).await {
-                Ok(response) => {
-                    let response = response.into_inner();
-                    (!response.accepted).then_some(response.error)
-                }
-                Err(status) => Some(format!("inject failed: {}", status.message())),
-            };
-            match error {
-                None => app.on_task_injected(),
-                Some(error) => {
+            match crate::driver::submit(
+                submit,
+                command_request::Action::InjectTask(InjectTask { text: text.clone() }),
+                "inject failed",
+            )
+            .await
+            {
+                Ok(()) => app.on_task_injected(),
+                Err(error) => {
                     app.on_submit_failed(format!("could not append to TASKS.md: {error}"));
                 }
             }
@@ -406,22 +399,18 @@ where
     Req: FnOnce(CommandRequest) -> Fut,
     Fut: std::future::Future<Output = CommandCall>,
 {
-    let command = CommandRequest {
-        action: Some(command_request::Action::AddTasks(AddTasks {
+    match crate::driver::submit(
+        submit,
+        command_request::Action::AddTasks(AddTasks {
             request,
             kind: kind as i32,
-        })),
-    };
-    let error = match submit(command).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("add failed: {}", status.message())),
-    };
-    match error {
-        None => app.on_tasks_submitted(),
-        Some(error) => app.on_submit_failed(error),
+        }),
+        "add failed",
+    )
+    .await
+    {
+        Ok(()) => app.on_tasks_submitted(),
+        Err(error) => app.on_submit_failed(error),
     }
 }
 
@@ -460,7 +449,7 @@ async fn event_loop(
 
     loop {
         // The timer recomputes on every render: refresh the clock first.
-        app.now.set(Instant::now());
+        app.clock.now.set(Instant::now());
         terminal.draw(|frame| ui::render(frame, app))?;
         shutdown_done = false;
         tokio::select! {
@@ -603,57 +592,52 @@ async fn event_loop(
                 },
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e.into()),
-                None => return Ok(Outcome::Detached { completed: app.completed }),
+                None => return Ok(Outcome::Detached { completed: app.run.completed }),
             },
-            update = updates.message() => match update {
-                Ok(Some(update)) => match update.payload {
-                    Some(engine_update::Payload::Event(event)) => {
-                        match EngineEvent::from_payload(&event.payload) {
-                            Ok(event) => {
-                                // Entering the idle phase rescans the project, so the
-                                // scenario reflects the files as they are now
-                                //.
-                                let was_idle = app.is_idle();
-                                app.apply(event);
-                                if !was_idle && app.is_idle() {
-                                    let dir = std::path::PathBuf::from(app.project.clone());
-                                    app.project_status = probe_status(&dir).await;
-                                }
-                            }
-                            Err(e) => app.status = Some(format!("unreadable {} event: {e}", event.kind)),
-                        }
+            update = crate::driver::next_update(&mut updates) => match update {
+                Update::Event(event) => {
+                    // Entering the idle phase rescans the project, so the
+                    // scenario reflects the files as they are now
+                    // .
+                    let was_idle = app.is_idle();
+                    app.apply(event);
+                    if !was_idle && app.is_idle() {
+                        let dir = std::path::PathBuf::from(app.project.clone());
+                        app.project_status = probe_status(&dir).await;
                     }
-                    Some(engine_update::Payload::ShutdownNotice(notice)) => {
-                        app.status = Some(format!("Engine stopping: {}", notice.reason));
-                        stopped_reason = Some(notice.reason);
-                    }
-                    _ => {}
-                },
-                // The stream ends once the engine is gone.
-                Ok(None) => {
-                    let reason = stopped_reason.unwrap_or_else(|| "connection to the engine closed".into());
-                    return Ok(Outcome::EngineStopped { reason, completed: app.completed });
                 }
-                Err(status) => return Err(anyhow!("lost the engine connection: {}", status.message())),
+                Update::UnreadableEvent { kind, error } => {
+                    app.status = Some(format!("unreadable {kind} event: {error}"))
+                }
+                Update::ShutdownNotice(reason) => {
+                    app.status = Some(format!("Engine stopping: {reason}"));
+                    stopped_reason = Some(reason);
+                }
+                Update::Ignored => {}
+                // The stream ends once the engine is gone.
+                Update::StreamEnded => {
+                    let reason =
+                        stopped_reason.unwrap_or_else(|| "connection to the engine closed".into());
+                    return Ok(Outcome::EngineStopped { reason, completed: app.run.completed });
+                }
+                Update::ConnectionLost(message) => {
+                    return Err(anyhow!("lost the engine connection: {message}"))
+                }
             },
             progress = next_shutdown(&mut shutdown) => match progress {
                 Some(Ok(update)) => {
                     let scope = shutdown.as_ref().expect("a pending shutdown").0;
-                    match shutdown_progress(app, scope, &update) {
-                        Some(outcome) => return Ok(outcome),
-                        // A completed shutdown is a stop, not a quit: drop the
-                        // finished stream below so keys work again. The shell
-                        // still ends through the attach stream when the engine
-                        // really exits.
-                        None => {
-                            if update.phase == shutdown_update::Phase::Complete as i32 {
-                                shutdown_done = true;
-                            }
-                        }
+                    shutdown_progress(app, scope, &update);
+                    // A completed shutdown is a stop, not a quit: drop the
+                    // finished stream below so keys work again. The shell
+                    // still ends through the attach stream when the engine
+                    // really exits.
+                    if update.phase == shutdown_update::Phase::Complete as i32 {
+                        shutdown_done = true;
                     }
                 }
                 // Stream ended or failed: the engine is gone either way.
-                _ => return Ok(Outcome::EngineStopped { reason: "stopped".into(), completed: app.completed }),
+                _ => return Ok(Outcome::EngineStopped { reason: "stopped".into(), completed: app.run.completed }),
             },
         }
         if shutdown_done {
@@ -671,14 +655,14 @@ pub fn shutdown_progress(
     app: &mut App,
     scope: shutdown_request::Scope,
     update: &patok_proto::ShutdownUpdate,
-) -> Option<Outcome> {
+) {
     // While a SOFT stop is pending, the two-keys message stays on screen for
     // the whole pending window; the engine's generic progress text does not
     // overwrite it. The Complete update still carries its own message.
     if scope == shutdown_request::Scope::Soft
         && update.phase != shutdown_update::Phase::Complete as i32
     {
-        app.status = Some(crate::SOFT_STOP_PENDING.to_string());
+        app.status = Some(crate::app::SOFT_STOP_PENDING.to_string());
     } else {
         app.status = Some(update.message.clone());
     }
@@ -686,10 +670,7 @@ pub fn shutdown_progress(
         // The loop has wound down; the engine is idle and keeps serving, so
         // the shell stays open (a SOFT stop finishes the running task first,
         // a NOW interrupt cancels it).
-        app.stopping = false;
-        None
-    } else {
-        None
+        app.run.stopping = false;
     }
 }
 
@@ -707,16 +688,13 @@ async fn next_shutdown(
 }
 
 async fn start_build(client: &mut EngineClient<Channel>, app: &mut App) {
-    let request = CommandRequest {
-        action: Some(command_request::Action::StartBuild(StartBuild {})),
-    };
-    app.status = match client.submit_command(request).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("start failed: {}", status.message())),
-    };
+    app.status = crate::driver::submit(
+        |command| client.submit_command(command),
+        command_request::Action::StartBuild(StartBuild {}),
+        "start failed",
+    )
+    .await
+    .err();
 }
 
 /// Starts one discovery round now (the Enter key while the engine is idle): the round
@@ -724,16 +702,13 @@ async fn start_build(client: &mut EngineClient<Channel>, app: &mut App) {
 /// attach stream; only a rejection (e.g. a run that just started) lands in the
 /// status bar.
 async fn run_discovery(client: &mut EngineClient<Channel>, app: &mut App) {
-    let request = CommandRequest {
-        action: Some(command_request::Action::RunDiscovery(RunDiscovery {})),
-    };
-    app.status = match client.submit_command(request).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("discovery failed: {}", status.message())),
-    };
+    app.status = crate::driver::submit(
+        |command| client.submit_command(command),
+        command_request::Action::RunDiscovery(RunDiscovery {}),
+        "discovery failed",
+    )
+    .await
+    .err();
 }
 
 /// Cancels a pending soft stop (Esc while one is pending). The app state was
@@ -742,18 +717,14 @@ async fn run_discovery(client: &mut EngineClient<Channel>, app: &mut App) {
 /// puts it back: the stop is still in flight and its stream finishes the
 /// cleanup.
 async fn cancel_soft_stop(client: &mut EngineClient<Channel>, app: &mut App) {
-    let request = CommandRequest {
-        action: Some(command_request::Action::CancelSoftStop(CancelSoftStop {})),
-    };
-    let error = match client.submit_command(request).await {
-        Ok(response) => {
-            let response = response.into_inner();
-            (!response.accepted).then_some(response.error)
-        }
-        Err(status) => Some(format!("cancel failed: {}", status.message())),
-    };
-    if let Some(error) = error {
-        app.stopping = true;
+    if let Err(error) = crate::driver::submit(
+        |command| client.submit_command(command),
+        command_request::Action::CancelSoftStop(CancelSoftStop {}),
+        "cancel failed",
+    )
+    .await
+    {
+        app.run.stopping = true;
         app.status = Some(error);
     }
 }
@@ -818,26 +789,21 @@ async fn change_setting<S: SettingsSubmit>(
                     return false;
                 }
             };
-            let request = CommandRequest {
-                action: Some(command_request::Action::SettingsChange(SettingsChange {
+            match crate::driver::submit(
+                |request| submitter.settings_change(request),
+                command_request::Action::SettingsChange(SettingsChange {
                     change: Some(change),
-                })),
-            };
-            match submitter.settings_change(request).await {
-                Ok(response) => {
-                    let response = response.into_inner();
-                    if !response.accepted {
-                        app.on_settings_rejected(response.error);
-                        return false;
-                    }
+                }),
+                "settings change failed",
+            )
+            .await
+            {
+                Ok(()) => {
                     app.on_settings_applied(schema, field, value);
                     true
                 }
-                Err(status) => {
-                    app.on_settings_rejected(format!(
-                        "settings change failed: {}",
-                        status.message()
-                    ));
+                Err(error) => {
+                    app.on_settings_rejected(error);
                     false
                 }
             }
@@ -880,7 +846,7 @@ async fn save_settings<S: SettingsSubmit>(
         }
     }
     if !app.overlay.dirty() {
-        app.overlay.close();
+        app.close_settings();
     }
 }
 
@@ -903,9 +869,9 @@ mod tests {
     };
     use ratatui::layout::Rect;
 
-    use crate::app::FrameFocus;
     use crate::overlay::StatusLevel;
     use crate::settings::ShellSettings;
+    use crate::view::FrameFocus;
 
     use super::{
         Action, App, CommandCall, Outcome, QueueRun, Schema, SettingsSubmit, ShutdownCall,
@@ -1068,7 +1034,7 @@ mod tests {
     /// changes pending.
     fn save_app(drafts: &[(&str, &str)]) -> App {
         let mut app = app();
-        app.overlay.open();
+        app.open_settings();
         for (field, value) in drafts {
             app.overlay
                 .drafts
@@ -1082,8 +1048,12 @@ mod tests {
     /// outside any other recorded rect, so its rows 0-2 are the choices.
     fn confirm_app() -> (App, Rect) {
         let mut app = save_app(&[("model", "opus")]);
-        app.overlay.confirm_open = true;
-        app.overlay.confirm_selected = 0;
+        // The real flow opens the dialog: Esc on the dirty overlay.
+        assert_eq!(
+            app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            Action::None
+        );
+        assert_eq!(app.overlay.confirm_selected, 0);
         let body = Rect::new(0, 20, 50, 6);
         app.overlay.confirm_body.set(body);
         (app, body)
@@ -1104,7 +1074,7 @@ mod tests {
     #[tokio::test]
     async fn detach_maps_to_the_detached_outcome_without_a_request() {
         let mut app = app();
-        app.completed = 3;
+        app.run.completed = 3;
         let flow = run_shutdown_family(&mut app, &Action::Detach, unused_request())
             .await
             .unwrap();
@@ -1193,8 +1163,8 @@ mod tests {
     #[tokio::test]
     async fn submit_tasks_sends_the_planner_add_tasks_and_closes_on_accept() {
         let mut app = app();
-        app.dialog_open = true;
-        app.dialog_text = "add a login page".into();
+        app.open_dialog();
+        app.dialog.editor.set_text("add a login page");
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut app,
@@ -1213,9 +1183,9 @@ mod tests {
             }
             other => panic!("expected an AddTasks command, got {other:?}"),
         }
-        assert!(!app.dialog_open);
+        assert!(!app.dialog_open());
         assert_eq!(app.focus, FrameFocus::Output);
-        assert_eq!(app.dialog_text, "");
+        assert_eq!(app.dialog.editor.text(), "");
     }
 
     /// The research queue-creation runs (T69.1) send the AddTasks command
@@ -1244,7 +1214,7 @@ mod tests {
                 }
                 other => panic!("expected an AddTasks command, got {other:?}"),
             }
-            assert!(!app.dialog_open, "{run:?}");
+            assert!(!app.dialog_open(), "{run:?}");
         }
     }
 
@@ -1254,8 +1224,8 @@ mod tests {
     async fn a_failed_add_keeps_the_dialog_open_with_the_error() {
         // The engine rejected the request: its reason lands in the dialog.
         let mut app = app();
-        app.dialog_open = true;
-        app.dialog_text = "add a login page".into();
+        app.open_dialog();
+        app.dialog.editor.set_text("add a login page");
         run_submit_family(
             &mut app,
             std::path::Path::new("/home/user/demo"),
@@ -1263,9 +1233,9 @@ mod tests {
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "planner busy"),
         )
         .await;
-        assert!(app.dialog_open);
-        assert_eq!(app.dialog_text, "add a login page");
-        assert_eq!(app.dialog_status.as_deref(), Some("planner busy"));
+        assert!(app.dialog_open());
+        assert_eq!(app.dialog.editor.text(), "add a login page");
+        assert_eq!(app.dialog.status.as_deref(), Some("planner busy"));
 
         // The transport failed: the add's failure message lands instead.
         run_submit_family(
@@ -1275,9 +1245,9 @@ mod tests {
             failing_submit("nope"),
         )
         .await;
-        assert!(app.dialog_open);
-        assert_eq!(app.dialog_text, "add a login page");
-        assert_eq!(app.dialog_status.as_deref(), Some("add failed: nope"));
+        assert!(app.dialog_open());
+        assert_eq!(app.dialog.editor.text(), "add a login page");
+        assert_eq!(app.dialog.status.as_deref(), Some("add failed: nope"));
     }
 
     /// The inject-task modal's confirm (T76.1) sends the InjectTask command
@@ -1286,7 +1256,7 @@ mod tests {
     #[tokio::test]
     async fn inject_sends_the_inject_command_and_closes_the_modal_on_accept() {
         let mut accepted = app();
-        accepted.dialog_open = true;
+        accepted.open_inject();
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut accepted,
@@ -1305,11 +1275,11 @@ mod tests {
                 other => panic!("expected an InjectTask command, got {other:?}"),
             }
         }
-        assert!(!accepted.dialog_open);
+        assert!(!accepted.dialog_open());
         assert_eq!(accepted.focus, FrameFocus::Tasks);
         // A rejected append keeps the modal open with the engine's reason.
         let mut rejected = app();
-        rejected.dialog_open = true;
+        rejected.open_inject();
         run_submit_family(
             &mut rejected,
             std::path::Path::new("/home/user/demo"),
@@ -1317,9 +1287,9 @@ mod tests {
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "empty text"),
         )
         .await;
-        assert!(rejected.dialog_open);
+        assert!(rejected.dialog_open());
         assert_eq!(
-            rejected.dialog_status.as_deref(),
+            rejected.dialog.status.as_deref(),
             Some("could not append to TASKS.md: empty text")
         );
 
@@ -1331,9 +1301,9 @@ mod tests {
             failing_submit("nope"),
         )
         .await;
-        assert!(rejected.dialog_open);
+        assert!(rejected.dialog_open());
         assert_eq!(
-            rejected.dialog_status.as_deref(),
+            rejected.dialog.status.as_deref(),
             Some("could not append to TASKS.md: inject failed: nope")
         );
     }
@@ -1345,7 +1315,7 @@ mod tests {
     async fn save_brief_writes_the_spec_file_and_reports_the_created_status() {
         let temp = tempfile::TempDir::new().unwrap();
         let mut app = app();
-        app.dialog_open = true;
+        app.open_dialog();
         let flow = run_submit_family(
             &mut app,
             temp.path(),
@@ -1359,9 +1329,9 @@ mod tests {
             contents,
             crate::project::brief_content("A web service for recipes.")
         );
-        assert!(app.dialog_open);
+        assert!(app.dialog_open());
         assert_eq!(
-            app.dialog_status.as_deref(),
+            app.dialog.status.as_deref(),
             Some("SPEC.md created -- review it, then press Enter to start.")
         );
         assert_eq!(app.project_status.spec, SpecState::Content);
@@ -1374,7 +1344,7 @@ mod tests {
         // A directory at the SPEC.md path makes the write fail.
         std::fs::create_dir(temp.path().join(SPEC_FILE)).unwrap();
         let mut app = app();
-        app.dialog_open = true;
+        app.open_dialog();
         run_submit_family(
             &mut app,
             temp.path(),
@@ -1382,9 +1352,10 @@ mod tests {
             unused_submit(),
         )
         .await;
-        assert!(app.dialog_open);
+        assert!(app.dialog_open());
         assert!(
-            app.dialog_status
+            app.dialog
+                .status
                 .as_deref()
                 .unwrap_or_default()
                 .starts_with("could not write SPEC.md: ")
@@ -1403,7 +1374,7 @@ mod tests {
             Action::Quit,
         ] {
             let mut app = app();
-            app.dialog_open = true;
+            app.open_dialog();
             let flow = run_submit_family(
                 &mut app,
                 std::path::Path::new("/home/user/demo"),
@@ -1412,8 +1383,8 @@ mod tests {
             )
             .await;
             assert!(matches!(flow, SubmitFlow::Keep), "{action:?}");
-            assert!(app.dialog_open, "{action:?}");
-            assert_eq!(app.dialog_status, None, "{action:?}");
+            assert!(app.dialog_open(), "{action:?}");
+            assert_eq!(app.dialog.status, None, "{action:?}");
         }
     }
 
@@ -1445,7 +1416,7 @@ mod tests {
             }
             other => panic!("expected a SettingsChange command, got {other:?}"),
         }
-        assert!(!app.overlay.open);
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(
             app.settings.get("model"),
@@ -1497,7 +1468,7 @@ mod tests {
             commands: Arc::clone(&commands),
         };
         save_settings(&mut app, &mut shell, &mut submit).await;
-        assert!(app.overlay.open);
+        assert!(app.settings_open());
         assert!(app.overlay.dirty());
         assert_eq!(
             app.overlay.status,
@@ -1536,7 +1507,7 @@ mod tests {
             }
             other => panic!("expected a SettingsChange command, got {other:?}"),
         }
-        assert!(!app.overlay.open);
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(
             app.settings.get("model"),
@@ -1550,10 +1521,10 @@ mod tests {
     async fn save_settings_with_no_drafts_closes_the_overlay_without_a_request() {
         let (_temp, mut shell) = shell();
         let mut app = app();
-        app.overlay.open();
+        app.open_settings();
         let mut submit = UnusedSave;
         save_settings(&mut app, &mut shell, &mut submit).await;
-        assert!(!app.overlay.open);
+        assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
     }
 
@@ -1581,8 +1552,8 @@ mod tests {
         );
         // Pre-dispatch: identical state, the dialog gone in both.
         for app in [&mut clicked, &mut pressed] {
-            assert!(!app.overlay.confirm_open);
-            assert!(app.overlay.open);
+            assert!(!app.confirm_open());
+            assert!(app.settings_open());
             assert_eq!(
                 app.overlay.pending(),
                 vec![(
@@ -1609,8 +1580,8 @@ mod tests {
         };
         save_settings(&mut clicked, &mut shell_clicked, &mut clicked_submit).await;
         save_settings(&mut pressed, &mut shell_pressed, &mut pressed_submit).await;
-        assert!(!clicked.overlay.open);
-        assert!(!pressed.overlay.open);
+        assert!(!clicked.settings_open());
+        assert!(!pressed.settings_open());
         assert!(clicked.overlay.drafts.is_empty());
         assert!(pressed.overlay.drafts.is_empty());
         assert_eq!(clicked.settings, pressed.settings);

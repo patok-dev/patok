@@ -4,6 +4,7 @@ use std::os::unix::fs::DirBuilderExt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::from_proto;
 use anyhow::Context;
 use patok_core::config::ApplyTiming;
 use patok_core::event::EngineEvent;
@@ -21,7 +22,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
 use tonic::{Request, Response, Status};
 
-use crate::engine::{Attachment, Engine, QueueCreation};
+use crate::engine::{Attachment, Engine, QueueCreation, RunState as EngineRunState};
 
 type Stream<T> = ReceiverStream<Result<T, Status>>;
 
@@ -78,10 +79,7 @@ impl EngineApi for Service {
         request: Request<CommandRequest>,
     ) -> Result<Response<CommandResponse>, Status> {
         let response = match request.into_inner().action {
-            Some(command_request::Action::StartBuild(_)) => match self.engine.start_build() {
-                Ok(()) => accepted(),
-                Err(error) => rejected(error),
-            },
+            Some(command_request::Action::StartBuild(_)) => outcome(self.engine.start_build()),
             Some(command_request::Action::AddTasks(add)) => {
                 // Which agent runs the append (T69.1): the planner expands a
                 // user request; the two research kinds run the research
@@ -95,39 +93,26 @@ impl EngineApi for Service {
                         } else {
                             // Runs in the background; planner output and the outcome reach the
                             // shell through the attach stream.
-                            match self.engine.start_add_tasks(&add.request) {
-                                Ok(()) => accepted(),
-                                Err(error) => rejected(error),
-                            }
+                            outcome(self.engine.start_add_tasks(&add.request))
                         }
                     }
                     AddTasksKind::AddTasksBootstrap => {
-                        match self.engine.start_queue_creation(QueueCreation::Bootstrap) {
-                            Ok(()) => accepted(),
-                            Err(error) => rejected(error),
-                        }
+                        outcome(self.engine.start_queue_creation(QueueCreation::Bootstrap))
                     }
                     AddTasksKind::AddTasksScan => {
-                        match self.engine.start_queue_creation(QueueCreation::Scan) {
-                            Ok(()) => accepted(),
-                            Err(error) => rejected(error),
-                        }
+                        outcome(self.engine.start_queue_creation(QueueCreation::Scan))
                     }
                 }
             }
             // Runs in the background; discovery output, the run state and the outcome
             // reach the shell through the attach stream.
-            Some(command_request::Action::RunDiscovery(_)) => match self.engine.start_discovery() {
-                Ok(()) => accepted(),
-                Err(error) => rejected(error),
-            },
+            Some(command_request::Action::RunDiscovery(_)) => {
+                outcome(self.engine.start_discovery())
+            }
             // Cancels a pending soft stop (T33.1): the loop continues with the
             // next pending task; rejected when no soft stop is pending.
             Some(command_request::Action::CancelSoftStop(_)) => {
-                match self.engine.cancel_soft_stop() {
-                    Ok(()) => accepted(),
-                    Err(error) => rejected(error),
-                }
+                outcome(self.engine.cancel_soft_stop())
             }
             // Injects one task line into TASKS.md under the engine's
             // task-file lock (T77.1): the typed text is normalized into a
@@ -136,27 +121,21 @@ impl EngineApi for Service {
             // mid-build; the appended line reaches the shell as a task-list
             // change right away.
             Some(command_request::Action::InjectTask(inject)) => {
-                match self.engine.inject_task(&inject.text).await {
-                    Ok(()) => accepted(),
-                    Err(error) => rejected(error),
-                }
+                outcome(self.engine.inject_task(&inject.text).await)
             }
             // Removes one pending task from TASKS.md under the engine's
             // task-file lock (T98.1), refusing the engine's current
             // (in-progress) task and completed tasks; the queue reconciles
             // immediately.
             Some(command_request::Action::RemoveTask(remove)) => {
-                match self.engine.remove_task(&remove.id).await {
-                    Ok(()) => accepted(),
-                    Err(error) => rejected(error),
-                }
+                outcome(self.engine.remove_task(&remove.id).await)
             }
             // One daemon-schema field change: validated,
             // persisted to the resolved layer and merged into the engine's central
             // config; the new value reaches the shell as a ConfigChanged event.
             Some(command_request::Action::SettingsChange(change)) => match change.change {
                 Some(change) => {
-                    let (field, value) = crate::settings::from_proto(&change);
+                    let (field, value) = from_proto(&change);
                     match self.engine.apply_settings_change(&field, value) {
                         Ok(ApplyTiming::Immediate) => {
                             settings_accepted(settings_change_result::ApplyTiming::Immediate)
@@ -186,8 +165,7 @@ impl EngineApi for Service {
         // stop on an idle engine quits the process, so only that case labels the
         // exit -- leaving the reason set on an interrupt would mislabel a later
         // signal-driven exit.
-        let busy =
-            self.engine.is_running() || self.engine.is_planning() || self.engine.is_discovering();
+        let busy = self.engine.run_state() != EngineRunState::Idle;
         let (tx, rx) = mpsc::channel(8);
         let engine = self.engine.clone();
         if now && !busy {
@@ -277,6 +255,15 @@ fn accepted() -> CommandResponse {
     }
 }
 
+/// The wire outcome of a command that starts work or is refused with the
+/// engine's reason: the one shape of every non-settings command arm.
+fn outcome(result: Result<(), String>) -> CommandResponse {
+    match result {
+        Ok(()) => accepted(),
+        Err(error) => rejected(error),
+    }
+}
+
 /// A settings change applied by the engine: every daemon-schema field resolves to the
 /// project-local `patok.config.toml` today.
 fn settings_accepted(timing: settings_change_result::ApplyTiming) -> CommandResponse {
@@ -298,18 +285,20 @@ fn rejected(error: String) -> CommandResponse {
     }
 }
 
-/// The engine's current run state for the wire protocol: the planner or a discovery round
-/// first (a scheduled round runs in a session's empty-queue gap, while the phase is still
-/// `Running`), else the build loop, else idle.
+/// The engine's current run state for the wire protocol.
 fn run_state(engine: &Engine) -> RunState {
-    if engine.is_planning() {
-        RunState::Planning
-    } else if engine.is_discovering() {
-        RunState::Discovering
-    } else if engine.is_running() {
-        RunState::Running
-    } else {
-        RunState::Idle
+    run_state_proto(engine.run_state())
+}
+
+/// The wire run state of an engine run state: the planner or a discovery round
+/// first (a scheduled round runs in a session's empty-queue gap, while the
+/// phase is still `Running`), else the build loop, else idle.
+fn run_state_proto(run: EngineRunState) -> RunState {
+    match run {
+        EngineRunState::Planning => RunState::Planning,
+        EngineRunState::Discovering | EngineRunState::SessionDiscovery => RunState::Discovering,
+        EngineRunState::Running => RunState::Running,
+        EngineRunState::Idle => RunState::Idle,
     }
 }
 
@@ -542,4 +531,30 @@ fn spawn_signal_handlers(engine: Engine) -> anyhow::Result<()> {
         engine.shutdown_token().cancel();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_state_proto_maps_every_engine_variant() {
+        assert_eq!(run_state_proto(EngineRunState::Idle), RunState::Idle);
+        assert_eq!(run_state_proto(EngineRunState::Running), RunState::Running);
+        assert_eq!(
+            run_state_proto(EngineRunState::Planning),
+            RunState::Planning
+        );
+        assert_eq!(
+            run_state_proto(EngineRunState::Discovering),
+            RunState::Discovering
+        );
+        // The session's gap round reports discovery even though the phase is
+        // still running -- the documented priority of the old three-flag
+        // re-derivation.
+        assert_eq!(
+            run_state_proto(EngineRunState::SessionDiscovery),
+            RunState::Discovering
+        );
+    }
 }

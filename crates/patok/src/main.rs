@@ -38,9 +38,10 @@ enum Command {
     },
     /// Check for a newer release and report how to update.
     Update {
-        /// Release channel to check.
-        #[arg(long, value_enum, default_value_t = update::ChannelArg::Stable)]
-        channel: update::ChannelArg,
+        /// Release channel to check; without the flag the tui.update_channel
+        /// setting applies (stable by default).
+        #[arg(long, value_enum)]
+        channel: Option<update::ChannelArg>,
     },
     /// Start the engine for this project and exit once it is listening.
     Daemon {
@@ -101,7 +102,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => daemon::run_shell(&project).await,
         Command::Headless { color } => daemon::run_headless(&project, color).await,
-        Command::Update { channel } => update::run(channel.into()),
+        Command::Update { channel } => update::run(channel, &project),
         Command::Daemon {
             foreground: true,
             action: None,

@@ -1,18 +1,35 @@
-//! The engine process: owns the task queue, git, history log and provider supervision, and
-//! serves the gRPC protocol to the shell over a Unix socket.
+//! The engine process: it serves the gRPC protocol to the shell over a
+//! Unix socket and runs the build loop around seven abstractions. A
+//! Task (`patok_core::task`) is one line of work; the TaskList
+//! (`task_list/`) owns every task-file concern of the queue. A Session
+//! (`session.rs`) is one engine-owning unit of work driven through its
+//! SessionContext (`context.rs`): the build session loops the pending
+//! tasks, the append kinds run their pipeline once. A Pipeline
+//! (`pipeline/`) orders its PipelineSteps (`step/`), and each step
+//! pairs an Agent (`agents/`) with a Provider (`patok-providers`) or
+//! performs one engine action.
 
+mod agents;
+mod artifact;
+mod context;
 mod engine;
 mod git;
-mod plan;
-mod prompt;
-mod review;
+mod markdown;
+mod pipeline;
 mod schedule;
 mod server;
-mod settings;
-pub mod taskfile;
+mod session;
+mod step;
+mod task_list;
 
 pub use engine::{Engine, EngineConfig, QueueCreation};
+/// The settings-change wire mapping, generated with the shell direction in
+/// `patok-wire` from one key-to-case list (finding 10).
+pub use patok_wire::from_proto;
 pub use server::{prepare_runtime_dir, serve};
+/// The pure task-file functions, re-exported under their historical name
+/// (section 5 of docs/private/engine-restructure.md).
+pub use task_list::file as taskfile;
 
 /// Name of the task file in the project root.
-pub const TASK_FILE: &str = "TASKS.md";
+pub use patok_core::scenario::TASK_FILE;

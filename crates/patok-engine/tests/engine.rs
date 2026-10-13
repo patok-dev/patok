@@ -10,6 +10,7 @@ use patok_core::pipeline::{PipelineState, Stage, Tile, TileStatus};
 use patok_engine::{QueueCreation, TASK_FILE};
 use patok_providers::ExitKind;
 use patok_providers::RESEARCH_TOOLS;
+use patok_providers::Tool;
 use patok_providers::mock::{MockProvider, Step};
 use support::{Fixture, collect_until, is_phase_startup};
 
@@ -102,7 +103,7 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
     let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(labels, ["T1.1", "T1.2", "discovery"]);
     assert!(sessions[0].prompt.contains("T1.1: add the greeting file"));
-    assert!(sessions[0].allowed_tools.contains(&"Bash".to_string()));
+    assert!(sessions[0].allowed_tools.contains(&Tool::Bash));
     // The round found nothing to append, so the session ended there.
     assert!(
         notices(&events)
@@ -118,6 +119,27 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
             .unwrap()
             .count()
             == 3
+    );
+}
+
+/// T152.5: the builder session runs through the shared `run_agent_session`
+/// path, and its transcript label still carries the task id.
+#[tokio::test]
+async fn the_builder_session_label_contains_the_task_id() {
+    let fixture = Fixture::new(TASKS);
+    let provider = scripted();
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let _ = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // The builder's recorded request is labelled with its task id rather than
+    // a static agent label.
+    let sessions = provider.sessions();
+    assert!(
+        sessions
+            .iter()
+            .any(|s| s.label.contains("T1.1") && s.allowed_tools.contains(&Tool::Bash))
     );
 }
 
@@ -214,7 +236,10 @@ async fn a_plan_session_precedes_the_builder_and_feeds_the_plan_forward() {
             .as_deref()
             .is_some_and(|p| p.contains("You are the Plan agent"))
     );
-    assert_eq!(sessions[0].allowed_tools, ["Read", "Glob", "Grep"]);
+    assert_eq!(
+        sessions[0].allowed_tools,
+        [Tool::Read, Tool::Glob, Tool::Grep]
+    );
     assert!(sessions[0].prompt.contains("T1.1: add the greeting file"));
     // The accepted plan reaches the builder prompt.
     assert!(sessions[1].prompt.contains("carry it out"));
@@ -1713,6 +1738,68 @@ async fn startup_cleanup_prunes_old_completed_tasks_and_broadcasts_the_list() {
     engine.shutdown_token().cancel();
 }
 
+#[tokio::test]
+async fn the_startup_sweep_removes_planted_task_file_orphans() {
+    let seed = "# Tasks\n- [ ] T1.1: still to do\n";
+    let fixture = Fixture::new(seed);
+    // Planted after the fixture's initial commit, so they stay untracked.
+    for name in [".TASKS.md.111.tmp", ".TASKS.md.98765.tmp"] {
+        std::fs::write(fixture.path().join(name), "orphan").unwrap();
+    }
+    // No unique part, so the sweep leaves it; `notes.txt` is unrelated.
+    std::fs::write(fixture.path().join(".TASKS.md.tmp"), "kept").unwrap();
+    std::fs::write(fixture.path().join("notes.txt"), "kept").unwrap();
+    let engine = fixture.engine(MockProvider::new(vec![]));
+    let mut attachment = engine.attach().unwrap();
+
+    engine.cleanup_completed_tasks().await;
+
+    assert!(!fixture.path().join(".TASKS.md.111.tmp").exists());
+    assert!(!fixture.path().join(".TASKS.md.98765.tmp").exists());
+    assert!(fixture.path().join(".TASKS.md.tmp").exists());
+    assert!(fixture.path().join("notes.txt").exists());
+    assert_eq!(
+        fixture.tasks_file(),
+        seed,
+        "the sweep never rewrites the task file"
+    );
+    // A second run removes nothing more and emits no event.
+    engine.cleanup_completed_tasks().await;
+    assert!(try_recv_all(&mut attachment.events).is_empty());
+    engine.shutdown_token().cancel();
+}
+
+#[tokio::test]
+async fn a_planted_task_file_orphan_never_lands_in_a_task_commit() {
+    // This test skips the startup sweep: it exercises the commit pathspec
+    // guard alone.
+    let fixture = Fixture::new("# Tasks\n- [ ] T1.1: add the greeting file\n");
+    std::fs::write(fixture.path().join(".TASKS.md.98765.tmp"), "orphan").unwrap();
+    let engine = fixture.engine(scripted());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, |e| {
+        matches!(
+            e,
+            EngineEvent::TaskFinished {
+                outcome: TaskOutcome::Done,
+                commit: Some(_),
+                ..
+            }
+        )
+    })
+    .await;
+
+    let names = fixture.git(&["show", "--name-only", "--format=", "HEAD"]);
+    assert!(names.contains("greeting.txt"), "{names}");
+    assert!(names.contains("TASKS.md"), "{names}");
+    assert!(!names.contains(".TASKS.md.98765.tmp"), "{names}");
+    // Excluded from the commit, not deleted from the working tree.
+    assert!(fixture.path().join(".TASKS.md.98765.tmp").exists());
+    engine.shutdown_token().cancel();
+}
+
 /// Drains every event already buffered in `rx` without waiting.
 fn try_recv_all(rx: &mut tokio::sync::broadcast::Receiver<EngineEvent>) -> Vec<EngineEvent> {
     let mut drained = vec![];
@@ -2295,7 +2382,7 @@ async fn a_discovery_round_appends_valid_d_tasks_and_the_queue_reconciles() {
     // The read-only Discovery allowlist.
     assert_eq!(
         sessions[0].allowed_tools,
-        vec!["Read".to_string(), "Glob".to_string(), "Grep".to_string()]
+        [Tool::Read, Tool::Glob, Tool::Grep]
     );
     // The raw stream is written to the history log like a planner session.
     assert_eq!(
@@ -2653,9 +2740,10 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_review() {
     );
     // Plan pending, then active in the plan session, then done while the builder
     // runs; the build tile goes done when the builder session completes, so the
-    // stages before the running one are always done. The review stage is skipped
-    // (review off), so its tile goes done with the skip; then everything is
-    // muted again.
+    // stages before the running one are always done. The review tile is active
+    // from entering the review step (section 11), before the skip decision; the
+    // review stage is skipped (review off), so its tile goes done with the
+    // skip; then everything is muted again.
     let walked: Vec<_> = rail.iter().map(walk).collect();
     assert_eq!(
         walked,
@@ -2668,6 +2756,7 @@ async fn a_build_run_walks_the_pipeline_tiles_plan_build_review() {
             (TileStatus::Active, TileStatus::Pending, TileStatus::Pending,),
             (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Active,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
             (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],
@@ -2688,8 +2777,9 @@ async fn a_build_without_the_plan_stage_walks_build_directly() {
 
     // The plan stage is disabled: the plan tile is still done once the builder
     // runs, so the stages before the running one are never stale. The build tile
-    // goes done when the builder session completes. The review stage is skipped
-    // (review off), so its tile goes done with the skip.
+    // goes done when the builder session completes. The review tile is active
+    // from entering the review step (section 11), before the skip decision; the
+    // review stage is skipped (review off), so its tile goes done with the skip.
     let walked: Vec<_> = rail(&events).iter().map(walk).collect();
     assert_eq!(
         walked,
@@ -2701,6 +2791,7 @@ async fn a_build_without_the_plan_stage_walks_build_directly() {
             ),
             (TileStatus::Done, TileStatus::Active, TileStatus::Pending,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Pending,),
+            (TileStatus::Done, TileStatus::Done, TileStatus::Active,),
             (TileStatus::Done, TileStatus::Done, TileStatus::Done,),
             (TileStatus::Muted, TileStatus::Muted, TileStatus::Muted,),
         ],
@@ -3022,6 +3113,18 @@ mod provider_config {
     }
 
     #[tokio::test]
+    async fn an_unknown_stage_id_does_not_refuse_runs() {
+        // Per D1: a stage id naming no pipeline stage is skipped with a warning,
+        // like the wrong-typed fields; the run is not refused.
+        let (_fixture, engine) = engine_with(
+            None,
+            Some("[daemon]\n[[daemon.stages]]\nid = \"doubt\"\n"),
+            picking(&Arc::default()),
+        );
+        engine.start_build().unwrap();
+    }
+
+    #[tokio::test]
     async fn the_plan_stage_runs_by_default_from_the_config() {
         let fixture = Fixture::new("- [ ] T1.1: fix the only task\n");
         let provider = MockProvider::per_session(vec![
@@ -3232,7 +3335,14 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
     assert_eq!(labels, ["T1.1", "review"]);
     assert_eq!(
         sessions[1].allowed_tools,
-        ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
+        [
+            Tool::Read,
+            Tool::Glob,
+            Tool::Grep,
+            Tool::Bash,
+            Tool::Edit,
+            Tool::Write
+        ]
     );
     // The reviewer prompt carries the task, the claims, the changed files
     // (the diff is empty for an untracked file) and the pass number.
@@ -3335,7 +3445,12 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(
-                provider.clone().with_slug(kind.as_str()),
+                // The claude-slugged mock also answers the capability query the
+                // way the real claude provider does.
+                provider
+                    .clone()
+                    .with_slug(kind.as_str())
+                    .with_reviewer_model(kind == ProviderKind::Claude),
             ))
         },
     );
@@ -3457,7 +3572,12 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(
-                provider.clone().with_slug(kind.as_str()),
+                // The default reviewer provider is claude, so the claude-slugged
+                // mock answers the capability query like the real one does.
+                provider
+                    .clone()
+                    .with_slug(kind.as_str())
+                    .with_reviewer_model(kind == ProviderKind::Claude),
             ))
         },
     );
@@ -4629,8 +4749,13 @@ async fn timed_injects_interleaved_with_a_run_all_land_intact_in_order() {
         .map(|s| s.label.clone())
         .collect();
     assert_eq!(labels, ["T1.1".to_string()]);
-    // No temporary rewrite file was left behind.
-    assert!(!fixture.path().join("TASKS.md.patok-tmp").exists());
+    // No temporary rewrite file was left behind, whatever its temp name.
+    let leftovers: Vec<String> = std::fs::read_dir(fixture.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "TASKS.md" && name.contains("TASKS.md"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
 /// T77.1: a line injected during a planner session survives a rejected run's

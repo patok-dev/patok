@@ -2,63 +2,60 @@
 //! newline-delimited JSON stream (`--output streaming`).
 
 use async_trait::async_trait;
+use patok_core::config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
-use crate::process::{self, LineParser, Parsed, ProcessSpec};
-use crate::{Provider, ProviderError, SessionRequest, SessionResult, cli_in};
-
-const TOOL_PREVIEW: usize = 120;
-const RESULT_PREVIEW: usize = 200;
+use crate::cli::{self, CliSpec};
+use crate::process::Parsed;
+use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 /// Name of the CLI binary this provider needs.
-pub const CLI: &str = "vibe";
+pub(crate) const CLI: &str = "vibe";
 
 pub struct Vibe;
 
 impl Vibe {
-    /// Fails with a clear error naming the CLI when `vibe` is not on `PATH`. Run before a
-    /// session starts.
-    pub fn check_available() -> Result<(), ProviderError> {
-        Self::check_available_in(std::env::var_os("PATH").as_deref())
-    }
-
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        if cli_in(CLI, path) {
-            Ok(())
-        } else {
-            Err(ProviderError::CliNotFound { cli: CLI.into() })
-        }
+        cli::check_available_in(CLI, path)
+    }
+}
+
+impl CliSpec for Vibe {
+    const CLI: &'static str = CLI;
+    type Parser = StreamParser;
+    fn slug() -> &'static str {
+        ProviderKind::Mistral.as_str()
+    }
+    fn build_args(request: &SessionRequest) -> Vec<String> {
+        build_args(request)
     }
 }
 
 #[async_trait]
 impl Provider for Vibe {
     fn slug(&self) -> &'static str {
-        "mistral"
+        ProviderKind::Mistral.as_str()
+    }
+
+    fn supports_reviewer_model(&self) -> bool {
+        false
+    }
+
+    fn check_available(&self) -> Result<(), ProviderError> {
+        cli::check_available::<Vibe>()
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
-        Self::check_available()?;
-        let spec = ProcessSpec {
-            program: CLI.into(),
-            args: build_args(&request),
-            env: vec![],
-            stdin: String::new(),
-        };
-        let model = request.model.clone().unwrap_or_default();
-        process::run(spec, &request, StreamParser, self.slug(), &model).await
+        cli::run_session::<Vibe>(request).await
     }
 }
 
 /// Vibe has no system-prompt flag and takes the prompt as the `-p` argument, so the system
 /// prompt is prepended to it.
 fn build_args(request: &SessionRequest) -> Vec<String> {
-    let prompt = match request.system_prompt.as_deref().filter(|s| !s.is_empty()) {
-        Some(system) => format!("{system}\n\n{}", request.prompt),
-        None => request.prompt.clone(),
-    };
+    let prompt = cli::prepend_system_prompt(request);
     let mut args: Vec<String> = vec![
         "-p".into(),
         prompt,
@@ -75,57 +72,30 @@ fn build_args(request: &SessionRequest) -> Vec<String> {
     args
 }
 
-/// Maps role allowlist names (Claude tool names) to Vibe's built-in tool names.
-fn vibe_tools(allowed: &[String]) -> Vec<&'static str> {
-    let mut tools: Vec<&'static str> = vec![];
-    for name in allowed {
-        let mapped: &[&'static str] = match name.as_str() {
-            "Bash" => &["bash"],
-            "Edit" => &["edit", "search_replace"],
-            "Write" => &["write_file"],
-            "Read" => &["read_file"],
-            "Glob" | "Grep" => &["grep"],
-            "WebFetch" => &["web_fetch"],
-            "WebSearch" => &["web_search"],
-            // NotebookEdit and unknown names have no Vibe equivalent.
-            _ => &[],
-        };
-        for tool in mapped {
-            if !tools.contains(tool) {
-                tools.push(tool);
-            }
-        }
-    }
-    tools
+/// Maps role allowlist tools to Vibe's built-in tool names.
+fn vibe_tools(allowed: &[Tool]) -> Vec<&'static str> {
+    cli::map_tools(allowed, |tool| match tool {
+        Tool::Bash => &["bash"],
+        Tool::Edit => &["edit", "search_replace"],
+        Tool::Write => &["write_file"],
+        Tool::Read => &["read_file"],
+        Tool::Glob | Tool::Grep => &["grep"],
+        Tool::WebFetch => &["web_fetch"],
+        Tool::WebSearch => &["web_search"],
+        // NotebookEdit has no Vibe equivalent.
+        Tool::NotebookEdit => &[],
+    })
 }
 
 /// Translates Vibe's streaming JSON entries into normalised events.
 #[derive(Default)]
 pub struct StreamParser;
 
-impl LineParser for StreamParser {
-    fn parse_line(&mut self, line: &str) -> Parsed {
-        self.parse(line)
-    }
-}
+crate::cli::forward_line_parser!(StreamParser);
 
 impl StreamParser {
     pub fn parse(&mut self, line: &str) -> Parsed {
-        let line = line.trim();
-        match serde_json::from_str::<Value>(line) {
-            Ok(value) if value.is_object() => Parsed {
-                events: events_for(&value),
-                json: true,
-            },
-            _ if line.is_empty() => Parsed {
-                events: vec![],
-                json: false,
-            },
-            _ => Parsed {
-                events: vec![AgentEvent::Stderr { text: line.into() }],
-                json: false,
-            },
-        }
+        cli::parse_line(line, events_for)
     }
 }
 
@@ -141,9 +111,7 @@ fn events_for(value: &Value) -> Vec<AgentEvent> {
         }
         "effect" => effect(value),
         "error" => vec![AgentEvent::Stderr {
-            text: ["message", "error", "text"]
-                .iter()
-                .find_map(|k| value[*k].as_str().filter(|s| !s.is_empty()))
+            text: cli::first_non_empty(value, &["message", "error", "text"])
                 .unwrap_or("unknown error")
                 .to_string(),
         }],
@@ -196,19 +164,10 @@ fn effect(value: &Value) -> Vec<AgentEvent> {
         .unwrap_or_default();
     let result = if status == "completed" {
         AgentEvent::ToolResult {
-            output: preview(&output, RESULT_PREVIEW),
+            output: preview(&output, cli::RESULT_PREVIEW),
         }
     } else {
-        AgentEvent::Stderr {
-            text: preview(
-                &if output.is_empty() {
-                    format!("{name} {status}")
-                } else {
-                    output
-                },
-                RESULT_PREVIEW,
-            ),
-        }
+        cli::failed_tool_stderr(name, status, &output)
     };
     vec![
         AgentEvent::ToolUse {
@@ -220,19 +179,18 @@ fn effect(value: &Value) -> Vec<AgentEvent> {
 }
 
 fn tool_preview(input: &Value) -> String {
-    let text = [
-        "filePath",
-        "file_path",
-        "path",
-        "command",
-        "pattern",
-        "url",
-        "query",
-    ]
-    .iter()
-    .find_map(|k| input[*k].as_str())
-    .map_or_else(|| input.to_string(), str::to_string);
-    preview(&text, TOOL_PREVIEW)
+    cli::preview_input(
+        input,
+        &[
+            "filePath",
+            "file_path",
+            "path",
+            "command",
+            "pattern",
+            "url",
+            "query",
+        ],
+    )
 }
 
 #[cfg(test)]
@@ -342,22 +300,8 @@ mod tests {
 
     #[test]
     fn args_map_role_tools_and_prepend_the_system_prompt() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut request = SessionRequest {
-            model: None,
-            prompt: "do it".into(),
-            system_prompt: Some("sys".into()),
-            project_dir: ".".into(),
-            events: tx,
-            log_dir: ".".into(),
-            label: "t".into(),
-            idle_timeout: std::time::Duration::from_secs(1),
-            cancel: Default::default(),
-            allowed_tools: crate::PLANNER_TOOLS
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-        };
+        let (mut request, _rx) =
+            crate::test_util::request("do it", Some("sys"), crate::PLANNER_TOOLS);
         let args = build_args(&request);
         assert_eq!(args[..2], ["-p", "sys\n\ndo it"]);
         let tools: Vec<&str> = args
@@ -369,10 +313,7 @@ mod tests {
             tools,
             ["read_file", "grep", "edit", "search_replace", "write_file"]
         );
-        request.allowed_tools = crate::BUILDER_TOOLS
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        request.allowed_tools = crate::BUILDER_TOOLS.to_vec();
         let args = build_args(&request).join(" ");
         assert!(args.contains("--enabled-tools bash"));
         assert!(args.contains("--enabled-tools web_search"));

@@ -42,6 +42,45 @@ mod tests {
         }
     }
 
+    /// The stages property, the `Stage` definition and the `StageId` definition stay
+    /// in their committed shape: the id enumerates the five accepted spellings
+    /// (including `implement`, the build stage's pre-enum spelling), derived from
+    /// the same enum the parser reads, and the rename of the config struct cannot
+    /// leak into the schema.
+    #[test]
+    fn the_stages_schema_stays_committed_byte_for_byte() {
+        let json: serde_json::Value = serde_json::from_str(&daemon_json_schema()).unwrap();
+        assert_eq!(
+            json["properties"]["stages"],
+            serde_json::json!({
+                "type": "array",
+                "items": { "$ref": "#/$defs/Stage" }
+            })
+        );
+        assert_eq!(
+            json["$defs"]["Stage"],
+            serde_json::json!({
+                "description": "One pipeline stage: id, label, enabled flag and an optional\nprompt override. A stage absent from the list is treated as disabled by the consumer;\norder is display-only.",
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean" },
+                    "id": { "$ref": "#/$defs/StageId" },
+                    "label": { "type": "string" },
+                    "prompt": { "type": ["string", "null"] }
+                },
+                "required": ["id", "label", "enabled"]
+            })
+        );
+        assert_eq!(
+            json["$defs"]["StageId"],
+            serde_json::json!({
+                "description": "A stage id as written in a `[[daemon.stages]]` entry: the four pipeline\nstage spellings plus `implement`, the build stage's pre-enum spelling.",
+                "type": "string",
+                "enum": ["research", "plan", "build", "implement", "review"]
+            })
+        );
+    }
+
     #[test]
     fn schemas_parse_and_list_representative_properties() {
         for (schema, properties) in [

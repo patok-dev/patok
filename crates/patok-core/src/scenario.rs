@@ -8,8 +8,7 @@
 
 use std::path::Path;
 
-/// The task-queue file. The engine owns its own constant;
-/// this one is for the shell-side scan.
+/// The task-queue file; the engine re-exports this constant at its crate root.
 pub const TASK_FILE: &str = "TASKS.md";
 /// The project spec file the brief is saved into.
 pub const SPEC_FILE: &str = "SPEC.md";

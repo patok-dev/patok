@@ -64,15 +64,10 @@ jobs:
           sed -i.bak -E "s/^version = \"0\.0\.0\"$/version = \"${version}\"/" Cargo.toml
           rm Cargo.toml.bak
           grep -qx "version = \"${version}\"" Cargo.toml
-      - name: Install musl tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Add target
-        run: rustup target add ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+          cargo metadata --no-deps --format-version 1 > /dev/null
+      - uses: ./.github/actions/cross-build
         with:
-          key: ${{ matrix.target }}
-      - run: cargo build --release -p patok --target ${{ matrix.target }}
+          target: ${{ matrix.target }}
       # Archive naming convention (relied on by the install script and `patok update`):
       #   patok-<target>.tar.gz, where <target> is the Rust target triple
       #   (x86_64-unknown-linux-musl, x86_64-apple-darwin, aarch64-apple-darwin).
@@ -96,14 +91,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Set workspace version from tag
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          version="${TAG#v}"
-          sed -i -E "s/^version = \"0\.0\.0\"$/version = \"${version}\"/" Cargo.toml
-          grep -qx "version = \"${version}\"" Cargo.toml
-          cargo metadata --no-deps --format-version 1 > /dev/null
       - uses: actions/download-artifact@v4
         with:
           pattern: patok-*

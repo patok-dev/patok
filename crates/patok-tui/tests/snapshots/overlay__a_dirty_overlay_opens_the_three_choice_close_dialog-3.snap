@@ -7,19 +7,19 @@ expression: "draw(&app, W, H)"
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      shell version: 0.0.0                                                             █│    │
-     │      provider  ‹ claude ›                                                             █│────┘
-[  Re│      model  (not set)                                                                 █│────┐
-     │      research provider  ‹ claude ›                                                    █│    │
-[ Dis│      research model  sonnet                                                           █│    │
-     │      planner provider  ‹ claude ›                                                     █│    │
-     │      planner model  opus                                                              █│    │
+[  Bu│      research model  sonnet                                                           ││    │
+     │      planner provider  ‹ claude ›                                                     █│────┘
+[  Re│      planner model  opus                                                              █│────┐
      │      builder provider  ‹ claude ›                                                     █│    │
-     │      builder model  opus                                                              █│    │
-     │      reviewer provider  ‹ claude ›                                                    ││    │
-     │      reviewer┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
-     │      discover│  Save -- apply every drafted change and close            │             ││    │
-     │      discover│  Discard -- throw away the drafted changes and close     │             ││    │
+[ Dis│      builder model  opus                                                              █│    │
+     │      reviewer provider  ‹ claude ›                                                    █│    │
+     │      reviewer model  sonnet                                                           ││    │
+     │      discovery provider  ‹ claude ›                                                   ││    │
+     │      discovery model  opus                                                            ││    │
+     │      learning extraction model  (not set)                                             ││    │
+     │      learning┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
+     │      local mo│  Save -- apply every drafted change and close            │             ││    │
+     │      model ca│  Discard -- throw away the drafted changes and close     │             ││    │
      │  ▾ Pipeline  │▶ Cancel -- back to the settings                          │             ││    │
      │      run mode│                                                          │             ││    │
      │▶     [x] plan│                                                          │             ││    │

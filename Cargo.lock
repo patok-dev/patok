@@ -1261,7 +1261,9 @@ dependencies = [
  "patok-providers",
  "patok-tui",
  "serde_json",
+ "sha2",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tonic",
@@ -1278,6 +1280,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "thiserror 2.0.21",
  "toml",
 ]
 
@@ -1290,6 +1293,7 @@ dependencies = [
  "patok-core",
  "patok-proto",
  "patok-providers",
+ "patok-wire",
  "serde",
  "serde_json",
  "sha2",
@@ -1307,11 +1311,14 @@ dependencies = [
 name = "patok-proto"
 version = "0.0.0"
 dependencies = [
+ "hyper-util",
  "prost",
  "protoc-bin-vendored",
+ "tokio",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+ "tower",
 ]
 
 [[package]]
@@ -1335,18 +1342,26 @@ dependencies = [
  "anyhow",
  "crossterm",
  "futures",
- "hyper-util",
  "insta",
  "patok-core",
  "patok-engine",
  "patok-proto",
  "patok-providers",
+ "patok-tui",
+ "patok-wire",
  "ratatui",
  "tempfile",
  "tokio",
  "tokio-util",
  "tonic",
- "tower",
+]
+
+[[package]]
+name = "patok-wire"
+version = "0.0.0"
+dependencies = [
+ "patok-core",
+ "patok-proto",
 ]
 
 [[package]]

@@ -1,5 +1,7 @@
-//! The settings overlay: a static row model over the
-//! configuration that exists after T13.1 and T14.1, plus the pure interaction state --
+//! The settings overlay: a row model over the
+//! configuration that exists after T13.1 and T14.1, whose daemon rows are built from
+//! the core field registry (only the grouping and order are written here), plus the
+//! pure interaction state --
 //! focus, collapsible sections, the inline editor, the unsaved-changes dialog, the
 //! draft map and the status line. Editing a value only updates the draft map in this
 //! state; nothing is applied or persisted until the user picks save in the close
@@ -10,12 +12,18 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use patok_core::config::{SettingValue, THEME_KEYS, daemon_help, tui_help};
+use patok_core::config::{
+    EnumSpelling, FieldKind as CoreFieldKind, ProviderName, RailMode, SettingValue, Theme,
+    UpdateChannel, daemon_field, daemon_help, daemon_label, tui_help,
+};
 use ratatui::layout::Rect;
 
 use crate::app::Action;
+use crate::choice::{Choice, ChoiceKey, choice_key};
+use crate::modal::{Modal, ModalStack};
 
 /// Which schema a field belongs to, and so who applies a change to it: daemon fields go through the engine, tui fields are the shell's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,263 +77,188 @@ pub struct Section {
     pub expanded: bool,
     /// The group id the section's help text is registered under (T85.1).
     pub group: &'static str,
-    pub rows: &'static [Row],
+    /// The section's rows, built once at first use: the daemon rows read the core
+    /// field registry, which is not available in a `const` context.
+    pub rows: &'static LazyLock<Vec<Row>>,
 }
 
-// Deliberate exclusions from the row model: per-stage model pickers (no model catalog
-// exists yet, so there is nothing to pick from), list- and map-valued fields (`stages`,
-// `stage_overrides`, `catalog_url_overrides`, `semgrep_rulesets`, `plugins` -- composite,
-// no single-value editor) and `agent_pane_split` (the TUI has a fixed split and no
-// dragging). Everything else the registries accept appears below.
+// The row model mirrors the core field table (`DAEMON_FIELDS` in `patok-core`, the
+// single source of truth for the daemon settings): every daemon row below is built
+// by `daemon_row` from the registry entry its key names -- the label and the editor
+// kind come from the table, the help text routes through the registry in
+// `help_for` -- so only the section grouping and the display order are written
+// here, and the drift test in `crate::settings`
+// (`every_daemon_field_has_an_overlay_row_and_round_trips_the_wire`) fails the
+// build if a row, a mapper arm or an editor kind disagrees with the registry.
+// Deliberate exclusions: the composite keys (`stages`, `stage_overrides`,
+// `catalog_url_overrides`, `semgrep_rulesets`, `plugins` -- no single-value editor)
+// and `agent_pane_split` (the TUI has a fixed split and no dragging). The two
+// read-only report rows (`engine_version`, `shell_version`) report engine and shell
+// state instead of a setting; the display section is the shell's own tui schema, so
+// its rows stay literal.
 
-const PROVIDERS: &[&str] = &["claude", "codex", "opencode", "ghcopilot", "mistral"];
+/// The overlay editor kind the core registry kind calls for: the one mapping from
+/// the field table's kind to the row model's editor, shared by [`daemon_row`] below
+/// and the drift test in `crate::settings`, so the rows and the test cannot
+/// disagree about what a kind edits.
+pub(crate) fn overlay_kind(kind: &CoreFieldKind) -> FieldKind {
+    match kind {
+        CoreFieldKind::Bool => FieldKind::Bool,
+        CoreFieldKind::Uint | CoreFieldKind::Port | CoreFieldKind::Range(..) => {
+            FieldKind::Number(Number::Uint)
+        }
+        CoreFieldKind::PositiveUint => FieldKind::Number(Number::PositiveUint),
+        CoreFieldKind::FloatRange(..) => FieldKind::Number(Number::Float),
+        CoreFieldKind::Str | CoreFieldKind::OptStr => FieldKind::Text,
+        CoreFieldKind::Enum(accepted) => FieldKind::Enum(accepted),
+        CoreFieldKind::Provider => FieldKind::Enum(ProviderName::SPELLINGS),
+        CoreFieldKind::Composite => unreachable!("composite keys are not registry fields"),
+    }
+}
 
-static PROVIDER_SECTION: &[Row] = &[
+/// One daemon-schema row, built from the core field registry: the key names the
+/// entry, and its table entry supplies the label and the editor kind. A key with
+/// no registry entry or label is a programming error caught by the registry tests
+/// and the drift test, never reachable in a passing build.
+fn daemon_row(key: &'static str) -> Row {
+    let kind = daemon_field(key).unwrap_or_else(|| panic!("`{key}` has no registry entry"));
+    let label = daemon_label(key).unwrap_or_else(|| panic!("`{key}` has no overlay label"));
     Row {
-        key: "engine_version",
-        label: "engine version",
+        key,
+        label,
         schema: Schema::Daemon,
-        kind: FieldKind::ReadOnly,
-    },
-    Row {
-        key: "shell_version",
-        label: "shell version",
-        schema: Schema::Daemon,
-        kind: FieldKind::ReadOnly,
-    },
-    Row {
-        key: "provider",
-        label: "provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
-    },
-    Row {
-        key: "model",
-        label: "model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "research_provider",
-        label: "research provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
-    },
-    Row {
-        key: "research_model",
-        label: "research model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "planner_provider",
-        label: "planner provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
-    },
-    Row {
-        key: "planner_model",
-        label: "planner model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "builder_provider",
-        label: "builder provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
-    },
-    Row {
-        key: "builder_model",
-        label: "builder model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "reviewer_provider",
-        label: "reviewer provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
-    },
-    Row {
-        key: "reviewer_model",
-        label: "reviewer model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-    Row {
-        key: "discovery_provider",
-        label: "discovery provider",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(PROVIDERS),
-    },
-    Row {
-        key: "discovery_model",
-        label: "discovery model",
-        schema: Schema::Daemon,
-        kind: FieldKind::Text,
-    },
-];
+        kind: overlay_kind(&kind),
+    }
+}
 
-static PIPELINE_SECTION: &[Row] = &[
-    Row {
-        key: "run_mode",
-        label: "run mode",
-        schema: Schema::Daemon,
-        kind: FieldKind::Enum(&["sprint", "continuous"]),
-    },
-    Row {
-        key: "plan_enabled",
-        label: "plan enabled",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "skip_planner_for_simple",
-        label: "skip planner for simple",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "skip_research_for_simple",
-        label: "skip research for simple",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "skip_review_for_simple",
-        label: "skip review for simple",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "review_confidence_threshold",
-        label: "review confidence threshold",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "review_multipass_threshold",
-        label: "review multipass threshold",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "batch_review",
-        label: "batch review",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "planner_lookahead",
-        label: "planner lookahead",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "review_in_loop",
-        label: "review in loop",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "confidence_threshold",
-        label: "confidence threshold",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Float),
-    },
-];
+static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        Row {
+            key: "engine_version",
+            label: "engine version",
+            schema: Schema::Daemon,
+            kind: FieldKind::ReadOnly,
+        },
+        Row {
+            key: "shell_version",
+            label: "shell version",
+            schema: Schema::Daemon,
+            kind: FieldKind::ReadOnly,
+        },
+        daemon_row("provider"),
+        daemon_row("model"),
+        daemon_row("research_provider"),
+        daemon_row("research_model"),
+        daemon_row("planner_provider"),
+        daemon_row("planner_model"),
+        daemon_row("builder_provider"),
+        daemon_row("builder_model"),
+        daemon_row("reviewer_provider"),
+        daemon_row("reviewer_model"),
+        daemon_row("discovery_provider"),
+        daemon_row("discovery_model"),
+        daemon_row("learning_extraction_model"),
+        daemon_row("learning_extraction_provider"),
+        daemon_row("local_model"),
+        daemon_row("model_catalog_refresh_secs"),
+    ]
+});
 
-static TIMEOUTS_SECTION: &[Row] = &[
-    Row {
-        key: "agent_timeout_secs",
-        label: "agent timeout",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::PositiveUint),
-    },
-    Row {
-        key: "pause_between_tasks_secs",
-        label: "pause between tasks",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "pause_between_agents_secs",
-        label: "pause between agents",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "pause_between_cycles_secs",
-        label: "pause between cycles",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "engine_idle_timeout_secs",
-        label: "engine idle timeout",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::Uint),
-    },
-    Row {
-        key: "adaptive_pauses",
-        label: "adaptive pauses",
-        schema: Schema::Daemon,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "discovery_cooldown_secs",
-        label: "discovery cooldown",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::PositiveUint),
-    },
-    Row {
-        key: "discovery_cooldown_cap_secs",
-        label: "discovery cooldown cap",
-        schema: Schema::Daemon,
-        kind: FieldKind::Number(Number::PositiveUint),
-    },
-];
+static PIPELINE_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("run_mode"),
+        daemon_row("plan_enabled"),
+        daemon_row("skip_planner_for_simple"),
+        daemon_row("skip_research_for_simple"),
+        daemon_row("skip_review_for_simple"),
+        daemon_row("review_confidence_threshold"),
+        daemon_row("review_multipass_threshold"),
+        daemon_row("batch_review"),
+        daemon_row("planner_lookahead"),
+        daemon_row("review_in_loop"),
+        daemon_row("confidence_threshold"),
+        daemon_row("plan_revision_cycles"),
+        daemon_row("plan_revision_accept_policy"),
+        daemon_row("semgrep_enabled"),
+        daemon_row("build_command"),
+        daemon_row("planning_iterations"),
+        daemon_row("require_human_approval"),
+        daemon_row("on_task_complete_hook"),
+    ]
+});
 
-static GIT_SECTION: &[Row] = &[Row {
-    key: "auto_push_remote",
-    label: "auto-push remote",
-    schema: Schema::Daemon,
-    kind: FieldKind::Text,
-}];
+static TIMEOUTS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("agent_timeout_secs"),
+        daemon_row("pause_between_tasks_secs"),
+        daemon_row("pause_between_agents_secs"),
+        daemon_row("pause_between_cycles_secs"),
+        daemon_row("engine_idle_timeout_secs"),
+        daemon_row("adaptive_pauses"),
+        daemon_row("discovery_cooldown_secs"),
+        daemon_row("discovery_cooldown_cap_secs"),
+    ]
+});
 
-static DISPLAY_SECTION: &[Row] = &[
-    Row {
-        key: "theme",
-        label: "theme",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(THEME_KEYS),
-    },
-    Row {
-        key: "truecolor",
-        label: "truecolor",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(&["auto", "on", "off"]),
-    },
-    Row {
-        key: "preview_wrap",
-        label: "preview wrap",
-        schema: Schema::Tui,
-        kind: FieldKind::Bool,
-    },
-    Row {
-        key: "update_channel",
-        label: "update channel",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(&["stable", "dev"]),
-    },
-    Row {
-        key: "rail_mode",
-        label: "rail mode",
-        schema: Schema::Tui,
-        kind: FieldKind::Enum(&["compact", "normal", "detailed"]),
-    },
-];
+static GIT_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| vec![daemon_row("auto_push_remote")]);
+
+static ISOLATION_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("phase_isolation"),
+        daemon_row("enforce_phase_rbac"),
+    ]
+});
+
+static LEARNINGS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("history_dir"),
+        daemon_row("max_learning_injection"),
+        daemon_row("min_learning_injection"),
+        daemon_row("history_search_results"),
+        daemon_row("history_retention_tasks"),
+        daemon_row("observatory_retention_days"),
+        daemon_row("semantic_match_enabled"),
+        daemon_row("embedding_model"),
+        daemon_row("embedding_port"),
+        daemon_row("embedding_timeout_ms"),
+        daemon_row("show_retrieval_panel"),
+    ]
+});
+
+static DISPLAY_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        Row {
+            key: "theme",
+            label: "theme",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(Theme::SPELLINGS),
+        },
+        Row {
+            key: "truecolor",
+            label: "truecolor",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(&["auto", "on", "off"]),
+        },
+        Row {
+            key: "preview_wrap",
+            label: "preview wrap",
+            schema: Schema::Tui,
+            kind: FieldKind::Bool,
+        },
+        Row {
+            key: "update_channel",
+            label: "update channel",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(UpdateChannel::SPELLINGS),
+        },
+        Row {
+            key: "rail_mode",
+            label: "rail mode",
+            schema: Schema::Tui,
+            kind: FieldKind::Enum(RailMode::SPELLINGS),
+        },
+    ]
+});
 
 /// The overlay's sections in display order.
 pub(crate) static SECTIONS: &[Section] = &[
@@ -333,31 +266,43 @@ pub(crate) static SECTIONS: &[Section] = &[
         title: "Provider and model",
         expanded: true,
         group: "provider_and_model",
-        rows: PROVIDER_SECTION,
+        rows: &PROVIDER_SECTION,
     },
     Section {
         title: "Pipeline",
         expanded: true,
         group: "pipeline",
-        rows: PIPELINE_SECTION,
+        rows: &PIPELINE_SECTION,
     },
     Section {
         title: "Timeouts and pauses",
         expanded: true,
         group: "timeouts_and_pauses",
-        rows: TIMEOUTS_SECTION,
+        rows: &TIMEOUTS_SECTION,
     },
     Section {
         title: "Git",
         expanded: true,
         group: "git",
-        rows: GIT_SECTION,
+        rows: &GIT_SECTION,
+    },
+    Section {
+        title: "Isolation and security",
+        expanded: true,
+        group: "isolation",
+        rows: &ISOLATION_SECTION,
+    },
+    Section {
+        title: "Learnings, history and embeddings",
+        expanded: true,
+        group: "learnings_history",
+        rows: &LEARNINGS_SECTION,
     },
     Section {
         title: "Display and theme",
         expanded: true,
         group: "display_and_theme",
-        rows: DISPLAY_SECTION,
+        rows: &DISPLAY_SECTION,
     },
 ];
 
@@ -383,8 +328,8 @@ impl<T> Entry<T> {
 
 /// The visible entries of a collapsible group list: every group's header
 /// always, its rows (by reference) only while the group is expanded, in
-/// group order -- the one fold mechanism the settings overlay's sections and
-/// the theme picker's Dark/Light groups (T116.1) share.
+/// group order -- the fold mechanism the theme picker's Dark/Light groups
+/// (T116.1) use over their slices.
 pub fn group_entries<'a, T>(groups: &'a [&'a [T]], expanded: &[bool]) -> Vec<Entry<&'a T>> {
     let mut entries = Vec::new();
     for (index, rows) in groups.iter().enumerate() {
@@ -416,14 +361,16 @@ pub fn clamp_focus(focus: usize, len: usize) -> usize {
     focus.min(len.saturating_sub(1))
 }
 
-/// The sections' row groups in display order, the input of the shared fold
-/// mechanism ([`group_entries`]); parallel to [`SECTIONS`].
-static SECTION_ROWS: [&[Row]; 5] = [
-    PROVIDER_SECTION,
-    PIPELINE_SECTION,
-    TIMEOUTS_SECTION,
-    GIT_SECTION,
-    DISPLAY_SECTION,
+/// The sections' row groups in display order, read by
+/// [`SettingsOverlay::visible`]; parallel to [`SECTIONS`].
+static SECTION_ROWS: [&LazyLock<Vec<Row>>; 7] = [
+    &PROVIDER_SECTION,
+    &PIPELINE_SECTION,
+    &TIMEOUTS_SECTION,
+    &GIT_SECTION,
+    &ISOLATION_SECTION,
+    &LEARNINGS_SECTION,
+    &DISPLAY_SECTION,
 ];
 
 /// The unsaved-changes dialog's choices (Esc or q on a dirty overlay): what the
@@ -454,6 +401,19 @@ impl SettingsChoice {
             SettingsChoice::Discard => "throw away the drafted changes and close",
             SettingsChoice::Cancel => "back to the settings",
         }
+    }
+}
+
+/// The dialog's rows through the shared choice-dialog component
+/// (finding 6): the inherent `label` and `detail` above stay the public
+/// surface; the trait only forwards to them.
+impl Choice for SettingsChoice {
+    fn label(&self) -> &'static str {
+        (*self).label()
+    }
+
+    fn detail(&self) -> &'static str {
+        (*self).detail()
     }
 }
 
@@ -508,7 +468,6 @@ pub fn scroll_offset(cursor: usize, len: usize, height: usize, current: usize) -
 /// The overlay's interaction state; values live in [`crate::app::App`].
 #[derive(Default)]
 pub struct SettingsOverlay {
-    pub open: bool,
     /// Per-section expanded flag, parallel to [`SECTIONS`].
     expanded: Vec<bool>,
     /// Index into the visible-row list.
@@ -518,8 +477,6 @@ pub struct SettingsOverlay {
     /// updates this map; the save choice in the close dialog applies and persists
     /// every entry through the settings-change flow.
     pub drafts: BTreeMap<String, SettingValue>,
-    /// The unsaved-changes dialog is open (Esc or q on a dirty overlay).
-    pub confirm_open: bool,
     /// The dialog's selected row; indexes [`SETTINGS_CHOICES`].
     pub confirm_selected: usize,
     pub status: Option<(String, StatusLevel)>,
@@ -550,25 +507,25 @@ pub struct SettingsOverlay {
 }
 
 impl SettingsOverlay {
-    /// Opens the overlay with fresh per-open state.
-    pub fn open(&mut self) {
-        self.open = true;
+    /// Resets the overlay with fresh per-open state; the caller pushes it
+    /// onto the modal stack ([`crate::modal::ModalStack`]), which is what
+    /// being open now means.
+    pub fn reset(&mut self) {
         self.expanded = SECTIONS.iter().map(|section| section.expanded).collect();
         self.focus = 0;
         self.editor = None;
         self.drafts.clear();
-        self.confirm_open = false;
         self.confirm_selected = 0;
         self.status = None;
         self.scroll.set(0);
     }
 
-    /// Closes the overlay, whatever state it is in.
-    pub fn close(&mut self) {
-        self.open = false;
+    /// Throws the overlay's interaction state away, whatever state it is
+    /// in; the caller pops it from the modal stack, which dismisses the
+    /// unsaved-changes dialog stacked on it with it.
+    pub fn discard(&mut self) {
         self.editor = None;
         self.drafts.clear();
-        self.confirm_open = false;
         self.confirm_selected = 0;
         self.status = None;
     }
@@ -595,7 +552,14 @@ impl SettingsOverlay {
     /// The focusable entries in display order: each section header and its rows when
     /// the section is expanded.
     pub fn visible(&self) -> Vec<Entry<&'static Row>> {
-        group_entries(&SECTION_ROWS, &self.expanded)
+        let mut entries = Vec::new();
+        for (index, rows) in SECTION_ROWS.iter().enumerate() {
+            entries.push(Entry::Header(index));
+            if self.expanded.get(index).copied().unwrap_or(false) {
+                entries.extend(rows.iter().map(Entry::Row));
+            }
+        }
+        entries
     }
 
     pub(crate) fn expanded(&self, index: usize) -> bool {
@@ -613,6 +577,7 @@ impl SettingsOverlay {
     }
 
     /// The focused editable row, if any.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn focused_row(&self) -> Option<&'static Row> {
         match self.focused() {
             Entry::Row(row) => Some(row),
@@ -690,12 +655,15 @@ impl SettingsOverlay {
     /// when one exists, otherwise the engine-reported readout or the shell's tui
     /// mirror; edits only update [`Self::drafts`], and the close dialog's save
     /// choice is what asks the driver to apply and persist them.
-    pub fn on_key(&mut self, key: KeyEvent, current: Option<SettingValue>) -> Action {
+    pub(crate) fn on_key(
+        &mut self,
+        modals: &mut ModalStack,
+        key: KeyEvent,
+        current: Option<SettingValue>,
+    ) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // The unsaved-changes dialog swallows every key while it is open.
-        if self.confirm_open {
-            return self.on_confirm_key(key.code);
-        }
+        // The unsaved-changes dialog's keys never reach this path: the
+        // modal stack routes them to `on_confirm_key` while it is on top.
         if self.editor.is_some() {
             return self.on_editor_key(key, ctrl);
         }
@@ -731,7 +699,7 @@ impl SettingsOverlay {
             }
             // q and Esc share the same close path: direct on a clean overlay,
             // the unsaved-changes dialog on a dirty one.
-            KeyCode::Esc | KeyCode::Char('q') if !ctrl => self.begin_close(),
+            KeyCode::Esc | KeyCode::Char('q') if !ctrl => self.begin_close(modals),
             _ => Action::None,
         }
     }
@@ -739,32 +707,34 @@ impl SettingsOverlay {
     /// The unsaved-changes dialog's keys: Up and k move the selection up,
     /// Down and j move it down, Enter confirms it, Esc cancels back to the
     /// overlay, and everything else is swallowed. Ctrl+C is handled before this
-    /// runs (it detaches from anywhere).
-    fn on_confirm_key(&mut self, code: KeyCode) -> Action {
-        match code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.confirm_selected = self.confirm_selected.saturating_sub(1)
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.confirm_selected = (self.confirm_selected + 1).min(SETTINGS_CHOICES.len() - 1);
-            }
-            KeyCode::Esc => self.confirm_open = false,
-            KeyCode::Enter => {
-                self.confirm_open = false;
-                return match SETTINGS_CHOICES[self.confirm_selected.min(SETTINGS_CHOICES.len() - 1)]
-                {
+    /// runs (it detaches from anywhere). The shared choice-dialog key
+    /// handling moves the selection (finding 6); this owns only the Enter
+    /// dispatch.
+    pub(crate) fn on_confirm_key(&mut self, modals: &mut ModalStack, code: KeyCode) -> Action {
+        match choice_key(
+            code,
+            true,
+            SETTINGS_CHOICES.len(),
+            &mut self.confirm_selected,
+        ) {
+            ChoiceKey::Close => modals.pop(Modal::Confirm),
+            ChoiceKey::Enter(index) => {
+                modals.pop(Modal::Confirm);
+                return match SETTINGS_CHOICES[index] {
                     // Save: the driver applies and persists every drafted change
-                    // through the settings-change flow, then closes the overlay.
+                    // through the settings-change flow, then closes the overlay
+                    // (which dismisses the whole stack).
                     SettingsChoice::Save => Action::SaveSettings,
                     SettingsChoice::Discard => {
                         self.drafts.clear();
-                        self.close();
+                        modals.pop(Modal::Overlay);
+                        self.discard();
                         Action::CloseSettings
                     }
                     SettingsChoice::Cancel => Action::None,
                 };
             }
-            _ => {}
+            ChoiceKey::Swallowed => {}
         }
         Action::None
     }
@@ -902,15 +872,20 @@ impl SettingsOverlay {
         Action::None
     }
 
-    /// Esc/q: nothing drafted closes directly; a dirty overlay opens the unsaved-changes dialog asking what
-    /// to do with the drafted changes instead.
-    fn begin_close(&mut self) -> Action {
+    /// Esc/q: nothing drafted closes directly -- popping the overlay from
+    /// the stack and discarding its drafts; a dirty overlay stacks the
+    /// unsaved-changes dialog on top instead, asking what to do with the
+    /// drafted changes. The one legitimate co-open pair; see
+    /// [`crate::modal::ModalStack`].
+    pub(crate) fn begin_close(&mut self, modals: &mut ModalStack) -> Action {
         if !self.dirty() {
-            self.close();
+            modals.pop(Modal::Overlay);
+            self.discard();
             return Action::CloseSettings;
         }
-        self.confirm_open = true;
-        self.confirm_selected = 0;
+        if modals.push(Modal::Confirm) {
+            self.confirm_selected = 0;
+        }
         Action::None
     }
 
@@ -954,9 +929,16 @@ impl SettingsOverlay {
                     .buffer
                     .parse()
                     .map_err(|_| format!("{} must be a number", editor.field))?;
-                if !(0.0..=1.0).contains(&value) {
+                // The bounds come from the field's registry entry (only the
+                // confidence threshold is a float today); a missing entry falls
+                // back to the 0.0..=1.0 range.
+                let (min, max) = match daemon_field(editor.field) {
+                    Some(CoreFieldKind::FloatRange(min, max)) => (min, max),
+                    _ => (0.0, 1.0),
+                };
+                if !(min..=max).contains(&value) {
                     return Err(format!(
-                        "{} must be a number between 0.0 and 1.0",
+                        "{} must be a number between {min:?} and {max:?}",
                         editor.field
                     ));
                 }
@@ -985,13 +967,35 @@ fn help_for(schema: Schema, key: &str) -> Option<&'static str> {
 /// auto-detection) apply again, which needs [`SettingValue::Unset`].
 fn enum_submit_value(field: &str, choice: &str) -> SettingValue {
     if field == "truecolor" {
-        return match choice {
-            "on" => SettingValue::Bool(true),
-            "off" => SettingValue::Bool(false),
-            _ => SettingValue::Unset,
-        };
+        return truecolor_value(choice);
     }
     SettingValue::Str(choice.to_string())
+}
+
+/// The truecolor tri-state's stored shape for an enum choice: "on"/"off"
+/// submit as the `Bool` the setting is stored as; "auto" removes the key
+/// ([`SettingValue::Unset`]) so the lower layers (and finally the
+/// auto-detection) apply again. The display direction is
+/// [`truecolor_choice`]; the two are one mapping.
+fn truecolor_value(choice: &str) -> SettingValue {
+    match choice {
+        "on" => SettingValue::Bool(true),
+        "off" => SettingValue::Bool(false),
+        _ => SettingValue::Unset,
+    }
+}
+
+/// The truecolor tri-state's display choice: the shell mirror's
+/// `Option<bool>` -- and the drafted `Bool`/`Unset` shape through
+/// [`SettingValue::as_bool`] -- as the auto/on/off string the overlay
+/// renders and cycles. The submit direction is [`truecolor_value`]; the
+/// two are one mapping.
+pub(crate) fn truecolor_choice(value: Option<bool>) -> &'static str {
+    match value {
+        None => "auto",
+        Some(true) => "on",
+        Some(false) => "off",
+    }
 }
 
 #[cfg(test)]
@@ -1000,8 +1004,16 @@ mod tests {
 
     fn overlay() -> SettingsOverlay {
         let mut overlay = SettingsOverlay::default();
-        overlay.open();
+        overlay.reset();
         overlay
+    }
+
+    /// The modal stack with the overlay open on it, the state the overlay's
+    /// key path runs against.
+    fn stack() -> ModalStack {
+        let mut modals = ModalStack::new();
+        assert!(modals.push(Modal::Overlay));
+        modals
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1033,22 +1045,25 @@ mod tests {
     }
 
     /// Puts focus on a section header and toggles it.
-    fn toggle_section(overlay: &mut SettingsOverlay, index: usize) {
+    fn toggle_section(overlay: &mut SettingsOverlay, modals: &mut ModalStack, index: usize) {
         focus_header(overlay, index);
-        overlay.on_key(key(KeyCode::Enter), None);
+        overlay.on_key(modals, key(KeyCode::Enter), None);
     }
 
     #[test]
     fn the_row_model_covers_the_documented_sections() {
         let subject = overlay();
         let entries = subject.visible();
-        // Every section opens expanded: 5 headers plus all of their rows.
+        // Every section opens expanded: one header per section plus all of their rows.
         assert_eq!(
             entries.len(),
-            5 + PROVIDER_SECTION.len()
+            SECTIONS.len()
+                + PROVIDER_SECTION.len()
                 + PIPELINE_SECTION.len()
                 + TIMEOUTS_SECTION.len()
                 + GIT_SECTION.len()
+                + ISOLATION_SECTION.len()
+                + LEARNINGS_SECTION.len()
                 + DISPLAY_SECTION.len()
         );
         assert_eq!(entries[0], Entry::Header(0));
@@ -1059,7 +1074,7 @@ mod tests {
         assert!(entries.contains(&Entry::Row(&DISPLAY_SECTION[0])));
         // A folded section contributes only its header.
         let mut overlay = overlay();
-        overlay.toggle_section(4);
+        overlay.toggle_section(6);
         assert!(
             overlay
                 .visible()
@@ -1077,7 +1092,7 @@ mod tests {
             let group = help_for(section.rows[0].schema, section.group)
                 .unwrap_or_else(|| panic!("`{}` has no group help", section.group));
             assert!(!group.is_empty());
-            for row in section.rows {
+            for row in section.rows.iter() {
                 let help = help_for(row.schema, row.key)
                     .unwrap_or_else(|| panic!("`{}` has no help text", row.key));
                 assert!(!help.is_empty());
@@ -1108,10 +1123,11 @@ mod tests {
 
     #[test]
     fn collapsing_and_focus_stay_consistent() {
+        let mut modals = stack();
         let mut overlay = overlay();
         let full = overlay.visible().len();
         assert_eq!(overlay.focused(), Entry::Header(0));
-        toggle_section(&mut overlay, 1);
+        toggle_section(&mut overlay, &mut modals, 1);
         let entries = overlay.visible();
         assert_eq!(entries.len(), full - PIPELINE_SECTION.len());
         // Focus clamps into range and never lands on a hidden row.
@@ -1120,57 +1136,72 @@ mod tests {
         assert_eq!(overlay.focused(), Entry::Row(&DISPLAY_SECTION[4]));
         assert!(!entries.contains(&Entry::Row(&PIPELINE_SECTION[0])));
         // Expanding brings the rows back.
-        toggle_section(&mut overlay, 1);
+        toggle_section(&mut overlay, &mut modals, 1);
         assert_eq!(overlay.visible().len(), full);
     }
 
     #[test]
     fn left_folds_a_header_and_right_unfolds_it() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_header(&mut overlay, 1);
         let full = overlay.visible().len();
-        assert_eq!(overlay.on_key(key(KeyCode::Left), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Left), None),
+            Action::None
+        );
         assert!(!overlay.expanded(1));
         assert_eq!(overlay.visible().len(), full - PIPELINE_SECTION.len());
         // Folding the focused header keeps focus on it (the header never hides).
         assert_eq!(overlay.focused(), Entry::Header(1));
-        assert_eq!(overlay.on_key(key(KeyCode::Right), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Right), None),
+            Action::None
+        );
         assert!(overlay.expanded(1));
         assert_eq!(overlay.visible().len(), full);
     }
 
     #[test]
     fn left_on_a_folded_header_and_right_on_an_expanded_one_are_noops() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_header(&mut overlay, 1);
         overlay.toggle_section(1);
         let folded = overlay.visible();
-        assert_eq!(overlay.on_key(key(KeyCode::Left), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Left), None),
+            Action::None
+        );
         assert!(!overlay.expanded(1));
         assert_eq!(overlay.visible(), folded);
         focus_header(&mut overlay, 0);
         let expanded = overlay.visible();
-        assert_eq!(overlay.on_key(key(KeyCode::Right), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Right), None),
+            Action::None
+        );
         assert!(overlay.expanded(0));
         assert_eq!(overlay.visible(), expanded);
     }
 
     #[test]
     fn hjkl_alias_the_arrows() {
+        let mut modals = stack();
         // j/k move the cursor exactly like Down/Up.
         let mut hjkl = overlay();
         let mut arrows = overlay();
         for _ in 0..5 {
             assert_eq!(
-                hjkl.on_key(key(KeyCode::Char('j')), None),
-                arrows.on_key(key(KeyCode::Down), None)
+                hjkl.on_key(&mut modals, key(KeyCode::Char('j')), None),
+                arrows.on_key(&mut modals, key(KeyCode::Down), None)
             );
             assert_eq!(hjkl.focus, arrows.focus);
         }
         for _ in 0..3 {
             assert_eq!(
-                hjkl.on_key(key(KeyCode::Char('k')), None),
-                arrows.on_key(key(KeyCode::Up), None)
+                hjkl.on_key(&mut modals, key(KeyCode::Char('k')), None),
+                arrows.on_key(&mut modals, key(KeyCode::Up), None)
             );
             assert_eq!(hjkl.focus, arrows.focus);
         }
@@ -1179,25 +1210,37 @@ mod tests {
         let mut subject = overlay();
         focus_header(&mut subject, 1);
         let full = subject.visible().len();
-        assert_eq!(subject.on_key(key(KeyCode::Char('h')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('h')), None),
+            Action::None
+        );
         assert!(!subject.expanded(1));
         assert_eq!(subject.visible().len(), full - PIPELINE_SECTION.len());
         // h on a folded header is a no-op, like Left.
         let folded = subject.visible();
-        assert_eq!(subject.on_key(key(KeyCode::Char('h')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('h')), None),
+            Action::None
+        );
         assert_eq!(subject.visible(), folded);
-        assert_eq!(subject.on_key(key(KeyCode::Char('l')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('l')), None),
+            Action::None
+        );
         assert!(subject.expanded(1));
         assert_eq!(subject.visible().len(), full);
         // l on an expanded header is a no-op, like Right.
         let expanded = subject.visible();
-        assert_eq!(subject.on_key(key(KeyCode::Char('l')), None), Action::None);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Char('l')), None),
+            Action::None
+        );
         assert_eq!(subject.visible(), expanded);
 
         // h/l cycle enum fields like Left/Right, drafting the new choice.
         focus_field(&mut subject, "run_mode");
         assert_eq!(
-            subject.on_key(key(KeyCode::Char('l')), str("sprint")),
+            subject.on_key(&mut modals, key(KeyCode::Char('l')), str("sprint")),
             Action::None
         );
         assert_eq!(
@@ -1205,7 +1248,7 @@ mod tests {
             Some(&SettingValue::Str("continuous".into()))
         );
         assert_eq!(
-            subject.on_key(key(KeyCode::Char('h')), str("continuous")),
+            subject.on_key(&mut modals, key(KeyCode::Char('h')), str("continuous")),
             Action::None
         );
         assert_eq!(
@@ -1215,10 +1258,17 @@ mod tests {
 
         // Inside an open text editor the four letters keep typing as characters.
         focus_field(&mut subject, "model");
-        subject.on_key(key(KeyCode::Enter), Some(SettingValue::Str(String::new())));
+        subject.on_key(
+            &mut modals,
+            key(KeyCode::Enter),
+            Some(SettingValue::Str(String::new())),
+        );
         let before = subject.expanded.clone();
         for c in ['h', 'j', 'k', 'l'] {
-            assert_eq!(subject.on_key(key(KeyCode::Char(c)), None), Action::None);
+            assert_eq!(
+                subject.on_key(&mut modals, key(KeyCode::Char(c)), None),
+                Action::None
+            );
         }
         assert_eq!(subject.editor.as_ref().unwrap().buffer, "hjkl");
         assert!(subject.editor.is_some());
@@ -1228,6 +1278,7 @@ mod tests {
         let mut ctrl_overlay = overlay();
         let focus = ctrl_overlay.focus;
         ctrl_overlay.on_key(
+            &mut modals,
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
             None,
         );
@@ -1236,13 +1287,24 @@ mod tests {
 
     #[test]
     fn left_and_right_keep_going_to_the_open_editor() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_field(&mut overlay, "agent_timeout_secs");
-        overlay.on_key(key(KeyCode::Enter), Some(SettingValue::Uint(600)));
+        overlay.on_key(
+            &mut modals,
+            key(KeyCode::Enter),
+            Some(SettingValue::Uint(600)),
+        );
         assert!(overlay.editor.is_some());
         let before = overlay.expanded.clone();
-        assert_eq!(overlay.on_key(key(KeyCode::Left), None), Action::None);
-        assert_eq!(overlay.on_key(key(KeyCode::Right), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Left), None),
+            Action::None
+        );
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Right), None),
+            Action::None
+        );
         // The editor stays open with its buffer untouched, and nothing folded.
         assert!(overlay.editor.is_some());
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "600");
@@ -1251,10 +1313,11 @@ mod tests {
 
     #[test]
     fn enums_cycle_wrapping_and_truecolor_maps_to_unset() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_field(&mut overlay, "run_mode");
         assert_eq!(
-            overlay.on_key(key(KeyCode::Right), str("sprint")),
+            overlay.on_key(&mut modals, key(KeyCode::Right), str("sprint")),
             Action::None
         );
         assert_eq!(
@@ -1264,7 +1327,7 @@ mod tests {
         // Enter cycles forward too, Left backward, both wrapping; each step drafts
         // (the caller passes the drafted value as `current`, as the app does).
         assert_eq!(
-            overlay.on_key(key(KeyCode::Enter), str("continuous")),
+            overlay.on_key(&mut modals, key(KeyCode::Enter), str("continuous")),
             Action::None
         );
         assert_eq!(
@@ -1272,7 +1335,7 @@ mod tests {
             Some(&SettingValue::Str("sprint".into()))
         );
         assert_eq!(
-            overlay.on_key(key(KeyCode::Left), str("sprint")),
+            overlay.on_key(&mut modals, key(KeyCode::Left), str("sprint")),
             Action::None
         );
         assert_eq!(
@@ -1288,7 +1351,10 @@ mod tests {
             (str("off"), SettingValue::Unset),
             (str("auto"), SettingValue::Bool(true)),
         ] {
-            assert_eq!(overlay.on_key(key(KeyCode::Enter), current), Action::None);
+            assert_eq!(
+                overlay.on_key(&mut modals, key(KeyCode::Enter), current),
+                Action::None
+            );
             assert_eq!(overlay.drafts.get("truecolor"), Some(&expected));
         }
 
@@ -1299,7 +1365,10 @@ mod tests {
             (str("normal"), "detailed"),
             (str("detailed"), "compact"),
         ] {
-            assert_eq!(overlay.on_key(key(KeyCode::Right), current), Action::None);
+            assert_eq!(
+                overlay.on_key(&mut modals, key(KeyCode::Right), current),
+                Action::None
+            );
             assert_eq!(
                 overlay.drafts.get("rail_mode"),
                 Some(&SettingValue::Str(expected.into()))
@@ -1309,26 +1378,35 @@ mod tests {
 
     #[test]
     fn the_editor_validates_before_submitting() {
+        let mut modals = stack();
         let mut overlay = overlay();
         focus_field(&mut overlay, "agent_timeout_secs");
         assert_eq!(
-            overlay.on_key(key(KeyCode::Enter), Some(SettingValue::Uint(600))),
+            overlay.on_key(
+                &mut modals,
+                key(KeyCode::Enter),
+                Some(SettingValue::Uint(600))
+            ),
             Action::None
         );
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "600");
         // Digits type, letters do not, Ctrl+U clears.
-        overlay.on_key(key(KeyCode::Char('2')), None);
+        overlay.on_key(&mut modals, key(KeyCode::Char('2')), None);
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "6002");
-        overlay.on_key(key(KeyCode::Char('x')), None);
+        overlay.on_key(&mut modals, key(KeyCode::Char('x')), None);
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "6002");
         overlay.on_key(
+            &mut modals,
             KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
             None,
         );
         assert_eq!(overlay.editor.as_ref().unwrap().buffer, "");
         // Zero is a local violation: the editor stays open with the reason.
-        overlay.on_key(key(KeyCode::Char('0')), None);
-        assert_eq!(overlay.on_key(key(KeyCode::Enter), None), Action::None);
+        overlay.on_key(&mut modals, key(KeyCode::Char('0')), None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Enter), None),
+            Action::None
+        );
         assert!(overlay.editor.is_some());
         assert_eq!(overlay.status.as_ref().unwrap().1, StatusLevel::Error);
         assert!(
@@ -1341,71 +1419,95 @@ mod tests {
         );
         // A valid value commits as a draft and closes the editor.
         overlay.on_key(
+            &mut modals,
             KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
             None,
         );
         for c in "120".chars() {
-            overlay.on_key(key(KeyCode::Char(c)), None);
+            overlay.on_key(&mut modals, key(KeyCode::Char(c)), None);
         }
-        assert_eq!(overlay.on_key(key(KeyCode::Enter), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Enter), None),
+            Action::None
+        );
         assert!(overlay.editor.is_none());
         assert_eq!(
             overlay.drafts.get("agent_timeout_secs"),
             Some(&SettingValue::Uint(120))
         );
         // Esc discards the edit instead.
-        overlay.on_key(key(KeyCode::Enter), Some(SettingValue::Uint(120)));
+        overlay.on_key(
+            &mut modals,
+            key(KeyCode::Enter),
+            Some(SettingValue::Uint(120)),
+        );
         assert!(overlay.editor.is_some());
-        assert_eq!(overlay.on_key(key(KeyCode::Esc), None), Action::None);
+        assert_eq!(
+            overlay.on_key(&mut modals, key(KeyCode::Esc), None),
+            Action::None
+        );
         assert!(overlay.editor.is_none());
     }
 
     #[test]
     fn the_close_dialog_saves_discards_or_cancels() {
-        // Clean: closes directly.
+        // Clean: closes directly, popping the overlay off the stack.
+        let mut modals = stack();
         let mut subject = overlay();
         assert_eq!(
-            subject.on_key(key(KeyCode::Esc), None),
+            subject.on_key(&mut modals, key(KeyCode::Esc), None),
             Action::CloseSettings
         );
-        assert!(!subject.open);
+        assert!(modals.is_empty());
 
-        // Dirty: Esc opens the three-choice dialog instead of closing.
+        // Dirty: Esc stacks the three-choice dialog on the overlay.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
         assert!(subject.dirty());
-        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
-        assert!(subject.confirm_open);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Esc), None),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Confirm));
         assert_eq!(subject.confirm_selected, 0);
         // Up clamps at the first row; Down walks to the last and clamps there.
-        assert_eq!(subject.on_key(key(KeyCode::Up), None), Action::None);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Up),
+            Action::None
+        );
         assert_eq!(subject.confirm_selected, 0);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(subject.confirm_selected, 1);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(subject.confirm_selected, 2);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(subject.confirm_selected, 2);
-        // Everything else is swallowed while the dialog is open.
+        // Everything else is swallowed while the dialog is on top.
         let before = (subject.confirm_selected, subject.drafts.clone());
-        assert_eq!(subject.on_key(key(KeyCode::Char('x')), None), Action::None);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Char('x')),
+            Action::None
+        );
         assert_eq!((subject.confirm_selected, subject.drafts.clone()), before);
         // Esc cancels: back to the overlay with the drafts intact.
-        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
-        assert!(!subject.confirm_open);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Esc),
+            Action::None
+        );
+        assert!(!modals.contains(Modal::Confirm));
         assert!(subject.dirty());
 
         // Save asks the driver to apply every draft; the overlay stays open until
         // the driver finishes.
-        subject.on_key(key(KeyCode::Esc), None);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
         assert_eq!(
-            subject.on_key(key(KeyCode::Enter), None),
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
             Action::SaveSettings
         );
-        assert!(!subject.confirm_open);
-        assert!(subject.open);
+        assert_eq!(modals.top(), Some(Modal::Overlay));
         assert_eq!(
             subject.pending(),
             vec![(
@@ -1416,69 +1518,83 @@ mod tests {
         );
 
         // Discard throws the drafts away and closes.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
-        subject.on_key(key(KeyCode::Esc), None);
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
         assert_eq!(
-            subject.on_key(key(KeyCode::Enter), None),
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
             Action::CloseSettings
         );
-        assert!(!subject.open);
+        assert!(modals.is_empty());
         assert!(subject.drafts.is_empty());
 
         // Cancel (the third row) leaves the overlay open with the drafts intact.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
-        subject.on_key(key(KeyCode::Esc), None);
-        subject.on_key(key(KeyCode::Down), None);
-        subject.on_key(key(KeyCode::Down), None);
-        assert_eq!(subject.on_key(key(KeyCode::Enter), None), Action::None);
-        assert!(subject.open);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Overlay));
         assert!(subject.dirty());
     }
 
     #[test]
     fn the_close_dialog_moves_with_j_and_k() {
-        // Dirty: Esc opens the dialog with Save selected.
+        // Dirty: Esc stacks the dialog with Save selected.
+        let mut modals = stack();
         let mut subject = overlay();
         subject
             .drafts
             .insert("plan_enabled".into(), SettingValue::Bool(true));
         assert!(subject.dirty());
-        assert_eq!(subject.on_key(key(KeyCode::Esc), None), Action::None);
-        assert!(subject.confirm_open);
+        assert_eq!(
+            subject.on_key(&mut modals, key(KeyCode::Esc), None),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Confirm));
         assert_eq!(subject.confirm_selected, 0);
         // k clamps at the first row; j walks to the last and clamps there.
-        assert_eq!(subject.on_key(key(KeyCode::Char('k')), None), Action::None);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Char('k')),
+            Action::None
+        );
         assert_eq!(subject.confirm_selected, 0);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(subject.confirm_selected, 1);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(subject.confirm_selected, 2);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(subject.confirm_selected, 2);
         // Enter on Cancel (row 2) leaves the overlay open with drafts intact.
-        assert_eq!(subject.on_key(key(KeyCode::Enter), None), Action::None);
-        assert!(!subject.confirm_open);
-        assert!(subject.open);
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
+            Action::None
+        );
+        assert_eq!(modals.top(), Some(Modal::Overlay));
         assert!(subject.dirty());
 
         // Reopening resets to Save; a j move selects Discard, which closes and
         // throws the drafts away.
-        subject.on_key(key(KeyCode::Esc), None);
-        assert!(subject.confirm_open);
+        subject.on_key(&mut modals, key(KeyCode::Esc), None);
+        assert_eq!(modals.top(), Some(Modal::Confirm));
         assert_eq!(subject.confirm_selected, 0);
-        subject.on_key(key(KeyCode::Char('j')), None);
+        subject.on_confirm_key(&mut modals, KeyCode::Char('j'));
         assert_eq!(
-            subject.on_key(key(KeyCode::Enter), None),
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
             Action::CloseSettings
         );
-        assert!(!subject.open);
+        assert!(modals.is_empty());
         assert!(subject.drafts.is_empty());
     }
 
@@ -1573,7 +1689,7 @@ mod tests {
     }
 
     /// A viewport the renderer recorded; the wiring tests hit-test and scroll
-    /// against it. Height 10 with the full 48-entry list leaves 38 rows to
+    /// against it. Height 10 with the full 70-entry list leaves 60 rows to
     /// scroll through.
     fn viewport(height: u16) -> Rect {
         Rect::new(0, 0, 60, height)
@@ -1581,12 +1697,13 @@ mod tests {
 
     #[test]
     fn the_scroll_offset_follows_the_selection_down_past_the_edge() {
+        let mut modals = stack();
         let mut subject = overlay();
         let len = subject.visible().len();
         subject.list.set(viewport(10));
         // The cursor starts at the top: the margin band holds the offset at 0.
         for _ in 0..5 {
-            subject.on_key(key(KeyCode::Down), None);
+            subject.on_key(&mut modals, key(KeyCode::Down), None);
         }
         assert_eq!(subject.focus, 5);
         assert_eq!(subject.scroll.get(), 0);
@@ -1594,30 +1711,31 @@ mod tests {
         // cursor visible, and lands on the last scrollable offset at the
         // last row.
         for _ in 0..(len - 6) {
-            subject.on_key(key(KeyCode::Char('j')), None);
+            subject.on_key(&mut modals, key(KeyCode::Char('j')), None);
         }
         assert_eq!(subject.focus, len - 1);
         assert_eq!(subject.scroll.get(), len - 10);
         assert!(subject.focus - subject.scroll.get() < 10);
         // Extra Down presses clamp at the last row and the last offset.
-        subject.on_key(key(KeyCode::Down), None);
+        subject.on_key(&mut modals, key(KeyCode::Down), None);
         assert_eq!(subject.focus, len - 1);
         assert_eq!(subject.scroll.get(), len - 10);
     }
 
     #[test]
     fn the_scroll_offset_follows_the_selection_back_up_to_the_top() {
+        let mut modals = stack();
         let mut subject = overlay();
         let len = subject.visible().len();
         subject.list.set(viewport(10));
         // Start at the last row, the offset the down walk ends on.
         subject.focus = len - 1;
-        subject.on_key(key(KeyCode::Char('k')), None);
+        subject.on_key(&mut modals, key(KeyCode::Char('k')), None);
         assert!(subject.scroll.get() > 0);
         // Walking back up with k (the Up alias) keeps the cursor visible and
         // the offset walks back with it ...
         for _ in 0..(len - 1) {
-            subject.on_key(key(KeyCode::Char('k')), None);
+            subject.on_key(&mut modals, key(KeyCode::Char('k')), None);
             assert!(
                 subject.focus - subject.scroll.get() < 10,
                 "focus {} offset {}",
@@ -1629,7 +1747,7 @@ mod tests {
         // clamped there.
         assert_eq!(subject.focus, 0);
         assert_eq!(subject.scroll.get(), 0);
-        subject.on_key(key(KeyCode::Up), None);
+        subject.on_key(&mut modals, key(KeyCode::Up), None);
         assert_eq!(subject.focus, 0);
         assert_eq!(subject.scroll.get(), 0);
     }

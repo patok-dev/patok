@@ -40,6 +40,26 @@ enum Line {
 
 const POLL: Duration = Duration::from_millis(500);
 
+/// The failure message of a session cancelled by shutdown; the mock provider
+/// reports the same wording.
+pub(crate) const CANCELLED_BY_SHUTDOWN: &str = "cancelled by shutdown";
+
+/// The failure message of a CLI process that exited unsuccessfully.
+pub(crate) fn agent_exited_unsuccessfully(provider: &str) -> String {
+    format!("Agent {provider} exited unsuccessfully")
+}
+
+/// The failure message of an agent killed after `secs` without progress.
+pub(crate) fn timed_out_without_progress(secs: u64) -> String {
+    format!("timed out after {secs} s without progress")
+}
+
+/// The failure message of an agent killed after the hard limit of four times
+/// the `secs` idle timeout.
+pub(crate) fn timed_out_total_runtime(secs: u64) -> String {
+    format!("timed out after {} s total runtime", secs * 4)
+}
+
 pub async fn run(
     spec: ProcessSpec,
     request: &SessionRequest,
@@ -98,15 +118,15 @@ pub async fn run(
                 status = Some(waited);
             }
             () = request.cancel.cancelled(), if exit.is_none() => {
-                exit = Some((ExitKind::Cancelled, Some("cancelled by shutdown".into())));
+                exit = Some((ExitKind::Cancelled, Some(CANCELLED_BY_SHUTDOWN.into())));
                 kill(&mut child, pid).await;
             }
             _ = tick.tick(), if exit.is_none() => {
                 let secs = idle.as_secs();
                 if last_progress.elapsed() >= idle {
-                    exit = Some((ExitKind::TimedOut, Some(format!("timed out after {secs} s without progress"))));
+                    exit = Some((ExitKind::TimedOut, Some(timed_out_without_progress(secs))));
                 } else if started.elapsed() >= idle * 4 {
-                    exit = Some((ExitKind::TimedOut, Some(format!("timed out after {} s total runtime", secs * 4))));
+                    exit = Some((ExitKind::TimedOut, Some(timed_out_total_runtime(secs))));
                 }
                 if exit.is_some() {
                     kill(&mut child, pid).await;
@@ -124,7 +144,7 @@ pub async fn run(
                 Ok(s) if s.success() => (ExitKind::Completed, None),
                 _ => (
                     ExitKind::Failed,
-                    Some(format!("Agent {provider} exited unsuccessfully")),
+                    Some(agent_exited_unsuccessfully(provider)),
                 ),
             },
         },
@@ -222,7 +242,6 @@ pub fn open_log_path(dir: &Path, label: &str, provider: &str) -> Result<PathBuf,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_util::sync::CancellationToken;
 
     struct Lines;
     impl LineParser for Lines {
@@ -247,19 +266,11 @@ mod tests {
         dir: &Path,
         idle: Duration,
     ) -> (SessionRequest, mpsc::UnboundedReceiver<AgentEvent>) {
-        let (events, rx) = mpsc::unbounded_channel();
-        let request = SessionRequest {
-            model: None,
-            prompt: String::new(),
-            system_prompt: None,
-            project_dir: dir.to_path_buf(),
-            events,
-            log_dir: dir.join("logs"),
-            label: "T1.1".into(),
-            idle_timeout: idle,
-            cancel: CancellationToken::new(),
-            allowed_tools: vec![],
-        };
+        let (mut request, rx) = crate::test_util::request("", None, &[]);
+        request.project_dir = dir.to_path_buf();
+        request.log_dir = dir.join("logs");
+        request.label = "T1.1".into();
+        request.idle_timeout = idle;
         (request, rx)
     }
 

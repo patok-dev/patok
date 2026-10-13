@@ -6,15 +6,16 @@ use std::io::Write;
 use std::time::Duration;
 
 use crossterm::style::Stylize;
-use patok_core::config::SettingValue;
+use patok_core::config::{RunMode, SettingValue};
 use patok_core::event::{EngineEvent, Phase, TaskOutcome};
 use patok_proto::engine_client::EngineClient;
-use patok_proto::{CommandRequest, SettingsChange, StartBuild, command_request, engine_update};
+use patok_proto::{SettingsChange, StartBuild, command_request, engine_update};
 use tokio_util::sync::CancellationToken;
 use tonic::Streaming;
 use tonic::transport::Channel;
 
 use crate::app::{App, LineKind, OutLine};
+use crate::driver::Update;
 use crate::settings::to_proto;
 use crate::theme::Theme;
 
@@ -59,10 +60,10 @@ pub async fn run_until<W: Write>(
     // without waiting between tasks. Forced through the settings-change flow so it
     // validates and persists like a user change, and put back on every exit path.
     let mut restore = None;
-    if app.run_mode() != "sprint" {
+    if app.run_mode() != RunMode::Sprint.as_str() {
         let previous = app.run_mode().to_string();
         // A rejected forcing is an engine error that stops the build before it began.
-        if let Err(error) = set_run_mode(&mut client, "sprint").await {
+        if let Err(error) = set_run_mode(&mut client, RunMode::Sprint.as_str()).await {
             printer.finish(out)?;
             return Ok(HeadlessOutcome::Failed(error));
         }
@@ -113,63 +114,56 @@ pub async fn run_until<W: Write>(
                 )
                 .await);
             }
-            update = updates.message() => match update {
-                Ok(Some(update)) => match update.payload {
-                    Some(engine_update::Payload::Event(event)) => {
-                        match EngineEvent::from_payload(&event.payload) {
-                            Ok(event) => {
-                                match &event {
-                                    EngineEvent::PhaseChanged { phase: Phase::Running } => {
-                                        build_started = true
-                                    }
-                                    EngineEvent::TaskFinished {
-                                        id,
-                                        outcome: TaskOutcome::Done,
-                                        ..
-                                    } => done.push(id.clone()),
-                                    EngineEvent::TaskFinished {
-                                        id,
-                                        outcome: TaskOutcome::Failed,
-                                        ..
-                                    } => {
-                                        failed =
-                                            Some(format!("task {id} failed; the build stopped"))
-                                    }
-                                    _ => {}
-                                }
-                                app.apply(event);
-                                printer.drain(out, &app)?;
-                                if let Some(outcome) = advance(
-                                    &mut client,
-                                    &app,
-                                    &done,
-                                    &mut failed,
-                                    &mut build_requested,
-                                    build_started,
-                                )
-                                .await
-                                {
-                                    return Ok(exit(
-                                        out, &mut printer, &mut client, &mut app,
-                                        &mut updates, restore, outcome,
-                                    )
-                                    .await);
-                                }
-                            }
-                            // The frame would show a status note; without one the run
-                            // keeps going on the events that do decode.
-                            Err(e) => {
-                                eprintln!("headless: unreadable {} event: {e}", event.kind)
-                            }
+            update = crate::driver::next_update(&mut updates) => match update {
+                Update::Event(event) => {
+                    match &event {
+                        EngineEvent::PhaseChanged { phase: Phase::Running } => {
+                            build_started = true
                         }
+                        EngineEvent::TaskFinished {
+                            id,
+                            outcome: TaskOutcome::Done,
+                            ..
+                        } => done.push(id.clone()),
+                        EngineEvent::TaskFinished {
+                            id,
+                            outcome: TaskOutcome::Failed,
+                            ..
+                        } => {
+                            failed = Some(format!("task {id} failed; the build stopped"))
+                        }
+                        _ => {}
                     }
-                    Some(engine_update::Payload::ShutdownNotice(notice)) => {
-                        printer.note(out, format!("Engine stopping: {}", notice.reason))?;
-                        stopped_reason = Some(notice.reason);
+                    app.apply(event);
+                    printer.drain(out, &app)?;
+                    if let Some(outcome) = advance(
+                        &mut client,
+                        &app,
+                        &done,
+                        &mut failed,
+                        &mut build_requested,
+                        build_started,
+                    )
+                    .await
+                    {
+                        return Ok(exit(
+                            out, &mut printer, &mut client, &mut app,
+                            &mut updates, restore, outcome,
+                        )
+                        .await);
                     }
-                    _ => {}
-                },
-                Ok(None) => {
+                }
+                // The frame would show a status note; without one the run
+                // keeps going on the events that do decode.
+                Update::UnreadableEvent { kind, error } => {
+                    eprintln!("headless: unreadable {kind} event: {error}")
+                }
+                Update::ShutdownNotice(reason) => {
+                    printer.note(out, format!("Engine stopping: {reason}"))?;
+                    stopped_reason = Some(reason);
+                }
+                Update::Ignored => {}
+                Update::StreamEnded => {
                     let outcome = if all_done(&app, &done) {
                         HeadlessOutcome::Completed
                     } else {
@@ -183,12 +177,12 @@ pub async fn run_until<W: Write>(
                     )
                     .await);
                 }
-                Err(status) => {
-                    // The connection is gone; the restore below cannot reach the engine.
+                Update::ConnectionLost(message) => {
+                    // The connection is gone; the restore below cannot reach
+                    // the engine.
                     printer.finish(out)?;
                     return Ok(HeadlessOutcome::Failed(format!(
-                        "lost the engine connection: {}",
-                        status.message()
+                        "lost the engine connection: {message}"
                     )));
                 }
             },
@@ -223,12 +217,18 @@ async fn advance(
         if !build_started {
             return None;
         }
-        let pending = app.tasks.iter().filter(|t| !t.done).count();
+        let pending = app.run.tasks.iter().filter(|t| !t.done).count();
         return Some(HeadlessOutcome::Failed(format!(
             "the build stopped with {pending} task(s) pending"
         )));
     }
-    match submit(client, command_request::Action::StartBuild(StartBuild {})).await {
+    match crate::driver::submit(
+        |command| client.submit_command(command),
+        command_request::Action::StartBuild(StartBuild {}),
+        "command failed",
+    )
+    .await
+    {
         Ok(()) => {
             *build_requested = true;
             None
@@ -240,8 +240,9 @@ async fn advance(
 /// Every task in the store is done: per the latest `TasksChanged`, or per the locally
 /// recorded completions when that list lags the final `PhaseChanged`.
 fn all_done(app: &App, done: &[String]) -> bool {
-    app.tasks.iter().all(|t| t.done)
+    app.run.tasks.iter().all(|t| t.done)
         || app
+            .run
             .tasks
             .iter()
             .filter(|t| !t.done)
@@ -271,34 +272,15 @@ async fn exit<W: Write>(
     outcome
 }
 
-/// Submits one command; the error is the engine's rejection reason or the transport
-/// failure, both of which stop a headless build.
-async fn submit(
-    client: &mut EngineClient<Channel>,
-    action: command_request::Action,
-) -> Result<(), String> {
-    let response = client
-        .submit_command(CommandRequest {
-            action: Some(action),
-        })
-        .await
-        .map_err(|status| format!("command failed: {}", status.message()))?
-        .into_inner();
-    if response.accepted {
-        Ok(())
-    } else {
-        Err(response.error)
-    }
-}
-
 /// One daemon-schema field change through the engine's settings flow.
 async fn set_run_mode(client: &mut EngineClient<Channel>, mode: &str) -> Result<(), String> {
     let change = to_proto("run_mode", SettingValue::Str(mode.to_string()))?;
-    submit(
-        client,
+    crate::driver::submit(
+        |command| client.submit_command(command),
         command_request::Action::SettingsChange(SettingsChange {
             change: Some(change),
         }),
+        "command failed",
     )
     .await
 }
@@ -368,7 +350,7 @@ impl Printer {
     /// (`Pane::append` only extends the last line while it is open), so the line at
     /// `printed` is final once a newer one exists behind it.
     fn drain<W: Write>(&mut self, out: &mut W, app: &App) -> std::io::Result<()> {
-        let lines = &app.output.lines;
+        let lines = &app.run.output.lines;
         if lines.len() < self.printed {
             // The 5000-line limit dropped the front; the old lines scroll off, as
             // in the frame.

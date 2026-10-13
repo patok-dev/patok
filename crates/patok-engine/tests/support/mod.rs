@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+// Each test binary consumes a different subset of this module, and an item
+// unused by one test binary would fail the `-D warnings` clippy gate.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

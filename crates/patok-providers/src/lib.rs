@@ -10,9 +10,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 pub mod claude;
+mod cli;
 pub mod codex;
+#[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 mod process;
+#[cfg(test)]
+pub(crate) mod test_util;
 pub mod vibe;
 
 /// Everything a provider needs to run one agent session.
@@ -33,7 +37,24 @@ pub struct SessionRequest {
     /// Kill the agent after this long without progress; the hard limit is four times this.
     pub idle_timeout: Duration,
     pub cancel: CancellationToken,
-    pub allowed_tools: Vec<String>,
+    /// The tools the session may use, provider-neutral; the provider maps each
+    /// to its own CLI's tool name(s).
+    pub allowed_tools: Vec<Tool>,
+}
+
+/// One tool an agent role's allowlist may name, provider-neutral: each provider
+/// maps it to its own CLI's tool name(s).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tool {
+    Bash,
+    Edit,
+    Write,
+    Read,
+    Glob,
+    Grep,
+    NotebookEdit,
+    WebFetch,
+    WebSearch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,80 +91,83 @@ pub enum ProviderError {
     },
 }
 
-/// One back-end. Every provider exposes exactly one operation: run a session.
+/// One back-end. Every provider exposes exactly one operation -- run a session --
+/// plus the surface the engine needs to route and start it: whether its CLI is
+/// installed, and whether it runs the configured reviewer model.
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Short provider identifier, e.g. `claude`.
     fn slug(&self) -> &'static str;
+
+    /// Whether the engine routes the configured reviewer model to sessions on
+    /// this provider. Claude runs its reviewer with `reviewer_model`; the other
+    /// providers run their CLI's default model (Codex accepts a `-m` flag, but
+    /// reviewer model names are Claude model names that do not map to it).
+    fn supports_reviewer_model(&self) -> bool;
+
+    /// The availability check: `Err(CliNotFound)` when the CLI is not on PATH.
+    fn check_available(&self) -> Result<(), ProviderError>;
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError>;
 }
 
 /// The provider for `kind`, after checking that its CLI is on `PATH`.
 pub fn resolve(kind: ProviderKind) -> Result<std::sync::Arc<dyn Provider>, ProviderError> {
-    match kind {
-        ProviderKind::Claude => {
-            if !cli_on_path("claude") {
-                return Err(ProviderError::CliNotFound {
-                    cli: "claude".into(),
-                });
-            }
-            Ok(std::sync::Arc::new(claude::Claude))
-        }
-        ProviderKind::Mistral => {
-            vibe::Vibe::check_available()?;
-            Ok(std::sync::Arc::new(vibe::Vibe))
-        }
-        ProviderKind::Codex => {
-            codex::Codex::check_available()?;
-            Ok(std::sync::Arc::new(codex::Codex))
-        }
-    }
+    let provider: std::sync::Arc<dyn Provider> = match kind {
+        ProviderKind::Claude => std::sync::Arc::new(claude::Claude),
+        ProviderKind::Mistral => std::sync::Arc::new(vibe::Vibe),
+        ProviderKind::Codex => std::sync::Arc::new(codex::Codex),
+    };
+    provider.check_available()?;
+    Ok(provider)
 }
 
 /// The Builder role's tool allowlist.
-pub const BUILDER_TOOLS: &[&str] = &[
-    "Bash",
-    "Edit",
-    "Write",
-    "Read",
-    "Glob",
-    "Grep",
-    "NotebookEdit",
-    "WebFetch",
-    "WebSearch",
+pub const BUILDER_TOOLS: &[Tool] = &[
+    Tool::Bash,
+    Tool::Edit,
+    Tool::Write,
+    Tool::Read,
+    Tool::Glob,
+    Tool::Grep,
+    Tool::NotebookEdit,
+    Tool::WebFetch,
+    Tool::WebSearch,
 ];
 
 /// The Planner role's tool allowlist: read-only exploration plus file writes, no shell or web.
-pub const PLANNER_TOOLS: &[&str] = &["Read", "Glob", "Grep", "Edit", "Write"];
+pub const PLANNER_TOOLS: &[Tool] = &[Tool::Read, Tool::Glob, Tool::Grep, Tool::Edit, Tool::Write];
 
-/// The Discovery role's tool allowlist: read-only exploration, no edits, writes, shell or web.
-pub const DISCOVERY_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
+/// The Discovery role's tool allowlist: the same read-only exploration as the
+/// Plan role.
+pub use PLAN_TOOLS as DISCOVERY_TOOLS;
 
 /// The Reviewer role's tool allowlist: read and search
 /// the project, run shell commands, edit and write files -- the combined
 /// review-and-fix agent of the review stage.
-pub const REVIEWER_TOOLS: &[&str] = &["Read", "Glob", "Grep", "Bash", "Edit", "Write"];
+pub const REVIEWER_TOOLS: &[Tool] = &[
+    Tool::Read,
+    Tool::Glob,
+    Tool::Grep,
+    Tool::Bash,
+    Tool::Edit,
+    Tool::Write,
+];
 
 /// The Plan role's tool allowlist: read-only exploration, no edits, writes, shell or web.
-pub const PLAN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
+pub const PLAN_TOOLS: &[Tool] = &[Tool::Read, Tool::Glob, Tool::Grep];
 
 /// The Research role's tool allowlist: read and search
 /// the project, run shell commands and look things up on the web.
-pub const RESEARCH_TOOLS: &[&str] = &[
-    "Read",
-    "Glob",
-    "Grep",
-    "Bash",
-    "Write",
-    "WebFetch",
-    "WebSearch",
+pub const RESEARCH_TOOLS: &[Tool] = &[
+    Tool::Read,
+    Tool::Glob,
+    Tool::Grep,
+    Tool::Bash,
+    Tool::Write,
+    Tool::WebFetch,
+    Tool::WebSearch,
 ];
-
-/// Whether an executable called `name` is on `PATH` (the provider availability check).
-pub fn cli_on_path(name: &str) -> bool {
-    cli_in(name, std::env::var_os("PATH").as_deref())
-}
 
 /// Whether an executable called `name` is in one of the directories of `path`.
 pub fn cli_in(name: &str, path: Option<&std::ffi::OsStr>) -> bool {
@@ -164,7 +188,29 @@ mod tests {
     fn the_reviewer_allowlist_is_the_spec_reviewer_row() {
         assert_eq!(
             REVIEWER_TOOLS,
-            &["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
+            &[
+                Tool::Read,
+                Tool::Glob,
+                Tool::Grep,
+                Tool::Bash,
+                Tool::Edit,
+                Tool::Write
+            ]
+        );
+    }
+
+    /// Only the claude provider runs its reviewer with the configured reviewer
+    /// model; the other providers and the default mock keep their CLI's default.
+    #[test]
+    fn only_claude_supports_the_reviewer_model() {
+        assert!(claude::Claude.supports_reviewer_model());
+        assert!(!codex::Codex.supports_reviewer_model());
+        assert!(!vibe::Vibe.supports_reviewer_model());
+        assert!(!mock::MockProvider::new(vec![]).supports_reviewer_model());
+        assert!(
+            mock::MockProvider::new(vec![])
+                .with_reviewer_model(true)
+                .supports_reviewer_model()
         );
     }
 

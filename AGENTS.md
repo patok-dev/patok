@@ -12,11 +12,13 @@ cargo fmt --all --check
 
 ## Lint gate
 
-Pinned toolchain, then the MSRV toolchain if installed:
+Pinned toolchain, then the MSRV toolchain if installed. The `--workspace` runs lint the plain library build too: `--all-targets` builds test targets, which enables the `test-support` feature of `patok-tui` and `patok-providers` through dev-dependencies, so without them the no-feature build is never warning-checked.
 
 ```sh
 cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace -- -D warnings
 rustup run 1.96 cargo clippy --all-targets -- -D warnings
+rustup run 1.96 cargo clippy --workspace -- -D warnings
 ```
 
 ## Test gate

@@ -9,8 +9,6 @@ use std::time::SystemTime;
 use patok_core::config::{
     ConfigFiles, SettingValue, TuiSettings, load_tui, project_file, set_tui_field,
 };
-use patok_proto::settings_change::Change;
-use patok_proto::{Provider, Role, RunMode};
 
 /// The shell's own central in-memory configuration: the merged,
 /// normalized tui settings plus the state needed to detect a hand-edited config file.
@@ -85,6 +83,7 @@ impl ShellSettings {
 
     /// Reloads all layers unconditionally (the shell itself just rewrote a file, so the
     /// mtime-based reload cannot be relied on); returns the re-merge warnings.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn reload(&mut self) -> Vec<String> {
         let (_, warnings) = self.remerge();
         warnings
@@ -107,6 +106,7 @@ impl ShellSettings {
 
     /// The config files the shell reads, with the user-local layer every tui field is
     /// persisted to (used by the settings overlay's touched-file restore).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn files(&self) -> &ConfigFiles {
         &self.files
     }
@@ -125,255 +125,106 @@ fn mtimes(files: &ConfigFiles, data_dir: Option<&Path>) -> Vec<Option<SystemTime
     .collect()
 }
 
-/// Maps one daemon-schema settings change onto its typed wire case, the exact inverse of
-/// the engine's `from_proto` (crates/patok-engine/src/settings.rs): every overlay row a
-/// shell can commit has a case here; names without one are a programming error on the
-/// shell side. The value's shape is checked against the case, not just the registry, so
-/// a mismatch is a user-facing rejection rather than a wire corruption.
-pub fn to_proto(field: &str, value: SettingValue) -> Result<Change, String> {
-    let wrong = |expect: &str| Err(format!("`{field}` must be {expect}"));
-    let boolean = || -> Result<bool, String> {
-        value
-            .as_bool()
-            .ok_or_else(|| format!("`{field}` must be a boolean"))
-    };
-    let uint = || -> Result<u32, String> {
-        let raw = value
-            .as_uint()
-            .ok_or_else(|| format!("`{field}` must be a whole number"))?;
-        u32::try_from(raw).map_err(|_| format!("`{field}` must be at most {}", u32::MAX))
-    };
-    let string = || -> Result<String, String> {
-        value
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| format!("`{field}` must be a string"))
-    };
-    Ok(match field {
-        "provider" => Change::Provider(provider_of(&string()?)? as i32),
-        "model" => Change::ModelOverride(string()?),
-        "research_provider" | "planner_provider" | "builder_provider" | "reviewer_provider"
-        | "discovery_provider" => Change::RoleProvider(patok_proto::RoleProvider {
-            role: role_of(&field[..field.len() - 9])? as i32,
-            provider: provider_of(&string()?)? as i32,
-        }),
-        "research_model" | "planner_model" | "builder_model" | "reviewer_model"
-        | "discovery_model" => Change::RoleModel(patok_proto::RoleModel {
-            role: role_of(&field[..field.len() - 6])? as i32,
-            model: string()?,
-        }),
-        "run_mode" => Change::RunMode(match string()?.as_str() {
-            "sprint" => RunMode::Sprint,
-            "continuous" => RunMode::Continuous,
-            _ => return wrong("one of `sprint`, `continuous`"),
-        } as i32),
-        "plan_enabled" => Change::PlanEnabled(boolean()?),
-        "skip_planner_for_simple" => Change::SkipPlannerForSimple(boolean()?),
-        "skip_research_for_simple" => Change::SkipResearchForSimple(boolean()?),
-        "skip_review_for_simple" => Change::SkipReviewForSimple(boolean()?),
-        "review_confidence_threshold" => Change::ReviewConfidenceThreshold(uint()?),
-        "review_multipass_threshold" => Change::ReviewMultipassThreshold(uint()?),
-        "batch_review" => Change::BatchReview(boolean()?),
-        "planner_lookahead" => Change::PlannerLookahead(boolean()?),
-        "review_in_loop" => Change::ReviewInLoop(boolean()?),
-        "confidence_threshold" => Change::ConfidenceThreshold(match value {
-            SettingValue::Float(f) => f,
-            _ => return wrong("a number"),
-        }),
-        "agent_timeout_secs" => Change::AgentTimeoutSecs(uint()?),
-        "pause_between_tasks_secs" => Change::PauseBetweenTasksSecs(uint()?),
-        "pause_between_agents_secs" => Change::PauseBetweenAgentsSecs(uint()?),
-        "pause_between_cycles_secs" => Change::PauseBetweenCyclesSecs(uint()?),
-        "engine_idle_timeout_secs" => Change::EngineIdleTimeoutSecs(uint()?),
-        "adaptive_pauses" => Change::AdaptivePauses(boolean()?),
-        "discovery_cooldown_secs" => Change::DiscoveryCooldownSecs(uint()?),
-        "discovery_cooldown_cap_secs" => Change::DiscoveryCooldownCapSecs(uint()?),
-        "auto_push_remote" => Change::AutoPushRemote(string()?),
-        other => return Err(format!("no settings-change case for `{other}`")),
-    })
-}
-
-fn role_of(name: &str) -> Result<Role, String> {
-    match name {
-        "research" => Ok(Role::Research),
-        "planner" => Ok(Role::Planner),
-        "builder" => Ok(Role::Builder),
-        "reviewer" => Ok(Role::Reviewer),
-        "discovery" => Ok(Role::Discovery),
-        _ => Err(format!("unknown agent role `{name}`")),
-    }
-}
-
-/// The canonical wire spelling of a provider; unknown text is a user-facing rejection.
-fn provider_of(name: &str) -> Result<Provider, String> {
-    match name {
-        "claude" => Ok(Provider::Claude),
-        "codex" => Ok(Provider::Codex),
-        "opencode" => Ok(Provider::Opencode),
-        "ghcopilot" => Ok(Provider::Ghcopilot),
-        "mistral" => Ok(Provider::Mistral),
-        other => Err(format!("`provider` must be a provider name, got {other:?}")),
-    }
-}
+/// The shell direction of the settings-change wire mapping: the exact inverse of the
+/// engine's `from_proto`, generated with it in `patok-wire` from one key-to-case list
+/// (finding 10), so the two directions cannot disagree.
+pub use patok_wire::to_proto;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patok_core::config::{RailMode, Theme};
+    use patok_core::config::{EnumSpelling, ProviderName, RailMode, Theme};
     use patok_proto::settings_change::Change;
 
-    /// The inverse of the engine's `from_proto`: every case this shell can produce maps
-    /// back onto its registry key, so the two ends agree at compile time.
-    #[test]
-    fn to_proto_maps_every_overlay_field_onto_its_wire_case() {
-        let str = |v: &str| SettingValue::Str(v.into());
-        let uint = |v: u64| SettingValue::Uint(v);
-        assert_eq!(
-            to_proto("provider", str("mistral")).unwrap(),
-            Change::Provider(Provider::Mistral as i32)
-        );
-        assert_eq!(
-            to_proto("model", str("opus")).unwrap(),
-            Change::ModelOverride("opus".into())
-        );
-        // The per-role provider and model rows (T90.1) map onto their wire cases.
-        for (role, model) in [
-            ("research", "sonnet"),
-            ("planner", "opus"),
-            ("builder", "opus"),
-            ("reviewer", "sonnet"),
-            ("discovery", "opus"),
-        ] {
-            assert_eq!(
-                to_proto(&format!("{role}_model"), str(model)).unwrap(),
-                Change::RoleModel(patok_proto::RoleModel {
-                    role: role_of(role).unwrap() as i32,
-                    model: model.into(),
-                }),
-                "{role}_model"
-            );
-            assert_eq!(
-                to_proto(&format!("{role}_provider"), str("mistral")).unwrap(),
-                Change::RoleProvider(patok_proto::RoleProvider {
-                    role: role_of(role).unwrap() as i32,
-                    provider: Provider::Mistral as i32,
-                }),
-                "{role}_provider"
-            );
-        }
-        assert_eq!(
-            to_proto("run_mode", str("continuous")).unwrap(),
-            Change::RunMode(RunMode::Continuous as i32)
-        );
-        for (field, change) in [
-            ("plan_enabled", Change::PlanEnabled(false)),
-            (
-                "skip_planner_for_simple",
-                Change::SkipPlannerForSimple(true),
-            ),
-            (
-                "skip_research_for_simple",
-                Change::SkipResearchForSimple(true),
-            ),
-            ("skip_review_for_simple", Change::SkipReviewForSimple(true)),
-            ("batch_review", Change::BatchReview(false)),
-            ("planner_lookahead", Change::PlannerLookahead(true)),
-            ("review_in_loop", Change::ReviewInLoop(true)),
-            ("adaptive_pauses", Change::AdaptivePauses(false)),
-        ] {
-            assert_eq!(
-                to_proto(field, SettingValue::Bool(bool_of(&change))).unwrap(),
-                change,
-                "{field}"
-            );
-        }
-        assert_eq!(
-            to_proto("confidence_threshold", SettingValue::Float(0.75)).unwrap(),
-            Change::ConfidenceThreshold(0.75)
-        );
-        assert_eq!(
-            to_proto("review_confidence_threshold", uint(5)).unwrap(),
-            Change::ReviewConfidenceThreshold(5)
-        );
-        assert_eq!(
-            to_proto("review_multipass_threshold", uint(8)).unwrap(),
-            Change::ReviewMultipassThreshold(8)
-        );
-        assert_eq!(
-            to_proto("agent_timeout_secs", uint(120)).unwrap(),
-            Change::AgentTimeoutSecs(120)
-        );
-        assert_eq!(
-            to_proto("pause_between_tasks_secs", uint(10)).unwrap(),
-            Change::PauseBetweenTasksSecs(10)
-        );
-        assert_eq!(
-            to_proto("pause_between_agents_secs", uint(3)).unwrap(),
-            Change::PauseBetweenAgentsSecs(3)
-        );
-        assert_eq!(
-            to_proto("pause_between_cycles_secs", uint(30)).unwrap(),
-            Change::PauseBetweenCyclesSecs(30)
-        );
-        assert_eq!(
-            to_proto("engine_idle_timeout_secs", uint(1800)).unwrap(),
-            Change::EngineIdleTimeoutSecs(1800)
-        );
-        assert_eq!(
-            to_proto("discovery_cooldown_secs", uint(300)).unwrap(),
-            Change::DiscoveryCooldownSecs(300)
-        );
-        assert_eq!(
-            to_proto("discovery_cooldown_cap_secs", uint(1800)).unwrap(),
-            Change::DiscoveryCooldownCapSecs(1800)
-        );
-        assert_eq!(
-            to_proto("auto_push_remote", str("origin")).unwrap(),
-            Change::AutoPushRemote("origin".into())
-        );
-        // An empty optional string clears the key.
-        assert_eq!(
-            to_proto("auto_push_remote", str("")).unwrap(),
-            Change::AutoPushRemote(String::new())
-        );
-    }
-
-    /// The boolean carried by a `Change` case, for the round-trip assertion above.
-    fn bool_of(change: &Change) -> bool {
-        match change {
-            Change::PlanEnabled(v)
-            | Change::SkipPlannerForSimple(v)
-            | Change::SkipResearchForSimple(v)
-            | Change::SkipReviewForSimple(v)
-            | Change::BatchReview(v)
-            | Change::PlannerLookahead(v)
-            | Change::ReviewInLoop(v)
-            | Change::AdaptivePauses(v) => *v,
-            _ => panic!("not a boolean case"),
+    /// A value valid for the core registry kind, the sample the drift test sends
+    /// through the wire and reads back.
+    fn sample_value(kind: &patok_core::config::FieldKind) -> SettingValue {
+        use patok_core::config::FieldKind as CoreFieldKind;
+        match kind {
+            CoreFieldKind::Bool => SettingValue::Bool(true),
+            CoreFieldKind::Uint
+            | CoreFieldKind::PositiveUint
+            | CoreFieldKind::Port
+            | CoreFieldKind::Range(..) => SettingValue::Uint(7),
+            CoreFieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) / 2.0),
+            CoreFieldKind::Str | CoreFieldKind::OptStr => SettingValue::Str("sample".into()),
+            CoreFieldKind::Enum(accepted) => SettingValue::Str(accepted[0].into()),
+            CoreFieldKind::Provider => SettingValue::Str("claude".into()),
+            CoreFieldKind::Composite => panic!("composite keys are not registry fields"),
         }
     }
 
+    /// Finding 10's cross-crate drift test: every core daemon field has an overlay
+    /// row whose editor matches the registry kind, maps through `to_proto` onto a
+    /// wire case, and the engine's `from_proto` maps that case back onto the same
+    /// key and value; and every daemon row of the overlay names a registry key (or
+    /// one of the two read-only report rows). A setting missing from any of the
+    /// three fails here instead of drifting silently.
     #[test]
-    fn to_proto_rejects_mismatched_shapes_and_unknown_fields() {
-        let error = to_proto("plan_enabled", SettingValue::Str("yes".into())).unwrap_err();
-        assert!(error.contains("must be a boolean"), "{error}");
-        let error = to_proto("agent_timeout_secs", SettingValue::Str("x".into())).unwrap_err();
-        assert!(error.contains("must be a whole number"), "{error}");
-        // Wire numbers are u32: anything larger is rejected before it can wrap.
-        let error = to_proto(
-            "agent_timeout_secs",
-            SettingValue::Uint(u64::from(u32::MAX) + 1),
-        )
-        .unwrap_err();
-        assert!(error.contains("at most"), "{error}");
-        let error = to_proto("run_mode", SettingValue::Str("fast".into())).unwrap_err();
-        assert!(error.contains("`sprint`, `continuous`"), "{error}");
-        let error = to_proto("no_such_key", SettingValue::Uint(1)).unwrap_err();
-        assert!(error.contains("no settings-change case"), "{error}");
-        let error = to_proto("provider", SettingValue::Str("not-a-provider".into())).unwrap_err();
-        assert!(error.contains("provider name"), "{error}");
-        let error = to_proto("research_model", SettingValue::Bool(true)).unwrap_err();
-        assert!(error.contains("must be a string"), "{error}");
+    fn every_daemon_field_has_an_overlay_row_and_round_trips_the_wire() {
+        use patok_core::config::{DAEMON_FIELDS, daemon_field};
+        use patok_engine::from_proto;
+
+        let rows: std::collections::BTreeMap<&str, &crate::overlay::Row> = crate::overlay::SECTIONS
+            .iter()
+            .flat_map(|section| section.rows.iter())
+            .filter(|row| row.schema == crate::overlay::Schema::Daemon)
+            .map(|row| (row.key, row))
+            .collect();
+        for &key in DAEMON_FIELDS {
+            let row = *rows
+                .get(key)
+                .unwrap_or_else(|| panic!("`{key}` has no overlay row"));
+            let kind = daemon_field(key).expect("every registry key has a kind");
+            assert_eq!(row.kind, crate::overlay::overlay_kind(&kind), "`{key}`");
+            let sample = sample_value(&kind);
+            let change = to_proto(key, sample.clone())
+                .unwrap_or_else(|error| panic!("`{key}` has no to_proto case: {error}"));
+            let (back, value) = from_proto(&change);
+            assert_eq!(back, key, "`{key}` maps back onto the wrong key");
+            assert_eq!(value, sample, "`{key}` does not round-trip the value");
+        }
+        for key in rows.keys() {
+            assert!(
+                DAEMON_FIELDS.contains(key) || *key == "engine_version" || *key == "shell_version",
+                "`{key}` is not a daemon registry key"
+            );
+        }
+    }
+
+    /// Finding 11: every provider spelling traces back to the core enums. Each
+    /// engine-implemented kind resolves to a provider whose slug is the enum's
+    /// own spelling (or, when its CLI is not installed, names the missing CLI),
+    /// and each config name round-trips its canonical spelling through both
+    /// proto mappers, with distinct wire numbers, matching the kind it
+    /// resolves to.
+    #[test]
+    fn every_provider_variant_resolves_and_round_trips_the_wire() {
+        use patok_core::config::ProviderKind;
+        use patok_engine::from_proto;
+        use patok_providers::{ProviderError, resolve};
+
+        for &(kind, spelling) in ProviderKind::VARIANTS {
+            match resolve(kind) {
+                Ok(provider) => assert_eq!(provider.slug(), spelling),
+                Err(ProviderError::CliNotFound { .. }) => {}
+                Err(other) => panic!("unexpected error for `{spelling}`: {other}"),
+            }
+        }
+        let mut wire_numbers = std::collections::HashSet::new();
+        for &(name, spelling) in ProviderName::VARIANTS {
+            let change = to_proto("provider", SettingValue::Str(spelling.into())).unwrap();
+            assert!(wire_numbers.insert(match change {
+                Change::Provider(raw) => raw,
+                other => panic!("`{spelling}` did not map to a wire provider: {other:?}"),
+            }));
+            let (key, value) = from_proto(&change);
+            assert_eq!(key, "provider");
+            assert_eq!(value, SettingValue::Str(spelling.into()), "{spelling}");
+            if let Some(kind) = name.kind() {
+                assert_eq!(kind.as_str(), spelling);
+            }
+        }
     }
 
     /// A holder whose user-local layer is a tempdir file, plus its path.

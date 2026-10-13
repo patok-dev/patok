@@ -1,40 +1,64 @@
-//! The shell: ratatui UI and gRPC client. Render-only; it holds no pipeline state
+//! The shell: ratatui UI. Render-only; it holds no pipeline state
 //!.
 
 mod app;
-pub mod client;
+mod choice;
+mod dialog_editor;
+mod driver;
+mod events;
+mod geom;
 mod headless;
+mod hit;
+mod keys;
 mod markdown;
+mod modal;
+mod mouse;
 mod overlay;
 mod pipeline;
 mod project;
 mod run;
 mod settings;
+mod submit;
 mod theme;
+mod theme_picker;
 mod ui;
+mod view;
 
-pub use app::{
-    Action, App, DialogKind, FrameFocus, MenuChoice, QueueRun, SOFT_STOP_PENDING, ThemeModal,
-    menu_entries,
-};
+// The surface the `patok` binary drives: the two drivers' entries and
+// their shared outcome types.
 pub use headless::{HeadlessOutcome, run_until};
-pub use overlay::{
-    Editor, Entry, FieldKind, Number, Row, SCROLL_MARGIN, SETTINGS_CHOICES, Schema, Section,
-    SettingsChoice, SettingsOverlay, StatusLevel, clamp_focus, group_entries, header_fold,
-    scroll_offset,
+pub use run::{Outcome, Spawner, run};
+
+// The internals the crate's own integration tests reach: re-exported only
+// under the test-support feature, enabled for those tests through the
+// self dev-dependency in Cargo.toml.
+#[cfg(any(test, feature = "test-support"))]
+pub use app::{
+    Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, finished_line, human_duration,
+    menu_entries, started_line,
 };
-pub use pipeline::{
-    RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width, render_rail,
-    tile_status, tile_style, tile_text,
+#[cfg(any(test, feature = "test-support"))]
+pub use hit::{
+    CLOSE_BUTTON_WIDTH, button_text, close_button_rect, footer_button_rects, frame_at, theme_row_at,
 };
-pub use run::{Outcome, Spawner, restart, run, save_theme, shutdown_progress};
+#[cfg(any(test, feature = "test-support"))]
+pub use modal::Modal;
+#[cfg(any(test, feature = "test-support"))]
+pub use overlay::{Entry, FieldKind, SETTINGS_CHOICES, Schema, StatusLevel};
+#[cfg(any(test, feature = "test-support"))]
+pub use pipeline::{RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width};
+#[cfg(any(test, feature = "test-support"))]
+pub use run::{restart, save_theme, shutdown_progress};
+#[cfg(any(test, feature = "test-support"))]
 pub use settings::{ShellSettings, to_proto};
-pub use theme::{AgentText, Theme, theme_modal_groups};
+#[cfg(any(test, feature = "test-support"))]
+pub use theme::{Theme, theme_modal_groups};
+#[cfg(any(test, feature = "test-support"))]
 pub use ui::{
-    CLOSE_BUTTON_WIDTH, DIALOG_WATERMARK, INJECT_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH,
-    SETTINGS_HELP_PANEL_HEIGHT, SETTINGS_HELP_PANEL_WIDTH, button_text, close_button_rect,
-    dialog_area, finished_line, fitted_hints, footer_button_rects, format_elapsed, frame_at,
-    frame_constraints, human_duration, menu_area, menu_row_at, output_title, output_title_parts,
-    output_title_spans, render, settings_area, settings_body_areas, settings_confirm_area,
-    settings_row_at, started_line, stop_area, theme_area, theme_row_at,
+    DIALOG_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
+    SETTINGS_HELP_PANEL_WIDTH, dialog_area, fitted_hints, format_elapsed, frame_constraints,
+    output_title, output_title_parts, output_title_spans, render, settings_area,
+    settings_body_areas, settings_confirm_area, stop_area, theme_area,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use view::FrameFocus;
