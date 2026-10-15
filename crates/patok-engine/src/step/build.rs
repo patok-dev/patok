@@ -1,3 +1,5 @@
+//! The per-task build step: the builder session and the claims file.
+
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
 

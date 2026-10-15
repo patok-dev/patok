@@ -1,3 +1,5 @@
+//! The per-task commit step: the progress write and the `feat`/`WIP` commit.
+
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
 use patok_core::utils::atomic_write;
@@ -26,8 +28,8 @@ impl<'a> CommitStep<'a> {
 
     pub(crate) async fn run(&self, task: &Task, token: &str, validated: bool) -> Option<Commit> {
         let ctx = self.ctx;
-        let path = ctx.task_list().path().to_path_buf();
-        match ctx.task_list().write_progress(task, token, validated).await {
+        let path = ctx.task_file().to_path_buf();
+        match ctx.write_progress(task, token, validated).await {
             Ok(true) => {}
             Ok(false) => ctx.notice(
                 NoticeLevel::Warning,

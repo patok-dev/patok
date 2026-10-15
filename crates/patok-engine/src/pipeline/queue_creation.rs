@@ -1,12 +1,38 @@
+//! The queue-creation pipeline and its run kinds.
+
 use std::time::Instant;
 
 use patok_core::event::AgentRole;
 
 use crate::context::SessionContext;
-use crate::engine::QueueCreation;
 use crate::step::queue_research::QueueResearchStep;
 use crate::step::validate_append::ValidateAppendStep;
 use crate::task_list::AppendMode;
+
+/// The two research queue-creation runs (T69.1): the Research agent's second
+/// duty besides investigating a task is creating the project's initial task
+/// queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueCreation {
+    /// The NeedsQueue scenario's empty submit: create the initial queue from
+    /// the spec.
+    Bootstrap,
+    /// The QueueComplete scenario's empty submit: a gap scan for worthwhile
+    /// follow-up work.
+    Scan,
+}
+
+impl QueueCreation {
+    /// The run's research report stem: its report is saved as
+    /// `research/<stem>-<timestamp>.md` and reused within the research
+    /// reuse window by stem.
+    pub(crate) fn stem(self) -> &'static str {
+        match self {
+            Self::Bootstrap => "bootstrap",
+            Self::Scan => "scan",
+        }
+    }
+}
 
 /// The queue-creation pipeline (section 10 of
 /// docs/private/engine-restructure.md): it orders the queue-creation

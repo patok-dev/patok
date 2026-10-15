@@ -22,7 +22,8 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
 use tonic::{Request, Response, Status};
 
-use crate::engine::{Attachment, Engine, QueueCreation, RunState as EngineRunState};
+use crate::QueueCreation;
+use crate::engine::{Attachment, Engine, RunState as EngineRunState};
 
 type Stream<T> = ReceiverStream<Result<T, Status>>;
 

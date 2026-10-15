@@ -1,3 +1,5 @@
+//! The shared post-run check of the append-style runs.
+
 use patok_core::event::{AgentRole, NoticeLevel};
 
 use crate::context::SessionContext;
@@ -32,15 +34,10 @@ impl<'a> ValidateAppendStep<'a> {
         role: AgentRole,
         record_ui_added: bool,
     ) -> Result<Vec<String>, String> {
-        match self
-            .ctx
-            .task_list()
-            .check_appended(before, mode, role)
-            .await
-        {
+        match self.ctx.check_appended(before, mode, role).await {
             Ok(ids) => {
                 if record_ui_added {
-                    self.ctx.task_list().record_ui_added(&ids);
+                    self.ctx.record_ui_added(&ids);
                 }
                 match ids.len() {
                     0 => self.ctx.notice(NoticeLevel::Info, "No tasks added."),

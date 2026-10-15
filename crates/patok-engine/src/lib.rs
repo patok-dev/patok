@@ -22,10 +22,11 @@ mod session;
 mod step;
 mod task_list;
 
-pub use engine::{Engine, EngineConfig, QueueCreation};
+pub use engine::{Engine, EngineConfig};
 /// The settings-change wire mapping, generated with the shell direction in
 /// `patok-wire` from one key-to-case list (finding 10).
 pub use patok_wire::from_proto;
+pub use pipeline::queue_creation::QueueCreation;
 pub use server::{prepare_runtime_dir, serve};
 /// The pure task-file functions, re-exported under their historical name
 /// (section 5 of docs/private/engine-restructure.md).

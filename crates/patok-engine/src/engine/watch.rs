@@ -9,17 +9,20 @@ const TASK_FILE_POLL: Duration = Duration::from_secs(2);
 
 impl Engine {
     /// The startup cleanup (T72.1): prunes old completed task lines from the
-    /// task file, adopts the cleaned file as the queue (the reset and the
-    /// orphaned-temp sweep both run in `TaskList::cleanup_completed`) and
-    /// broadcasts the change. Called once from `serve`, before the task-file
-    /// watcher starts, never during the session.
+    /// task file and removes its orphaned temp siblings (both in
+    /// `TaskList::cleanup_completed`, under the task-file lock), then adopts
+    /// the cleaned file as the queue and broadcasts the change under one
+    /// state lock. Called once from `serve`, before the task-file watcher
+    /// starts, never during the session.
     pub async fn cleanup_completed_tasks(&self) {
         match self.inner.task_list.cleanup_completed().await {
-            Ok(Some(merged)) => {
+            Ok(true) => {
                 let mut state = self.state();
-                self.emit_locked(&mut state, EngineEvent::TasksChanged { tasks: merged });
+                if let Some(merged) = self.inner.task_list.reset() {
+                    self.emit_locked(&mut state, EngineEvent::TasksChanged { tasks: merged });
+                }
             }
-            Ok(None) => {}
+            Ok(false) => {}
             Err(error) => {
                 tracing::warn!(
                     "startup cleanup of {}: {error}",

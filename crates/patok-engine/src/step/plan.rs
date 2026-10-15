@@ -1,3 +1,5 @@
+//! The per-task plan step: the plan gate, its one retry and the plan file.
+
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
 

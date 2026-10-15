@@ -14,11 +14,10 @@ use patok_core::event::TaskOutcome;
 use patok_core::task::Task;
 
 use crate::context::SessionContext;
-use crate::engine::QueueCreation;
 use crate::pipeline::add_task::AddTaskPipeline;
 use crate::pipeline::build::BuildPipeline;
 use crate::pipeline::discovery::DiscoveryPipeline;
-use crate::pipeline::queue_creation::QueueCreationPipeline;
+use crate::pipeline::queue_creation::{QueueCreation, QueueCreationPipeline};
 
 /// One engine-owning unit of work: the kind says which one runs, and the
 /// context holds the settings snapshot and cancel token it runs on. The
@@ -133,7 +132,7 @@ impl Session {
     /// when none remain (a task added externally mid-session is picked up here
     /// like any other).
     fn begin_next_task(ctx: &SessionContext) -> Option<Task> {
-        let task = ctx.task_list().next_pending().ok().flatten()?;
+        let task = ctx.next_pending()?;
         ctx.begin_task(&task);
         Some(task)
     }
@@ -158,7 +157,7 @@ impl Session {
     /// settings snapshot. Returns how many tasks it appended, or `None`
     /// when no round ran to completion.
     async fn run_scheduled_discovery(ctx: &SessionContext) -> Option<usize> {
-        let before = ctx.task_list().read_before().await?;
+        let before = ctx.read_before().await?;
         ctx.gap_discovery_started();
         let added = Self::run_discovery_round(ctx, &before).await;
         ctx.record_round(added);
