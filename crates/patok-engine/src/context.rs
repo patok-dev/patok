@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::Engine;
 use crate::engine::{Inner, Tiles, resolve_provider};
 use crate::git::Git;
-use crate::task_list::TaskList;
+use crate::task_list::{AppendMode, AppendRejection};
 
 /// One session's context (section 8 of docs/private/engine-restructure.md):
 /// the unit-of-work snapshot taken at the session's start -- the provider,
@@ -27,7 +27,6 @@ use crate::task_list::TaskList;
 /// cancel token and a private handle on the engine internals. The steps and
 /// pipelines borrow `&SessionContext`; it is the only bridge to the engine's
 /// bus, tile and reconcile paths, exposed through these narrow methods.
-#[derive(Clone)]
 pub(crate) struct SessionContext {
     inner: Arc<Inner>,
     provider: Arc<dyn Provider>,
@@ -97,9 +96,12 @@ impl SessionContext {
         &self.cancel
     }
 
-    /// Records the event for replay and pushes it to the attached shell.
-    pub(crate) fn emit(&self, event: EngineEvent) {
-        self.engine().emit(event);
+    /// A `'static` emitter for the agent-event forwarder, which runs on its
+    /// own task beside the provider session: each call records the event for
+    /// replay and pushes it to the attached shell.
+    pub(crate) fn event_sink(&self) -> impl Fn(EngineEvent) + Send + 'static {
+        let engine = self.engine();
+        move |event| engine.emit(event)
     }
 
     /// Emits one notice to the attached shell.
@@ -130,10 +132,56 @@ impl SessionContext {
         self.engine().update_tiles(update);
     }
 
-    /// The engine's task list: the task-file path, the in-memory queue and
-    /// the file lock guarding it.
-    pub(crate) fn task_list(&self) -> &TaskList {
-        &self.inner.task_list
+    /// The task file's path.
+    pub(crate) fn task_file(&self) -> &Path {
+        self.inner.task_list.path()
+    }
+
+    /// The first pending task as the task file has it now; `None` when none
+    /// remain or the file cannot be read.
+    pub(crate) fn next_pending(&self) -> Option<Task> {
+        self.inner.task_list.next_pending().ok().flatten()
+    }
+
+    /// IDs of the pending tasks in the task file (the review deferral's
+    /// input).
+    pub(crate) fn pending_ids(&self) -> Vec<String> {
+        self.inner.task_list.pending_ids()
+    }
+
+    /// The task file before a gap discovery round, read under the file lock
+    /// (T77.1); `None` on a read error.
+    pub(crate) async fn read_before(&self) -> Option<String> {
+        self.inner.task_list.read_before().await
+    }
+
+    /// The post-session check of an append-style run, under the file lock.
+    pub(crate) async fn check_appended(
+        &self,
+        before: &str,
+        mode: AppendMode,
+        role: AgentRole,
+    ) -> Result<Vec<String>, AppendRejection> {
+        self.inner
+            .task_list
+            .check_appended(before, mode, role)
+            .await
+    }
+
+    /// Adds `ids` to the engine run's UI-added task IDs.
+    pub(crate) fn record_ui_added(&self, ids: &[String]) {
+        self.inner.task_list.record_ui_added(ids);
+    }
+
+    /// Writes the task's progress token into its line, ticking it when
+    /// `done`, under the file lock; whether the line was found.
+    pub(crate) async fn write_progress(
+        &self,
+        task: &Task,
+        token: &str,
+        done: bool,
+    ) -> std::io::Result<bool> {
+        self.inner.task_list.write_progress(task, token, done).await
     }
 
     /// Re-reads the task file, merges it into the queue and broadcasts the

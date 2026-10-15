@@ -4,10 +4,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::state::State;
 use super::{AttachError, Attachment, Engine};
-use crate::TASK_FILE;
 use crate::session::{Session, SessionKind};
 use crate::step::research::reusable_research_report;
 use crate::taskfile::RemoveOutcome;
+use crate::{QueueCreation, TASK_FILE};
 
 /// Which `start_*` command is asking: the four entry points share one guard
 /// preamble and differ only in the wording of two of its rejections (finding
@@ -17,19 +17,6 @@ pub(crate) enum StartCommand {
     AddTasks,
     QueueCreation,
     Discovery,
-}
-
-/// The two research queue-creation runs (T69.1): the Research agent's second
-/// duty besides investigating a task is creating the project's initial task
-/// queue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueueCreation {
-    /// The NeedsQueue scenario's empty submit: create the initial queue from
-    /// the spec.
-    Bootstrap,
-    /// The QueueComplete scenario's empty submit: a gap scan for worthwhile
-    /// follow-up work.
-    Scan,
 }
 
 impl StartCommand {
@@ -46,18 +33,6 @@ impl StartCommand {
         match self {
             Self::AddTasks => "the planner is already running",
             _ => "tasks are being planned; wait for the planner to finish",
-        }
-    }
-}
-
-impl QueueCreation {
-    /// The run's research report stem: its report is saved as
-    /// `research/<stem>-<timestamp>.md` and reused within the research
-    /// reuse window by stem.
-    pub(crate) fn stem(self) -> &'static str {
-        match self {
-            Self::Bootstrap => "bootstrap",
-            Self::Scan => "scan",
         }
     }
 }
@@ -336,25 +311,21 @@ impl Engine {
         if id.is_empty() {
             return Err("the task id is empty".into());
         }
-        // Reading `current_task` before taking the task-list lock keeps the
-        // lock order engine state first; the Session's next-task pick loads
-        // the file without the lock either way, so the documented race
-        // above and its consequence are unchanged.
-        {
-            let state = self.state();
-            if state.current_task.as_deref() == Some(id) {
+        let path = self.inner.task_list.path();
+        // `current_task` is read under the task-file lock, which shrinks the
+        // race window against the Session's next-task pick (see above).
+        let in_progress = || self.state().current_task.as_deref() == Some(id);
+        match self.inner.task_list.remove(id, in_progress).await {
+            Ok(None) => {
                 return Err(format!(
                     "task {id} is in progress; wait for it to finish before removing it"
                 ));
             }
-        }
-        let path = self.inner.task_list.path();
-        match self.inner.task_list.remove(id).await {
-            Ok(RemoveOutcome::Removed) => {}
-            Ok(RemoveOutcome::Completed) => {
+            Ok(Some(RemoveOutcome::Removed)) => {}
+            Ok(Some(RemoveOutcome::Completed)) => {
                 return Err(format!("task {id} is completed and cannot be removed"));
             }
-            Ok(RemoveOutcome::NotFound) => {
+            Ok(Some(RemoveOutcome::NotFound)) => {
                 return Err(format!("no task with id {id} in {TASK_FILE}"));
             }
             Err(e) => {

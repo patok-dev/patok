@@ -1,3 +1,6 @@
+//! The per-task research step and the research-report helpers it shares
+//! with the queue-creation research step.
+
 use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;

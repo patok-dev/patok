@@ -197,10 +197,22 @@ impl TaskList {
     }
 
     /// Removes the task line with the given id from the file (T98.1), under
-    /// the file lock.
-    pub(crate) async fn remove(&self, id: &str) -> io::Result<RemoveOutcome> {
+    /// the file lock. `in_progress` runs inside the same lock hold, before
+    /// the file is touched, which shrinks the race window against the
+    /// session's next-task pick; when it reports the task as the running
+    /// one, nothing is removed and `None` is returned. It may take the
+    /// engine state lock: the only path that takes the file lock under the
+    /// state lock, [`TaskList::snapshot_before`], only tries it.
+    pub(crate) async fn remove(
+        &self,
+        id: &str,
+        in_progress: impl FnOnce() -> bool,
+    ) -> io::Result<Option<RemoveOutcome>> {
         let _guard = self.lock.lock().await;
-        file::remove_task(&self.path, id)
+        if in_progress() {
+            return Ok(None);
+        }
+        file::remove_task(&self.path, id).map(Some)
     }
 
     /// Writes the task's five-position progress token into its line, ticking
@@ -217,13 +229,10 @@ impl TaskList {
     }
 
     /// The startup cleanup (T72.1) plus the task file's orphaned temp-file
-    /// sweep, both under the file lock. When the file was rewritten, the
-    /// queue starts over from the cleaned file -- a plain reconcile would
-    /// keep the pruned completed tasks in memory (reconcile protects done
-    /// tasks that vanish from the file), undoing the cleanup in the queue --
-    /// and `Some(merged)` is returned when the queue changed, so the caller
-    /// can broadcast it.
-    pub(crate) async fn cleanup_completed(&self) -> io::Result<Option<Vec<Task>>> {
+    /// sweep, both under the file lock. Returns whether the file was
+    /// rewritten; the caller then starts the queue over with
+    /// [`TaskList::reset`] under the engine state lock.
+    pub(crate) async fn cleanup_completed(&self) -> io::Result<bool> {
         let _guard = self.lock.lock().await;
         match atomic_write::sweep_temp_files(&self.path) {
             Ok(0) => {}
@@ -235,18 +244,24 @@ impl TaskList {
             }
             Err(error) => tracing::warn!("startup temp sweep of {}: {error}", self.path.display()),
         }
-        if !file::cleanup_completed(&self.path)? {
-            return Ok(None);
-        }
-        // The queue starts over from the cleaned file.
-        let file = file::load(&self.path)?;
+        file::cleanup_completed(&self.path)
+    }
+
+    /// Starts the queue over from the file -- after the startup cleanup a
+    /// plain reconcile would keep the pruned completed tasks in memory
+    /// (reconcile protects done tasks that vanish from the file), undoing
+    /// the cleanup in the queue. `Some(merged)` when the queue changed,
+    /// `None` when it did not or the file could not be read. Synchronous,
+    /// so a caller may run it while holding the engine state lock.
+    pub(crate) fn reset(&self) -> Option<Vec<Task>> {
+        let file = file::load(&self.path).ok()?;
         let merged = file::reconcile(&[], file, None);
         let mut shared = self.shared();
         if merged == shared.tasks {
-            return Ok(None);
+            return None;
         }
         shared.tasks = merged.clone();
-        Ok(Some(merged))
+        Some(merged)
     }
 
     /// Adds `ids` to the run's UI-added task IDs (the append-tasks flow).
@@ -378,5 +393,40 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "# T\n- [x] T1.1: [RP.BA] do it\n"
         );
+    }
+
+    #[tokio::test]
+    async fn remove_refuses_the_task_in_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        std::fs::write(&path, "- [ ] T1.1: a\n- [ ] T1.2: b\n").unwrap();
+        let list = TaskList::new(path.clone());
+        // The in-progress check refuses: the file is left alone.
+        assert!(list.remove("T1.1", || true).await.unwrap().is_none());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "- [ ] T1.1: a\n- [ ] T1.2: b\n"
+        );
+        assert!(matches!(
+            list.remove("T1.1", || false).await.unwrap(),
+            Some(RemoveOutcome::Removed)
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "- [ ] T1.2: b\n");
+    }
+
+    #[test]
+    fn reset_drops_done_tasks_reconcile_would_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        std::fs::write(&path, "- [x] T1.1: a\n- [ ] T1.2: b\n").unwrap();
+        let list = TaskList::new(path.clone());
+        list.reconcile(None).unwrap();
+        // The done task vanishes from the file: reconcile protects it, the
+        // reset starts the queue over from the file.
+        std::fs::write(&path, "- [ ] T1.2: b\n").unwrap();
+        list.reconcile(None);
+        assert_eq!(list.tasks().len(), 2);
+        assert_eq!(list.reset().unwrap().len(), 1);
+        assert_eq!(list.reset(), None);
     }
 }

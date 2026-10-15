@@ -1,9 +1,12 @@
+//! The per-task review step: the skip rules, the reviewer sessions, the
+//! verdict, the review file and the learned-confidence history.
+
 use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
 
 use crate::agents::{
-    Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs,
+    self, Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewerAgent, SkipInputs,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
 use crate::artifact;
@@ -19,26 +22,18 @@ const DIFF_LIMIT_BYTES: usize = 50 * 1024;
 /// this many bytes warns and the reviewer falls back to the plan and files.
 const CLAIMS_MIN_BYTES: usize = 10;
 
-/// The outcome of one task's review step, together with whether the task
-/// was batch-deferred: the deferral is not the group's last task, so the
-/// caller keeps the group's record open for its real last task. Every
-/// variant carries `deferred` (section 9); only a passed or skipped
-/// review closes the group, so the failed and cancelled fields have no
-/// reader today.
+/// The outcome of one task's review step. A passed or skipped review
+/// carries whether the task was batch-deferred: the deferral is not the
+/// group's last task, so the caller keeps the group's record open for its
+/// real last task; only a passed or skipped review closes the group.
 #[derive(Debug)]
-pub(crate) enum ReviewStage {
+pub(crate) enum ReviewOutcome {
     /// The review passed: the task is validated.
     Passed { deferred: bool },
     /// The review failed: a stage failure with suggestions, leading to WIP.
-    Failed {
-        #[expect(dead_code)]
-        deferred: bool,
-    },
+    Failed,
     /// A reviewer session was cancelled.
-    Cancelled {
-        #[expect(dead_code)]
-        deferred: bool,
-    },
+    Cancelled,
     /// Skipped by one of the spec's skip rules; the reason was recorded
     /// with the skip notice, and any skip treats the task as validated.
     Skipped { deferred: bool },
@@ -47,7 +42,7 @@ pub(crate) enum ReviewStage {
 /// The outcome of the reviewer sessions of one review.
 enum ReviewRun {
     /// The final review report and its computed verdict.
-    Outcome(ReviewOutcome),
+    Outcome(agents::ReviewOutcome),
     /// The reviewer session failed: a missing report counts as one HIGH finding.
     Failed,
     /// A reviewer session was cancelled.
@@ -87,11 +82,11 @@ impl<'a> ReviewStep<'a> {
         plan: Option<&str>,
         claims: Option<&str>,
         group_base: Option<&str>,
-    ) -> ReviewStage {
+    ) -> ReviewOutcome {
         let ctx = self.ctx;
         let complexity = complexity::classify(&task.description);
         // The skip decision, recorded with its reason.
-        let pending_after: Vec<String> = ctx.task_list().pending_ids();
+        let pending_after: Vec<String> = ctx.pending_ids();
         let history = ReviewHistory::load(ctx.review_history_path());
         // The raw deferral decides the group's close beside the skip rule:
         // the batch deferral is not the group's last task, and its skip is
@@ -117,7 +112,7 @@ impl<'a> ReviewStep<'a> {
             // the caller closes the group's record for the group's last
             // task; the deferral leaves it open for the group's real last
             // task.
-            return ReviewStage::Skipped { deferred };
+            return ReviewOutcome::Skipped { deferred };
         }
 
         // The claims prerequisite gate: a warning only, applied to the
@@ -158,7 +153,7 @@ impl<'a> ReviewStep<'a> {
                 NoticeLevel::Error,
                 format!("{}: no changed files to review", task.id),
             );
-            return ReviewStage::Failed { deferred };
+            return ReviewOutcome::Failed;
         }
         // The reviewer receives the diff when it is non-empty and at most
         // 50 KB, otherwise the changed-file list.
@@ -222,7 +217,7 @@ impl<'a> ReviewStep<'a> {
         let (report, verdict) = match run {
             ReviewRun::Cancelled => {
                 ctx.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
-                return ReviewStage::Cancelled { deferred };
+                return ReviewOutcome::Cancelled;
             }
             ReviewRun::Outcome(outcome) => (outcome.report, outcome.verdict),
             ReviewRun::Failed => {
@@ -254,7 +249,7 @@ impl<'a> ReviewStep<'a> {
             // The group's last task completed its review validated: the
             // caller closes the record. A failed review keeps it so the
             // rerun still diffs the whole group.
-            ReviewStage::Passed { deferred }
+            ReviewOutcome::Passed { deferred }
         } else {
             let report = review_path
                 .map(|path| path.display().to_string())
@@ -266,7 +261,7 @@ impl<'a> ReviewStep<'a> {
                     task.id, report
                 ),
             );
-            ReviewStage::Failed { deferred }
+            ReviewOutcome::Failed
         }
     }
 }
@@ -382,7 +377,7 @@ async fn multipass_review(
     task: &Task,
     reviewable: &[String],
     changed: &[String],
-) -> Result<ReviewOutcome, ReviewExit> {
+) -> Result<agents::ReviewOutcome, ReviewExit> {
     let mut merged = Findings::default();
     for file in reviewable {
         let agent = FileReviewerAgent::new(task, file, 1);

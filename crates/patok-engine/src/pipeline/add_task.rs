@@ -1,3 +1,5 @@
+//! The append-tasks pipeline.
+
 use std::time::Instant;
 
 use patok_core::event::AgentRole;

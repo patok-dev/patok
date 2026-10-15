@@ -1,3 +1,5 @@
+//! The append-tasks planner step.
+
 use std::time::Instant;
 
 use patok_core::event::NoticeLevel;

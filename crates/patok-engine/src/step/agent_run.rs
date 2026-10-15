@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex};
+//! The shared announce-run-classify skeleton every agent step runs on.
+
+use std::sync::Arc;
 use std::time::Instant;
 
 use patok_core::event::{AgentEvent, AgentRole, EngineEvent, NoticeLevel, SessionOutcome};
@@ -93,19 +95,17 @@ async fn run_agent_session(
     capture: bool,
 ) -> (Result<SessionResult, ProviderError>, Vec<AgentEvent>) {
     let (events, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let recorded = Arc::new(Mutex::new(Vec::<AgentEvent>::new()));
-    let recorder = recorded.clone();
-    let forwarder = {
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                if capture {
-                    recorder.lock().expect("capture lock").push(event.clone());
-                }
-                ctx.emit(EngineEvent::Agent { event });
+    let emit = ctx.event_sink();
+    let forwarder = tokio::spawn(async move {
+        let mut captured = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if capture {
+                captured.push(event.clone());
             }
-        })
-    };
+            emit(EngineEvent::Agent { event });
+        }
+        captured
+    });
 
     let session = provider
         .run_session(SessionRequest {
@@ -122,8 +122,7 @@ async fn run_agent_session(
         })
         .await;
     // The request (and its sender) is gone: let the forwarder flush the tail of the stream.
-    let _ = forwarder.await;
-    let captured = recorded.lock().expect("capture lock").drain(..).collect();
+    let captured = forwarder.await.unwrap_or_default();
     (session, captured)
 }
 

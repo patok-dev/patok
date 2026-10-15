@@ -1,3 +1,5 @@
+//! The discovery pipeline.
+
 use patok_core::event::AgentRole;
 
 use crate::context::SessionContext;

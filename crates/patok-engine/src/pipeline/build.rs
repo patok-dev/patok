@@ -1,6 +1,8 @@
+//! The per-task build pipeline and its batch-review group wiring.
+
 use patok_core::event::TaskOutcome;
 use patok_core::pipeline::{Stage, TileStatus};
-use patok_core::task::{Task, group_number_of};
+use patok_core::task::Task;
 
 use crate::context::SessionContext;
 use crate::pipeline::group;
@@ -8,7 +10,7 @@ use crate::step::build::{BuildOutcome, BuildStep};
 use crate::step::commit::CommitStep;
 use crate::step::plan::{PlanOutcome, PlanStep};
 use crate::step::research::{ResearchOutcome, ResearchStep};
-use crate::step::review::{ReviewStage, ReviewStep};
+use crate::step::review::{ReviewOutcome, ReviewStep};
 
 /// One task's build pipeline (section 10 of docs/private/engine-restructure.md):
 /// it configures and orders the research, plan, build, review and commit
@@ -123,22 +125,22 @@ impl<'a> BuildPipeline<'a> {
                 self.ctx
                     .update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
                 match review {
-                    ReviewStage::Cancelled { .. } => (TaskOutcome::Cancelled, None),
-                    ReviewStage::Passed { deferred } => {
+                    ReviewOutcome::Cancelled => (TaskOutcome::Cancelled, None),
+                    ReviewOutcome::Passed { deferred } => {
                         if !deferred {
-                            self.close_group(&task.id);
+                            self.close_group(task);
                         }
                         let commit = self.commit(task, &progress(true, true), true).await;
                         (TaskOutcome::Done, commit)
                     }
-                    ReviewStage::Skipped { deferred } => {
+                    ReviewOutcome::Skipped { deferred } => {
                         if !deferred {
-                            self.close_group(&task.id);
+                            self.close_group(task);
                         }
                         let commit = self.commit(task, &progress(false, true), true).await;
                         (TaskOutcome::Done, commit)
                     }
-                    ReviewStage::Failed { .. } => {
+                    ReviewOutcome::Failed => {
                         let commit = self.commit(task, &progress(true, false), false).await;
                         (TaskOutcome::Failed, commit)
                     }
@@ -257,8 +259,8 @@ impl<'a> BuildPipeline<'a> {
     /// review validated; a failed review keeps it so the rerun still diffs
     /// the whole group. A task outside the current group (or without a
     /// leading number) closes nothing.
-    fn close_group(&self, task_id: &str) {
-        let number = group_number_of(task_id);
+    fn close_group(&self, task: &Task) {
+        let number = task.group_number();
         if number.is_none() || self.ctx.group_number() != number {
             return;
         }

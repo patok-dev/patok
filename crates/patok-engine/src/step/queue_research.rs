@@ -1,10 +1,12 @@
+//! The queue-creation research step and its report save.
+
 use std::time::Instant;
 
 use patok_core::event::NoticeLevel;
 
 use crate::agents::{Agent, ResearchQueueAgent};
 use crate::context::SessionContext;
-use crate::engine::QueueCreation;
+use crate::pipeline::queue_creation::QueueCreation;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 use crate::step::research::write_research_report;
 

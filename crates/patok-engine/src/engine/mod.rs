@@ -22,7 +22,6 @@ mod stop;
 mod tiles;
 mod watch;
 
-pub use self::commands::QueueCreation;
 pub use self::config::EngineConfig;
 pub(crate) use self::state::{Inner, RunState, Tiles, resolve_provider};
 

@@ -1,3 +1,5 @@
+//! The discovery step.
+
 use patok_core::event::NoticeLevel;
 
 use crate::agents::{Agent, DiscoveryAgent};
