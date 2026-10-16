@@ -30,7 +30,13 @@ impl Engine {
             }
         }
         // No receiver is normal: nobody is attached.
-        let _ = self.inner.events.send(event);
+        let _ = self.inner.events.send(event.clone());
+
+        // Send to history writer if available
+        if let Some(sender) = &self.inner.history_sender {
+            let msg = crate::history::HistoryMsg::Event(event);
+            let _ = sender.send(msg);
+        }
     }
 
     pub(crate) fn emit(&self, event: EngineEvent) {

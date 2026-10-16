@@ -5,7 +5,7 @@ use patok_core::config::{DaemonEnv, DaemonSettings, EnumSpelling, ProviderKind, 
 use patok_core::event::{EngineEvent, Phase};
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
 use patok_providers::{Provider, ProviderError};
-use tokio::sync::{Notify, broadcast, watch};
+use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
@@ -166,6 +166,11 @@ pub(crate) struct Inner {
     pub(crate) task_list: Arc<TaskList>,
     /// Cancelled when the engine process should exit.
     pub(crate) shutdown: CancellationToken,
+    /// Sender for history messages to the HistoryWriter.
+    pub(crate) history_sender: Option<mpsc::UnboundedSender<crate::history::HistoryMsg>>,
+    /// Receiver for history messages, wrapped in Arc<Mutex> so it can be taken once.
+    pub(crate) history_receiver:
+        Arc<Mutex<Option<mpsc::UnboundedReceiver<crate::history::HistoryMsg>>>>,
 }
 
 impl RunState {

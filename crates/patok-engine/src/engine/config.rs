@@ -7,7 +7,7 @@ use patok_core::config::{DaemonEnv, DaemonSettings, ProviderKind, RunMode, load_
 use patok_core::event::Phase;
 use patok_core::pipeline::PipelineState;
 use patok_providers::{Provider, ProviderError};
-use tokio::sync::{Notify, broadcast, watch};
+use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
@@ -205,6 +205,8 @@ impl Engine {
             Instant::now(),
         );
         let task_list = Arc::new(TaskList::new(config.task_file()));
+        // Create the unbounded channel for history messages
+        let (history_sender, history_receiver) = mpsc::unbounded_channel();
         Self {
             inner: Arc::new(Inner {
                 config,
@@ -233,6 +235,8 @@ impl Engine {
                 soft_stop_cancelled: Notify::new(),
                 task_list,
                 shutdown: CancellationToken::new(),
+                history_sender: Some(history_sender),
+                history_receiver: Arc::new(Mutex::new(Some(history_receiver))),
             }),
         }
     }
@@ -244,5 +248,17 @@ impl Engine {
     /// Cancelled when the engine process should exit.
     pub fn shutdown_token(&self) -> CancellationToken {
         self.inner.shutdown.clone()
+    }
+
+    /// Spawns the history writer tokio task.
+    /// This should be called once when the engine starts up in an async context.
+    pub fn spawn_history_writer(&self) {
+        // Try to take the receiver from the Mutex
+        let mut guard = self.inner.history_receiver.lock().unwrap();
+        if let Some(receiver) = guard.take() {
+            drop(guard); // Release the lock before spawning
+            let writer = crate::history::HistoryWriter::new(receiver);
+            tokio::spawn(writer.run());
+        }
     }
 }

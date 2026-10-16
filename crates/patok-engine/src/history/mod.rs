@@ -45,3 +45,5 @@ mod writer;
 
 #[cfg(test)]
 mod tests;
+
+pub use writer::{HistoryMsg, HistoryWriter};
