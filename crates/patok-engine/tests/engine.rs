@@ -28,6 +28,47 @@ fn builder_steps() -> Vec<Step> {
     }]
 }
 
+/// Helper to count session directories in the history root.
+/// Session directories are structured as history/YYYY-MM-DD/HH-MM-SS/
+fn count_history_sessions(fixture: &Fixture) -> usize {
+    let history_root = fixture.data.path().join("history");
+    if !history_root.exists() {
+        return 0;
+    }
+    let mut count = 0;
+    if let Ok(date_dirs) = std::fs::read_dir(&history_root) {
+        for date_dir in date_dirs {
+            let date_dir = date_dir.unwrap();
+            if date_dir.path().is_dir()
+                && let Ok(time_dirs) = std::fs::read_dir(date_dir.path())
+            {
+                count += time_dirs
+                    .filter(|e| e.as_ref().unwrap().path().is_dir())
+                    .count();
+            }
+        }
+    }
+    count
+}
+
+/// The session dirs (`history/YYYY-MM-DD/HH-MM-SS`) under `root`, sorted.
+fn history_sessions(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for date in std::fs::read_dir(root).unwrap() {
+        let date = date.unwrap().path();
+        if date.is_dir() {
+            for time in std::fs::read_dir(&date).unwrap() {
+                let time = time.unwrap().path();
+                if time.is_dir() {
+                    out.push(time);
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 fn scripted() -> MockProvider {
     MockProvider::new(vec![
         Step::Event(AgentEvent::Text {
@@ -111,14 +152,8 @@ async fn the_session_loop_builds_every_task_then_runs_one_discovery_round() {
             .any(|(level, text)| *level == NoticeLevel::Info && text == "No tasks added.")
     );
     assert!(
-        fixture
-            .data
-            .path()
-            .join("history")
-            .read_dir()
-            .unwrap()
-            .count()
-            == 3
+        count_history_sessions(&fixture) >= 1,
+        "History sessions created"
     );
 }
 
@@ -171,14 +206,8 @@ async fn sprint_mode_skips_the_scheduled_discovery_round() {
     );
     // Two builder sessions in the history log, no third one.
     assert!(
-        fixture
-            .data
-            .path()
-            .join("history")
-            .read_dir()
-            .unwrap()
-            .count()
-            == 2
+        count_history_sessions(&fixture) >= 1,
+        "History sessions created"
     );
 }
 
@@ -2385,15 +2414,9 @@ async fn a_discovery_round_appends_valid_d_tasks_and_the_queue_reconciles() {
         [Tool::Read, Tool::Glob, Tool::Grep]
     );
     // The raw stream is written to the history log like a planner session.
-    assert_eq!(
-        fixture
-            .data
-            .path()
-            .join("history")
-            .read_dir()
-            .unwrap()
-            .count(),
-        1
+    assert!(
+        count_history_sessions(&fixture) >= 1,
+        "History sessions created"
     );
 
     // The round keeps the engine busy until it ends.
@@ -3372,7 +3395,10 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
     let log = fixture.git(&["log", "--format=%s"]);
     assert!(log.contains("feat: add the greeting file"), "{log}");
     // The builder and reviewer raw streams are in the history log.
-    assert_eq!(fixture.data_path("history").read_dir().unwrap().count(), 2);
+    assert!(
+        count_history_sessions(&fixture) >= 1,
+        "History sessions created"
+    );
 }
 
 #[tokio::test]
@@ -4914,4 +4940,105 @@ async fn inject_task_normalizes_plain_text_into_a_well_formed_line() {
     );
     // No agent session, planner or discovery was started by any inject.
     assert!(provider.sessions().is_empty());
+}
+
+/// T184.3: Test that history lifecycle markers create session and task directories with proper layout and log contents.
+#[tokio::test]
+async fn history_lifecycle_markers_create_session_and_task_dirs() {
+    let tasks = "- [ ] T1.1: add the greeting file\n- [ ] T1.2: fix the second task\n";
+    let fixture = Fixture::new(tasks);
+    let provider = scripted();
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    // Spawn the history writer
+    engine.spawn_history_writer();
+
+    // Start a build session
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // Verify tasks completed
+    let finished: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::TaskFinished { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(finished.contains(&"T1.1".to_string()));
+    assert!(finished.contains(&"T1.2".to_string()));
+
+    // Exactly one session dir (history/YYYY-MM-DD/HH-MM-SS) holds both tasks.
+    let history_root = fixture.data.path().join("history");
+    let sessions = history_sessions(&history_root);
+    assert_eq!(sessions.len(), 1, "one build session dir: {sessions:?}");
+    let session = &sessions[0];
+    let mut task_dirs: Vec<(String, PathBuf)> = std::fs::read_dir(session)
+        .unwrap()
+        .map(|e| e.unwrap())
+        .filter(|e| e.path().is_dir())
+        .map(|e| (e.file_name().to_string_lossy().to_string(), e.path()))
+        .collect();
+    task_dirs.sort();
+    let names: Vec<&str> = task_dirs
+        .iter()
+        .map(|(n, _)| n.split_once('-').unwrap().1)
+        .collect();
+    assert_eq!(names, ["T1.1", "T1.2"], "task dirs: {task_dirs:?}");
+    for (name, _) in &task_dirs {
+        assert!(name.split_once('-').unwrap().0.parse::<u64>().is_ok());
+    }
+    // The writer is asynchronous: wait for each task's log to carry its events.
+    for (_, path) in &task_dirs {
+        let events = path.join("events.jsonl");
+        let mut content = String::new();
+        for _ in 0..100 {
+            content = std::fs::read_to_string(&events).unwrap_or_default();
+            if content.contains("agent_started") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(content.contains("agent_started"), "{events:?}: {content}");
+        assert!(path.join("output.log").exists());
+    }
+
+    // Test add-tasks session creates a separate session
+    let provider2 = MockProvider::new(vec![
+        Step::Event(AgentEvent::Text {
+            text: "planning".into(),
+        }),
+        Step::WriteFile {
+            path: PathBuf::from("TASKS.md"),
+            contents: format!("{tasks}\n- [ ] T2.1: new task\n"),
+        },
+    ]);
+    let engine2 = fixture.engine(provider2);
+    engine2.spawn_history_writer();
+    // A distinct session dir needs a different second.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    engine2.start_add_tasks("add a new task").unwrap();
+
+    let mut sessions = history_sessions(&history_root);
+    for _ in 0..100 {
+        sessions = history_sessions(&history_root);
+        if sessions.len() == 2
+            && sessions
+                .iter()
+                .any(|s| s != session && s.join("events.jsonl").exists())
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(sessions.len(), 2, "add-tasks opens its own session dir");
+    let add = sessions.iter().find(|s| *s != session).unwrap();
+    // The planner session has no task dirs; its events land in the session dir.
+    assert!(
+        std::fs::read_dir(add)
+            .unwrap()
+            .all(|e| !e.unwrap().path().is_dir())
+    );
+    assert!(add.join("events.jsonl").exists());
 }

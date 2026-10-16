@@ -7,6 +7,7 @@
 //! the append kinds (add-tasks, queue creation, discovery) run their
 //! pipeline once.
 
+use std::path::PathBuf;
 use std::time::Instant;
 
 use patok_core::config::RunMode;
@@ -26,6 +27,25 @@ use crate::pipeline::queue_creation::{QueueCreation, QueueCreationPipeline};
 pub(crate) struct Session {
     kind: SessionKind,
     ctx: SessionContext,
+}
+
+/// A guard that emits SessionClose when dropped.
+/// This ensures SessionClose is emitted on all exit paths from Session::run.
+pub(crate) struct SessionCloseGuard {
+    session_path: Option<PathBuf>,
+    inner: std::sync::Arc<crate::engine::Inner>,
+}
+
+impl Drop for SessionCloseGuard {
+    fn drop(&mut self) {
+        if self.session_path.is_some() {
+            let engine = crate::Engine {
+                inner: self.inner.clone(),
+            };
+            let mut state = engine.inner.state.lock().expect("engine state lock");
+            engine.emit_history_msg_locked(&mut state, crate::history::HistoryMsg::SessionClose);
+        }
+    }
 }
 
 /// Which unit of work the session owns.
@@ -59,6 +79,13 @@ impl Session {
     /// one standalone discovery round.
     pub(crate) async fn run(self) {
         let Self { kind, ctx } = self;
+
+        // Create a guard that will emit SessionClose on drop (all exit paths)
+        let _guard = SessionCloseGuard {
+            session_path: ctx.session_path().map(|p| p.to_path_buf()),
+            inner: ctx.inner_clone(),
+        };
+
         match kind {
             SessionKind::Build { first } => Self::run_build(&ctx, first).await,
             SessionKind::AddTasks {

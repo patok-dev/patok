@@ -132,6 +132,10 @@ fn session_timestamp_from_path(session_dir: &Path) -> Option<u64> {
 /// Convert YYYY-MM-DD HH-MM-SS to unix timestamp in milliseconds (UTC)
 #[allow(dead_code)]
 fn date_time_to_timestamp(year: u32, month: u32, day: u32, hour: u32, min: u32, sec: u32) -> u64 {
+    // Stray dirs with impossible dates must not panic: treat them as the epoch.
+    if !(1..=12).contains(&month) || day == 0 || year < 1970 {
+        return 0;
+    }
     // Calculate days since epoch for the date
     let mut total_days = 0u64;
 
@@ -167,7 +171,6 @@ fn is_leap_year(year: u32) -> bool {
 }
 
 /// Prunes history directories according to retention settings.
-#[allow(dead_code)]
 ///
 /// # Arguments
 /// * `root` - The history root directory
@@ -196,7 +199,7 @@ pub fn prune(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let retention_secs = retention_days * 24 * 60 * 60;
+    let retention_secs = retention_days.saturating_mul(24 * 60 * 60);
 
     // Collect all session directories
     // Session dirs are structured as root/YYYY-MM-DD/HH-MM-SS
@@ -235,6 +238,19 @@ pub fn prune(
     // Get current session path for comparison
     let current_session_path = current_session.map(|s| root.join(s));
 
+    // The task-count limit applies across all sessions: rank every task dir
+    // newest first and mark those beyond the limit.
+    let mut all_tasks: Vec<(PathBuf, u64)> = Vec::new();
+    for session_dir in &session_dirs {
+        all_tasks.extend(collect_task_dirs(session_dir)?);
+    }
+    all_tasks.sort_by_key(|(_, ts)| std::cmp::Reverse(*ts));
+    let beyond_count_set: std::collections::HashSet<PathBuf> = all_tasks
+        .into_iter()
+        .skip(usize::try_from(retention_tasks).unwrap_or(usize::MAX))
+        .map(|(path, _)| path)
+        .collect();
+
     // Process each session directory
     for session_dir in &session_dirs {
         // Skip current session
@@ -251,10 +267,9 @@ pub fn prune(
         // Determine which task dirs to remove
         let tasks_to_remove: Vec<PathBuf> = task_dirs
             .into_iter()
-            .enumerate()
-            .filter_map(|(idx, (path, ts))| {
+            .filter_map(|(path, ts)| {
                 // Remove if beyond retention_tasks OR older than retention_days
-                let beyond_count = (idx as u64) >= retention_tasks;
+                let beyond_count = beyond_count_set.contains(&path);
                 let too_old = now.saturating_sub(ts / 1000) > retention_secs;
 
                 if beyond_count || too_old {

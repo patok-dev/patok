@@ -36,7 +36,6 @@ impl HistoryRoot {
 /// Generates the session directory name in UTC as `YYYY-MM-DD/HH-MM-SS`.
 /// We use UTC to avoid adding a chrono dependency. Local time can be added later
 /// if chrono is added to the workspace.
-#[allow(dead_code)]
 pub fn session_dir_name() -> String {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -112,7 +111,6 @@ fn secs_to_hms(secs: u32) -> (u32, u32, u32) {
 
 /// Generates the task directory name as `<unix_millis>-<task_id>`.
 /// The timestamp is the unix timestamp in milliseconds.
-#[allow(dead_code)]
 pub fn task_dir_name(task_id: &str, timestamp: u64) -> String {
     format!("{}-{}", timestamp, task_id)
 }
@@ -154,7 +152,6 @@ pub fn resolve_task_dir(session_dir: &Path, task_name: &str) -> PathBuf {
 }
 
 /// Ensures a session directory exists and returns its path.
-#[allow(dead_code)]
 pub fn ensure_session_dir(root: &Path, session_name: &str) -> std::io::Result<PathBuf> {
     let path = resolve_session_dir(root, session_name);
     fs::create_dir_all(&path)?;
@@ -162,7 +159,6 @@ pub fn ensure_session_dir(root: &Path, session_name: &str) -> std::io::Result<Pa
 }
 
 /// Ensures a task directory exists within a session directory and returns its path.
-#[allow(dead_code)]
 pub fn ensure_task_dir(session_dir: &Path, task_name: &str) -> std::io::Result<PathBuf> {
     let path = resolve_task_dir(session_dir, task_name);
     fs::create_dir_all(&path)?;

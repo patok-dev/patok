@@ -106,7 +106,7 @@ impl Engine {
     /// context. Errors are user-facing rejection reasons.
     pub fn start_build(&self) -> Result<(), String> {
         let cancel = CancellationToken::new();
-        let ctx = self.session_context(cancel.clone())?;
+        let mut ctx = self.session_context(cancel.clone())?;
         let path = self.inner.task_list.path();
         let pending = self
             .inner
@@ -116,6 +116,19 @@ impl Engine {
         let mut state = self.state();
         Self::check_start(&state, StartCommand::Build)?;
         let task = pending.ok_or_else(|| format!("no pending tasks in {TASK_FILE}"))?;
+
+        // Create both directories before any state changes, so a filesystem
+        // failure rejects the start without leaving a half-started session.
+        let session_name = crate::history::session_dir_name();
+        let history_root = crate::history::resolve_root(ctx.settings(), ctx.data_dir());
+        let session_path = crate::history::ensure_session_dir(&history_root, &session_name)
+            .map_err(|e| e.to_string())?;
+        let task_timestamp = crate::artifact::unix_now().as_millis() as u64;
+        let task_dir_name = crate::history::task_dir_name(&task.id, task_timestamp);
+        let task_path = crate::history::ensure_task_dir(&session_path, &task_dir_name)
+            .map_err(|e| e.to_string())?;
+        ctx = ctx.with_session_path(session_path.clone());
+
         state.cancel = cancel.clone();
         // A new session starts a new batch-review group: the same leading number recurring after a different task ran
         // starts a fresh group with a fresh base, and an interrupted group
@@ -123,8 +136,33 @@ impl Engine {
         state.group_number = None;
         state.group_base = None;
         state.current_task = Some(task.id.clone());
+
+        // Emit session open marker and run retention pruning before first event
+        let retention_tasks = ctx.settings().history_retention_tasks;
+        let retention_days = ctx.settings().history_retention_days;
+        self.emit_history_msg_locked(
+            &mut state,
+            crate::history::HistoryMsg::SessionOpen {
+                path: session_path.clone(),
+            },
+        );
+        // Run retention pruning at session open
+        let _ = crate::history::prune(
+            &history_root,
+            retention_tasks,
+            retention_days,
+            Some(&session_name),
+        );
+
         let run = state.run.build_started();
         self.apply_run_state(&mut state, run);
+
+        // Emit task open marker before TaskStarted
+        self.emit_history_msg_locked(
+            &mut state,
+            crate::history::HistoryMsg::TaskOpen { path: task_path },
+        );
+
         self.emit_locked(
             &mut state,
             EngineEvent::TaskStarted {
@@ -151,10 +189,37 @@ impl Engine {
             return Err("the request is empty".into());
         }
         let cancel = CancellationToken::new();
-        let ctx = self.session_context(cancel.clone())?;
+        let mut ctx = self.session_context(cancel.clone())?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::AddTasks)?;
+
         let before = self.prepare_task_file_run(&mut state, cancel)?;
+
+        // Generate session directory name and ensure it exists
+        let session_name = crate::history::session_dir_name();
+        let history_root = crate::history::resolve_root(ctx.settings(), ctx.data_dir());
+        let session_path = crate::history::ensure_session_dir(&history_root, &session_name)
+            .map_err(|e| e.to_string())?;
+
+        // Emit session open marker and run retention pruning before first event
+        let retention_tasks = ctx.settings().history_retention_tasks;
+        let retention_days = ctx.settings().history_retention_days;
+        self.emit_history_msg_locked(
+            &mut state,
+            crate::history::HistoryMsg::SessionOpen {
+                path: session_path.clone(),
+            },
+        );
+        let _ = crate::history::prune(
+            &history_root,
+            retention_tasks,
+            retention_days,
+            Some(&session_name),
+        );
+
+        // Set session path in context for task open/close markers
+        ctx = ctx.with_session_path(session_path);
+
         // The planner announces itself before the planning flag flips (T24.1),
         // so the shell's header and output frame title show the Planner from
         // the moment the run starts.
@@ -187,11 +252,11 @@ impl Engine {
     /// Starts one research queue-creation run (T69.1): the research agent
     /// investigates the project and appends the resulting tasks to the task
     /// file. A fresh same-kind research report on disk is reused without a
-    /// session (the T68.1 reuse window). Errors are user-facing rejection
-    /// reasons.
+    /// session (the T68.1 reuse window covers the queue-creation reports).
+    /// Errors are user-facing rejection reasons.
     pub fn start_queue_creation(&self, kind: QueueCreation) -> Result<(), String> {
         let cancel = CancellationToken::new();
-        let ctx = self.session_context(cancel.clone())?;
+        let mut ctx = self.session_context(cancel.clone())?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::QueueCreation)?;
         // A fresh same-kind research report is reused: no session (the T68.1
@@ -206,7 +271,34 @@ impl Engine {
             );
             return Ok(());
         }
+
         let before = self.prepare_task_file_run(&mut state, cancel)?;
+
+        // Generate session directory name and ensure it exists
+        let session_name = crate::history::session_dir_name();
+        let history_root = crate::history::resolve_root(ctx.settings(), ctx.data_dir());
+        let session_path = crate::history::ensure_session_dir(&history_root, &session_name)
+            .map_err(|e| e.to_string())?;
+
+        // Emit session open marker and run retention pruning before first event
+        let retention_tasks = ctx.settings().history_retention_tasks;
+        let retention_days = ctx.settings().history_retention_days;
+        self.emit_history_msg_locked(
+            &mut state,
+            crate::history::HistoryMsg::SessionOpen {
+                path: session_path.clone(),
+            },
+        );
+        let _ = crate::history::prune(
+            &history_root,
+            retention_tasks,
+            retention_days,
+            Some(&session_name),
+        );
+
+        // Set session path in context for task open/close markers
+        ctx = ctx.with_session_path(session_path);
+
         // The research agent announces itself before the planning flag flips,
         // so the shell's header and output frame title show Research from the
         // moment the run starts (T24.1).
@@ -240,10 +332,37 @@ impl Engine {
     /// rejection reasons.
     pub fn start_discovery(&self) -> Result<(), String> {
         let cancel = CancellationToken::new();
-        let ctx = self.session_context(cancel.clone())?;
+        let mut ctx = self.session_context(cancel.clone())?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::Discovery)?;
+
         let before = self.prepare_task_file_run(&mut state, cancel)?;
+
+        // Generate session directory name and ensure it exists
+        let session_name = crate::history::session_dir_name();
+        let history_root = crate::history::resolve_root(ctx.settings(), ctx.data_dir());
+        let session_path = crate::history::ensure_session_dir(&history_root, &session_name)
+            .map_err(|e| e.to_string())?;
+
+        // Emit session open marker and run retention pruning before first event
+        let retention_tasks = ctx.settings().history_retention_tasks;
+        let retention_days = ctx.settings().history_retention_days;
+        self.emit_history_msg_locked(
+            &mut state,
+            crate::history::HistoryMsg::SessionOpen {
+                path: session_path.clone(),
+            },
+        );
+        let _ = crate::history::prune(
+            &history_root,
+            retention_tasks,
+            retention_days,
+            Some(&session_name),
+        );
+
+        // Set session path in context for task open/close markers
+        ctx = ctx.with_session_path(session_path);
+
         state.run = state.run.discovery_started();
         self.emit_locked(
             &mut state,

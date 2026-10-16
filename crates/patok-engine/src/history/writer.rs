@@ -20,16 +20,12 @@ pub enum HistoryMsg {
     /// An engine event to process.
     Event(EngineEvent),
     /// A session has opened.
-    #[allow(dead_code)]
     SessionOpen { path: PathBuf },
     /// A session has closed.
-    #[allow(dead_code)]
     SessionClose,
     /// A task has opened.
-    #[allow(dead_code)]
     TaskOpen { path: PathBuf },
     /// A task has closed.
-    #[allow(dead_code)]
     TaskClose,
 }
 
@@ -70,9 +66,7 @@ impl HistoryWriter {
     /// Returns the current directory for writing files: the task directory if
     /// a task is open, otherwise the session directory.
     fn current_dir(&self) -> Option<&Path> {
-        self.task_path
-            .as_deref()
-            .or(self.session_path.as_deref())
+        self.task_path.as_deref().or(self.session_path.as_deref())
     }
 
     /// Processes an event by applying it to both panes and writing lines to disk.

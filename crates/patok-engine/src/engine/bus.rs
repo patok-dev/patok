@@ -44,6 +44,18 @@ impl Engine {
         self.emit_locked(&mut state, event);
     }
 
+    /// Sends a `HistoryMsg` to the history writer under the state lock.
+    /// This is the atomic counterpart to `emit_locked` for history-specific messages.
+    pub(crate) fn emit_history_msg_locked(
+        &self,
+        _state: &mut State,
+        msg: crate::history::HistoryMsg,
+    ) {
+        if let Some(sender) = &self.inner.history_sender {
+            let _ = sender.send(msg);
+        }
+    }
+
     pub(crate) fn notice(&self, level: NoticeLevel, text: impl Into<String>) {
         self.emit(EngineEvent::Notice {
             level,

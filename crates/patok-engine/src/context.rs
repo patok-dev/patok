@@ -34,6 +34,8 @@ pub(crate) struct SessionContext {
     model: Option<String>,
     settings: DaemonSettings,
     cancel: CancellationToken,
+    /// The session directory path for history logging.
+    session_path: Option<std::path::PathBuf>,
 }
 
 impl SessionContext {
@@ -50,7 +52,24 @@ impl SessionContext {
             model,
             settings,
             cancel,
+            session_path: None,
         }
+    }
+
+    /// Sets the session directory path for history logging.
+    pub(crate) fn with_session_path(mut self, path: std::path::PathBuf) -> Self {
+        self.session_path = Some(path);
+        self
+    }
+
+    /// Returns the session directory path if available.
+    pub(crate) fn session_path(&self) -> Option<&std::path::Path> {
+        self.session_path.as_deref()
+    }
+
+    /// Returns a clone of the inner Arc for use by SessionCloseGuard.
+    pub(crate) fn inner_clone(&self) -> Arc<Inner> {
+        self.inner.clone()
     }
 
     /// The facade over this context's internals handle, for delegation to the
@@ -266,6 +285,19 @@ impl SessionContext {
         let engine = self.engine();
         let mut state = self.inner.state.lock().expect("engine state lock");
         state.current_task = Some(task.id.clone());
+
+        // Emit task open marker before TaskStarted if session path is available
+        if let Some(session_path) = self.session_path() {
+            let task_timestamp = crate::artifact::unix_now().as_millis() as u64;
+            let task_dir_name = crate::history::task_dir_name(&task.id, task_timestamp);
+            let task_path = crate::history::ensure_task_dir(session_path, &task_dir_name)
+                .unwrap_or_else(|_| session_path.join(&task_dir_name));
+            engine.emit_history_msg_locked(
+                &mut state,
+                crate::history::HistoryMsg::TaskOpen { path: task_path },
+            );
+        }
+
         engine.emit_locked(
             &mut state,
             EngineEvent::TaskStarted {
@@ -298,6 +330,9 @@ impl SessionContext {
         );
         state.current_task = None;
         engine.task_tiles_finished_locked(&mut state);
+
+        // Emit task close marker after TaskFinished
+        engine.emit_history_msg_locked(&mut state, crate::history::HistoryMsg::TaskClose);
     }
 
     /// Ends the build session: nothing is current, the run state returns to

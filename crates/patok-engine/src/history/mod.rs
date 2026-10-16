@@ -20,6 +20,7 @@ use patok_core::config::DaemonSettings;
 
 #[allow(unused_imports)]
 pub use layout::HistoryRoot;
+pub use layout::{ensure_session_dir, ensure_task_dir, session_dir_name, task_dir_name};
 #[allow(unused_imports)]
 pub use retention::prune;
 #[cfg(test)]
