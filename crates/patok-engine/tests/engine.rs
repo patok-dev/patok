@@ -69,6 +69,34 @@ fn history_sessions(root: &std::path::Path) -> Vec<PathBuf> {
     out
 }
 
+/// Every Markdown artifact named `<stem>-*.md` under the history tree
+/// (session and task directories), as (file name, contents).
+fn md_artifacts(fixture: &Fixture, stem: &str) -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, stem: &str, out: &mut Vec<(String, String)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, stem, out);
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&format!("{stem}-"))
+                && name.ends_with(".md")
+                && let Ok(text) = std::fs::read_to_string(&path)
+            {
+                out.push((name, text));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&fixture.data.path().join("history"), stem, &mut out);
+    out.sort();
+    out
+}
+
 fn scripted() -> MockProvider {
     MockProvider::new(vec![
         Step::Event(AgentEvent::Text {
@@ -275,20 +303,9 @@ async fn a_plan_session_precedes_the_builder_and_feeds_the_plan_forward() {
     assert!(sessions[1].prompt.contains(VALID_PLAN));
 
     // The accepted plan is written to the data directory as plans/<task id>-<timestamp>.md.
-    let plans_dir = fixture.data.path().join("plans");
-    let files: Vec<_> = std::fs::read_dir(&plans_dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
+    let files = md_artifacts(&fixture, "T1.1-plan");
     assert_eq!(files.len(), 1, "{files:?}");
-    assert!(
-        files[0].starts_with("T1.1-") && files[0].ends_with(".md"),
-        "{files:?}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(plans_dir.join(&files[0])).unwrap(),
-        VALID_PLAN
-    );
+    assert_eq!(files[0].1, VALID_PLAN);
     assert!(notices(&events)
         .iter()
         .any(|(level, text)| *level == NoticeLevel::Info && text.starts_with("Plan written to")));
@@ -335,16 +352,9 @@ async fn the_plan_falls_back_to_the_text_events_without_a_result() {
     let plan =
         "## File Operations\nCreate greeting.txt.\n## Verification\nThe file contains hello.";
     assert!(sessions[1].prompt.contains(plan));
-    let plans_dir = fixture.data.path().join("plans");
-    let written: Vec<_> = std::fs::read_dir(&plans_dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
+    let written = md_artifacts(&fixture, "T1.1-plan");
     assert_eq!(written.len(), 1, "{written:?}");
-    assert_eq!(
-        std::fs::read_to_string(plans_dir.join(&written[0])).unwrap(),
-        plan
-    );
+    assert_eq!(written[0].1, plan);
 }
 
 #[tokio::test]
@@ -426,7 +436,7 @@ async fn a_plan_rejected_twice_fails_the_task_without_a_builder_session() {
             .contains("- [ ] T1.1: add the greeting file")
     );
     assert_eq!(fixture.git(&["log", "--format=%s", "-1"]).trim(), "initial");
-    assert!(!fixture.data.path().join("plans").exists());
+    assert!(md_artifacts(&fixture, "T1.1-plan").is_empty());
 }
 
 /// A Medium task's research session script: it returns one research report.
@@ -496,19 +506,12 @@ async fn a_research_session_precedes_the_plan_and_feeds_the_report_forward() {
     assert!(!sessions[2].prompt.contains("research report"));
 
     // The report is written to the data directory as research/<task id>-<timestamp>.md.
-    let reports_dir = fixture.data.path().join("research");
-    let files: Vec<_> = std::fs::read_dir(&reports_dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(files.len(), 1, "{files:?}");
+    let files = md_artifacts(&fixture, "T1.1-research");
     assert!(
-        files[0].starts_with("T1.1-") && files[0].ends_with(".md"),
+        files
+            .iter()
+            .any(|(_, text)| text == "1. What does the parser do today?\nIt parses nothing yet."),
         "{files:?}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(reports_dir.join(&files[0])).unwrap(),
-        "1. What does the parser do today?\nIt parses nothing yet."
     );
     assert!(
         notices(&events)
@@ -584,84 +587,6 @@ async fn the_report_reaches_the_builder_prompt_when_the_plan_stage_is_off() {
 }
 
 #[tokio::test]
-async fn a_fresh_report_on_disk_is_reused_without_a_new_session() {
-    let fixture = Fixture::new(SUBSTANTIAL_TASK);
-    // A report written moments ago: inside the ten-minute reuse window.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let dir = fixture.data.path().join("research");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(format!("T1.1-{now}.md")), "1. Reused report.\n").unwrap();
-    let provider = MockProvider::per_session(vec![
-        vec![Step::Event(AgentEvent::Result {
-            text: VALID_PLAN.into(),
-        })],
-        builder_steps(),
-    ]);
-    let engine = fixture.engine_with_plan(provider.clone());
-    let mut attachment = engine.attach().unwrap();
-
-    engine.start_build().unwrap();
-    let events = collect_until(&mut attachment.events, is_phase_startup).await;
-
-    // No research session ran: the plan session is the first one, and the
-    // reused report still reaches the plan prompt.
-    let sessions = provider.sessions();
-    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
-    assert_eq!(labels, ["plan", "T1.1", "discovery"]);
-    assert!(sessions[0].prompt.contains("1. Reused report."));
-    assert!(
-        notices(&events)
-            .iter()
-            .any(|(level, text)| *level == NoticeLevel::Info
-                && text.contains("Reusing the research report for T1.1"))
-    );
-    // The reused report was not overwritten.
-    assert_eq!(
-        std::fs::read_to_string(dir.join(format!("T1.1-{now}.md"))).unwrap(),
-        "1. Reused report.\n"
-    );
-}
-
-#[tokio::test]
-async fn a_stale_report_on_disk_is_not_reused() {
-    let fixture = Fixture::new(SUBSTANTIAL_TASK);
-    // A report twenty minutes old: outside the ten-minute reuse window.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let dir = fixture.data.path().join("research");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join(format!("T1.1-{}.md", now - 1200)),
-        "1. Stale report.\n",
-    )
-    .unwrap();
-    let provider = MockProvider::per_session(vec![
-        research_steps("1. Fresh report."),
-        vec![Step::Event(AgentEvent::Result {
-            text: VALID_PLAN.into(),
-        })],
-        builder_steps(),
-    ]);
-    let engine = fixture.engine_with_plan(provider.clone());
-    let mut attachment = engine.attach().unwrap();
-
-    engine.start_build().unwrap();
-    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
-
-    // A research session ran and its fresh report reaches the plan prompt.
-    let sessions = provider.sessions();
-    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
-    assert_eq!(labels, ["research", "plan", "T1.1", "discovery"]);
-    assert!(sessions[1].prompt.contains("1. Fresh report."));
-    assert!(!sessions[1].prompt.contains("Stale report"));
-}
-
-#[tokio::test]
 async fn a_simple_task_skips_research_with_the_key_on_and_runs_it_when_off() {
     // "add the greeting file" is a Simple description, so the skip key decides.
     let tasks = "- [ ] T1.1: add the greeting file\n";
@@ -681,7 +606,7 @@ async fn a_simple_task_skips_research_with_the_key_on_and_runs_it_when_off() {
     let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
     // The key is on by default: no research session and no report on disk.
     assert_eq!(labels, ["plan", "T1.1", "discovery"]);
-    assert!(!fixture.data.path().join("research").exists());
+    assert!(md_artifacts(&fixture, "T1.1-research").is_empty());
 
     // With the key off, the same Simple task runs the research stage.
     let fixture = Fixture::new(tasks);
@@ -730,7 +655,7 @@ async fn a_research_session_without_a_report_is_non_blocking() {
     let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(labels, ["research", "plan", "T1.1", "discovery"]);
     assert!(!sessions[1].prompt.contains("research report"));
-    assert!(!fixture.data.path().join("research").exists());
+    assert!(md_artifacts(&fixture, "T1.1-research").is_empty());
     assert!(
         notices(&events)
             .iter()
@@ -2132,18 +2057,11 @@ fn assert_research_run_announced(events: &[EngineEvent]) {
     )));
 }
 
-/// The newest research report saved under `stem` in the data directory.
+/// The newest research report saved under `stem` in the session's history.
 fn research_report_file(fixture: &Fixture, stem: &str) -> String {
-    let dir = fixture.data.path().join("research");
-    let mut files: Vec<String> = std::fs::read_dir(&dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with(&format!("{stem}-")) && name.ends_with(".md"))
-        .collect();
+    let mut files = md_artifacts(fixture, &format!("{stem}-research"));
     assert!(!files.is_empty(), "no {stem} report saved");
-    files.sort();
-    let newest = files.pop().unwrap();
-    std::fs::read_to_string(dir.join(newest)).unwrap()
+    files.pop().unwrap().1
 }
 
 #[tokio::test]
@@ -2257,83 +2175,6 @@ async fn a_scan_queue_creation_run_is_a_research_session_whose_tasks_validate() 
 }
 
 #[tokio::test]
-async fn a_fresh_queue_creation_report_is_reused_without_a_session() {
-    let fixture = Fixture::new(TASKS);
-    // A bootstrap report written moments ago: inside the ten-minute window.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let dir = fixture.data.path().join("research");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join(format!("bootstrap-{now}.md")),
-        "1. Reused report.\n",
-    )
-    .unwrap();
-    let provider = queue_research_writing("- [ ] T9.1: never appended\n", "1. Never run.");
-    let engine = fixture.engine(provider.clone());
-    let mut attachment = engine.attach().unwrap();
-
-    engine
-        .start_queue_creation(QueueCreation::Bootstrap)
-        .unwrap();
-    let events = collect_until(&mut attachment.events, |e| {
-        matches!(e, EngineEvent::Notice { text, .. } if text.contains("Reusing the research report for bootstrap"))
-    })
-    .await;
-
-    // No session ran and the queue is untouched.
-    assert!(provider.sessions().is_empty());
-    assert!(!engine.is_planning());
-    assert_eq!(fixture.tasks_file(), TASKS);
-    assert!(
-        notices(&events)
-            .iter()
-            .any(|(level, text)| *level == NoticeLevel::Info
-                && text == "Reusing the research report for bootstrap.")
-    );
-    // The reused report was not overwritten.
-    assert_eq!(
-        std::fs::read_to_string(dir.join(format!("bootstrap-{now}.md"))).unwrap(),
-        "1. Reused report.\n"
-    );
-}
-
-#[tokio::test]
-async fn a_stale_queue_creation_report_runs_the_research_session() {
-    let fixture = Fixture::new(TASKS);
-    // A scan report twenty minutes old: outside the ten-minute window.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let dir = fixture.data.path().join("research");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join(format!("scan-{}.md", now - 1200)),
-        "1. Stale report.\n",
-    )
-    .unwrap();
-    let provider = queue_research_writing(
-        &format!("{TASKS}- [ ] T2.1: fresh scan\n"),
-        "1. Fresh report.",
-    );
-    let engine = fixture.engine(provider.clone());
-    let mut attachment = engine.attach().unwrap();
-
-    engine.start_queue_creation(QueueCreation::Scan).unwrap();
-    let events = collect_until(&mut attachment.events, planning_finished).await;
-
-    // The research session ran; the fresh report replaced the stale one's role.
-    assert_research_run_announced(&events);
-    let sessions = provider.sessions();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].label, "research");
-    assert_eq!(research_report_file(&fixture, "scan"), "1. Fresh report.");
-}
-
-#[tokio::test]
 async fn an_invalid_queue_creation_result_is_rolled_back_with_an_error() {
     let invalid = [
         // Modifies an existing task.
@@ -2362,7 +2203,7 @@ async fn an_invalid_queue_creation_result_is_rolled_back_with_an_error() {
         assert_eq!(fixture.tasks_file(), TASKS);
         // A rejected result records no UI-added IDs and saves no report.
         assert!(engine.ui_added_task_ids().is_empty());
-        assert!(!fixture.data.path().join("research").exists());
+        assert!(md_artifacts(&fixture, "bootstrap-research").is_empty());
     }
 }
 
@@ -3301,20 +3142,6 @@ fn review_fail() -> Vec<Step> {
     })]
 }
 
-/// One review artifact file of `folder` written for `task_id`, with its contents.
-fn artifact(fixture: &Fixture, folder: &str, task_id: &str) -> Vec<(String, String)> {
-    std::fs::read_dir(fixture.data_path(folder))
-        .unwrap()
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let text = std::fs::read_to_string(entry.path()).ok()?;
-            name.starts_with(&format!("{task_id}-"))
-                .then_some((name, text))
-        })
-        .collect()
-}
-
 #[tokio::test]
 async fn a_passing_review_validates_the_task_and_commits_feat() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
@@ -3338,14 +3165,13 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
             ..
         }
     )));
-    // The claims and review artifacts (T70.1), saved under the project data
-    // directory next to the plans and research folders.
-    let claims = artifact(&fixture, "claims", "T1.1");
+    // The claims and review artifacts (T70.1), saved in the task directory.
+    let claims = md_artifacts(&fixture, "T1.1-claims");
     assert_eq!(claims.len(), 1, "{claims:?}");
     assert!(claims[0].0.ends_with(".md"));
     assert!(claims[0].1.contains("## Build Claims"));
     assert!(claims[0].1.contains("- [ ] the file exists"));
-    let reviews = artifact(&fixture, "reviews", "T1.1");
+    let reviews = md_artifacts(&fixture, "T1.1-review");
     assert_eq!(reviews.len(), 1, "{reviews:?}");
     assert!(reviews[0].1.contains("Verdict: PASS"));
 

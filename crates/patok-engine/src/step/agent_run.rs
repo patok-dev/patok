@@ -1,7 +1,10 @@
 //! The shared announce-run-classify skeleton every agent step runs on.
 
+use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
+
+use serde::Serialize;
 
 use patok_core::event::{AgentEvent, AgentRole, EngineEvent, NoticeLevel, SessionOutcome};
 use patok_providers::{ExitKind, Provider, ProviderError, SessionRequest, SessionResult, Tool};
@@ -93,7 +96,7 @@ async fn run_agent_session(
     model: Option<&str>,
     agent: AgentPrompt,
     capture: bool,
-) -> (Result<SessionResult, ProviderError>, Vec<AgentEvent>) {
+) -> (Result<SessionResult, ProviderError>, Vec<AgentEvent>, u32) {
     let (events, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
     let emit = ctx.event_sink();
     let forwarder = tokio::spawn(async move {
@@ -130,7 +133,7 @@ async fn run_agent_session(
         .await;
     // The request (and its sender) is gone: let the forwarder flush the tail of the stream.
     let captured = forwarder.await.unwrap_or_default();
-    (session, captured)
+    (session, captured, seq)
 }
 
 /// Runs one stage session through the shared announce-run-match-exit
@@ -153,35 +156,39 @@ pub(crate) async fn run_stage(
     role: AgentRole,
     agent: AgentPrompt,
     words: StageWords,
-) -> StageExit {
+) -> (StageExit, Option<SessionResult>, u32) {
     let start = match start {
         StageStart::Announce => ctx.announce_agent(role, provider.slug(), model),
         StageStart::Announced(start) => start,
     };
-    let (session, events) = run_agent_session(ctx, provider, model, agent, words.capture).await;
+    let (session, events, seq) =
+        run_agent_session(ctx, provider, model, agent, words.capture).await;
     ctx.finish_agent(role, start, session_outcome(&session));
     match session {
         Err(error) => {
             tracing::error!("{}: {error}", words.could_not_start);
             ctx.notice(NoticeLevel::Error, error.to_string());
-            StageExit::Failed
+            (StageExit::Failed, None, seq)
         }
-        Ok(result) if result.exit == ExitKind::Completed => StageExit::Completed(events),
+        Ok(result) if result.exit == ExitKind::Completed => {
+            (StageExit::Completed(events), Some(result), seq)
+        }
         Ok(result) if result.exit == ExitKind::Cancelled => {
             if let Some(text) = &words.cancelled_notice {
                 ctx.notice(NoticeLevel::Warning, text.clone());
             }
-            StageExit::Cancelled
+            (StageExit::Cancelled, Some(result), seq)
         }
         Ok(result) => {
             let reason = result
                 .failure
-                .unwrap_or_else(|| words.default_failure.clone());
+                .as_deref()
+                .unwrap_or(words.default_failure.as_str());
             ctx.notice(
                 words.failure_level,
                 format!("{}{reason}{}", words.failure_prefix, words.failure_suffix),
             );
-            StageExit::Failed
+            (StageExit::Failed, Some(result), seq)
         }
     }
 }
@@ -195,5 +202,31 @@ fn session_outcome(session: &Result<SessionResult, ProviderError>) -> SessionOut
             ExitKind::Cancelled => SessionOutcome::Cancelled,
             ExitKind::Failed | ExitKind::TimedOut => SessionOutcome::Failed,
         },
+    }
+}
+
+/// Record written next to each agent's raw log: the agent details,
+/// the session outcome and the step's serializable outcome.
+#[derive(Serialize)]
+pub(crate) struct AgentResultRecord {
+    pub agent: String,
+    pub provider: String,
+    pub model: Option<String>,
+    pub exit_kind: ExitKind,
+    pub success: bool,
+    pub failure: Option<String>,
+    pub outcome: serde_json::Value,
+}
+
+/// Writes the result JSON next to the raw log file.
+pub(crate) fn write_result_json(
+    base_dir: &std::path::Path,
+    seq: u32,
+    agent: &str,
+    record: AgentResultRecord,
+) {
+    let result_path = base_dir.join(format!("{:03}-{}-result.json", seq, agent));
+    if let Ok(json) = serde_json::to_string_pretty(&record) {
+        let _ = fs::write(result_path, json);
     }
 }

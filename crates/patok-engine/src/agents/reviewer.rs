@@ -304,14 +304,14 @@ fn balanced_objects(text: &str) -> Vec<&str> {
 }
 
 /// One finding counted against the verdict, with the bucket it came from.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct QualifyingFinding {
     pub severity: Severity,
     pub finding: Finding,
 }
 
 /// The computed verdict of one review.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct Verdict {
     pub passed: bool,
     /// HIGH and MEDIUM findings at or above the confidence threshold.
@@ -672,6 +672,7 @@ const STOPWORDS: &[&str] = &[
 /// The payload one reviewer session produces: the report as captured and its
 /// computed verdict. The verdict's `passed` flag is the accept/reject; the
 /// report and the below-threshold findings travel with it even on a fail.
+#[derive(Serialize)]
 pub(crate) struct ReviewOutcome {
     /// The review report as captured.
     pub report: String,

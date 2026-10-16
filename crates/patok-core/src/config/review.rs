@@ -9,7 +9,7 @@ config_enum! {
     /// all read the same three spellings -- `high`, `medium` and `low` --
     /// from here. The JSON block's field names are the file format and stay
     /// strings; unknown severity keys in a parsed block are dropped as before.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
     pub enum Severity {
         High => "high",
         Medium => "medium",

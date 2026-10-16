@@ -55,7 +55,7 @@ pub enum Tool {
     WebSearch,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum ExitKind {
     Completed,
     Failed,

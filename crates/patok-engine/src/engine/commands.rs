@@ -1,11 +1,10 @@
 use patok_core::config::daemon_readout;
-use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, Snapshot};
+use patok_core::event::{AgentRole, EngineEvent, Snapshot};
 use tokio_util::sync::CancellationToken;
 
 use super::state::State;
 use super::{AttachError, Attachment, Engine};
 use crate::session::{Session, SessionKind};
-use crate::step::research::reusable_research_report;
 use crate::taskfile::RemoveOutcome;
 use crate::{QueueCreation, TASK_FILE};
 
@@ -259,19 +258,6 @@ impl Engine {
         let mut ctx = self.session_context(cancel.clone())?;
         let mut state = self.state();
         Self::check_start(&state, StartCommand::QueueCreation)?;
-        // A fresh same-kind research report is reused: no session (the T68.1
-        // reuse window covers the queue-creation reports).
-        if reusable_research_report(&ctx, kind.stem()).is_some() {
-            self.emit_locked(
-                &mut state,
-                EngineEvent::Notice {
-                    level: NoticeLevel::Info,
-                    text: format!("Reusing the research report for {}.", kind.stem()),
-                },
-            );
-            return Ok(());
-        }
-
         let before = self.prepare_task_file_run(&mut state, cancel)?;
 
         // Generate session directory name and ensure it exists

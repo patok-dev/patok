@@ -2,14 +2,18 @@
 
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
+use patok_providers::ExitKind;
 
 use crate::agents::{Agent, PlanAgent};
 use crate::artifact;
 use crate::context::SessionContext;
-use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use crate::step::agent_run::{
+    AgentPrompt, AgentResultRecord, StageExit, StageStart, StageWords, run_stage, write_result_json,
+};
+use serde::Serialize;
 
 /// The outcome of one task's plan step (T10.1).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) enum PlanOutcome {
     /// The plan gate accepted this plan text.
     Accepted(String),
@@ -35,10 +39,14 @@ impl<'a> PlanStep<'a> {
 
     pub(crate) async fn run(&self, task: &Task, research: Option<&str>) -> PlanOutcome {
         let mut agent = PlanAgent::new(task, research);
+        let provider_slug = self.ctx.provider().slug().to_string();
+        let model = self.ctx.model().map(|s| s.to_string());
+
         for attempt in 1..=2 {
             // Every attempt is one planner session with its own timing, so a retried
             // plan leaves its own finished line (T42.1) and starting line (T78.1).
-            let exit = run_stage(
+            let label = agent.label().to_string();
+            let (exit, session_result, seq) = run_stage(
                 self.ctx,
                 self.ctx.provider(),
                 self.ctx.model(),
@@ -57,14 +65,69 @@ impl<'a> PlanStep<'a> {
             )
             .await;
             let events = match exit {
-                StageExit::Cancelled => return PlanOutcome::Cancelled,
-                StageExit::Failed => return PlanOutcome::Failed,
+                StageExit::Cancelled => {
+                    let outcome = PlanOutcome::Cancelled;
+                    let exit_kind = session_result
+                        .as_ref()
+                        .map(|r| r.exit)
+                        .unwrap_or(ExitKind::Cancelled);
+                    let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+                    let failure = session_result.as_ref().and_then(|r| r.failure.clone());
+                    let record = AgentResultRecord {
+                        agent: label.clone(),
+                        provider: provider_slug.clone(),
+                        model: model.clone(),
+                        exit_kind,
+                        success,
+                        failure,
+                        outcome: serde_json::to_value(&outcome).unwrap(),
+                    };
+                    write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+                    return outcome;
+                }
+                StageExit::Failed => {
+                    let outcome = PlanOutcome::Failed;
+                    let exit_kind = session_result
+                        .as_ref()
+                        .map(|r| r.exit)
+                        .unwrap_or(ExitKind::Failed);
+                    let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+                    let failure = session_result.as_ref().and_then(|r| r.failure.clone());
+                    let record = AgentResultRecord {
+                        agent: label.clone(),
+                        provider: provider_slug.clone(),
+                        model: model.clone(),
+                        exit_kind,
+                        success,
+                        failure,
+                        outcome: serde_json::to_value(&outcome).unwrap(),
+                    };
+                    write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+                    return outcome;
+                }
                 StageExit::Completed(events) => events,
             };
             match agent.validate(&events) {
                 Ok(text) => {
+                    let outcome = PlanOutcome::Accepted(text.clone());
                     write_plan_file(self.ctx, &task.id, &text);
-                    return PlanOutcome::Accepted(text);
+                    let exit_kind = session_result
+                        .as_ref()
+                        .map(|r| r.exit)
+                        .unwrap_or(ExitKind::Completed);
+                    let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+                    let failure = session_result.as_ref().and_then(|r| r.failure.clone());
+                    let record = AgentResultRecord {
+                        agent: label.clone(),
+                        provider: provider_slug.clone(),
+                        model: model.clone(),
+                        exit_kind,
+                        success,
+                        failure,
+                        outcome: serde_json::to_value(&outcome).unwrap(),
+                    };
+                    write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+                    return outcome;
                 }
                 Err(reason) if attempt == 2 => {
                     self.ctx.notice(
@@ -74,7 +137,27 @@ impl<'a> PlanStep<'a> {
                             task.id
                         ),
                     );
-                    return PlanOutcome::Failed;
+                    let outcome = PlanOutcome::Failed;
+                    let exit_kind = session_result
+                        .as_ref()
+                        .map(|r| r.exit)
+                        .unwrap_or(ExitKind::Failed);
+                    let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+                    let failure = session_result
+                        .as_ref()
+                        .and_then(|r| r.failure.clone())
+                        .or(Some(reason));
+                    let record = AgentResultRecord {
+                        agent: label.clone(),
+                        provider: provider_slug.clone(),
+                        model: model.clone(),
+                        exit_kind,
+                        success,
+                        failure,
+                        outcome: serde_json::to_value(&outcome).unwrap(),
+                    };
+                    write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+                    return outcome;
                 }
                 Err(reason) => {
                     agent = agent.retry(&events, &reason);
@@ -85,11 +168,11 @@ impl<'a> PlanStep<'a> {
     }
 }
 
-/// Writes the accepted plan to the project data directory as
-/// `plans/<task id>-<timestamp>.md` (T10.1).
+/// Writes the accepted plan to the task directory as
+/// `<task id>-<timestamp>.md` (T10.1).
 fn write_plan_file(ctx: &SessionContext, task_id: &str, plan: &str) {
-    let dir = ctx.data_dir().join("plans");
-    match artifact::write_artifact(&dir, task_id, plan) {
+    let dir = ctx.current_task_dir();
+    match artifact::write_artifact(&dir, &format!("{task_id}-plan"), plan) {
         Ok(path) => ctx.notice(
             NoticeLevel::Info,
             format!("Plan written to {}", path.display()),

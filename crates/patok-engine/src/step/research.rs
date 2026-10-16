@@ -4,17 +4,21 @@
 use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
+use patok_providers::ExitKind;
 
 use crate::agents::{Agent, ResearchAgent};
 use crate::artifact;
 use crate::context::SessionContext;
-use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use crate::step::agent_run::{
+    AgentPrompt, AgentResultRecord, StageExit, StageStart, StageWords, run_stage, write_result_json,
+};
+use serde::Serialize;
 
 /// How long a research report on disk stays reusable across restarts.
 pub(crate) const RESEARCH_REUSE_SECS: u64 = 600;
 
 /// The outcome of one task's research step (T68.1).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) enum ResearchOutcome {
     /// A report exists: fresh from a session or reused from disk.
     Report(String),
@@ -79,7 +83,10 @@ impl<'a> ResearchStep<'a> {
             return outcome;
         }
         let agent = ResearchAgent::new(task);
-        let exit = run_stage(
+        let label = agent.label().to_string();
+        let provider_slug = self.ctx.provider().slug().to_string();
+        let model = self.ctx.model().map(|s| s.to_string());
+        let (exit, session_result, seq) = run_stage(
             self.ctx,
             self.ctx.provider(),
             self.ctx.model(),
@@ -98,14 +105,72 @@ impl<'a> ResearchStep<'a> {
         )
         .await;
         let events = match exit {
-            StageExit::Cancelled => return ResearchOutcome::Cancelled,
-            StageExit::Failed => return ResearchOutcome::Failed,
+            StageExit::Cancelled => {
+                let outcome = ResearchOutcome::Cancelled;
+                let exit_kind = session_result
+                    .as_ref()
+                    .map(|r| r.exit)
+                    .unwrap_or(ExitKind::Cancelled);
+                let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+                let failure = session_result.as_ref().and_then(|r| r.failure.clone());
+                let record = AgentResultRecord {
+                    agent: label.clone(),
+                    provider: provider_slug,
+                    model,
+                    exit_kind,
+                    success,
+                    failure,
+                    outcome: serde_json::to_value(&outcome).unwrap(),
+                };
+                write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+                return outcome;
+            }
+            StageExit::Failed => {
+                let outcome = ResearchOutcome::Failed;
+                let exit_kind = session_result
+                    .as_ref()
+                    .map(|r| r.exit)
+                    .unwrap_or(ExitKind::Failed);
+                let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+                let failure = session_result.as_ref().and_then(|r| r.failure.clone());
+                let record = AgentResultRecord {
+                    agent: label.clone(),
+                    provider: provider_slug,
+                    model,
+                    exit_kind,
+                    success,
+                    failure,
+                    outcome: serde_json::to_value(&outcome).unwrap(),
+                };
+                write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+                return outcome;
+            }
             StageExit::Completed(events) => events,
         };
         // The research agent's validation is trivial acceptance, so this arm
         // cannot fire; it stays dead-safe.
         let Ok(report) = agent.validate(&events) else {
-            return ResearchOutcome::Failed;
+            let outcome = ResearchOutcome::Failed;
+            let exit_kind = session_result
+                .as_ref()
+                .map(|r| r.exit)
+                .unwrap_or(ExitKind::Failed);
+            let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+            let failure = session_result
+                .as_ref()
+                .and_then(|r| r.failure.clone())
+                .or(Some("validation failed".to_string()));
+            let record = AgentResultRecord {
+                agent: label.clone(),
+                provider: provider_slug,
+                model,
+                exit_kind,
+                success,
+                failure,
+                outcome: serde_json::to_value(&outcome).unwrap(),
+            };
+            write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+            return outcome;
         };
         if report.trim().is_empty() {
             self.ctx.notice(
@@ -115,10 +180,47 @@ impl<'a> ResearchStep<'a> {
                     task.id
                 ),
             );
-            return ResearchOutcome::Failed;
+            let outcome = ResearchOutcome::Failed;
+            let exit_kind = session_result
+                .as_ref()
+                .map(|r| r.exit)
+                .unwrap_or(ExitKind::Failed);
+            let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+            let failure = session_result
+                .as_ref()
+                .and_then(|r| r.failure.clone())
+                .or(Some("empty report".to_string()));
+            let record = AgentResultRecord {
+                agent: label.clone(),
+                provider: provider_slug,
+                model,
+                exit_kind,
+                success,
+                failure,
+                outcome: serde_json::to_value(&outcome).unwrap(),
+            };
+            write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+            return outcome;
         }
         write_research_report(self.ctx, &task.id, &report);
-        ResearchOutcome::Report(report)
+        let outcome = ResearchOutcome::Report(report);
+        let exit_kind = session_result
+            .as_ref()
+            .map(|r| r.exit)
+            .unwrap_or(ExitKind::Completed);
+        let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
+        let failure = session_result.as_ref().and_then(|r| r.failure.clone());
+        let record = AgentResultRecord {
+            agent: label.clone(),
+            provider: provider_slug,
+            model,
+            exit_kind,
+            success,
+            failure,
+            outcome: serde_json::to_value(&outcome).unwrap(),
+        };
+        write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+        outcome
     }
 }
 
@@ -127,17 +229,18 @@ impl<'a> ResearchStep<'a> {
 /// The stem is a task ID for the per-task research step and `bootstrap` /
 /// `scan` for the queue-creation runs (T69.1).
 pub(crate) fn reusable_research_report(ctx: &SessionContext, stem: &str) -> Option<String> {
-    let dir = ctx.data_dir().join("research");
-    let path = artifact::newest_artifact(&dir, stem, Some(RESEARCH_REUSE_SECS))?;
+    let dir = ctx.current_task_dir();
+    let path =
+        artifact::newest_artifact(&dir, &format!("{stem}-research"), Some(RESEARCH_REUSE_SECS))?;
     std::fs::read_to_string(path).ok()
 }
 
-/// Writes the research report to the project data directory as
-/// `research/<stem>-<timestamp>.md` (T68.1; the queue-creation runs use
+/// Writes the research report to the task directory as
+/// `<stem>-<timestamp>.md` (T68.1; the queue-creation runs use
 /// their kind's stem, T69.1).
 pub(crate) fn write_research_report(ctx: &SessionContext, stem: &str, report: &str) {
-    let dir = ctx.data_dir().join("research");
-    match artifact::write_artifact(&dir, stem, report) {
+    let dir = ctx.current_task_dir();
+    match artifact::write_artifact(&dir, &format!("{stem}-research"), report) {
         Ok(path) => ctx.notice(
             NoticeLevel::Info,
             format!("Research report written to {}", path.display()),
