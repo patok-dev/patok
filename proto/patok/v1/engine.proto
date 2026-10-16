@@ -408,6 +408,9 @@ message SettingsChange {
     bool plan_enabled = 48;
     // The cap the discovery cooldown doubles up to (Part III, section 5).
     uint32 discovery_cooldown_cap_secs = 49;
+    // How many days the history keeps its task records (section 9 of
+    // docs/private/history-restructure.md).
+    uint32 history_retention_days = 50;
   }
 }
 
