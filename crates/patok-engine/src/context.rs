@@ -19,7 +19,6 @@ use tokio_util::sync::CancellationToken;
 use crate::Engine;
 use crate::engine::{Inner, Tiles, resolve_provider};
 use crate::git::Git;
-use crate::history::resolve_root;
 use crate::task_list::{AppendMode, AppendRejection};
 
 /// One session's context (section 8 of docs/private/engine-restructure.md):
@@ -225,9 +224,25 @@ impl SessionContext {
         &self.inner.config.data_dir
     }
 
-    /// The directory holding the agents' history logs.
-    pub(crate) fn history_dir(&self) -> PathBuf {
-        resolve_root(&self.settings, self.data_dir())
+    /// Returns the current task directory if a task is active, otherwise the session directory.
+    pub(crate) fn current_task_dir(&self) -> PathBuf {
+        let state = self.inner.state.lock().expect("engine state lock");
+        // If we have a stored task directory, use it
+        if let Some(ref task_dir) = state.current_task_dir {
+            return task_dir.clone();
+        }
+        // Otherwise, fall back to session directory
+        if let Some(session_path) = self.session_path() {
+            return session_path.to_path_buf();
+        }
+        // Fallback to data dir if no session path
+        self.data_dir().to_path_buf()
+    }
+
+    /// Returns the next zero-padded 3-digit sequence number for the current task directory.
+    pub(crate) fn next_sequence_number(&self) -> u32 {
+        let task_dir = self.current_task_dir();
+        crate::history::sequence_counter(&task_dir).unwrap_or(1)
     }
 
     /// The persistent learned-confidence history file.
@@ -292,6 +307,7 @@ impl SessionContext {
             let task_dir_name = crate::history::task_dir_name(&task.id, task_timestamp);
             let task_path = crate::history::ensure_task_dir(session_path, &task_dir_name)
                 .unwrap_or_else(|_| session_path.join(&task_dir_name));
+            state.current_task_dir = Some(task_path.clone());
             engine.emit_history_msg_locked(
                 &mut state,
                 crate::history::HistoryMsg::TaskOpen { path: task_path },
@@ -329,6 +345,7 @@ impl SessionContext {
             },
         );
         state.current_task = None;
+        state.current_task_dir = None;
         engine.task_tiles_finished_locked(&mut state);
 
         // Emit task close marker after TaskFinished

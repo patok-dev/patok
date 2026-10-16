@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use patok_core::config::{DaemonEnv, DaemonSettings, EnumSpelling, ProviderKind, ProviderName};
@@ -51,6 +52,8 @@ pub(crate) struct State {
     /// The engine's run state, the single owner of which unit of work runs.
     pub(crate) run: RunState,
     pub(crate) current_task: Option<String>,
+    /// The current task's directory path for history logging.
+    pub(crate) current_task_dir: Option<PathBuf>,
     pub(crate) recent: VecDeque<EngineEvent>,
     pub(crate) attached: bool,
     /// The pending stop, if any.

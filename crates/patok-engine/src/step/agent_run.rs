@@ -107,6 +107,14 @@ async fn run_agent_session(
         captured
     });
 
+    let base_dir = ctx.current_task_dir();
+    let seq = ctx.next_sequence_number();
+    let raw_log_path = base_dir.join(format!(
+        "{:03}-{}-{}-raw.jsonl",
+        seq,
+        agent.label,
+        provider.slug()
+    ));
     let session = provider
         .run_session(SessionRequest {
             model: model.map(str::to_string),
@@ -114,8 +122,7 @@ async fn run_agent_session(
             system_prompt: Some(agent.system_prompt.to_string()),
             project_dir: ctx.project_dir().to_path_buf(),
             events,
-            log_dir: ctx.history_dir(),
-            label: agent.label,
+            raw_log_path,
             idle_timeout: ctx.agent_timeout(),
             cancel: ctx.cancel_token().clone(),
             allowed_tools: agent.tools.to_vec(),

@@ -30,10 +30,8 @@ pub struct SessionRequest {
     pub project_dir: PathBuf,
     /// Normalised events are pushed here as the session streams.
     pub events: UnboundedSender<AgentEvent>,
-    /// Directory for the raw transcript; created if missing.
-    pub log_dir: PathBuf,
-    /// Short label (usually the task ID) used in the transcript file name.
-    pub label: String,
+    /// Full path for the raw transcript JSONL file; the parent directory is created if missing.
+    pub raw_log_path: PathBuf,
     /// Kill the agent after this long without progress; the hard limit is four times this.
     pub idle_timeout: Duration,
     pub cancel: CancellationToken,
@@ -84,9 +82,9 @@ pub enum ProviderError {
     CliNotFound { cli: String },
     #[error("failed to start `{cli}`: {source}")]
     Spawn { cli: String, source: std::io::Error },
-    #[error("cannot write the session transcript in {}: {source}", dir.display())]
+    #[error("cannot write the session transcript at {}: {source}", path.display())]
     Log {
-        dir: PathBuf,
+        path: PathBuf,
         source: std::io::Error,
     },
 }

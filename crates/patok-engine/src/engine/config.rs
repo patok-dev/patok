@@ -217,6 +217,7 @@ impl Engine {
                 state: Mutex::new(State {
                     run: RunState::default(),
                     current_task: None,
+                    current_task_dir: None,
                     recent: VecDeque::new(),
                     attached: false,
                     stop: Stop::default(),
