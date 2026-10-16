@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::Engine;
 use crate::engine::{Inner, Tiles, resolve_provider};
 use crate::git::Git;
+use crate::history::resolve_root;
 use crate::task_list::{AppendMode, AppendRejection};
 
 /// One session's context (section 8 of docs/private/engine-restructure.md):
@@ -207,7 +208,7 @@ impl SessionContext {
 
     /// The directory holding the agents' history logs.
     pub(crate) fn history_dir(&self) -> PathBuf {
-        self.data_dir().join("history")
+        resolve_root(&self.settings, self.data_dir())
     }
 
     /// The persistent learned-confidence history file.

@@ -389,6 +389,7 @@ mod tests {
             "agent_timeout_secs",
             "phase_isolation",
             "history_dir",
+            "history_retention_tasks",
             "history_retention_days",
         ] {
             assert_eq!(

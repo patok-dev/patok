@@ -14,6 +14,7 @@ mod artifact;
 mod context;
 mod engine;
 mod git;
+mod history;
 mod markdown;
 mod pipeline;
 mod schedule;
@@ -23,6 +24,8 @@ mod step;
 mod task_list;
 
 pub use engine::{Engine, EngineConfig};
+/// The history module for session and task history management.
+pub use history::{HistoryRoot, resolve_root};
 /// The settings-change wire mapping, generated with the shell direction in
 /// `patok-wire` from one key-to-case list (finding 10).
 pub use patok_wire::from_proto;
