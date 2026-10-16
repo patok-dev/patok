@@ -6,19 +6,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use patok_core::config::{SettingValue, Theme as ThemeKey, TuiSettings};
 use patok_core::event::{AgentRole, Phase, Snapshot, Usage};
+use patok_core::output::{LineKind, LineOrigin, Pane};
 use patok_core::pipeline::PipelineState;
 use patok_core::scenario::{ProjectScan, Scenario};
 use patok_core::task::Task;
 use ratatui::layout::Rect;
-
-// The shared output lines, re-exported for the shell's modules until T183.2
-// switches them to `patok_core::output` directly (section 5 of
-// docs/private/history-restructure.md). `human_duration` is not re-exported
-// here: no shell module imports it, so lib.rs re-exports it from patok-core
-// for the test surface instead.
-pub use patok_core::output::{
-    LineKind, LineOrigin, OutLine, Pane, agent_display, finished_line, started_line,
-};
 
 use crate::dialog_editor::DialogEditor;
 use crate::modal::{Modal, ModalStack};
@@ -251,7 +243,7 @@ impl ThemeModal {
     }
 }
 
-/// The run state the event reducer (`App::apply`/`apply_agent`) writes: the
+/// The run state the event reducer (`App::apply`) writes: the
 /// engine's phase and run flags, the active agent, provider and model, the
 /// task list and the output pane. Grouped (finding 19) so the reducer's state
 /// reads as one thing instead of a dozen flat fields.

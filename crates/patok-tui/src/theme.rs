@@ -73,9 +73,9 @@
 //! | `agent_names.*` | `render_output` | the output frame title's agent type name only (T110.1, T117.1) |
 //! | `agent_text.pane_status` | `style_of`, headless `--color` | the agent lifecycle status lines in the output pane (T78.1, T42.1), the agent name included (T117.1) |
 
-use crate::app::LineKind;
 use patok_core::config::Theme as ThemeKey;
 use patok_core::event::AgentRole;
+use patok_core::output::LineKind;
 use ratatui::style::Color;
 
 /// The agent output line colours (T108.1): structurally separate from the

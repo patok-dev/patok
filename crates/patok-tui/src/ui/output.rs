@@ -1,9 +1,10 @@
 //! The agent output frame: its title, pane rendering and session lines. The
 //! lifecycle status lines the event reducer appends (the started, finished
-//! and human-duration formatters) live on the shell state side
-//! ([`crate::app`]); the frame keeps the timer's `mm:ss` formatting.
+//! and human-duration formatters) live in the shared output module
+//! ([`patok_core::output`]); the frame keeps the timer's `mm:ss` formatting.
 
 use patok_core::config::ProviderKind;
+use patok_core::output::{LineKind, OutLine, Pane, agent_display};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -12,7 +13,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::Duration;
 
 use super::common::{fitted_prefix, render_hints_strip, split_hints_row};
-use crate::app::{App, LineKind, OutLine, Pane, agent_display};
+use crate::app::App;
 use crate::geom::wrap_chunks;
 use crate::markdown::markdown_lines;
 use crate::theme::Theme;
