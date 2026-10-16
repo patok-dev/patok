@@ -1,15 +1,24 @@
 //! Shell state and its transitions. Pure: no I/O, so it is tested without a terminal.
 
 use std::cell::Cell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime};
 
 use patok_core::config::{SettingValue, Theme as ThemeKey, TuiSettings};
-use patok_core::event::{AgentRole, Phase, SessionOutcome, Snapshot, Usage};
+use patok_core::event::{AgentRole, Phase, Snapshot, Usage};
 use patok_core::pipeline::PipelineState;
 use patok_core::scenario::{ProjectScan, Scenario};
 use patok_core::task::Task;
 use ratatui::layout::Rect;
+
+// The shared output lines, re-exported for the shell's modules until T183.2
+// switches them to `patok_core::output` directly (section 5 of
+// docs/private/history-restructure.md). `human_duration` is not re-exported
+// here: no shell module imports it, so lib.rs re-exports it from patok-core
+// for the test surface instead.
+pub use patok_core::output::{
+    LineKind, LineOrigin, OutLine, Pane, agent_display, finished_line, started_line,
+};
 
 use crate::dialog_editor::DialogEditor;
 use crate::modal::{Modal, ModalStack};
@@ -18,125 +27,6 @@ use crate::overlay::{
 };
 use crate::theme::{Theme, theme_modal_groups};
 use crate::view::FrameFocus;
-
-/// Output lines kept; older ones scroll off for good.
-const OUTPUT_LIMIT: usize = 5000;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LineKind {
-    Text,
-    /// The agent's thinking; rendered as markdown in the thinking colour.
-    Thinking,
-    Tool,
-    Result,
-    Error,
-    Notice,
-    /// A status line, not agent content: the agent-started line (T78.1) and
-    /// the finished-agent line naming the agent type and the session's
-    /// duration (T42.1), in the heading colour (T96.1).
-    Status,
-    Heading,
-}
-
-/// Agent output lines, with the streaming-line state deltas append to.
-#[derive(Default)]
-pub struct Pane {
-    pub lines: VecDeque<OutLine>,
-    /// Whether the last line is a streaming line that deltas append to.
-    open: bool,
-}
-
-impl Pane {
-    pub fn is_empty(&self) -> bool {
-        self.lines.is_empty()
-    }
-
-    pub(crate) fn push(&mut self, kind: LineKind, text: String) {
-        self.open = false;
-        self.add(kind, text);
-    }
-
-    fn add(&mut self, kind: LineKind, text: String) {
-        if self.lines.len() == OUTPUT_LIMIT {
-            self.lines.pop_front();
-        }
-        self.lines.push_back(OutLine { kind, text });
-    }
-
-    /// Appends a streamed chunk to the current line, starting new lines at newlines.
-    pub(crate) fn append(&mut self, chunk: &str) {
-        for (i, piece) in chunk.split('\n').enumerate() {
-            if i > 0 {
-                self.open = false;
-            }
-            if piece.is_empty() {
-                continue;
-            }
-            match self.lines.back_mut() {
-                Some(line) if self.open => line.text.push_str(piece),
-                _ => self.add(LineKind::Text, piece.to_string()),
-            }
-            self.open = true;
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutLine {
-    pub kind: LineKind,
-    pub text: String,
-}
-
-/// The output frame title's agent type: the active agent's name capitalised
-/// ("planner" -> "Planner", "builder" -> "Builder"; T11.1).
-pub fn agent_display(agent: &str) -> String {
-    let mut chars = agent.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
-}
-
-/// A session's duration in human words (T42.1): `M sec` under a minute,
-/// `N min M sec` under an hour (seconds zero-padded) and `N h M min` beyond
-/// (minutes-within-the-hour zero-padded).
-pub fn human_duration(duration: Duration) -> String {
-    let total = duration.as_secs();
-    let (mins, secs) = (total / 60, total % 60);
-    if total < 60 {
-        format!("{secs} sec")
-    } else if total < 3600 {
-        format!("{mins} min {secs:02} sec")
-    } else {
-        format!("{} h {:02} min", total / 3600, mins % 60)
-    }
-}
-
-/// The started line appended to the output pane when one agent session begins
-/// (T78.1): the agent type name exactly as the finished line shows it, the
-/// provider it runs on, and the configured model when one exists.
-pub fn started_line(agent: &str, provider: &str, model: Option<&str>) -> String {
-    match model {
-        Some(model) => format!("{} started ({provider}, {model})", agent_display(agent)),
-        None => format!("{} started ({provider})", agent_display(agent)),
-    }
-}
-
-/// The finished line appended to the output pane when one agent session ends
-/// (T42.1): the agent type name exactly as the frame title shows it, the
-/// outcome's word (`finished`, `failed` or `cancelled`) and the human duration.
-pub fn finished_line(agent: &str, outcome: SessionOutcome, duration: Duration) -> String {
-    let word = match outcome {
-        SessionOutcome::Done | SessionOutcome::Finished => "finished",
-        SessionOutcome::Failed => "failed",
-        SessionOutcome::Cancelled => "cancelled",
-    };
-    format!(
-        "{} {word} in {}",
-        agent_display(agent),
-        human_duration(duration)
-    )
-}
 
 /// The two research queue-creation runs (T69.1): the Research agent's second
 /// duty besides investigating a task is creating the project's initial task
@@ -689,7 +579,7 @@ impl App {
 
     /// A shell-side notice line in the main pane (e.g. a config reload warning).
     pub(crate) fn shell_notice(&mut self, text: impl Into<String>) {
-        self.push(LineKind::Notice, text.into());
+        self.push(LineOrigin::Orchestrator, LineKind::Notice, text.into());
     }
 
     pub fn is_new_task(&self, id: &str) -> bool {

@@ -11,7 +11,7 @@ use std::time::Duration;
 use patok_core::config::ApplyTiming;
 use patok_core::event::{AgentEvent, EngineEvent, NoticeLevel, Phase, TaskOutcome};
 
-use crate::app::{App, LineKind, finished_line, started_line};
+use crate::app::{App, LineKind, LineOrigin, OutLine, finished_line, started_line};
 use crate::view::FrameFocus;
 
 impl App {
@@ -29,7 +29,11 @@ impl App {
             }
             EngineEvent::TaskStarted { id, description } => {
                 self.run.current_task = Some(id.clone());
-                self.push(LineKind::Heading, format!("── {id}: {description}"));
+                self.push(
+                    LineOrigin::Orchestrator,
+                    LineKind::Heading,
+                    format!("── {id}: {description}"),
+                );
             }
             EngineEvent::Agent { event } => self.apply_agent(event),
             // Replayed with the recent events, so a reattaching shell shows the right one.
@@ -61,7 +65,7 @@ impl App {
                 model,
             } => {
                 let text = started_line(&agent, &provider, model.as_deref());
-                self.push(LineKind::Status, text);
+                self.push(LineOrigin::Orchestrator, LineKind::Status, text);
                 self.run.provider = provider;
                 self.run.model = model.unwrap_or_default();
             }
@@ -75,7 +79,7 @@ impl App {
                 duration_ms,
             } => {
                 let text = finished_line(&agent, outcome, Duration::from_millis(duration_ms));
-                self.push(LineKind::Status, text);
+                self.push(LineOrigin::Orchestrator, LineKind::Status, text);
                 self.run.provider = self.run.config_provider.clone();
                 self.run.model = self.run.config_model.clone();
             }
@@ -121,7 +125,7 @@ impl App {
                     TaskOutcome::Failed => (LineKind::Error, format!("✘ {id} failed{sha}")),
                     TaskOutcome::Cancelled => (LineKind::Notice, format!("■ {id} cancelled")),
                 };
-                self.push(kind, text);
+                self.push(LineOrigin::Orchestrator, kind, text);
             }
             // A daemon-schema field changed on the engine:
             // the readout the overlay renders from stays in sync, the routing fields
@@ -147,7 +151,7 @@ impl App {
                         if timing == ApplyTiming::NextUnitOfWork {
                             text.push_str(" (takes effect on the next start)");
                         }
-                        self.push(LineKind::Notice, text);
+                        self.push(LineOrigin::Orchestrator, LineKind::Notice, text);
                     }
                 }
             }
@@ -160,7 +164,7 @@ impl App {
                 } else {
                     LineKind::Notice
                 };
-                self.push(kind, text);
+                self.push(LineOrigin::Orchestrator, kind, text);
             }
         }
     }
@@ -168,20 +172,26 @@ impl App {
     fn apply_agent(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::TextDelta { text } => self.append(&text),
-            AgentEvent::Text { text } => self.push(LineKind::Text, text),
-            AgentEvent::Thinking { text } => self.push(LineKind::Thinking, text),
-            AgentEvent::ToolUse { name, input } => {
-                self.push(LineKind::Tool, format!("▸ {name} {input}"))
-            }
+            AgentEvent::Text { text } => self.push(LineOrigin::Agent, LineKind::Text, text),
+            AgentEvent::Thinking { text } => self.push(LineOrigin::Agent, LineKind::Thinking, text),
+            AgentEvent::ToolUse { name, input } => self.push(
+                LineOrigin::Agent,
+                LineKind::Tool,
+                format!("▸ {name} {input}"),
+            ),
             AgentEvent::ToolResult { output } => {
-                self.push(LineKind::Result, format!("  ↳ {output}"))
+                self.push(LineOrigin::Agent, LineKind::Result, format!("  ↳ {output}"))
             }
             AgentEvent::Stderr { text } | AgentEvent::Error { text, .. } => {
-                self.push(LineKind::Error, text)
+                self.push(LineOrigin::Agent, LineKind::Error, text)
             }
             AgentEvent::Result { text } => {
                 if !text.is_empty() {
-                    self.push(LineKind::Result, format!("result: {text}"));
+                    self.push(
+                        LineOrigin::Agent,
+                        LineKind::Result,
+                        format!("result: {text}"),
+                    );
                 }
             }
             AgentEvent::Usage(usage) if !self.run.planning => self.run.usage = Some(usage),
@@ -189,12 +199,12 @@ impl App {
         }
     }
 
-    pub(crate) fn push(&mut self, kind: LineKind, text: String) {
-        self.run.output.push(kind, text);
+    pub(crate) fn push(&mut self, origin: LineOrigin, kind: LineKind, text: String) {
+        self.run.output.push(OutLine { kind, origin, text });
     }
 
     fn append(&mut self, chunk: &str) {
-        self.run.output.append(chunk);
+        self.run.output.append(LineOrigin::Agent, chunk);
     }
 
     /// The frame focus the engine state implies: the task list while idle, the agent

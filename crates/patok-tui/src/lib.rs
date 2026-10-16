@@ -34,8 +34,7 @@ pub use run::{Outcome, Spawner, run};
 // self dev-dependency in Cargo.toml.
 #[cfg(any(test, feature = "test-support"))]
 pub use app::{
-    Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, finished_line, human_duration,
-    menu_entries, started_line,
+    Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, finished_line, menu_entries, started_line,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use hit::{
@@ -45,6 +44,10 @@ pub use hit::{
 pub use modal::Modal;
 #[cfg(any(test, feature = "test-support"))]
 pub use overlay::{Entry, FieldKind, SETTINGS_CHOICES, Schema, StatusLevel};
+// The line formatters' new home; the shell's modules never import
+// `human_duration` itself, so the app shim does not carry it.
+#[cfg(any(test, feature = "test-support"))]
+pub use patok_core::output::human_duration;
 #[cfg(any(test, feature = "test-support"))]
 pub use pipeline::{RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width};
 #[cfg(any(test, feature = "test-support"))]

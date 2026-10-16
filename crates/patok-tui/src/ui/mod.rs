@@ -96,7 +96,7 @@ mod tests {
     use super::settings::settings_row_line;
     use super::status::status_widget;
     use super::*;
-    use crate::app::{LineKind, OutLine, agent_display, finished_line, started_line};
+    use crate::app::{LineKind, LineOrigin, OutLine, agent_display, finished_line, started_line};
     use crate::hit::{button_text, confirm_row_at, stop_row_at};
     use crate::overlay::{Editor, Entry, FieldKind, SECTIONS};
     use crate::theme::Theme;
@@ -200,6 +200,7 @@ mod tests {
                     theme,
                     &OutLine {
                         kind,
+                        origin: LineOrigin::Orchestrator,
                         text: text.clone(),
                     },
                     40,
