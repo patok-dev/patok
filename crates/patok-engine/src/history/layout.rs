@@ -1,4 +1,5 @@
-//! Directory layout for history: session and task directories.
+//! Directory layout for history: `<root>/<YYYY-MM-DD>/<HH-MM-SS>/` session dirs,
+//! `<unix_millis>-<task id>` task dirs, and the per-task zero-padded `<seq>` counter.
 
 use std::fs;
 use std::path::{Path, PathBuf};

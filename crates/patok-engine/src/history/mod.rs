@@ -1,18 +1,25 @@
 //! The history module for session and task history management.
 //!
-//! This module implements the directory layout and retention pruning described in
-//! docs/private/history-restructure.md, section 2 and 9:
+//! This module implements the history restructure described in docs/private/history-restructure.md,
+//! sections 2-9:
 //!
-//! - Root: resolved from `settings.history_dir`, fallback to `<data_dir>/history`
-//! - Session dirs: local-time `YYYY-MM-DD/HH-MM-SS`
-//! - Task dirs: `<unix_millis>-<task_id>`
-//! - Per-task zero-padded sequence counter shared across agents
+//! - **Root:** resolved from `settings.history_dir`, fallback to `<data_dir>/history`
+//! - **Layout:** session dirs `YYYY-MM-DD/HH-MM-SS` in local time, task dirs
+//!   `<unix_millis>-<task_id>`, with a per-task zero-padded `<seq>` counter shared across agents
+//! - **Writer:** `HistoryWriter` writes `output.log`, `orchestrator.log` and `events.jsonl` to the
+//!   open task dir, or to the session dir when no task is open
+//! - **Markers:** `SessionOpen` from `Engine::start_*`, `SessionClose` from
+//!   `SessionCloseGuard`, `TaskOpen` from `begin_task` and the first-task path, `TaskClose`
+//!   after `TaskFinished`
+//! - **Files written elsewhere into the same dirs:** raw `-raw.jsonl` and `-result.json` from
+//!   `step::agent_run`, Markdown artifacts from `artifact::write_artifact`, batch review output
+//!   in the batch's last task dir (`OpenGroup::task_dirs`)
+//! - `open-group.json` lives outside the root in the project data dir
+//! - **Retention:** `prune` at session open removes task dirs beyond `history_retention_tasks`
+//!   OR older than `history_retention_days`, session dirs left empty after pruning, and
+//!   task-less session dirs older than `history_retention_days`; never touches the current session
 //!
-//! Retention pruning removes:
-//! - Task dirs beyond the newest `history_retention_tasks` OR older than `history_retention_days`
-//! - Session dirs left without task dirs (after having had some)
-//! - Task-less session dirs older than `history_retention_days`
-//! - Never touches the current session
+//! The history is write-only: nothing in patok reads it back.
 
 use std::path::{Path, PathBuf};
 
