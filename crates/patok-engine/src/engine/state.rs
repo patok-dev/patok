@@ -52,7 +52,7 @@ pub(crate) struct State {
     pub(crate) run: RunState,
     pub(crate) current_task: Option<String>,
     pub(crate) recent: VecDeque<EngineEvent>,
-    pub(crate) attached: bool,
+    pub(crate) attach_count: usize,
     /// The pending stop, if any.
     pub(crate) stop: Stop,
     /// The discovery cooldown schedule.
@@ -360,7 +360,7 @@ impl Engine {
             .next_pending()
             .is_ok_and(|t| t.is_some());
         let state = self.state();
-        !state.attached && state.run == RunState::Idle && !pending
+        state.attach_count == 0 && state.run == RunState::Idle && !pending
     }
 
     /// The IDs this engine appended through the append-tasks flow during the session, in the

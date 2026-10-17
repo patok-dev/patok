@@ -55,15 +55,10 @@ impl Engine {
         Ok(before)
     }
 
-    /// Takes the single controlling-shell slot and returns the current state plus a live feed.
+    /// Takes an attachment slot and returns the current state plus a live feed.
     pub fn attach(&self) -> Result<Attachment, AttachError> {
         let mut state = self.state();
-        if state.attached {
-            return Err(AttachError::AlreadyAttached(
-                self.inner.config.project_dir.display().to_string(),
-            ));
-        }
-        state.attached = true;
+        state.attach_count += 1;
         // The display fields and the settings readout come from the central config: a
         // settings swap holds this lock only briefly and never the state lock inside it,
         // so they are consistent.

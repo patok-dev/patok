@@ -57,11 +57,13 @@ async fn attach_build_reattach_and_soft_stop_keeps_the_engine_running() {
     assert_eq!(snapshot.phase, Phase::Startup);
     assert_eq!(snapshot.tasks.len(), 1);
 
-    // Only one controlling shell at a time.
+    // Multiple shells can attach simultaneously now.
     let mut second = connect_retrying(&socket).await;
-    let rejected = second.attach(AttachRequest::default()).await.unwrap_err();
-    assert_eq!(rejected.code(), tonic::Code::FailedPrecondition);
-    assert!(rejected.message().contains("already attached"));
+    let mut second_updates = second
+        .attach(AttachRequest::default())
+        .await
+        .unwrap()
+        .into_inner();
 
     let response = client
         .submit_command(CommandRequest {
@@ -93,18 +95,14 @@ async fn attach_build_reattach_and_soft_stop_keeps_the_engine_running() {
     assert!(saw_agent_text);
     assert_eq!(finished, ("T1.1".to_string(), TaskOutcome::Done));
 
-    // Close the shell and reattach: the engine kept the state.
+    // Close both shells and reattach: the engine kept the state.
     drop(updates);
-    let reattached = loop {
-        match client.attach(AttachRequest::default()).await {
-            Ok(stream) => break stream.into_inner(),
-            // The engine frees the slot asynchronously once it notices the disconnect.
-            Err(status) if status.code() == tonic::Code::FailedPrecondition => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(status) => panic!("{status}"),
-        }
-    };
+    drop(second_updates);
+    let reattached = client
+        .attach(AttachRequest::default())
+        .await
+        .unwrap()
+        .into_inner();
     let mut reattached = reattached;
     let (_, snapshot) = snapshot_of(reattached.message().await.unwrap().unwrap());
     assert!(snapshot.tasks[0].done);
@@ -831,10 +829,14 @@ async fn restart_stops_the_engine_spawns_a_fresh_one_and_reattaches() {
     assert!(!app.version_mismatch);
     assert_eq!(app.status.as_deref(), Some("Engine restarted."));
 
-    // The new stream is live: a fresh attach on the new engine is rejected as already taken.
+    // The new stream is live: a fresh attach on the new engine succeeds (multiple shells can attach).
     let mut other = connect_retrying(&socket).await;
-    let rejected = other.attach(AttachRequest::default()).await.unwrap_err();
-    assert_eq!(rejected.code(), tonic::Code::FailedPrecondition);
+    let _other_updates = other
+        .attach(AttachRequest::default())
+        .await
+        .unwrap()
+        .into_inner();
+    drop(_other_updates);
 
     // Stop the new engine.
     let mut progress = client
