@@ -85,6 +85,7 @@ impl<'a> ReviewStep<'a> {
         plan: Option<&str>,
         claims: Option<&str>,
         group_base: Option<&str>,
+        review_dir: &std::path::Path,
     ) -> ReviewOutcome {
         let ctx = self.ctx;
         let complexity = complexity::classify(&task.description);
@@ -243,7 +244,7 @@ impl<'a> ReviewStep<'a> {
                 below.finding.issue
             );
         }
-        let review_path = write_review_file(ctx, &task.id, &report);
+        let review_path = write_review_file(ctx, review_dir, &task.id, &report);
         // The pass/fail outcome is recorded in the persistent learned-confidence
         // history in the background.
         record_review_outcome(ctx, task, complexity, verdict.passed);
@@ -315,16 +316,16 @@ fn file_hashes(ctx: &SessionContext, files: &[String]) -> Vec<Option<String>> {
         .collect()
 }
 
-/// Writes the review report to the task directory as
-/// `<task id>-<timestamp>.md`, returning
+/// Writes the review report to the specified directory as
+/// `<task id>-review-<timestamp>.md`, returning
 /// its path for the failure notice.
 fn write_review_file(
     ctx: &SessionContext,
+    dir: &std::path::Path,
     task_id: &str,
     report: &str,
 ) -> Option<std::path::PathBuf> {
-    let dir = ctx.current_task_dir();
-    match artifact::write_artifact(&dir, &format!("{task_id}-review"), report) {
+    match artifact::write_artifact(dir, &format!("{task_id}-review"), report) {
         Ok(path) => {
             ctx.notice(
                 NoticeLevel::Info,

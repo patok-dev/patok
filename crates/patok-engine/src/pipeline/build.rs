@@ -40,6 +40,8 @@ impl<'a> BuildPipeline<'a> {
         // number starts or resumes a group through the open-group record,
         // capturing the base its last review diffs across.
         self.note_group(task).await;
+        // Record the task's directory in the group record.
+        self.record_group_task_dir(task);
 
         // The research step (T68.1): one research session runs before the task is
         // planned (or built, with the plan step off), unless a fresh report is on
@@ -119,8 +121,15 @@ impl<'a> BuildPipeline<'a> {
                 self.ctx
                     .update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Active));
                 let base = self.ctx.group_base();
+                let review_dir = self.batch_review_dir(task);
                 let review = ReviewStep::new(self.ctx)
-                    .run(task, plan.as_deref(), claims.as_deref(), base.as_deref())
+                    .run(
+                        task,
+                        plan.as_deref(),
+                        claims.as_deref(),
+                        base.as_deref(),
+                        &review_dir,
+                    )
                     .await;
                 self.ctx
                     .update_tiles(|tiles| tiles.set(Stage::Review, TileStatus::Done));
@@ -212,6 +221,7 @@ impl<'a> BuildPipeline<'a> {
             base: head.clone(),
             last: head.clone(),
             members: Vec::new(),
+            task_dirs: Vec::new(),
         };
         match group::OpenGroup::load(self.ctx.open_group_path()) {
             Some(record) => {
@@ -268,5 +278,56 @@ impl<'a> BuildPipeline<'a> {
         if let Err(error) = group::OpenGroup::clear(path) {
             tracing::warn!("cannot delete the open group {}: {error}", path.display());
         }
+    }
+
+    /// Records the current task's directory path in the open-group record's
+    /// `task_dirs` list when the task joins the group. Called right after
+    /// `note_group`, which has already set the group number and base and
+    /// persisted the record. The task dir is recorded in run order: a retry
+    /// adds its new dir, so the list can name the same task ID twice.
+    fn record_group_task_dir(&self, task: &Task) {
+        let Some(number) = self.ctx.group_number() else {
+            return;
+        };
+        if task.group_number() != Some(number) {
+            return;
+        }
+        let Some(task_dir) = self.ctx.task_dir() else {
+            return;
+        };
+        let path = self.ctx.open_group_path();
+        let Some(mut record) = group::OpenGroup::load(path) else {
+            return;
+        };
+        // Only push if not already present (avoid duplicates from retry reads)
+        if !record.task_dirs.contains(&task_dir) {
+            record.task_dirs.push(task_dir);
+        }
+        if let Err(error) = record.save(path) {
+            tracing::warn!("cannot write the open group {}: {error}", path.display());
+        }
+    }
+
+    /// Returns the directory where the batch review output should be written.
+    /// If the task has a group number equal to `ctx.group_number()` and
+    /// `OpenGroup::load` returns a record with a `last_task_dir()`, return that
+    /// path. Otherwise return `ctx.current_task_dir()`.
+    /// This ensures the batch review output goes into the batch's last task dir,
+    /// resolved from `open-group.json`, so a batch that spans sessions works.
+    fn batch_review_dir(&self, task: &Task) -> std::path::PathBuf {
+        let Some(number) = self.ctx.group_number() else {
+            return self.ctx.current_task_dir();
+        };
+        if task.group_number() != Some(number) {
+            return self.ctx.current_task_dir();
+        }
+        let path = self.ctx.open_group_path();
+        let Some(record) = group::OpenGroup::load(path) else {
+            return self.ctx.current_task_dir();
+        };
+        record
+            .last_task_dir()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.ctx.current_task_dir())
     }
 }

@@ -213,6 +213,12 @@ impl SessionContext {
         &self.inner.config.data_dir
     }
 
+    /// Returns the stored task directory if set, without any fallback.
+    pub(crate) fn task_dir(&self) -> Option<PathBuf> {
+        let state = self.inner.state.lock().expect("engine state lock");
+        state.current_task_dir.clone()
+    }
+
     /// Returns the current task directory if a task is active, otherwise the session directory.
     pub(crate) fn current_task_dir(&self) -> PathBuf {
         let state = self.inner.state.lock().expect("engine state lock");

@@ -135,6 +135,7 @@ impl Engine {
         state.group_number = None;
         state.group_base = None;
         state.current_task = Some(task.id.clone());
+        state.current_task_dir = Some(task_path.clone());
 
         // Emit session open marker and run retention pruning before first event
         let retention_tasks = ctx.settings().history_retention_tasks;

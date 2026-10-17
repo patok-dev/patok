@@ -5040,3 +5040,210 @@ async fn history_lifecycle_markers_create_session_and_task_dirs() {
     );
     assert!(add.join("events.jsonl").exists());
 }
+
+/// T186.1: a batch spanning two sessions writes its review into the last task dir.
+/// Session 1: T1.1 and T1.2 run, both reviews fail so the record survives.
+/// Session 2: T1.2 reruns, its review fails, and the review file lands in
+/// the batch's last task dir (the session 2 T1.2 task dir).
+#[tokio::test]
+async fn a_batch_spanning_two_sessions_writes_its_review_into_the_last_task_dir() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_fail(),
+        builder_with_claims("second.txt", "second v2\n", "none"),
+        review_fail(),
+    ]);
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // Session 1: two tasks ran, both reviews failed
+    let sessions1 = history_sessions(&fixture.data.path().join("history"));
+    assert_eq!(sessions1.len(), 1, "session 1 should have been created");
+    let session_a = &sessions1[0];
+
+    // Check the record has task_dirs for both tasks
+    let record = open_group_record(&fixture);
+    let task_dirs = record["task_dirs"]
+        .as_array()
+        .expect("task_dirs should be present");
+    assert_eq!(task_dirs.len(), 2, "record should have 2 task_dirs");
+    let dirs: Vec<&str> = task_dirs.iter().map(|v| v.as_str().unwrap()).collect();
+    // Both should be in session A
+    assert!(
+        dirs[0].contains(&session_a.display().to_string()),
+        "first task dir should be in session A"
+    );
+    assert!(
+        dirs[0].ends_with("-T1.1"),
+        "first task dir should end with -T1.1"
+    );
+    assert!(
+        dirs[1].contains(&session_a.display().to_string()),
+        "second task dir should be in session A"
+    );
+    assert!(
+        dirs[1].ends_with("-T1.2"),
+        "second task dir should end with -T1.2"
+    );
+
+    // Session A's T1.2 dir should have the review
+    let t1_2_dirs: Vec<_> = std::fs::read_dir(session_a)
+        .unwrap()
+        .filter_map(|e| {
+            let entry = e.unwrap();
+            if entry.file_name().to_string_lossy().ends_with("-T1.2") {
+                Some(entry.path())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        t1_2_dirs.len(),
+        1,
+        "session A should have one T1.2 task dir"
+    );
+    let t1_2_dir = &t1_2_dirs[0];
+    let review_files: Vec<_> = std::fs::read_dir(t1_2_dir)
+        .unwrap()
+        .filter_map(|e| {
+            let entry = e.unwrap();
+            let binding = entry.file_name();
+            let name = binding.to_string_lossy();
+            if name.starts_with("T1.2-review-") && name.ends_with(".md") {
+                Some(name.into_owned())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        !review_files.is_empty(),
+        "session A T1.2 dir should have a review file"
+    );
+    // Session dir should not have review files directly
+    let session_reviews: Vec<_> = std::fs::read_dir(session_a)
+        .unwrap()
+        .filter_map(|e| {
+            let entry = e.unwrap();
+            let binding = entry.file_name();
+            let name = binding.to_string_lossy();
+            if name.starts_with("T1.") && name.contains("-review-") && name.ends_with(".md") {
+                Some(name.into_owned())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        session_reviews.is_empty(),
+        "session A dir should not have review files directly"
+    );
+
+    // Wait for session boundary
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    // Session 2: start fresh engine over the same fixture
+    let engine = fixture.engine_configured(provider.clone(), "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    // Now we should have two sessions
+    let sessions2 = history_sessions(&fixture.data.path().join("history"));
+    assert_eq!(sessions2.len(), 2, "should have 2 sessions");
+    let session_b = sessions2.iter().find(|s| *s != session_a).unwrap();
+
+    // Check the record now has 3 task_dirs (2 from session A, 1 from session B)
+    let record = open_group_record(&fixture);
+    let task_dirs = record["task_dirs"]
+        .as_array()
+        .expect("task_dirs should be present");
+    assert_eq!(
+        task_dirs.len(),
+        3,
+        "record should have 3 task_dirs after retry"
+    );
+    let dirs: Vec<&str> = task_dirs.iter().map(|v| v.as_str().unwrap()).collect();
+    // First two should be in session A, third in session B
+    assert!(dirs[0].contains(&session_a.display().to_string()));
+    assert!(dirs[0].ends_with("-T1.1"));
+    assert!(dirs[1].contains(&session_a.display().to_string()));
+    assert!(dirs[1].ends_with("-T1.2"));
+    assert!(dirs[2].contains(&session_b.display().to_string()));
+    assert!(dirs[2].ends_with("-T1.2"));
+
+    // Members should still be ["T1.1", "T1.2"]
+    let members = record["members"].as_array().expect("members");
+    let ids: Vec<&str> = members.iter().map(|m| m[0].as_str().unwrap()).collect();
+    assert_eq!(ids, ["T1.1", "T1.2"]);
+
+    // Session B's T1.2 dir should have the review
+    let t1_2_dirs_b: Vec<_> = std::fs::read_dir(session_b)
+        .unwrap()
+        .filter_map(|e| {
+            let entry = e.unwrap();
+            if entry.file_name().to_string_lossy().ends_with("-T1.2") {
+                Some(entry.path())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        t1_2_dirs_b.len(),
+        1,
+        "session B should have one T1.2 task dir"
+    );
+    let t1_2_dir_b = &t1_2_dirs_b[0];
+    let review_files_b: Vec<_> = std::fs::read_dir(t1_2_dir_b)
+        .unwrap()
+        .filter_map(|e| {
+            let entry = e.unwrap();
+            let binding = entry.file_name();
+            let name = binding.to_string_lossy();
+            if name.starts_with("T1.2-review-") && name.ends_with(".md") {
+                Some(name.into_owned())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        !review_files_b.is_empty(),
+        "session B T1.2 dir should have a review file"
+    );
+
+    // Neither session dir should have review files directly
+    for session in &sessions2 {
+        let session_reviews: Vec<_> = std::fs::read_dir(session)
+            .unwrap()
+            .filter_map(|e| {
+                let entry = e.unwrap();
+                let binding = entry.file_name();
+                let name = binding.to_string_lossy();
+                if name.starts_with("T1.") && name.contains("-review-") && name.ends_with(".md") {
+                    Some(name.into_owned())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            session_reviews.is_empty(),
+            "session dir {} should not have review files directly",
+            session.display()
+        );
+    }
+
+    // Check provider labels
+    let sessions = provider.sessions();
+    let labels: Vec<_> = sessions.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["T1.1", "T1.2", "review", "T1.2", "review"]);
+}
