@@ -87,6 +87,10 @@ impl Fixture {
             idle_shutdown: Duration::from_secs(3600),
             discovery_cooldown: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN,
             discovery_cooldown_cap: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN_CAP,
+            // No pauses, so the existing tests keep their timing; the pause tests opt in.
+            pause_between_tasks: Duration::ZERO,
+            pause_between_agents: Duration::ZERO,
+            pause_between_cycles: Duration::ZERO,
             plan_enabled,
             run_mode: RunMode::Continuous,
             skip_research_for_simple,
@@ -135,7 +139,7 @@ impl Fixture {
     ) -> Engine {
         std::fs::write(
             self.project_config(),
-            format!("[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\n{daemon_toml}"),
+            format!("[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\npause_between_tasks_secs = 0\npause_between_agents_secs = 0\npause_between_cycles_secs = 0\n{daemon_toml}"),
         )
         .unwrap();
         let config = self.config_review();

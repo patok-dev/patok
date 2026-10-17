@@ -14,7 +14,7 @@ use patok_core::config::RunMode;
 use patok_core::event::TaskOutcome;
 use patok_core::task::Task;
 
-use crate::context::SessionContext;
+use crate::context::{Pause, SessionContext};
 use crate::pipeline::add_task::AddTaskPipeline;
 use crate::pipeline::build::BuildPipeline;
 use crate::pipeline::discovery::DiscoveryPipeline;
@@ -124,6 +124,9 @@ impl Session {
     /// immediately would loop), as does a stop request. `first` is the task `start_build`
     /// already announced: it runs even when a stop request arrives before the loop does,
     /// so the stop cancels the running agent as before.
+    /// Pauses: the inter-task pause runs before every task after the first, the inter-cycle
+    /// pause before each scheduled discovery round, and the agent pause before every agent
+    /// after the first of a task (in `run_stage`).
     async fn run_build(ctx: &SessionContext, first: Task) {
         if Self::run_task(ctx, first).await != TaskOutcome::Done {
             ctx.build_ended();
@@ -131,6 +134,14 @@ impl Session {
         }
         loop {
             while !ctx.stop_pending() {
+                // The inter-task pause runs only when another task is waiting.
+                if ctx.next_pending().is_none() {
+                    break;
+                }
+                ctx.pause(Pause::Task).await;
+                if ctx.stop_pending() {
+                    break;
+                }
                 let Some(task) = Self::begin_next_task(ctx) else {
                     break;
                 };
@@ -145,6 +156,11 @@ impl Session {
                 || ctx.settings().run_mode != RunMode::Continuous
                 || !ctx.discovery_due()
             {
+                break;
+            }
+            // The inter-cycle pause before the scheduled discovery round.
+            ctx.pause(Pause::Cycle).await;
+            if ctx.stop_pending() {
                 break;
             }
             match Self::run_scheduled_discovery(ctx).await {

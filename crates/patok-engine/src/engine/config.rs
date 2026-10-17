@@ -35,6 +35,12 @@ pub struct EngineConfig {
     pub discovery_cooldown: Duration,
     /// The cap the discovery cooldown doubles up to.
     pub discovery_cooldown_cap: Duration,
+    /// The pause between two tasks (`pause_between_tasks_secs`).
+    pub pause_between_tasks: Duration,
+    /// The pause between two agent invocations (`pause_between_agents_secs`).
+    pub pause_between_agents: Duration,
+    /// The pause before a scheduled discovery round (`pause_between_cycles_secs`).
+    pub pause_between_cycles: Duration,
     /// Whether a plan session runs before each builder session (`plan_enabled`, T10.1).
     pub plan_enabled: bool,
     /// Seeds the central settings on `Engine::new` exactly like `plan_enabled`;
@@ -67,6 +73,15 @@ impl EngineConfig {
     pub const DEFAULT_DISCOVERY_COOLDOWN_CAP: Duration =
         Duration::from_secs(patok_core::config::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS);
 
+    /// The daemon default of `pause_between_tasks_secs`.
+    pub const DEFAULT_PAUSE_BETWEEN_TASKS: Duration = Duration::from_secs(10);
+
+    /// The daemon default of `pause_between_agents_secs`.
+    pub const DEFAULT_PAUSE_BETWEEN_AGENTS: Duration = Duration::from_secs(3);
+
+    /// The daemon default of `pause_between_cycles_secs`.
+    pub const DEFAULT_PAUSE_BETWEEN_CYCLES: Duration = Duration::from_secs(30);
+
     /// Resolves directories from the environment. `project_dir` must already be canonical.
     pub fn resolve(project_dir: PathBuf) -> anyhow::Result<Self> {
         let data_dir =
@@ -85,6 +100,9 @@ impl EngineConfig {
             idle_shutdown: Self::DEFAULT_IDLE_SHUTDOWN,
             discovery_cooldown: Self::DEFAULT_DISCOVERY_COOLDOWN,
             discovery_cooldown_cap: Self::DEFAULT_DISCOVERY_COOLDOWN_CAP,
+            pause_between_tasks: Self::DEFAULT_PAUSE_BETWEEN_TASKS,
+            pause_between_agents: Self::DEFAULT_PAUSE_BETWEEN_AGENTS,
+            pause_between_cycles: Self::DEFAULT_PAUSE_BETWEEN_CYCLES,
             plan_enabled: true,
             run_mode: RunMode::Sprint,
             skip_research_for_simple: true,
@@ -126,6 +144,9 @@ impl Engine {
             engine_idle_timeout_secs: config.idle_shutdown.as_secs(),
             discovery_cooldown_secs: config.discovery_cooldown.as_secs(),
             discovery_cooldown_cap_secs: config.discovery_cooldown_cap.as_secs(),
+            pause_between_tasks_secs: config.pause_between_tasks.as_secs(),
+            pause_between_agents_secs: config.pause_between_agents.as_secs(),
+            pause_between_cycles_secs: config.pause_between_cycles.as_secs(),
             plan_enabled: config.plan_enabled,
             run_mode: config.run_mode,
             skip_research_for_simple: config.skip_research_for_simple,

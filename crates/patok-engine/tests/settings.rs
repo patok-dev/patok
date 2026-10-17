@@ -37,6 +37,9 @@ fn defaults_config(fixture: &Fixture) -> EngineConfig {
     let mut config = fixture.config_for(true);
     config.agent_timeout = EngineConfig::DEFAULT_AGENT_TIMEOUT;
     config.idle_shutdown = EngineConfig::DEFAULT_IDLE_SHUTDOWN;
+    config.pause_between_tasks = EngineConfig::DEFAULT_PAUSE_BETWEEN_TASKS;
+    config.pause_between_agents = EngineConfig::DEFAULT_PAUSE_BETWEEN_AGENTS;
+    config.pause_between_cycles = EngineConfig::DEFAULT_PAUSE_BETWEEN_CYCLES;
     // The file default for the run mode is sprint (the fixture's continuous
     // default is for the scheduled-round tests, T103.1).
     config.run_mode = RunMode::Sprint;

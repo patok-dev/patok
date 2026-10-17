@@ -690,6 +690,74 @@ async fn the_report_reaches_the_builder_prompt_when_the_plan_stage_is_off() {
     assert!(!sessions[1].prompt.contains("carry it out"));
 }
 
+/// Builds `tasks` on an engine whose pauses are set by `configure`, and returns how long the
+/// build took.
+async fn timed_build(
+    fixture: &Fixture,
+    provider: MockProvider,
+    configure: impl FnOnce(&mut patok_engine::EngineConfig),
+    skip_research_for_simple: bool,
+) -> Duration {
+    let mut config = fixture.config_full(false, skip_research_for_simple);
+    configure(&mut config);
+    let engine = patok_engine::Engine::new(config, std::sync::Arc::new(provider));
+    let mut attachment = engine.attach().unwrap();
+    let started = std::time::Instant::now();
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+    started.elapsed()
+}
+
+#[tokio::test]
+async fn an_adaptive_agent_pause_is_short_when_not_rate_limited() {
+    let fixture = Fixture::new(SUBSTANTIAL_TASK);
+    let provider = MockProvider::per_session(vec![research_steps("report"), builder_steps()]);
+    let elapsed = timed_build(
+        &fixture,
+        provider.clone(),
+        |config| config.pause_between_agents = Duration::from_secs(3),
+        false,
+    )
+    .await;
+    assert!(elapsed < Duration::from_secs(3), "took {elapsed:?}");
+    assert_eq!(provider.sessions()[1].label, "T1.1");
+}
+
+#[tokio::test]
+async fn a_rate_limited_agent_waits_the_full_agent_pause() {
+    let fixture = Fixture::new(SUBSTANTIAL_TASK);
+    let provider = MockProvider::per_session(vec![research_steps("report"), builder_steps()])
+        .with_rate_limited(true);
+    let elapsed = timed_build(
+        &fixture,
+        provider.clone(),
+        |config| config.pause_between_agents = Duration::from_secs(3),
+        false,
+    )
+    .await;
+    assert!(elapsed >= Duration::from_secs(3), "took {elapsed:?}");
+    assert_eq!(provider.sessions()[1].label, "T1.1");
+}
+
+#[tokio::test]
+async fn a_rate_limited_task_waits_the_full_task_pause() {
+    let fixture = Fixture::new(TASKS);
+    let provider = MockProvider::new(builder_steps()).with_rate_limited(true);
+    let elapsed = timed_build(
+        &fixture,
+        provider,
+        |config| config.pause_between_tasks = Duration::from_secs(2),
+        true,
+    )
+    .await;
+    assert!(elapsed >= Duration::from_secs(2), "took {elapsed:?}");
+    let tasks = fixture.tasks_file();
+    assert!(
+        tasks.contains("[x] T1.1") && tasks.contains("[x] T1.2"),
+        "{tasks}"
+    );
+}
+
 #[tokio::test]
 async fn a_simple_task_skips_research_with_the_key_on_and_runs_it_when_off() {
     // "add the greeting file" is a Simple description, so the skip key decides.

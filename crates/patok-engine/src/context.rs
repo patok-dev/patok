@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use patok_core::config::DaemonSettings;
@@ -21,6 +22,36 @@ use crate::engine::{Inner, Tiles, resolve_provider};
 use crate::git::Git;
 use crate::task_list::{AppendMode, AppendRejection};
 
+/// Which configured pause the loop waits before the next unit of work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pause {
+    Agent,
+    Task,
+    Cycle,
+}
+
+/// The adaptive pause: what a pause shrinks to when the last agent was not rate limited.
+pub(crate) const ADAPTIVE_PAUSE: Duration = Duration::from_millis(500);
+
+/// The pause of `kind` (`pause_between_*_secs`); with `adaptive_pauses` on and the last
+/// agent not rate limited, it shrinks to at most [`ADAPTIVE_PAUSE`].
+pub(crate) fn pause_duration(
+    settings: &DaemonSettings,
+    kind: Pause,
+    rate_limited: bool,
+) -> Duration {
+    let full = Duration::from_secs(match kind {
+        Pause::Agent => settings.pause_between_agents_secs,
+        Pause::Task => settings.pause_between_tasks_secs,
+        Pause::Cycle => settings.pause_between_cycles_secs,
+    });
+    if settings.adaptive_pauses && !rate_limited {
+        full.min(ADAPTIVE_PAUSE)
+    } else {
+        full
+    }
+}
+
 /// One session's context (section 8 of docs/private/engine-restructure.md):
 /// the unit-of-work snapshot taken at the session's start -- the provider,
 /// the model and the merged settings it relies on -- plus the session's
@@ -34,6 +65,10 @@ pub(crate) struct SessionContext {
     cancel: CancellationToken,
     /// The session directory path for history logging.
     session_path: Option<std::path::PathBuf>,
+    /// Whether the last agent session was rate limited.
+    last_rate_limited: AtomicBool,
+    /// Whether an agent has run since the session started or since the last task or cycle pause.
+    agent_since_pause: AtomicBool,
 }
 
 impl SessionContext {
@@ -49,6 +84,49 @@ impl SessionContext {
             settings,
             cancel,
             session_path: None,
+            last_rate_limited: AtomicBool::new(false),
+            agent_since_pause: AtomicBool::new(false),
+        }
+    }
+
+    /// Records one finished agent session's rate-limit status for the next pause.
+    pub(crate) fn record_agent(&self, rate_limited: bool) {
+        self.last_rate_limited
+            .store(rate_limited, Ordering::Relaxed);
+        self.agent_since_pause.store(true, Ordering::Relaxed);
+    }
+
+    /// Waits the `kind` pause before the next agent, task or discovery cycle; the session's
+    /// cancel token cuts it short. An agent pause only follows an agent of the same task:
+    /// the first agent of a task or session starts at once.
+    pub(crate) async fn pause(&self, kind: Pause) {
+        if kind == Pause::Agent && !self.agent_since_pause.load(Ordering::Relaxed) {
+            return;
+        }
+        if kind != Pause::Agent {
+            self.agent_since_pause.store(false, Ordering::Relaxed);
+        }
+        let duration = pause_duration(
+            &self.settings,
+            kind,
+            self.last_rate_limited.load(Ordering::Relaxed),
+        );
+        if duration.is_zero() {
+            return;
+        }
+        // A soft stop does not fire the cancel token, so poll for it in short slices.
+        let deadline = tokio::time::Instant::now() + duration;
+        while !self.stop_pending() {
+            let slice = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .min(Duration::from_millis(100));
+            if slice.is_zero() {
+                break;
+            }
+            tokio::select! {
+                () = tokio::time::sleep(slice) => {}
+                () = self.cancel.cancelled() => break,
+            }
         }
     }
 
@@ -495,5 +573,74 @@ impl SessionContext {
     /// The reviewer session's provider and model ([`Self::for_role`]).
     pub(crate) fn reviewer(&self) -> (Arc<dyn Provider>, Option<String>) {
         self.for_role(AgentRole::Reviewer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(adaptive_pauses: bool) -> DaemonSettings {
+        DaemonSettings {
+            pause_between_agents_secs: 3,
+            pause_between_tasks_secs: 10,
+            pause_between_cycles_secs: 30,
+            adaptive_pauses,
+            ..DaemonSettings::default()
+        }
+    }
+
+    #[test]
+    fn adaptive_not_rate_limited_shrinks_every_pause() {
+        let s = settings(true);
+        for kind in [Pause::Agent, Pause::Task, Pause::Cycle] {
+            assert_eq!(pause_duration(&s, kind, false), ADAPTIVE_PAUSE);
+        }
+    }
+
+    #[test]
+    fn adaptive_rate_limited_keeps_the_full_pause() {
+        let s = settings(true);
+        assert_eq!(
+            pause_duration(&s, Pause::Agent, true),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            pause_duration(&s, Pause::Task, true),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            pause_duration(&s, Pause::Cycle, true),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn non_adaptive_keeps_the_full_pause_either_way() {
+        let s = settings(false);
+        for rate_limited in [false, true] {
+            assert_eq!(
+                pause_duration(&s, Pause::Agent, rate_limited),
+                Duration::from_secs(3)
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_pause_stays_zero_when_adaptive() {
+        let s = DaemonSettings {
+            pause_between_agents_secs: 0,
+            adaptive_pauses: true,
+            ..DaemonSettings::default()
+        };
+        assert_eq!(pause_duration(&s, Pause::Agent, false), Duration::ZERO);
+    }
+
+    #[test]
+    fn the_defaults_adapt_to_500_ms() {
+        let s = DaemonSettings::default();
+        for kind in [Pause::Agent, Pause::Task, Pause::Cycle] {
+            assert_eq!(pause_duration(&s, kind, false), ADAPTIVE_PAUSE);
+        }
     }
 }
