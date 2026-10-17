@@ -6113,7 +6113,7 @@ mod pipeline {
     fn detailed_mode_displays_configured_agent_provider_and_model_and_ignores_v() {
         let mut shell = app();
         shell.settings.insert(
-            "provider".into(),
+            "planner_provider".into(),
             patok_core::config::SettingValue::Str("claude".into()),
         );
         shell.settings.insert(

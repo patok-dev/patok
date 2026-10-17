@@ -14,8 +14,8 @@ use patok_core::event::Snapshot;
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{
     AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, InjectTask,
-    RunDiscovery, SettingsChange, ShutdownRequest, StartBuild,
-    command_request, engine_update, shutdown_request, shutdown_update,
+    RunDiscovery, SettingsChange, ShutdownRequest, StartBuild, command_request, engine_update,
+    shutdown_request, shutdown_update,
 };
 use ratatui::backend::Backend;
 use ratatui::{DefaultTerminal, Terminal};
@@ -1410,7 +1410,10 @@ mod tests {
             Some(command_request::Action::SettingsChange(change)) => {
                 assert_eq!(
                     change.change,
-                    Some(Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
+                    Some(Change::RoleModel(patok_proto::RoleModel {
+                        role: 3,
+                        model: "opus".into()
+                    })),
                     "{change:?}"
                 );
             }
@@ -1501,7 +1504,10 @@ mod tests {
             Some(command_request::Action::SettingsChange(change)) => {
                 assert_eq!(
                     change.change,
-                    Some(Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
+                    Some(Change::RoleModel(patok_proto::RoleModel {
+                        role: 3,
+                        model: "opus".into()
+                    })),
                     "{change:?}"
                 );
             }
@@ -1592,7 +1598,10 @@ mod tests {
             Some(command_request::Action::SettingsChange(change)) => {
                 assert_eq!(
                     change.change,
-                    Some(Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
+                    Some(Change::RoleModel(patok_proto::RoleModel {
+                        role: 3,
+                        model: "opus".into()
+                    })),
                     "{change:?}"
                 );
             }

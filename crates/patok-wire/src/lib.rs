@@ -584,10 +584,10 @@ mod tests {
         );
         maps_to(
             Change::RoleProvider(RoleProvider {
-                role: Role::LearningExtraction as i32,
+                role: Role::Orchestrator as i32,
                 provider: Provider::Mistral as i32,
             }),
-            "learning_extraction_provider",
+            "orchestrator_provider",
             string("mistral"),
         );
         // The orchestrator seats map to their names; the registry rejects them uniformly.
@@ -821,14 +821,9 @@ mod tests {
     fn to_proto_maps_every_overlay_field_onto_its_wire_case() {
         let str = |v: &str| SettingValue::Str(v.into());
         let uint = |v: u64| SettingValue::Uint(v);
-        assert_eq!(
-            to_proto("provider", str("mistral")).unwrap(),
-            Change::Provider(Provider::Mistral as i32)
-        );
-        assert_eq!(
-            to_proto("model", str("opus")).unwrap(),
-            Change::ModelOverride("opus".into())
-        );
+        // The removed global keys have no overlay field, so the shell cannot submit them.
+        assert!(to_proto("provider", str("mistral")).is_err());
+        assert!(to_proto("model", str("opus")).is_err());
         // The per-role provider and model rows (T90.1) map onto their wire cases.
         for (role, model) in [
             ("research", "sonnet"),
@@ -963,10 +958,14 @@ mod tests {
         assert!(error.contains("`sprint`, `continuous`"), "{error}");
         let error = to_proto("no_such_key", SettingValue::Uint(1)).unwrap_err();
         assert!(error.contains("no settings-change case"), "{error}");
-        let error = to_proto("provider", SettingValue::Str("not-a-provider".into())).unwrap_err();
+        let error = to_proto(
+            "builder_provider",
+            SettingValue::Str("not-a-provider".into()),
+        )
+        .unwrap_err();
         assert!(error.contains("provider name"), "{error}");
         // The alias is a TOML-only concern: only canonical spellings travel the wire.
-        let error = to_proto("provider", SettingValue::Str("vibe".into())).unwrap_err();
+        let error = to_proto("builder_provider", SettingValue::Str("vibe".into())).unwrap_err();
         assert!(error.contains("provider name"), "{error}");
         let error = to_proto("research_model", SettingValue::Bool(true)).unwrap_err();
         assert!(error.contains("must be a string"), "{error}");

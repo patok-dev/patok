@@ -428,21 +428,10 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* provider $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
-        $($tail:tt)*
-    ) => {
-        daemon_materialize! {
-            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
-            $layer, $($tail)*
-        }
-    };
-    (
-        settings [$($acc:tt)*] $layer:ident,
         [$(#[$doc:meta])* provider $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
-            // An unset role provider uses Claude as default.
             settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
             $layer, $($tail)*
         }
@@ -1051,18 +1040,18 @@ daemon_table! {
     /// pipeline, routing and learnings tasks pick them up.
     entries {
         // Routing (section 4).
-        [opt_str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default."],
-        [opt_str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default."],
-        [opt_str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default."],
-        [opt_str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default."],
-        [opt_str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default."],
-        [opt_str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default."],
-        [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start." default ProviderName::Claude],
-        [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start." default ProviderName::Claude],
-        [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start." default ProviderName::Claude],
-        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start." default ProviderName::Claude],
-        [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start." default ProviderName::Claude],
-        [provider orchestrator_provider "orchestrator_provider" label "orchestrator provider" help "The provider the orchestrator role runs on. Applies at the next orchestrator session start." default ProviderName::Claude],
+        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default." default "sonnet".into()],
+        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default." default "opus".into()],
+        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default." default "opus".into()],
+        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default." default "sonnet".into()],
+        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default." default "opus".into()],
+        [str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default." default String::new()],
+        [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start."],
+        [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start."],
+        [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start."],
+        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
+        [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
+        [provider orchestrator_provider "orchestrator_provider" label "orchestrator provider" help "The provider the orchestrator role runs on. Applies at the next orchestrator session start."],
         [opt_str local_model "local_model" label "local model" help "The model used for local runs; empty uses the provider's default."],
         [uint model_catalog_refresh_secs "model_catalog_refresh_secs" label "model catalog refresh" help "How often the model catalog refreshes from the provider, in seconds. Default 86400 (24 hours)." expect "a whole number of seconds" default 86400],
         [string_map catalog_url_overrides "catalog_url_overrides"],

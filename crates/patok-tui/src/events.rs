@@ -112,11 +112,11 @@ impl App {
             EngineEvent::ConfigChanged { field, value, .. } => {
                 self.settings.insert(field.clone(), value.clone());
                 match field.as_str() {
-                    "provider" => {
+                    "builder_provider" => {
                         self.run.config_provider = value.to_string();
                         self.run.provider = self.run.config_provider.clone();
                     }
-                    "model" => {
+                    "builder_model" => {
                         self.run.config_model = value.to_string();
                         self.run.model = self.run.config_model.clone();
                     }

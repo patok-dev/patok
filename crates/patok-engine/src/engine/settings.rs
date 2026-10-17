@@ -46,7 +46,6 @@ impl Engine {
         Ok(SessionContext::new(
             self.inner.clone(),
             provider,
-            central.model.clone(),
             central.settings.clone(),
             cancel,
         ))
@@ -101,7 +100,7 @@ impl Engine {
             let old = std::mem::replace(&mut central.settings, new.clone());
             if self.inner.resolver.is_some() {
                 central.provider_name = new.builder_provider.to_string();
-                central.model = new.builder_model.clone();
+                central.model = Some(new.builder_model.clone()).filter(|m| !m.is_empty());
             }
             daemon_changed_fields(&old, &new)
         };

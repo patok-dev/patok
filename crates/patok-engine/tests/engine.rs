@@ -1182,7 +1182,7 @@ async fn agent_runs_push_their_starting_event_before_any_output() {
 #[tokio::test]
 async fn a_configured_model_names_the_model_in_the_starting_event() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
-    let provider = MockProvider::new(builder_steps());
+    let provider = MockProvider::new(builder_steps()).with_reviewer_model(true);
     let engine = fixture.engine_configured(provider, "builder_model = \"mistral-small\"\n");
     let mut attachment = engine.attach().unwrap();
 
@@ -1192,6 +1192,46 @@ async fn a_configured_model_names_the_model_in_the_starting_event() {
     // The configured model rides along with the provider the run uses; the
     // resolver hands back the mock whatever the configured kind (T78.1).
     assert_one_starting_line(&events, "builder", "mock", Some("mistral-small"));
+}
+
+#[tokio::test]
+async fn each_role_runs_on_its_own_model_not_the_builders() {
+    let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
+    let provider = MockProvider::per_session(vec![
+        vec![Step::Event(AgentEvent::Result {
+            text: VALID_PLAN.into(),
+        })],
+        builder_steps(),
+    ])
+    .with_reviewer_model(true);
+    let recorded = provider.clone();
+    std::fs::write(
+        fixture.project_config(),
+        "[daemon]\nplan_enabled = true\nrun_mode = \"sprint\"\nreview_in_loop = false\nbuilder_model = \"opus\"\nplanner_model = \"sonnet\"\n",
+    )
+    .unwrap();
+    let provider = std::sync::Arc::new(provider);
+    let engine = patok_engine::Engine::configured_with_env(
+        fixture.config_review(),
+        &patok_core::config::DaemonEnv::default(),
+        move |_kind| Ok(provider.clone()),
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let sessions = recorded.sessions();
+    let plan = sessions
+        .iter()
+        .find(|s| s.label == "plan")
+        .expect("plan ran");
+    assert_eq!(plan.model.as_deref(), Some("sonnet"));
+    let build = sessions
+        .iter()
+        .find(|s| s.label == "T1.1")
+        .expect("build ran");
+    assert_eq!(build.model.as_deref(), Some("opus"));
 }
 
 #[tokio::test]
@@ -3024,7 +3064,7 @@ mod provider_config {
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Claude]);
         let mut attachment = engine.attach().unwrap();
         assert_eq!(attachment.snapshot.provider, "claude");
-        assert_eq!(attachment.snapshot.model, "");
+        assert_eq!(attachment.snapshot.model, "opus");
         engine.start_build().unwrap();
         collect_until(&mut attachment.events, is_phase_startup).await;
     }
@@ -3619,7 +3659,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         picked.lock().unwrap()
     );
     assert!(
-        started(&events).contains(&("reviewer".into(), "claude".into(), None)),
+        started(&events).contains(&("reviewer".into(), "claude".into(), Some("sonnet".into()))),
         "{:#?}",
         started(&events)
     );
@@ -3628,7 +3668,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         .iter()
         .find(|s| s.label == "review")
         .expect("the review session ran");
-    assert_eq!(review.model.as_deref(), None);
+    assert_eq!(review.model.as_deref(), Some("sonnet"));
 }
 
 #[tokio::test]

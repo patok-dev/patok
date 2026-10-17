@@ -74,7 +74,7 @@ async fn a_valid_settings_change_updates_the_config_the_file_and_broadcasts() {
         "{events:#?}"
     );
     assert!(
-        config_change(&events, "provider").is_none(),
+        config_change(&events, "builder_provider").is_none(),
         "only the changed field is reported"
     );
 }
@@ -117,7 +117,7 @@ async fn a_run_mode_settings_change_updates_the_config_the_file_and_broadcasts()
         "{events:#?}"
     );
     assert!(
-        config_change(&events, "provider").is_none(),
+        config_change(&events, "builder_provider").is_none(),
         "only the changed field is reported"
     );
 }
@@ -240,10 +240,12 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     ]);
     let claude_recorded = claude.clone();
     let claude = Arc::new(claude);
+    // The mock stands in for a provider that runs the role's model.
     let mistral = MockProvider::new(vec![Step::WriteFile {
         path: "two.txt".into(),
         contents: "two\n".into(),
-    }]);
+    }])
+    .with_reviewer_model(true);
     let mistral_recorded = mistral.clone();
     let mistral = Arc::new(mistral);
     let engine = Engine::configured_with_env(
@@ -267,7 +269,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     // The change lands mid-run: the running session keeps the snapshot it started with,
     // and the new values apply at the next build start.
     engine
-        .apply_settings_change("builder_model", SettingValue::Str("opus".into()))
+        .apply_settings_change("builder_model", SettingValue::Str("sonnet".into()))
         .unwrap();
     engine
         .apply_settings_change("builder_provider", SettingValue::Str("mistral".into()))
@@ -303,7 +305,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         mistral_recorded.sessions().is_empty(),
         "the running unit was untouched"
     );
-    assert_eq!(engine.settings().builder_model, Some("opus".to_string()));
+    assert_eq!(engine.settings().builder_model, "sonnet");
 
     // The next build start takes the new routing.
     std::fs::write(
@@ -318,7 +320,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     .await;
     let sessions = mistral_recorded.sessions();
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].model.as_deref(), Some("opus"));
+    assert_eq!(sessions[0].model.as_deref(), Some("sonnet"));
     assert_eq!(
         claude_recorded.sessions().len(),
         2,

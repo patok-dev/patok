@@ -30,7 +30,6 @@ use crate::task_list::{AppendMode, AppendRejection};
 pub(crate) struct SessionContext {
     inner: Arc<Inner>,
     provider: Arc<dyn Provider>,
-    model: Option<String>,
     settings: DaemonSettings,
     cancel: CancellationToken,
     /// The session directory path for history logging.
@@ -41,14 +40,12 @@ impl SessionContext {
     pub(crate) fn new(
         inner: Arc<Inner>,
         provider: Arc<dyn Provider>,
-        model: Option<String>,
         settings: DaemonSettings,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             inner,
             provider,
-            model,
             settings,
             cancel,
             session_path: None,
@@ -435,14 +432,14 @@ impl SessionContext {
     /// The provider and model a role's session runs on: the role's provider
     /// (`<role>_provider`), resolved like any other unit of work, with the role's model
     /// (`<role>_model`, empty meaning the provider's default). A role model
-    /// only reaches a provider that supports one (the claude provider)
-    /// unless it is the single-model override on the configured provider.
-    /// A name this build does not implement keeps the configured pair
+    /// only reaches a provider that supports one
+    /// ([`Provider::supports_reviewer_model`]).
+    /// A name this build does not implement keeps the session's (builder) provider
     /// silently; an unavailable provider warns and falls back to the
-    /// configured pair, as does a role provider on a fixed-provider engine
-    /// without a resolver.
+    /// session's provider, as does a role provider on a fixed-provider engine
+    /// without a resolver. The fallback keeps the role's own model when the
+    /// session's provider supports one.
     pub(crate) fn for_role(&self, role: AgentRole) -> (Arc<dyn Provider>, Option<String>) {
-        let configured = (self.provider.clone(), self.model.clone());
         let (name, role_model) = match role {
             AgentRole::Research => (
                 self.settings.research_provider,
@@ -463,6 +460,13 @@ impl SessionContext {
                 &self.settings.orchestrator_model,
             ),
         };
+        let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
+        let fallback = || {
+            let model = role_model
+                .clone()
+                .filter(|_| self.provider.supports_reviewer_model());
+            (self.provider.clone(), model)
+        };
         let Some(resolver) = self.inner.resolver.as_ref() else {
             if name.kind().is_some() && name != self.settings.builder_provider {
                 tracing::warn!(
@@ -470,32 +474,20 @@ impl SessionContext {
                      the {role} runs on the fixed provider"
                 );
             }
-            return configured;
+            return fallback();
         };
         match resolve_provider(resolver, &name) {
             Ok(Some(provider)) => {
-                let role_model = role_model.clone().filter(|m| !m.is_empty());
-                // When the resolved provider matches the session's builder provider,
-                // prefer role's model, fall back to session model.
-                // For a different provider, only use the role's model if the provider supports
-                // custom model names (currently only Claude).
-                let supports_custom_models = provider.slug() == "claude";
-                let model = if provider.slug() == self.provider.slug() {
-                    role_model
-                        .filter(|_| supports_custom_models)
-                        .or(self.model.clone())
-                } else {
-                    role_model.filter(|_| supports_custom_models)
-                };
+                let model = role_model.filter(|_| provider.supports_reviewer_model());
                 (provider, model)
             }
-            Ok(None) => configured,
+            Ok(None) => fallback(),
             Err(error) => {
                 tracing::warn!(
                     "the {name} {role} provider is unavailable ({error}); \
                      the {role} runs on the configured provider"
                 );
-                configured
+                fallback()
             }
         }
     }

@@ -414,7 +414,7 @@ mod tests {
         assert!(changed.iter().any(|f| f == "agent_timeout_secs"));
         assert!(changed.iter().any(|f| f == "builder_provider"));
         // Role-specific model changes are independent.
-        new.builder_model = Some("mistral-small".into());
+        new.builder_model = "mistral-small".into();
         let changed = daemon_changed_fields(&DaemonSettings::default(), &new);
         assert_eq!(changed.len(), 3);
         assert!(changed.iter().any(|f| f == "agent_timeout_secs"));
@@ -455,7 +455,7 @@ mod tests {
         );
         // An unset optional string reads back as cleared, not as a missing value.
         assert_eq!(
-            daemon_field_value(&settings, "builder_model").unwrap(),
+            daemon_field_value(&settings, "local_model").unwrap(),
             SettingValue::Str("".into())
         );
         assert_eq!(daemon_field_value(&settings, "stages"), None);

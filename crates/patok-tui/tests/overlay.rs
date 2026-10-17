@@ -34,6 +34,8 @@ fn readout() -> BTreeMap<String, SettingValue> {
         ("reviewer_model", str("sonnet")),
         ("discovery_provider", str("claude")),
         ("discovery_model", str("opus")),
+        ("orchestrator_provider", str("claude")),
+        ("orchestrator_model", SettingValue::Str(String::new())),
         ("run_mode", str("sprint")),
         ("plan_enabled", SettingValue::Bool(false)),
         ("review_confidence_threshold", SettingValue::Uint(5)),
@@ -867,6 +869,8 @@ fn entry_rows_indent_under_their_section_headers() {
         "reviewer model",
         "discovery provider  ‹",
         "discovery model",
+        "orchestrator provider  ‹",
+        "orchestrator model",
         "local model",
         "model catalog refresh",
         "run mode",
@@ -930,7 +934,7 @@ fn a_narrow_terminal_clamps_the_editor_to_the_modal_body() {
     let mut app = open();
     // A 50-column screen makes the modal full width; the model editor gets a buffer
     // far longer than the row has room for.
-    focus_field(&mut app, "builder_model");
+    focus_field(&mut app, "research_model");
     press(&mut app, KeyCode::Enter);
     for c in "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHTTTTTTTTTTTTTTTTTTTT".chars() {
         press(&mut app, KeyCode::Char(c));
@@ -1005,7 +1009,7 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
     assert!(!screen.contains("Close settings"), "{screen}");
     // From the margin on, each Down advances the offset by one, keeping the
     // cursor exactly 4 rows above the bottom edge (viewport row 15).
-    for (focus, scroll) in (16..=66).map(|focus| (focus, focus - 15)) {
+    for (focus, scroll) in (16..=64).map(|focus| (focus, focus - 15)) {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
@@ -1013,13 +1017,13 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
         assert_eq!(focus - scroll, 15);
         assert_cursor_visible(&app, &screen, 20);
     }
-    // The list-end clamp: the offset stops at 51 and the cursor rides the last
+    // The list-end clamp: the offset stops at 49 and the cursor rides the last
     // rows down to the bottom edge.
-    for focus in 67..=70 {
+    for focus in 65..=68 {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 51, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 49, "focus {focus}");
         assert_cursor_visible(&app, &screen, 20);
     }
     assert!(draw(&app, W, H).contains("rail mode"));
@@ -1029,25 +1033,25 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
 fn up_scrolls_only_once_the_cursor_is_four_rows_below_the_top() {
     let mut app = open();
     // Walk to the last row first, drawing every step; the offset ends at its
-    // maximum (51) with the last entry row in view.
-    for _ in 0..70 {
+    // maximum (49) with the last entry row in view.
+    for _ in 0..68 {
         press(&mut app, KeyCode::Down);
         draw(&app, W, H);
     }
-    assert_eq!(app.overlay.focus, 70);
-    assert_eq!(app.overlay.scroll.get(), 51);
+    assert_eq!(app.overlay.focus, 68);
+    assert_eq!(app.overlay.scroll.get(), 49);
     // Up from the bottom keeps the view stationary while the cursor has room:
     // it climbs from viewport row 19 down to 4 -- 4 rows below the top edge.
-    for focus in (55..=69).rev() {
+    for focus in (53..=67).rev() {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 51, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 49, "focus {focus}");
         assert_cursor_visible(&app, &screen, 20);
     }
     // Past the margin the offset decreases one row per Up press, keeping the
     // cursor exactly 4 rows below the top edge (viewport row 4).
-    for (focus, scroll) in (4..=54).rev().map(|focus| (focus, focus - 4)) {
+    for (focus, scroll) in (4..=52).rev().map(|focus| (focus, focus - 4)) {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
@@ -1116,7 +1120,7 @@ fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
         assert!(app.overlay.focus - app.overlay.scroll.get() < usize::from(list.height));
     }
     assert_eq!(app.overlay.focus, len - 1);
-    assert_eq!(app.overlay.scroll.get(), 51);
+    assert_eq!(app.overlay.scroll.get(), 49);
 
     // The hovered row's selection marker is on screen at the walk's end.
     let screen = draw(&app, W, H);
@@ -1126,7 +1130,7 @@ fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
 #[test]
 fn the_margin_holds_with_sections_folded() {
     let mut app = open();
-    // Fold the Pipeline section: 53 visible rows in a 12-row list (the 20-row
+    // Fold the Pipeline section: 51 visible rows in a 12-row list (the 20-row
     // body of a full-screen modal at H = 24 minus the help box under it,
     // T85.1), so the margin band is viewport rows 4..=7.
     focus_header(&mut app, 1);
@@ -1147,9 +1151,9 @@ fn the_margin_holds_with_sections_folded() {
     // section longer than the band.
     assert!(matches!(
         app.overlay.focused(),
-        Entry::Row(row) if row.key == "planner_provider"
+        Entry::Row(row) if row.key == "builder_provider"
     ));
-    for (focus, scroll) in (8..=48).map(|focus| (focus, focus - 7)) {
+    for (focus, scroll) in (8..=46).map(|focus| (focus, focus - 7)) {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
@@ -1160,19 +1164,19 @@ fn the_margin_holds_with_sections_folded() {
         // contributes its header alone, so the walk crosses straight from the
         // Pipeline header to the Timeouts header without landing on a hidden
         // row.
-        if focus == 19 {
+        if focus == 17 {
             assert_eq!(app.overlay.focused(), Entry::Header(1));
         }
-        if focus == 20 {
+        if focus == 18 {
             assert_eq!(app.overlay.focused(), Entry::Header(2));
         }
     }
-    // The clamp: the offset stops at 41 and the cursor rides to the bottom edge.
-    for focus in 49..=52 {
+    // The clamp: the offset stops at 39 and the cursor rides to the bottom edge.
+    for focus in 47..=50 {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 41, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 39, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
     assert!(matches!(
@@ -1181,14 +1185,14 @@ fn the_margin_holds_with_sections_folded() {
     ));
     // And back up: stationary to viewport row 4, then decreasing with the same
     // 4-row margin below the top edge.
-    for focus in (45..=51).rev() {
+    for focus in (43..=49).rev() {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 41, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 39, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    for (focus, scroll) in (4..=44).rev().map(|focus| (focus, focus - 4)) {
+    for (focus, scroll) in (4..=42).rev().map(|focus| (focus, focus - 4)) {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
@@ -1209,7 +1213,7 @@ fn the_margin_holds_with_sections_folded() {
 fn the_cursor_stays_visible_after_jumps_and_folds() {
     let mut app = open();
     // At H = 24 the list is 12 rows (a 20-row body minus the help box under it,
-    // T85.1) and the expanded row model 71 rows, so a PageDown jumps the cursor
+    // T85.1) and the expanded row model 69 rows, so a PageDown jumps the cursor
     // far past the stationary band; every draw must pull the stale offset along.
     let screen = draw(&app, W, 24);
     assert_cursor_visible(&app, &screen, 12);
@@ -1220,7 +1224,7 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         (40, 33),
         (50, 43),
         (60, 53),
-        (70, 59),
+        (68, 57),
     ] {
         press(&mut app, KeyCode::PageDown);
         let screen = draw(&app, W, 24);
@@ -1228,7 +1232,7 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         assert_eq!(app.overlay.scroll.get(), scroll, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    // Folding Pipeline while scrolled to the bottom shortens the list to 53
+    // Folding Pipeline while scrolled to the bottom shortens the list to 51
     // rows: walking the focus to the header and back down with the keys keeps
     // every step visible, and the offset clamps into the shortened range.
     let header = app
@@ -1245,9 +1249,9 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         press(&mut app, KeyCode::Down);
     }
     let screen = draw(&app, W, 24);
-    assert_eq!(app.overlay.visible().len(), 53);
-    assert_eq!(app.overlay.focus, 52);
-    assert_eq!(app.overlay.scroll.get(), 41);
+    assert_eq!(app.overlay.visible().len(), 51);
+    assert_eq!(app.overlay.focus, 50);
+    assert_eq!(app.overlay.scroll.get(), 39);
     assert_cursor_visible(&app, &screen, 12);
     // Unfolding grows the list again; walking back down to the very bottom
     // keeps the cursor visible, back at the maximum offset.
@@ -1265,8 +1269,8 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         press(&mut app, KeyCode::Down);
     }
     let screen = draw(&app, W, 24);
-    assert_eq!(app.overlay.visible().len(), 71);
-    assert_eq!(app.overlay.scroll.get(), 59);
+    assert_eq!(app.overlay.visible().len(), 69);
+    assert_eq!(app.overlay.scroll.get(), 57);
     assert_cursor_visible(&app, &screen, 12);
 }
 
@@ -1277,7 +1281,7 @@ fn j_and_k_move_focus_exactly_like_down_and_up() {
     // the scroll offset (the T22.1 margin behaviour) is recomputed identically.
     let mut hjkl = open();
     let mut arrows = open();
-    for _ in 0..70 {
+    for _ in 0..68 {
         press(&mut hjkl, KeyCode::Char('j'));
         press(&mut arrows, KeyCode::Down);
         let screen = draw(&hjkl, W, H);
@@ -1293,7 +1297,7 @@ fn j_and_k_move_focus_exactly_like_down_and_up() {
     }
     // The bottom of the list is reached with j alone and the last entry row shows.
     assert!(draw(&hjkl, W, H).contains("update channel"));
-    for _ in 0..70 {
+    for _ in 0..68 {
         press(&mut hjkl, KeyCode::Char('k'));
         press(&mut arrows, KeyCode::Up);
         let screen = draw(&hjkl, W, H);
@@ -1412,7 +1416,7 @@ fn hjkl_type_as_characters_in_the_open_editors() {
     // In the free-text editor the four letters append to the buffer, and nothing
     // folds or moves while the editor is open.
     let mut app = open();
-    focus_field(&mut app, "builder_model");
+    focus_field(&mut app, "orchestrator_model");
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
     assert_eq!(app.overlay.editor.as_ref().unwrap().buffer, "");
     let before = app.overlay.visible();

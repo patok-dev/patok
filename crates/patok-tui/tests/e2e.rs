@@ -1694,7 +1694,10 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::SettingsChange(SettingsChange {
-                change: Some(settings_change::Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
+                change: Some(settings_change::Change::RoleModel(patok_proto::RoleModel {
+                    role: 3,
+                    model: "sonnet".into(),
+                })),
             })),
         })
         .await
@@ -1711,7 +1714,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         settings_change_result::ApplyTiming::NextUnitOfWork as i32
     );
     let text = std::fs::read_to_string(setup.config.data_dir.join("patok.config.toml")).unwrap();
-    assert!(text.contains("builder_model = \"opus\""), "{text}");
+    assert!(text.contains("builder_model = \"sonnet\""), "{text}");
 
     // The broadcast reaches the attached shell and syncs its display.
     loop {
@@ -1783,7 +1786,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         "{lines:?}"
     );
 
-    // Clearing the builder model is accepted and reported back as cleared.
+    // An empty model is not a valid builder model: rejected with the field named.
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::SettingsChange(SettingsChange {
@@ -1796,8 +1799,13 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         .await
         .unwrap()
         .into_inner();
-    assert!(response.accepted, "{}", response.error);
-    assert!(response.settings_change_result.is_some());
+    assert!(!response.accepted);
+    assert!(
+        response.error.contains("builder_model"),
+        "{}",
+        response.error
+    );
+    assert!(response.settings_change_result.is_none());
 
     // An orchestrator role seat has no daemon registry key: rejected with a clear error.
     let response = client

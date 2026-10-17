@@ -278,9 +278,9 @@ enum Role {
   ROLE_REVIEWER = 4;
   ROLE_DISCOVERY = 5;
   ROLE_LEARNING_EXTRACTION = 6;
-  ROLE_ORCHESTRATOR = 7;
-  ROLE_ORCHESTRATOR_PROPOSER = 8;
-  ROLE_ORCHESTRATOR_REVIEWER = 9;
+  ROLE_ORCHESTRATOR_PROPOSER = 7;
+  ROLE_ORCHESTRATOR_REVIEWER = 8;
+  ROLE_ORCHESTRATOR = 9;
 }
 
 // Canonical provider identifiers. The parser-level aliases documented there
@@ -309,8 +309,7 @@ enum AcceptPolicy {
   ACCEPT_POLICY_NO_FINDINGS = 2;
 }
 
-// The model route for one role. Also carries the "learning
-// extraction model" row via ROLE_LEARNING_EXTRACTION.
+// The model route for one role.
 message RoleModel {
   Role role = 1;
   string model = 2;
@@ -344,7 +343,7 @@ message SettingsChange {
     // -- Section 3.4, model and provider routing --
     RoleModel role_model = 1;
     RoleProvider role_provider = 2;
-    string model_override = 3; // the "model" single-model-override row
+    string model_override = 3; // retired: the global "model" row was removed; from_proto rejects it
     string local_model = 4;
     uint32 model_catalog_refresh_secs = 5;
 

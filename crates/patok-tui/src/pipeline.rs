@@ -261,12 +261,12 @@ pub fn render_rail(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn agent_details(app: &App, id: TileId) -> Option<(String, String)> {
-    let (provider, model_key) = match id {
-        TileId::Research => ("provider", "research_model"),
-        TileId::Plan => ("provider", "planner_model"),
-        TileId::Build => ("provider", "builder_model"),
-        TileId::Review => ("provider", "reviewer_model"),
-        TileId::Discover => ("provider", "discovery_model"),
+    let (provider_key, model_key) = match id {
+        TileId::Research => ("research_provider", "research_model"),
+        TileId::Plan => ("planner_provider", "planner_model"),
+        TileId::Build => ("builder_provider", "builder_model"),
+        TileId::Review => ("reviewer_provider", "reviewer_model"),
+        TileId::Discover => ("discovery_provider", "discovery_model"),
     };
     let value = |key: &str| {
         app.settings.get(key).and_then(|v| match v {
@@ -274,8 +274,8 @@ fn agent_details(app: &App, id: TileId) -> Option<(String, String)> {
             _ => None,
         })
     };
-    let provider = value(provider)?;
-    let model = value(model_key).or_else(|| value("model"))?;
+    let provider = value(provider_key)?;
+    let model = value(model_key)?;
     Some((provider, model))
 }
 
