@@ -1098,7 +1098,7 @@ daemon_table! {
         [bool phase_isolation "phase_isolation" label "phase isolation" help "Run each pipeline phase in its own isolated session (default on)." default true],
         [bool enforce_phase_rbac "enforce_phase_rbac" label "enforce phase rbac" help "Enforce role-based access control between the pipeline phases (default on)." default true],
         // Learnings, history and embeddings (section 8).
-        [opt_str history_dir "history_dir" label "history dir" help "Directory the session history lives in; empty uses the default location."],
+        [opt_str history_dir "history_dir" label "history dir" help "Root directory of the session history (per-session and per-task logs); empty uses history/ in the project data directory."],
         [uint max_learning_injection "max_learning_injection" label "max learning injection" help "The most learned items injected into one prompt. Default 10." expect "a whole number" default 10],
         [uint min_learning_injection "min_learning_injection" label "min learning injection" help "The fewest learned items injected into one prompt. Default 2." expect "a whole number" default 2],
         [uint history_search_results "history_search_results" label "history search results" help "How many matches a history search returns. Default 5." expect "a whole number" default 5],

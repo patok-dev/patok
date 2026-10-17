@@ -24,7 +24,7 @@ pub struct EngineConfig {
     pub project_dir: PathBuf,
     /// Holds the socket and `engine.log`.
     pub runtime_dir: PathBuf,
-    /// Persistent per-project directory (history log).
+    /// Persistent per-project directory: the default history root, `open-group.json` and the project-local config.
     pub data_dir: PathBuf,
     /// Idle timeout of one agent session.
     pub agent_timeout: Duration,
@@ -46,8 +46,8 @@ pub struct EngineConfig {
     pub skip_research_for_simple: bool,
     /// Whether the review stage runs at all (`review_in_loop`; default on).
     pub review_in_loop: bool,
-    /// The persistent learned-confidence history file, stored globally per user.
-    pub review_history: PathBuf,
+    /// The persistent learned-confidence store file (`review-history.json`), stored globally per user.
+    pub review_confidence: PathBuf,
     /// The open-group record (`open-group.json`), stored in the project data
     /// directory: the batch-review group open across restarts.
     pub open_group: PathBuf,
@@ -75,7 +75,7 @@ impl EngineConfig {
                     "cannot determine the data directory: neither XDG_DATA_HOME nor HOME is set"
                 )
             })?;
-        let review_history = Self::default_review_history(&data_dir);
+        let review_confidence = Self::default_review_confidence(&data_dir);
         let open_group = data_dir.join("open-group.json");
         Ok(Self {
             runtime_dir: patok_core::paths::runtime_dir_from_env(&project_dir),
@@ -89,16 +89,16 @@ impl EngineConfig {
             run_mode: RunMode::Sprint,
             skip_research_for_simple: true,
             review_in_loop: true,
-            review_history,
+            review_confidence,
             open_group,
             config_files: patok_core::config::ConfigFiles::from_env(),
         })
     }
 
-    /// The learned-confidence history file: stored globally per user under the config directory,
+    /// The learned-confidence store file: stored globally per user under the config directory,
     /// next to the config files; a missing config directory falls back to
     /// the project data directory.
-    fn default_review_history(data_dir: &std::path::Path) -> PathBuf {
+    fn default_review_confidence(data_dir: &std::path::Path) -> PathBuf {
         patok_core::paths::config_dir_from_env()
             .map(|dir| dir.join("review-history.json"))
             .unwrap_or_else(|| data_dir.join("review-history.json"))

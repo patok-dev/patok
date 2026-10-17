@@ -240,9 +240,9 @@ impl SessionContext {
         crate::history::sequence_counter(&task_dir).unwrap_or(1)
     }
 
-    /// The persistent learned-confidence history file.
-    pub(crate) fn review_history_path(&self) -> &Path {
-        &self.inner.config.review_history
+    /// The persistent learned-confidence store file.
+    pub(crate) fn review_confidence_path(&self) -> &Path {
+        &self.inner.config.review_confidence
     }
 
     /// The open-group record (`open-group.json`): the batch-review group open

@@ -1,12 +1,12 @@
 //! The per-task review step: the skip rules, the reviewer sessions, the
-//! verdict, the review file and the learned-confidence history.
+//! verdict, the review file and the learned-confidence store.
 
 use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
 
 use crate::agents::{
-    self, Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewerAgent, SkipInputs, Verdict,
+    self, Agent, FileReviewerAgent, Findings, ReviewConfidence, ReviewerAgent, SkipInputs, Verdict,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
 use crate::artifact;
@@ -91,7 +91,7 @@ impl<'a> ReviewStep<'a> {
         let complexity = complexity::classify(&task.description);
         // The skip decision, recorded with its reason.
         let pending_after: Vec<String> = ctx.pending_ids();
-        let history = ReviewHistory::load(ctx.review_history_path());
+        let confidence = ReviewConfidence::load(ctx.review_confidence_path());
         // The raw deferral decides the group's close beside the skip rule:
         // the batch deferral is not the group's last task, and its skip is
         // not a completed review.
@@ -103,7 +103,7 @@ impl<'a> ReviewStep<'a> {
             complexity: Some(complexity),
             builder_clean: true,
             review_confidence_threshold: ctx.settings().review_confidence_threshold,
-            history_consecutive_passes: history.match_shape(&task.description, complexity),
+            confidence_consecutive_passes: confidence.match_shape(&task.description, complexity),
             stage_enabled: ctx.review_stage_enabled(),
         };
         if let Some(reason) = skip_review(&inputs) {
@@ -246,7 +246,7 @@ impl<'a> ReviewStep<'a> {
         }
         let review_path = write_review_file(ctx, review_dir, &task.id, &report);
         // The pass/fail outcome is recorded in the persistent learned-confidence
-        // history in the background.
+        // store in the background.
         record_review_outcome(ctx, task, complexity, verdict.passed);
 
         let step_outcome = if verdict.passed {
@@ -343,7 +343,7 @@ fn write_review_file(
     }
 }
 
-/// Records one review outcome in the persistent learned-confidence history
+/// Records one review outcome in the persistent learned-confidence store
 /// in the background, for the
 /// simple and medium shapes the feature matches on.
 fn record_review_outcome(ctx: &SessionContext, task: &Task, complexity: Complexity, passed: bool) {
@@ -351,14 +351,14 @@ fn record_review_outcome(ctx: &SessionContext, task: &Task, complexity: Complexi
         return;
     }
     let description = task.description.clone();
-    let path = ctx.review_history_path().to_path_buf();
+    let path = ctx.review_confidence_path().to_path_buf();
     let date = artifact::unix_now().as_secs().to_string();
     tokio::spawn(async move {
-        let mut history = ReviewHistory::load(&path);
-        history.record(&description, complexity, passed, &date);
-        if let Err(error) = history.save(&path) {
+        let mut confidence = ReviewConfidence::load(&path);
+        confidence.record(&description, complexity, passed, &date);
+        if let Err(error) = confidence.save(&path) {
             tracing::warn!(
-                "cannot write the review history {}: {error}",
+                "cannot write the review confidence store {}: {error}",
                 path.display()
             );
         }

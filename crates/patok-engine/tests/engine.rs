@@ -3812,7 +3812,7 @@ async fn a_simple_task_with_a_passing_build_skips_the_review() {
 #[tokio::test]
 async fn learned_confidence_skips_the_review_after_the_threshold() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
-    // Prime the persistent history with two consecutive review passes for the
+    // Prime the persistent learned-confidence store with two consecutive review passes for the
     // task's shape.
     let primed_history = r#"{"clusters":[{"representative":"add the greeting file","tokens":["add","greeting","file"],"tier":"simple","passes":2,"fails":0,"consecutive_passes":2,"last_fail":null}]}"#;
     std::fs::write(fixture.data_path("review-history.json"), primed_history).unwrap();

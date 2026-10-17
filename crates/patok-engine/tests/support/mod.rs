@@ -91,7 +91,7 @@ impl Fixture {
             run_mode: RunMode::Continuous,
             skip_research_for_simple,
             review_in_loop: false,
-            review_history: self.data.path().join("review-history.json"),
+            review_confidence: self.data.path().join("review-history.json"),
             open_group: self.data.path().join("open-group.json"),
             config_files: patok_core::config::ConfigFiles::default(),
         }
