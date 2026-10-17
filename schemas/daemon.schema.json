@@ -87,6 +87,11 @@
         "null"
       ]
     },
+    "history_retention_days": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
     "history_retention_tasks": {
       "type": "integer",
       "format": "uint64",
@@ -313,6 +318,7 @@
     "min_learning_injection",
     "history_search_results",
     "history_retention_tasks",
+    "history_retention_days",
     "observatory_retention_days",
     "semantic_match_enabled",
     "embedding_model",

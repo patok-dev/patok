@@ -7,9 +7,10 @@ use crate::agents::{self, Agent, BuilderAgent};
 use crate::artifact;
 use crate::context::SessionContext;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use serde::Serialize;
 
 /// The outcome of one task's build step.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) enum BuildOutcome {
     /// The builder session completed: the trimmed claims text when the
     /// final message carried a build claims section.
@@ -43,10 +44,11 @@ impl<'a> BuildStep<'a> {
         // The builder's final message carries the build claims section the review
         // step reviews, so the events are captured like the plan step's.
         let agent = BuilderAgent::new(task, plan, research);
-        let exit = run_stage(
+        let (provider, model) = self.ctx.for_role(agent.role());
+        let (exit, record) = run_stage(
             self.ctx,
-            self.ctx.provider(),
-            self.ctx.model(),
+            &provider,
+            model.as_deref(),
             StageStart::Announce,
             agent.role(),
             AgentPrompt::of(&agent),
@@ -61,7 +63,7 @@ impl<'a> BuildStep<'a> {
             },
         )
         .await;
-        match exit {
+        let outcome = match exit {
             StageExit::Cancelled => BuildOutcome::Cancelled,
             StageExit::Failed => BuildOutcome::Failed,
             StageExit::Completed(builder_events) => {
@@ -77,16 +79,17 @@ impl<'a> BuildStep<'a> {
                 });
                 BuildOutcome::Completed { claims }
             }
-        }
+        };
+        record.write(&outcome);
+        outcome
     }
 }
 
-/// Writes the builder's build claims to the project data directory as
-/// `claims/<task id>-<timestamp>.md`, next to
-/// the plans and research folders.
+/// Writes the builder's build claims to the task directory as
+/// `<task id>-claims-<timestamp>.md`.
 fn write_claims_file(ctx: &SessionContext, task_id: &str, claims: &str) {
-    let dir = ctx.data_dir().join("claims");
-    match artifact::write_artifact(&dir, task_id, claims) {
+    let dir = ctx.current_task_dir();
+    match artifact::write_artifact(&dir, &format!("{task_id}-claims"), claims) {
         Ok(path) => ctx.notice(
             NoticeLevel::Info,
             format!("Build claims written to {}", path.display()),

@@ -1,5 +1,5 @@
-//! Timestamped artifact files under the project data directory: the
-//! research, plan, claims and review stages write `<prefix>-<unix seconds>.md`
+//! Timestamped artifact files in the current task directory (the session directory
+//! outside a task): the research, plan, claims and review stages write `<prefix>-<unix seconds>.md`
 //! files and scan the newest one back on restart.
 
 use std::io;

@@ -216,6 +216,7 @@ static LEARNINGS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
         daemon_row("min_learning_injection"),
         daemon_row("history_search_results"),
         daemon_row("history_retention_tasks"),
+        daemon_row("history_retention_days"),
         daemon_row("observatory_retention_days"),
         daemon_row("semantic_match_enabled"),
         daemon_row("embedding_model"),

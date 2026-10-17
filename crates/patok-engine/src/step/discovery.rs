@@ -25,10 +25,11 @@ impl<'a> DiscoveryStep<'a> {
     /// earlier announcement to pass. Returns the agent exit.
     pub(crate) async fn run(&self) -> StageExit {
         let agent = DiscoveryAgent::new();
-        run_stage(
+        let (provider, model) = self.ctx.for_role(agent.role());
+        let (exit, record) = run_stage(
             self.ctx,
-            self.ctx.provider(),
-            self.ctx.model(),
+            &provider,
+            model.as_deref(),
             StageStart::Announce,
             agent.role(),
             AgentPrompt::of(&agent),
@@ -42,6 +43,8 @@ impl<'a> DiscoveryStep<'a> {
                 failure_suffix: String::new(),
             },
         )
-        .await
+        .await;
+        record.write(&serde_json::Value::Null);
+        exit
     }
 }

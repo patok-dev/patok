@@ -8,13 +8,14 @@ use std::time::Duration;
 use crossterm::style::Stylize;
 use patok_core::config::{RunMode, SettingValue};
 use patok_core::event::{EngineEvent, Phase, TaskOutcome};
+use patok_core::output::{LineKind, OutLine};
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{SettingsChange, StartBuild, command_request, engine_update};
 use tokio_util::sync::CancellationToken;
 use tonic::Streaming;
 use tonic::transport::Channel;
 
-use crate::app::{App, LineKind, OutLine};
+use crate::app::App;
 use crate::driver::Update;
 use crate::settings::to_proto;
 use crate::theme::Theme;

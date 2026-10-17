@@ -9,8 +9,8 @@ use crate::{SessionRequest, Tool};
 
 /// A `SessionRequest` with the given prompt, system prompt and tool allowlist, a
 /// fresh event channel (its receiver is returned for tests that read the stream),
-/// and inert defaults for everything else: `.` directories, the label `t`, a
-/// one-second idle timeout and a fresh cancellation token.
+/// and inert defaults for everything else: `.` directories, a raw log path of `./t-raw.jsonl`,
+/// a one-second idle timeout and a fresh cancellation token.
 pub(crate) fn request(
     prompt: &str,
     system_prompt: Option<&str>,
@@ -24,8 +24,7 @@ pub(crate) fn request(
             system_prompt: system_prompt.map(str::to_string),
             project_dir: ".".into(),
             events,
-            log_dir: ".".into(),
-            label: "t".into(),
+            raw_log_path: "t-raw.jsonl".into(),
             idle_timeout: Duration::from_secs(1),
             cancel: Default::default(),
             allowed_tools: allowed_tools.to_vec(),

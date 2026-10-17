@@ -1,7 +1,6 @@
 //! The reviewer agents: the reviewer prompts, the review report's verdict
 //! and findings parsing, the verdict computation, the multipass findings
-//! merge, the skip decision in precedence order, the persistent
-//! learned-confidence history, and the agents that drive the combined,
+//! merge, the skip decision in precedence order, the persistent learned-confidence store, and the agents that drive the combined,
 //! per-file and integration review sessions.
 
 use std::collections::HashSet;
@@ -304,14 +303,14 @@ fn balanced_objects(text: &str) -> Vec<&str> {
 }
 
 /// One finding counted against the verdict, with the bucket it came from.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct QualifyingFinding {
     pub severity: Severity,
     pub finding: Finding,
 }
 
 /// The computed verdict of one review.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct Verdict {
     pub passed: bool,
     /// HIGH and MEDIUM findings at or above the confidence threshold.
@@ -459,8 +458,8 @@ pub(crate) struct SkipInputs {
     /// The builder's verification exited cleanly.
     pub builder_clean: bool,
     pub review_confidence_threshold: u64,
-    /// The consecutive review passes of the matching history cluster.
-    pub history_consecutive_passes: Option<u32>,
+    /// The consecutive review passes of the matching learned-confidence cluster.
+    pub confidence_consecutive_passes: Option<u32>,
     pub stage_enabled: bool,
 }
 
@@ -482,7 +481,7 @@ pub(crate) fn skip_review(inputs: &SkipInputs) -> Option<SkipReason> {
         .complexity
         .is_some_and(|tier| tier != Complexity::Complex)
         && inputs.review_confidence_threshold > 0
-        && inputs.history_consecutive_passes.is_some_and(|passes| {
+        && inputs.confidence_consecutive_passes.is_some_and(|passes| {
             passes >= u32::try_from(inputs.review_confidence_threshold).unwrap_or(u32::MAX)
         })
     {
@@ -494,7 +493,7 @@ pub(crate) fn skip_review(inputs: &SkipInputs) -> Option<SkipReason> {
     None
 }
 
-/// The clusters cap of the persistent learned-confidence history.
+/// The clusters cap of the persistent learned-confidence store.
 const CLUSTER_CAP: usize = 200;
 /// The Jaccard word-overlap similarity at or above which a cluster matches.
 const MATCH_SIMILARITY: f64 = 0.4;
@@ -533,15 +532,15 @@ impl Cluster {
     }
 }
 
-/// The persistent learned-confidence history: stored globally per user as JSON, matched by complexity tier
+/// The persistent learned-confidence store: stored globally per user as JSON, matched by complexity tier
 /// plus Jaccard word overlap (keyword mode; no embedding service exists yet).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ReviewHistory {
+pub(crate) struct ReviewConfidence {
     clusters: Vec<Cluster>,
 }
 
-impl ReviewHistory {
-    /// Loads the history from `path`; a missing file is an empty history.
+impl ReviewConfidence {
+    /// Loads the store from `path`; a missing file is an empty store.
     pub(crate) fn load(path: &Path) -> Self {
         std::fs::read_to_string(path)
             .ok()
@@ -549,7 +548,7 @@ impl ReviewHistory {
             .unwrap_or_default()
     }
 
-    /// Saves the history to `path`, best-effort: the error is returned for the
+    /// Saves the store to `path`, best-effort: the error is returned for the
     /// caller to log.
     pub(crate) fn save(&self, path: &Path) -> std::io::Result<()> {
         patok_core::utils::atomic_write::write_atomic(
@@ -672,6 +671,7 @@ const STOPWORDS: &[&str] = &[
 /// The payload one reviewer session produces: the report as captured and its
 /// computed verdict. The verdict's `passed` flag is the accept/reject; the
 /// report and the below-threshold findings travel with it even on a fail.
+#[derive(Serialize)]
 pub(crate) struct ReviewOutcome {
     /// The review report as captured.
     pub report: String,
@@ -1087,7 +1087,7 @@ mod tests {
             complexity: Some(Complexity::Simple),
             builder_clean: true,
             review_confidence_threshold: 0,
-            history_consecutive_passes: None,
+            confidence_consecutive_passes: None,
             stage_enabled: true,
         };
         // Review in loop off wins over everything.
@@ -1109,19 +1109,19 @@ mod tests {
         let mut inputs = base;
         inputs.skip_review_for_simple = false;
         inputs.review_confidence_threshold = 5;
-        inputs.history_consecutive_passes = Some(5);
+        inputs.confidence_consecutive_passes = Some(5);
         assert_eq!(skip_review(&inputs), Some(SkipReason::LearnedConfidence));
-        inputs.history_consecutive_passes = Some(4);
+        inputs.confidence_consecutive_passes = Some(4);
         assert_eq!(skip_review(&inputs), None);
         // A threshold of 0 disables it.
         inputs.review_confidence_threshold = 0;
-        inputs.history_consecutive_passes = Some(99);
+        inputs.confidence_consecutive_passes = Some(99);
         assert_eq!(skip_review(&inputs), None);
         // Complex tasks always review.
         let mut inputs = base;
         inputs.complexity = Some(Complexity::Complex);
         inputs.review_confidence_threshold = 5;
-        inputs.history_consecutive_passes = Some(99);
+        inputs.confidence_consecutive_passes = Some(99);
         assert_eq!(skip_review(&inputs), None);
         // The stage disabled rule fires last.
         let mut inputs = base;
@@ -1141,118 +1141,121 @@ mod tests {
     }
 
     #[test]
-    fn the_review_history_matches_and_records() {
-        let mut history = ReviewHistory::default();
-        // An empty history yields no skip.
+    fn the_review_confidence_matches_and_records() {
+        let mut confidence = ReviewConfidence::default();
+        // An empty store yields no skip.
         assert_eq!(
-            history.match_shape("add the greeting file", Complexity::Simple),
+            confidence.match_shape("add the greeting file", Complexity::Simple),
             None
         );
-        history.record(
+        confidence.record(
             "add the greeting file",
             Complexity::Simple,
             true,
             "2026-01-01",
         );
         assert_eq!(
-            history.match_shape("add the greeting file", Complexity::Simple),
+            confidence.match_shape("add the greeting file", Complexity::Simple),
             Some(1)
         );
         // A similar shape matches; a different one does not.
         assert_eq!(
-            history.match_shape("add the greeting file again", Complexity::Simple),
+            confidence.match_shape("add the greeting file again", Complexity::Simple),
             Some(1)
         );
         assert_eq!(
-            history.match_shape("refactor the payment module", Complexity::Simple),
+            confidence.match_shape("refactor the payment module", Complexity::Simple),
             None
         );
         // A fail resets the consecutive passes and stores the date.
-        history.record(
+        confidence.record(
             "add the greeting file",
             Complexity::Simple,
             false,
             "2026-01-02",
         );
         assert_eq!(
-            history.match_shape("add the greeting file", Complexity::Simple),
+            confidence.match_shape("add the greeting file", Complexity::Simple),
             Some(0)
         );
-        assert_eq!(history.clusters[0].last_fail.as_deref(), Some("2026-01-02"));
+        assert_eq!(
+            confidence.clusters[0].last_fail.as_deref(),
+            Some("2026-01-02")
+        );
         // A pass increments again.
-        history.record(
+        confidence.record(
             "add the greeting file",
             Complexity::Simple,
             true,
             "2026-01-03",
         );
         assert_eq!(
-            history.match_shape("add the greeting file", Complexity::Simple),
+            confidence.match_shape("add the greeting file", Complexity::Simple),
             Some(1)
         );
         // Complex tasks never match.
         assert_eq!(
-            history.match_shape("add the greeting file", Complexity::Complex),
+            confidence.match_shape("add the greeting file", Complexity::Complex),
             None
         );
         // A medium shape is a separate cluster.
-        history.record(
+        confidence.record(
             "wire the review stage into the engine",
             Complexity::Medium,
             true,
             "2026-01-04",
         );
         assert_eq!(
-            history.match_shape("wire the review stage into the engine", Complexity::Medium),
+            confidence.match_shape("wire the review stage into the engine", Complexity::Medium),
             Some(1)
         );
         assert_eq!(
-            history.match_shape("wire the review stage into the engine", Complexity::Simple),
+            confidence.match_shape("wire the review stage into the engine", Complexity::Simple),
             None
         );
     }
 
     #[test]
-    fn the_review_history_round_trips_through_disk() {
+    fn the_review_confidence_round_trips_through_disk() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("review-history.json");
-        let mut history = ReviewHistory::default();
-        history.record(
+        let mut confidence = ReviewConfidence::default();
+        confidence.record(
             "add the greeting file",
             Complexity::Simple,
             true,
             "2026-01-01",
         );
-        history.save(&path).unwrap();
-        assert_eq!(ReviewHistory::load(&path), history);
-        // A missing file is an empty history.
+        confidence.save(&path).unwrap();
+        assert_eq!(ReviewConfidence::load(&path), confidence);
+        // A missing file is an empty store.
         assert_eq!(
-            ReviewHistory::load(&dir.path().join("missing.json")),
-            ReviewHistory::default()
+            ReviewConfidence::load(&dir.path().join("missing.json")),
+            ReviewConfidence::default()
         );
     }
 
     #[test]
     fn the_cluster_cap_evicts_the_least_observed() {
-        let mut history = ReviewHistory::default();
-        // 200 mutually dissimilar shapes fill the history without matching.
+        let mut confidence = ReviewConfidence::default();
+        // 200 mutually dissimilar shapes fill the store without matching.
         for n in 0..200 {
-            history.record(
+            confidence.record(
                 &format!("alpha{n} beta{n} gamma{n} delta{n} epsilon{n}"),
                 Complexity::Simple,
                 true,
                 "2026-01-01",
             );
         }
-        assert_eq!(history.clusters.len(), 200);
+        assert_eq!(confidence.clusters.len(), 200);
         // A new shape still records: the least-observed cluster is evicted.
-        history.record(
+        confidence.record(
             "a brand new task shape entirely different",
             Complexity::Simple,
             true,
             "2026-01-01",
         );
-        assert_eq!(history.clusters.len(), 200);
+        assert_eq!(confidence.clusters.len(), 200);
     }
 
     #[test]

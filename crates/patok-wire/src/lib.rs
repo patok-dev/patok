@@ -538,6 +538,7 @@ daemon_wire_table! {
         [uint "min_learning_injection" MinLearningInjection]
         [uint "history_search_results" HistorySearchResults]
         [uint "history_retention_tasks" HistoryRetentionTasks]
+        [uint "history_retention_days" HistoryRetentionDays]
         [uint "observatory_retention_days" ObservatoryRetentionDays]
         [bool "semantic_match_enabled" SemanticMatchEnabled]
         [text "embedding_model" EmbeddingModel]
@@ -767,9 +768,14 @@ mod tests {
             uint(5),
         );
         maps_to(
-            Change::HistoryRetentionTasks(50),
+            Change::HistoryRetentionTasks(1000),
             "history_retention_tasks",
-            uint(50),
+            uint(1000),
+        );
+        maps_to(
+            Change::HistoryRetentionDays(30),
+            "history_retention_days",
+            uint(30),
         );
         maps_to(
             Change::ObservatoryRetentionDays(30),

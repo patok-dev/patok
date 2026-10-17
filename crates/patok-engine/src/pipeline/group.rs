@@ -3,7 +3,7 @@
 //! decision. Everything here is deterministic and unit-tested; the group
 //! wiring in `BuildPipeline` calls into it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,8 +46,9 @@ pub(crate) fn progress(
 }
 
 /// The batch-review group currently open across restarts: the shared leading
-/// task-ID number, the group's base and last full commit SHAs, and the
-/// (task ID, description hash) of every task committed into the group.
+/// task-ID number, the group's base and last full commit SHAs, the
+/// (task ID, description hash) of every task committed into the group, and
+/// the task directory path of every task run that joined the group.
 /// Stored as `open-group.json` in the data dir; a missing or corrupt file
 /// means no open group.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -60,6 +61,10 @@ pub(crate) struct OpenGroup {
     pub last: String,
     /// `(task_id, description_hash)` per task committed into the group.
     pub members: Vec<(String, String)>,
+    /// Task directory path of every task run that joined the group, in run order.
+    /// A retry adds its new dir, so the list can name the same task ID twice.
+    #[serde(default)]
+    pub task_dirs: Vec<PathBuf>,
 }
 
 impl OpenGroup {
@@ -89,8 +94,18 @@ impl OpenGroup {
             Err(error) => Err(error),
         }
     }
+
+    /// Returns the task directory of the last task that joined the group.
+    pub(crate) fn last_task_dir(&self) -> Option<&Path> {
+        self.task_dirs.last().map(|p| p.as_path())
+    }
 }
 
+/// Updates the open-group record after an in-group commit: `last` becomes
+/// the new commit's full SHA, the task joins `members`, and its task dir
+/// path is recorded in `task_dirs`. A missing record (the group already
+/// closed, or no HEAD when it started) is left alone.
+///
 /// Whether an interrupted batch-review group resumes or starts fresh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResumeDecision {
@@ -169,6 +184,10 @@ mod tests {
                 ("T1.1".into(), hashed("first task description")),
                 ("T1.2".into(), "0123456789abcdef0123456789abcdef".into()),
             ],
+            task_dirs: vec![
+                PathBuf::from("/path/to/T1.1"),
+                PathBuf::from("/path/to/T1.2"),
+            ],
         };
         group.save(&path).unwrap();
         assert_eq!(OpenGroup::load(&path), Some(group));
@@ -191,6 +210,7 @@ mod tests {
             base: "base".into(),
             last: "c0ffee".into(),
             members: vec![("T1.2".into(), hash.clone())],
+            task_dirs: Vec::new(),
         };
         assert_eq!(
             resume_decision(&record, "c0ffee", true, "T1.2", &hash),
@@ -206,6 +226,7 @@ mod tests {
             base: "base".into(),
             last: "c0ffee".into(),
             members: vec![("T1.2".into(), hash.clone())],
+            task_dirs: Vec::new(),
         };
         assert_eq!(
             resume_decision(&record, "head moved on", true, "T1.2", &hash),
@@ -221,6 +242,7 @@ mod tests {
             base: "abandoned".into(),
             last: "c0ffee".into(),
             members: vec![("T1.2".into(), hash.clone())],
+            task_dirs: Vec::new(),
         };
         assert_eq!(
             resume_decision(&record, "c0ffee", false, "T1.2", &hash),
@@ -236,6 +258,7 @@ mod tests {
             base: "base".into(),
             last: "c0ffee".into(),
             members: vec![("T1.2".into(), hash.clone())],
+            task_dirs: Vec::new(),
         };
         assert_eq!(
             resume_decision(&record, "c0ffee", true, "T1.2", &hash),
@@ -255,6 +278,7 @@ mod tests {
             base: "base".into(),
             last: "c0ffee".into(),
             members: vec![("T1.2".into(), hashed("old description"))],
+            task_dirs: Vec::new(),
         };
         assert_eq!(
             resume_decision(
@@ -275,10 +299,41 @@ mod tests {
             base: "base".into(),
             last: "c0ffee".into(),
             members: vec![("T1.1".into(), "0123456789abcdef0123456789abcdef".into())],
+            task_dirs: Vec::new(),
         };
         assert_eq!(
             resume_decision(&record, "c0ffee", true, "T1.2", &hashed("the next task")),
             ResumeDecision::Resume
         );
+    }
+
+    #[test]
+    fn a_record_without_task_dirs_loads_with_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("open-group.json");
+        std::fs::write(
+            &path,
+            r#"{"number":"1","base":"b","last":"l","members":[["T1.1","h"]]}"#,
+        )
+        .unwrap();
+        let record = OpenGroup::load(&path).unwrap();
+        assert!(record.task_dirs.is_empty());
+        assert_eq!(record.last_task_dir(), None);
+    }
+
+    #[test]
+    fn the_last_task_dir_is_the_latest_joined() {
+        let record = OpenGroup {
+            number: "1".into(),
+            base: "base".into(),
+            last: "last".into(),
+            members: vec![],
+            task_dirs: vec![
+                PathBuf::from("/session1/T1.1"),
+                PathBuf::from("/session1/T1.2"),
+                PathBuf::from("/session2/T1.2"),
+            ],
+        };
+        assert_eq!(record.last_task_dir(), Some(Path::new("/session2/T1.2")));
     }
 }

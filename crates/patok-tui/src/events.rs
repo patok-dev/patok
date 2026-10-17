@@ -1,21 +1,23 @@
 //! The event reducer (finding 19, the rest, in
 //! docs/private/structure-review-followup.md): the one place engine events
-//! fold into the shell's run state -- the phase and run flags, the active
-//! agent, provider and model, the task list and the output pane -- plus the
-//! reducer's own focus and session-timer helpers, split out of `app` so the
-//! state types and the reducer each read as one thing. Pure: no I/O, so it
-//! is tested without a terminal.
+//! fold into the shell -- the run state (the phase and run flags, the active
+//! agent, provider and model, the task list) and the output pane's lines,
+//! mapped by the shared [`event_lines`], plus the reducer's own focus and
+//! session-timer helpers, split out of `app` so the state types and the
+//! reducer each read as one thing. Pure: no I/O, so it is tested without a
+//! terminal.
 
-use std::time::Duration;
+use patok_core::event::{AgentEvent, EngineEvent, Phase, TaskOutcome};
+use patok_core::output::{LineKind, LineOrigin, OutLine, event_lines};
 
-use patok_core::config::ApplyTiming;
-use patok_core::event::{AgentEvent, EngineEvent, NoticeLevel, Phase, TaskOutcome};
-
-use crate::app::{App, LineKind, finished_line, started_line};
+use crate::app::App;
 use crate::view::FrameFocus;
 
 impl App {
     pub fn apply(&mut self, event: EngineEvent) {
+        // The shared mapping owns the pane's lines; it reads only the pane's
+        // open flag, captured here before the state match runs.
+        let out = event_lines(&event, self.run.output.is_open());
         match event {
             EngineEvent::PhaseChanged { phase } => {
                 let was_idle = self.is_idle();
@@ -27,11 +29,18 @@ impl App {
                 self.sync_focus(was_idle);
                 self.sync_session(was_idle);
             }
-            EngineEvent::TaskStarted { id, description } => {
-                self.run.current_task = Some(id.clone());
-                self.push(LineKind::Heading, format!("── {id}: {description}"));
+            EngineEvent::TaskStarted { id, .. } => {
+                self.run.current_task = Some(id);
             }
-            EngineEvent::Agent { event } => self.apply_agent(event),
+            EngineEvent::Agent { event } => {
+                // Usage feeds the run state's readout, not the pane; every
+                // other agent event is pure line mapping, applied below.
+                if let AgentEvent::Usage(usage) = event
+                    && !self.run.planning
+                {
+                    self.run.usage = Some(usage);
+                }
+            }
             // Replayed with the recent events, so a reattaching shell shows the right one.
             // The engine-recorded start anchors the running timer, so it and the
             // finished line derive from the same session timing (T42.1). The
@@ -47,35 +56,19 @@ impl App {
                     self.clock.session_start = Some(self.clock.anchored(started_ms));
                 }
             }
-            // One agent session began: one line naming the agent type, the
-            // provider it runs on and the configured model when one exists,
-            // pairing with the finished line at the session's end (T78.1). The
-            // active agent and the timer stay owned by the adjacent
-            // `AgentChanged` arm. The session's provider and model drive the
-            // output frame title while it runs, so a reviewer on another
-            // provider (a `claude` reviewer provider) is titled accordingly instead
-            // of silently reusing the configured one (T81.1).
+            // The session's provider and model drive the output frame title
+            // while it runs, so a reviewer on another provider (a `claude`
+            // reviewer provider) is titled accordingly instead of silently
+            // reusing the configured one (T81.1).
             EngineEvent::AgentStarted {
-                agent,
-                provider,
-                model,
+                provider, model, ..
             } => {
-                let text = started_line(&agent, &provider, model.as_deref());
-                self.push(LineKind::Status, text);
                 self.run.provider = provider;
                 self.run.model = model.unwrap_or_default();
             }
-            // One agent session ended: one line naming the agent type and the
-            // session's total duration lands at the end of the pane (T42.1). The
-            // timer hides with the idle transition that follows, and the frame
-            // title returns to the configured provider and model (T81.1).
-            EngineEvent::AgentFinished {
-                agent,
-                outcome,
-                duration_ms,
-            } => {
-                let text = finished_line(&agent, outcome, Duration::from_millis(duration_ms));
-                self.push(LineKind::Status, text);
+            // The frame title returns to the configured provider and model
+            // (T81.1).
+            EngineEvent::AgentFinished { .. } => {
                 self.run.provider = self.run.config_provider.clone();
                 self.run.model = self.run.config_model.clone();
             }
@@ -106,32 +99,17 @@ impl App {
                 self.sync_focus(was_idle);
                 self.sync_session(was_idle);
             }
-            EngineEvent::TaskFinished {
-                id,
-                outcome,
-                commit,
-            } => {
+            EngineEvent::TaskFinished { outcome, .. } => {
                 self.run.current_task = None;
-                let sha = commit.map(|c| format!(" ({c})")).unwrap_or_default();
-                let (kind, text) = match outcome {
-                    TaskOutcome::Done | TaskOutcome::Finished => {
-                        self.run.completed += 1;
-                        (LineKind::Notice, format!("✔ {id} done{sha}"))
-                    }
-                    TaskOutcome::Failed => (LineKind::Error, format!("✘ {id} failed{sha}")),
-                    TaskOutcome::Cancelled => (LineKind::Notice, format!("■ {id} cancelled")),
-                };
-                self.push(kind, text);
+                if matches!(outcome, TaskOutcome::Done | TaskOutcome::Finished) {
+                    self.run.completed += 1;
+                }
             }
             // A daemon-schema field changed on the engine:
             // the readout the overlay renders from stays in sync, the routing fields
-            // keep the display in sync, every other field is a notice line with its
-            // apply timing.
-            EngineEvent::ConfigChanged {
-                field,
-                value,
-                timing,
-            } => {
+            // keep the display in sync, every other field's notice line came
+            // from the shared mapping.
+            EngineEvent::ConfigChanged { field, value, .. } => {
                 self.settings.insert(field.clone(), value.clone());
                 match field.as_str() {
                     "provider" => {
@@ -142,59 +120,24 @@ impl App {
                         self.run.config_model = value.to_string();
                         self.run.model = self.run.config_model.clone();
                     }
-                    _ => {
-                        let mut text = format!("Setting `{field}` changed to `{value}`");
-                        if timing == ApplyTiming::NextUnitOfWork {
-                            text.push_str(" (takes effect on the next start)");
-                        }
-                        self.push(LineKind::Notice, text);
-                    }
+                    _ => {}
                 }
             }
             // The pipeline rail changed: the full state
             // replaces the previous one. Rendered by the pipeline rail of T50.1.
             EngineEvent::PipelineChanged { state } => self.pipeline = state,
-            EngineEvent::Notice { level, text } => {
-                let kind = if level == NoticeLevel::Error {
-                    LineKind::Error
-                } else {
-                    LineKind::Notice
-                };
-                self.push(kind, text);
-            }
+            EngineEvent::Notice { .. } => {}
+        }
+        for line in out.lines {
+            self.run.output.push(line);
+        }
+        if let Some(chunk) = out.append {
+            self.run.output.append(LineOrigin::Agent, &chunk);
         }
     }
 
-    fn apply_agent(&mut self, event: AgentEvent) {
-        match event {
-            AgentEvent::TextDelta { text } => self.append(&text),
-            AgentEvent::Text { text } => self.push(LineKind::Text, text),
-            AgentEvent::Thinking { text } => self.push(LineKind::Thinking, text),
-            AgentEvent::ToolUse { name, input } => {
-                self.push(LineKind::Tool, format!("▸ {name} {input}"))
-            }
-            AgentEvent::ToolResult { output } => {
-                self.push(LineKind::Result, format!("  ↳ {output}"))
-            }
-            AgentEvent::Stderr { text } | AgentEvent::Error { text, .. } => {
-                self.push(LineKind::Error, text)
-            }
-            AgentEvent::Result { text } => {
-                if !text.is_empty() {
-                    self.push(LineKind::Result, format!("result: {text}"));
-                }
-            }
-            AgentEvent::Usage(usage) if !self.run.planning => self.run.usage = Some(usage),
-            AgentEvent::Usage(_) => {}
-        }
-    }
-
-    pub(crate) fn push(&mut self, kind: LineKind, text: String) {
-        self.run.output.push(kind, text);
-    }
-
-    fn append(&mut self, chunk: &str) {
-        self.run.output.append(chunk);
+    pub(crate) fn push(&mut self, origin: LineOrigin, kind: LineKind, text: String) {
+        self.run.output.push(OutLine { kind, origin, text });
     }
 
     /// The frame focus the engine state implies: the task list while idle, the agent
@@ -238,7 +181,7 @@ impl App {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
 
     use patok_core::event::Snapshot;
     use patok_core::pipeline::PipelineState;

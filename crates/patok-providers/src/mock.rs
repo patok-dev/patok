@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use patok_core::event::AgentEvent;
+use serde_json;
 
 use crate::{ExitKind, Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
@@ -115,25 +116,65 @@ impl Provider for MockProvider {
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
+        // Extract the label (agent name) from the raw_log_path filename
+        // Format: <seq>-<agent>-<provider>-raw.jsonl
+        let filename = request
+            .raw_log_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let label = if let Some(base) = std::path::Path::new(&filename).file_stem() {
+            let name = base.to_string_lossy().into_owned();
+            // Extract the agent part from "<seq>-<agent>-<provider>-raw"
+            if let Some(pos) = name.rfind("-raw") {
+                let prefix = &name[..pos];
+                if let Some(pos2) = prefix.rfind('-') {
+                    let prefix2 = &prefix[..pos2];
+                    if let Some(pos3) = prefix2.rfind('-') {
+                        prefix2[pos3 + 1..].to_string()
+                    } else {
+                        prefix2.to_string()
+                    }
+                } else {
+                    name
+                }
+            } else {
+                name
+            }
+        } else {
+            filename
+        };
+
         let index = {
             let mut sessions = self.sessions.lock().expect("mock lock");
             sessions.push(RecordedSession {
                 prompt: request.prompt.clone(),
                 system_prompt: request.system_prompt.clone(),
                 model: request.model.clone(),
-                label: request.label.clone(),
+                label,
                 allowed_tools: request.allowed_tools.clone(),
             });
             sessions.len() - 1
         };
-        let log_path = crate::process::open_log_path(&request.log_dir, &request.label, "mock")?;
+        let log_path = request.raw_log_path.clone();
         let mut transcript = String::new();
+
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| ProviderError::Log {
+                path: log_path.clone(),
+                source,
+            })?;
+        }
 
         let script = &self.scripts[std::cmp::min(index, self.scripts.len() - 1)];
         for step in script {
             match step {
                 Step::Event(event) => {
-                    transcript.push_str(&format!("{event:?}\n"));
+                    // Write each event as a JSONL line
+                    let json_line = serde_json::to_string(event).unwrap_or_else(|_| "{}".into());
+                    transcript.push_str(&format!("{json_line}\n"));
                     let _ = request.events.send(event.clone());
                 }
                 Step::WriteFile { path, contents } => {

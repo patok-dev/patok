@@ -7,14 +7,14 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      [ ] phase isolation                                                              ││    │
-     │      [ ] enforce phase rbac                                                           ││────┘
-[  Re│  ▾ Learnings, history and embeddings                                                  ││────┐
-     │      history dir  (not set)                                                           ││    │
-[ Dis│      max learning injection  (not set)                                                ││    │
-     │      min learning injection  (not set)                                                ││    │
+[  Bu│      [ ] enforce phase rbac                                                           ││    │
+     │  ▾ Learnings, history and embeddings                                                  ││────┘
+[  Re│      history dir  (not set)                                                           ││────┐
+     │      max learning injection  (not set)                                                ││    │
+[ Dis│      min learning injection  (not set)                                                ││    │
      │      history search results  (not set)                                                ││    │
      │      history retention tasks  (not set)                                               ││    │
+     │      history retention days  (not set)                                                ││    │
      │      observatory retention days  (not set)                                            ││    │
      │      [ ] semantic match enabled                                                       ││    │
      │      embedding model  (not set)                                                       ││    │

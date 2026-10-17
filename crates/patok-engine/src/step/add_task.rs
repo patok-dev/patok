@@ -28,10 +28,11 @@ impl<'a> AddTaskStep<'a> {
     /// the agent exit.
     pub(crate) async fn run(&self, request: &str, start: Instant) -> StageExit {
         let agent = AppendPlannerAgent::new(request);
-        run_stage(
+        let (provider, model) = self.ctx.for_role(agent.role());
+        let (exit, record) = run_stage(
             self.ctx,
-            self.ctx.provider(),
-            self.ctx.model(),
+            &provider,
+            model.as_deref(),
             StageStart::Announced(start),
             agent.role(),
             AgentPrompt::of(&agent),
@@ -45,6 +46,8 @@ impl<'a> AddTaskStep<'a> {
                 failure_suffix: String::new(),
             },
         )
-        .await
+        .await;
+        record.write(&serde_json::Value::Null);
+        exit
     }
 }

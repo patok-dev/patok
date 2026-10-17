@@ -32,10 +32,11 @@ impl<'a> QueueResearchStep<'a> {
             QueueCreation::Bootstrap => ResearchQueueAgent::bootstrap(),
             QueueCreation::Scan => ResearchQueueAgent::scan(),
         };
-        let exit = run_stage(
+        let (provider, model) = self.ctx.for_role(agent.role());
+        let (exit, record) = run_stage(
             self.ctx,
-            self.ctx.provider(),
-            self.ctx.model(),
+            &provider,
+            model.as_deref(),
             StageStart::Announced(start),
             agent.role(),
             AgentPrompt::of(&agent),
@@ -50,11 +51,19 @@ impl<'a> QueueResearchStep<'a> {
             },
         )
         .await;
+        // For queue-creation, we need to determine the outcome
         match exit {
-            // The research agent's validation is trivial acceptance, so this
-            // stays dead-safe.
-            StageExit::Completed(events) => Some(agent.validate(&events).unwrap_or_default()),
-            _ => None,
+            StageExit::Completed(events) => {
+                // The research agent's validation is trivial acceptance, so this
+                // stays dead-safe.
+                let report = agent.validate(&events).unwrap_or_default();
+                record.write(&report);
+                Some(report)
+            }
+            _ => {
+                record.write(&serde_json::Value::Null);
+                None
+            }
         }
     }
 

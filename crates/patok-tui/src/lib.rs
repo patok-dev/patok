@@ -33,10 +33,7 @@ pub use run::{Outcome, Spawner, run};
 // under the test-support feature, enabled for those tests through the
 // self dev-dependency in Cargo.toml.
 #[cfg(any(test, feature = "test-support"))]
-pub use app::{
-    Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, finished_line, human_duration,
-    menu_entries, started_line,
-};
+pub use app::{Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, menu_entries};
 #[cfg(any(test, feature = "test-support"))]
 pub use hit::{
     CLOSE_BUTTON_WIDTH, button_text, close_button_rect, footer_button_rects, frame_at, theme_row_at,
@@ -45,6 +42,10 @@ pub use hit::{
 pub use modal::Modal;
 #[cfg(any(test, feature = "test-support"))]
 pub use overlay::{Entry, FieldKind, SETTINGS_CHOICES, Schema, StatusLevel};
+// The line formatters and the duration helper, re-exported from their home
+// in patok-core for the test surface.
+#[cfg(any(test, feature = "test-support"))]
+pub use patok_core::output::{finished_line, human_duration, started_line};
 #[cfg(any(test, feature = "test-support"))]
 pub use pipeline::{RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width};
 #[cfg(any(test, feature = "test-support"))]

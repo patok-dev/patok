@@ -9,12 +9,13 @@ use crate::agents::{Agent, ResearchAgent};
 use crate::artifact;
 use crate::context::SessionContext;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use serde::Serialize;
 
 /// How long a research report on disk stays reusable across restarts.
 pub(crate) const RESEARCH_REUSE_SECS: u64 = 600;
 
 /// The outcome of one task's research step (T68.1).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) enum ResearchOutcome {
     /// A report exists: fresh from a session or reused from disk.
     Report(String),
@@ -79,10 +80,11 @@ impl<'a> ResearchStep<'a> {
             return outcome;
         }
         let agent = ResearchAgent::new(task);
-        let exit = run_stage(
+        let (provider, model) = self.ctx.for_role(agent.role());
+        let (exit, record) = run_stage(
             self.ctx,
-            self.ctx.provider(),
-            self.ctx.model(),
+            &provider,
+            model.as_deref(),
             StageStart::Announce,
             agent.role(),
             AgentPrompt::of(&agent),
@@ -98,14 +100,24 @@ impl<'a> ResearchStep<'a> {
         )
         .await;
         let events = match exit {
-            StageExit::Cancelled => return ResearchOutcome::Cancelled,
-            StageExit::Failed => return ResearchOutcome::Failed,
+            StageExit::Cancelled => {
+                let outcome = ResearchOutcome::Cancelled;
+                record.write(&outcome);
+                return outcome;
+            }
+            StageExit::Failed => {
+                let outcome = ResearchOutcome::Failed;
+                record.write(&outcome);
+                return outcome;
+            }
             StageExit::Completed(events) => events,
         };
         // The research agent's validation is trivial acceptance, so this arm
         // cannot fire; it stays dead-safe.
         let Ok(report) = agent.validate(&events) else {
-            return ResearchOutcome::Failed;
+            let outcome = ResearchOutcome::Failed;
+            record.failure("validation failed").write(&outcome);
+            return outcome;
         };
         if report.trim().is_empty() {
             self.ctx.notice(
@@ -115,10 +127,14 @@ impl<'a> ResearchStep<'a> {
                     task.id
                 ),
             );
-            return ResearchOutcome::Failed;
+            let outcome = ResearchOutcome::Failed;
+            record.failure("empty report").write(&outcome);
+            return outcome;
         }
         write_research_report(self.ctx, &task.id, &report);
-        ResearchOutcome::Report(report)
+        let outcome = ResearchOutcome::Report(report);
+        record.write(&outcome);
+        outcome
     }
 }
 
@@ -127,17 +143,18 @@ impl<'a> ResearchStep<'a> {
 /// The stem is a task ID for the per-task research step and `bootstrap` /
 /// `scan` for the queue-creation runs (T69.1).
 pub(crate) fn reusable_research_report(ctx: &SessionContext, stem: &str) -> Option<String> {
-    let dir = ctx.data_dir().join("research");
-    let path = artifact::newest_artifact(&dir, stem, Some(RESEARCH_REUSE_SECS))?;
+    let dir = ctx.current_task_dir();
+    let path =
+        artifact::newest_artifact(&dir, &format!("{stem}-research"), Some(RESEARCH_REUSE_SECS))?;
     std::fs::read_to_string(path).ok()
 }
 
-/// Writes the research report to the project data directory as
-/// `research/<stem>-<timestamp>.md` (T68.1; the queue-creation runs use
+/// Writes the research report to the task directory as
+/// `<stem>-<timestamp>.md` (T68.1; the queue-creation runs use
 /// their kind's stem, T69.1).
 pub(crate) fn write_research_report(ctx: &SessionContext, stem: &str, report: &str) {
-    let dir = ctx.data_dir().join("research");
-    match artifact::write_artifact(&dir, stem, report) {
+    let dir = ctx.current_task_dir();
+    match artifact::write_artifact(&dir, &format!("{stem}-research"), report) {
         Ok(path) => ctx.notice(
             NoticeLevel::Info,
             format!("Research report written to {}", path.display()),

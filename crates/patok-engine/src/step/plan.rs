@@ -7,9 +7,10 @@ use crate::agents::{Agent, PlanAgent};
 use crate::artifact;
 use crate::context::SessionContext;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use serde::Serialize;
 
 /// The outcome of one task's plan step (T10.1).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) enum PlanOutcome {
     /// The plan gate accepted this plan text.
     Accepted(String),
@@ -35,13 +36,15 @@ impl<'a> PlanStep<'a> {
 
     pub(crate) async fn run(&self, task: &Task, research: Option<&str>) -> PlanOutcome {
         let mut agent = PlanAgent::new(task, research);
+        let (provider, model) = self.ctx.for_role(agent.role());
+
         for attempt in 1..=2 {
             // Every attempt is one planner session with its own timing, so a retried
             // plan leaves its own finished line (T42.1) and starting line (T78.1).
-            let exit = run_stage(
+            let (exit, record) = run_stage(
                 self.ctx,
-                self.ctx.provider(),
-                self.ctx.model(),
+                &provider,
+                model.as_deref(),
                 StageStart::Announce,
                 agent.role(),
                 AgentPrompt::of(&agent),
@@ -57,14 +60,24 @@ impl<'a> PlanStep<'a> {
             )
             .await;
             let events = match exit {
-                StageExit::Cancelled => return PlanOutcome::Cancelled,
-                StageExit::Failed => return PlanOutcome::Failed,
+                StageExit::Cancelled => {
+                    let outcome = PlanOutcome::Cancelled;
+                    record.write(&outcome);
+                    return outcome;
+                }
+                StageExit::Failed => {
+                    let outcome = PlanOutcome::Failed;
+                    record.write(&outcome);
+                    return outcome;
+                }
                 StageExit::Completed(events) => events,
             };
             match agent.validate(&events) {
                 Ok(text) => {
+                    let outcome = PlanOutcome::Accepted(text.clone());
                     write_plan_file(self.ctx, &task.id, &text);
-                    return PlanOutcome::Accepted(text);
+                    record.write(&outcome);
+                    return outcome;
                 }
                 Err(reason) if attempt == 2 => {
                     self.ctx.notice(
@@ -74,9 +87,15 @@ impl<'a> PlanStep<'a> {
                             task.id
                         ),
                     );
-                    return PlanOutcome::Failed;
+                    let outcome = PlanOutcome::Failed;
+                    record.failure(reason.clone()).write(&outcome);
+                    return outcome;
                 }
                 Err(reason) => {
+                    // First rejection: write record with Rejected outcome and retry
+                    record
+                        .failure(reason.clone())
+                        .write(&serde_json::json!({ "Rejected": reason }));
                     agent = agent.retry(&events, &reason);
                 }
             }
@@ -85,11 +104,11 @@ impl<'a> PlanStep<'a> {
     }
 }
 
-/// Writes the accepted plan to the project data directory as
-/// `plans/<task id>-<timestamp>.md` (T10.1).
+/// Writes the accepted plan to the task directory as
+/// `<task id>-<timestamp>.md` (T10.1).
 fn write_plan_file(ctx: &SessionContext, task_id: &str, plan: &str) {
-    let dir = ctx.data_dir().join("plans");
-    match artifact::write_artifact(&dir, task_id, plan) {
+    let dir = ctx.current_task_dir();
+    match artifact::write_artifact(&dir, &format!("{task_id}-plan"), plan) {
         Ok(path) => ctx.notice(
             NoticeLevel::Info,
             format!("Plan written to {}", path.display()),

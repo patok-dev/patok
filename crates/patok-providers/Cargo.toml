@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 async-trait.workspace = true
 patok-core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

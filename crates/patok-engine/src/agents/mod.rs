@@ -20,8 +20,8 @@ pub(crate) use self::discovery::DiscoveryAgent;
 pub(crate) use self::planner::{AppendPlannerAgent, PlanAgent};
 pub(crate) use self::research::{ResearchAgent, ResearchQueueAgent};
 pub(crate) use self::reviewer::{
-    FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs,
-    compute_verdict, is_generated, merge_findings, skip_review,
+    FileReviewerAgent, Findings, ReviewConfidence, ReviewOutcome, ReviewerAgent, SkipInputs,
+    Verdict, compute_verdict, is_generated, merge_findings, skip_review,
 };
 
 /// Everything a caller needs to drive one agent session, and nothing about

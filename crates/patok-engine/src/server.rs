@@ -453,6 +453,7 @@ pub async fn serve(engine: Engine) -> anyhow::Result<()> {
     engine.cleanup_completed_tasks().await;
     engine.spawn_task_file_watch();
     engine.spawn_config_watch();
+    engine.spawn_history_writer();
     spawn_idle_watch(engine.clone());
     spawn_signal_handlers(engine.clone())?;
 

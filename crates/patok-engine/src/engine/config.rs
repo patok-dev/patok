@@ -7,7 +7,7 @@ use patok_core::config::{DaemonEnv, DaemonSettings, ProviderKind, RunMode, load_
 use patok_core::event::Phase;
 use patok_core::pipeline::PipelineState;
 use patok_providers::{Provider, ProviderError};
-use tokio::sync::{Notify, broadcast, watch};
+use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
@@ -24,7 +24,7 @@ pub struct EngineConfig {
     pub project_dir: PathBuf,
     /// Holds the socket and `engine.log`.
     pub runtime_dir: PathBuf,
-    /// Persistent per-project directory (history log).
+    /// Persistent per-project directory: the default history root, `open-group.json` and the project-local config.
     pub data_dir: PathBuf,
     /// Idle timeout of one agent session.
     pub agent_timeout: Duration,
@@ -46,8 +46,8 @@ pub struct EngineConfig {
     pub skip_research_for_simple: bool,
     /// Whether the review stage runs at all (`review_in_loop`; default on).
     pub review_in_loop: bool,
-    /// The persistent learned-confidence history file, stored globally per user.
-    pub review_history: PathBuf,
+    /// The persistent learned-confidence store file (`review-history.json`), stored globally per user.
+    pub review_confidence: PathBuf,
     /// The open-group record (`open-group.json`), stored in the project data
     /// directory: the batch-review group open across restarts.
     pub open_group: PathBuf,
@@ -75,7 +75,7 @@ impl EngineConfig {
                     "cannot determine the data directory: neither XDG_DATA_HOME nor HOME is set"
                 )
             })?;
-        let review_history = Self::default_review_history(&data_dir);
+        let review_confidence = Self::default_review_confidence(&data_dir);
         let open_group = data_dir.join("open-group.json");
         Ok(Self {
             runtime_dir: patok_core::paths::runtime_dir_from_env(&project_dir),
@@ -89,16 +89,16 @@ impl EngineConfig {
             run_mode: RunMode::Sprint,
             skip_research_for_simple: true,
             review_in_loop: true,
-            review_history,
+            review_confidence,
             open_group,
             config_files: patok_core::config::ConfigFiles::from_env(),
         })
     }
 
-    /// The learned-confidence history file: stored globally per user under the config directory,
+    /// The learned-confidence store file: stored globally per user under the config directory,
     /// next to the config files; a missing config directory falls back to
     /// the project data directory.
-    fn default_review_history(data_dir: &std::path::Path) -> PathBuf {
+    fn default_review_confidence(data_dir: &std::path::Path) -> PathBuf {
         patok_core::paths::config_dir_from_env()
             .map(|dir| dir.join("review-history.json"))
             .unwrap_or_else(|| data_dir.join("review-history.json"))
@@ -205,6 +205,8 @@ impl Engine {
             Instant::now(),
         );
         let task_list = Arc::new(TaskList::new(config.task_file()));
+        // Create the unbounded channel for history messages
+        let (history_sender, history_receiver) = mpsc::unbounded_channel();
         Self {
             inner: Arc::new(Inner {
                 config,
@@ -215,6 +217,7 @@ impl Engine {
                 state: Mutex::new(State {
                     run: RunState::default(),
                     current_task: None,
+                    current_task_dir: None,
                     recent: VecDeque::new(),
                     attach_count: 0,
                     stop: Stop::default(),
@@ -233,6 +236,8 @@ impl Engine {
                 soft_stop_cancelled: Notify::new(),
                 task_list,
                 shutdown: CancellationToken::new(),
+                history_sender: Some(history_sender),
+                history_receiver: Arc::new(Mutex::new(Some(history_receiver))),
             }),
         }
     }
@@ -244,5 +249,17 @@ impl Engine {
     /// Cancelled when the engine process should exit.
     pub fn shutdown_token(&self) -> CancellationToken {
         self.inner.shutdown.clone()
+    }
+
+    /// Spawns the history writer tokio task.
+    /// This should be called once when the engine starts up in an async context.
+    pub fn spawn_history_writer(&self) {
+        // Try to take the receiver from the Mutex
+        let mut guard = self.inner.history_receiver.lock().unwrap();
+        if let Some(receiver) = guard.take() {
+            drop(guard); // Release the lock before spawning
+            let writer = crate::history::HistoryWriter::new(receiver);
+            tokio::spawn(writer.run());
+        }
     }
 }

@@ -33,6 +33,8 @@ pub(crate) struct SessionContext {
     model: Option<String>,
     settings: DaemonSettings,
     cancel: CancellationToken,
+    /// The session directory path for history logging.
+    session_path: Option<std::path::PathBuf>,
 }
 
 impl SessionContext {
@@ -49,7 +51,24 @@ impl SessionContext {
             model,
             settings,
             cancel,
+            session_path: None,
         }
+    }
+
+    /// Sets the session directory path for history logging.
+    pub(crate) fn with_session_path(mut self, path: std::path::PathBuf) -> Self {
+        self.session_path = Some(path);
+        self
+    }
+
+    /// Returns the session directory path if available.
+    pub(crate) fn session_path(&self) -> Option<&std::path::Path> {
+        self.session_path.as_deref()
+    }
+
+    /// Returns a clone of the inner Arc for use by SessionCloseGuard.
+    pub(crate) fn inner_clone(&self) -> Arc<Inner> {
+        self.inner.clone()
     }
 
     /// The facade over this context's internals handle, for delegation to the
@@ -58,17 +77,6 @@ impl SessionContext {
         Engine {
             inner: self.inner.clone(),
         }
-    }
-
-    /// The provider the session's runs use, unless a run names its own (the
-    /// review stage's reviewer provider).
-    pub(crate) fn provider(&self) -> &Arc<dyn Provider> {
-        &self.provider
-    }
-
-    /// The session's model override, if one is configured.
-    pub(crate) fn model(&self) -> Option<&str> {
-        self.model.as_deref()
     }
 
     /// The session's settings snapshot, taken when it started.
@@ -205,14 +213,36 @@ impl SessionContext {
         &self.inner.config.data_dir
     }
 
-    /// The directory holding the agents' history logs.
-    pub(crate) fn history_dir(&self) -> PathBuf {
-        self.data_dir().join("history")
+    /// Returns the stored task directory if set, without any fallback.
+    pub(crate) fn task_dir(&self) -> Option<PathBuf> {
+        let state = self.inner.state.lock().expect("engine state lock");
+        state.current_task_dir.clone()
     }
 
-    /// The persistent learned-confidence history file.
-    pub(crate) fn review_history_path(&self) -> &Path {
-        &self.inner.config.review_history
+    /// Returns the current task directory if a task is active, otherwise the session directory.
+    pub(crate) fn current_task_dir(&self) -> PathBuf {
+        let state = self.inner.state.lock().expect("engine state lock");
+        // If we have a stored task directory, use it
+        if let Some(ref task_dir) = state.current_task_dir {
+            return task_dir.clone();
+        }
+        // Otherwise, fall back to session directory
+        if let Some(session_path) = self.session_path() {
+            return session_path.to_path_buf();
+        }
+        // Fallback to data dir if no session path
+        self.data_dir().to_path_buf()
+    }
+
+    /// Returns the next zero-padded 3-digit sequence number for the current task directory.
+    pub(crate) fn next_sequence_number(&self) -> u32 {
+        let task_dir = self.current_task_dir();
+        crate::history::sequence_counter(&task_dir).unwrap_or(1)
+    }
+
+    /// The persistent learned-confidence store file.
+    pub(crate) fn review_confidence_path(&self) -> &Path {
+        &self.inner.config.review_confidence
     }
 
     /// The open-group record (`open-group.json`): the batch-review group open
@@ -265,6 +295,20 @@ impl SessionContext {
         let engine = self.engine();
         let mut state = self.inner.state.lock().expect("engine state lock");
         state.current_task = Some(task.id.clone());
+
+        // Emit task open marker before TaskStarted if session path is available
+        if let Some(session_path) = self.session_path() {
+            let task_timestamp = crate::artifact::unix_now().as_millis() as u64;
+            let task_dir_name = crate::history::task_dir_name(&task.id, task_timestamp);
+            let task_path = crate::history::ensure_task_dir(session_path, &task_dir_name)
+                .unwrap_or_else(|_| session_path.join(&task_dir_name));
+            state.current_task_dir = Some(task_path.clone());
+            engine.emit_history_msg_locked(
+                &mut state,
+                crate::history::HistoryMsg::TaskOpen { path: task_path },
+            );
+        }
+
         engine.emit_locked(
             &mut state,
             EngineEvent::TaskStarted {
@@ -296,7 +340,11 @@ impl SessionContext {
             },
         );
         state.current_task = None;
+        state.current_task_dir = None;
         engine.task_tiles_finished_locked(&mut state);
+
+        // Emit task close marker after TaskFinished
+        engine.emit_history_msg_locked(&mut state, crate::history::HistoryMsg::TaskClose);
     }
 
     /// Ends the build session: nothing is current, the run state returns to
@@ -384,45 +432,69 @@ impl SessionContext {
         self.inner.planning_done.notify_waiters();
     }
 
-    /// The reviewer session's provider and model when the reviewer provider
-    /// names a provider this build implements (`reviewer_provider`): that
-    /// provider, resolved like any other unit of work. A provider that
-    /// supports the reviewer model (the claude provider) runs with the
-    /// configured one (`reviewer_model`); the other providers keep their
-    /// default model. A name this build does not implement keeps the
-    /// configured pair silently; an unavailable provider warns and falls back
-    /// to the configured pair, as does a configured reviewer provider on a
-    /// fixed-provider engine without a resolver.
-    pub(crate) fn reviewer(&self) -> (Arc<dyn Provider>, Option<String>) {
+    /// The provider and model a role's session runs on: the role's provider
+    /// (`<role>_provider`, which follows the global `provider` when unset),
+    /// resolved like any other unit of work, with the role's model
+    /// (`<role>_model`, empty meaning the provider's default). A role model
+    /// only reaches a provider that supports one (the claude provider)
+    /// unless it is the single-model override on the configured provider.
+    /// A name this build does not implement keeps the configured pair
+    /// silently; an unavailable provider warns and falls back to the
+    /// configured pair, as does a role provider on a fixed-provider engine
+    /// without a resolver.
+    pub(crate) fn for_role(&self, role: AgentRole) -> (Arc<dyn Provider>, Option<String>) {
         let configured = (self.provider.clone(), self.model.clone());
+        let (name, role_model) = match role {
+            AgentRole::Research => (
+                self.settings.research_provider,
+                &self.settings.research_model,
+            ),
+            AgentRole::Planner => (self.settings.planner_provider, &self.settings.planner_model),
+            AgentRole::Builder => (self.settings.builder_provider, &self.settings.builder_model),
+            AgentRole::Reviewer => (
+                self.settings.reviewer_provider,
+                &self.settings.reviewer_model,
+            ),
+            AgentRole::Discovery => (
+                self.settings.discovery_provider,
+                &self.settings.discovery_model,
+            ),
+            AgentRole::Orchestrator => return configured,
+        };
         let Some(resolver) = self.inner.resolver.as_ref() else {
-            if self.settings.reviewer_provider.kind().is_some() {
-                let name = &self.settings.reviewer_provider;
+            if name.kind().is_some() && name != self.settings.provider {
                 tracing::warn!(
-                    "the {name} reviewer provider has no resolver; \
-                     the reviewer runs on the fixed provider"
+                    "the {name} {role} provider has no resolver; \
+                     the {role} runs on the fixed provider"
                 );
             }
             return configured;
         };
-        match resolve_provider(resolver, &self.settings.reviewer_provider) {
+        match resolve_provider(resolver, &name) {
             Ok(Some(provider)) => {
-                let model = provider
-                    .supports_reviewer_model()
-                    .then(|| self.settings.reviewer_model.clone());
+                let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
+                let model = if provider.slug() == self.provider.slug() {
+                    self.model
+                        .clone()
+                        .or_else(|| role_model.filter(|_| provider.supports_reviewer_model()))
+                } else {
+                    role_model.filter(|_| provider.supports_reviewer_model())
+                };
                 (provider, model)
             }
-            // A name this build does not implement: keep the configured
-            // provider silently, exactly like today.
             Ok(None) => configured,
             Err(error) => {
-                let name = &self.settings.reviewer_provider;
                 tracing::warn!(
-                    "the {name} reviewer provider is unavailable ({error}); \
-                     the reviewer runs on the configured provider"
+                    "the {name} {role} provider is unavailable ({error}); \
+                     the {role} runs on the configured provider"
                 );
                 configured
             }
         }
+    }
+
+    /// The reviewer session's provider and model ([`Self::for_role`]).
+    pub(crate) fn reviewer(&self) -> (Arc<dyn Provider>, Option<String>) {
+        self.for_role(AgentRole::Reviewer)
     }
 }

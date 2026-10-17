@@ -1,9 +1,9 @@
 //! Supervision of a provider CLI subprocess: line streaming, transcript, timeouts, cancellation.
 //! Shared by every CLI-backed provider. No PTY layer.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use patok_core::event::AgentEvent;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -67,14 +67,19 @@ pub async fn run(
     provider: &str,
     model: &str,
 ) -> Result<SessionResult, ProviderError> {
-    let log_path = open_log_path(&request.log_dir, &request.label, provider)?;
-    let mut log =
-        tokio::fs::File::create(&log_path)
-            .await
-            .map_err(|source| ProviderError::Log {
-                dir: request.log_dir.clone(),
-                source,
-            })?;
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = request.raw_log_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| ProviderError::Log {
+            path: request.raw_log_path.clone(),
+            source,
+        })?;
+    }
+    let mut log = tokio::fs::File::create(&request.raw_log_path)
+        .await
+        .map_err(|source| ProviderError::Log {
+            path: request.raw_log_path.clone(),
+            source,
+        })?;
 
     let mut child = spawn(&spec, &request.project_dir)?;
     let pid = child.id();
@@ -153,7 +158,7 @@ pub async fn run(
         success: exit == ExitKind::Completed,
         exit,
         failure,
-        log_path: Some(log_path),
+        log_path: Some(request.raw_log_path.clone()),
         provider: provider.to_string(),
         model: model.to_string(),
     })
@@ -218,27 +223,6 @@ async fn write_log(log: &mut tokio::fs::File, line: &str) {
     let _ = log.write_all(b"\n").await;
 }
 
-pub fn open_log_path(dir: &Path, label: &str, provider: &str) -> Result<PathBuf, ProviderError> {
-    std::fs::create_dir_all(dir).map_err(|source| ProviderError::Log {
-        dir: dir.to_path_buf(),
-        source,
-    })?;
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis());
-    let label: String = label
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    Ok(dir.join(format!("{millis}-{label}-{provider}.log")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,8 +252,7 @@ mod tests {
     ) -> (SessionRequest, mpsc::UnboundedReceiver<AgentEvent>) {
         let (mut request, rx) = crate::test_util::request("", None, &[]);
         request.project_dir = dir.to_path_buf();
-        request.log_dir = dir.join("logs");
-        request.label = "T1.1".into();
+        request.raw_log_path = dir.join("logs").join("T1.1-mock-raw.jsonl");
         request.idle_timeout = idle;
         (request, rx)
     }

@@ -1,18 +1,21 @@
 //! The per-task review step: the skip rules, the reviewer sessions, the
-//! verdict, the review file and the learned-confidence history.
+//! verdict, the review file and the learned-confidence store.
 
 use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
 
 use crate::agents::{
-    self, Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewerAgent, SkipInputs,
+    self, Agent, FileReviewerAgent, Findings, ReviewConfidence, ReviewerAgent, SkipInputs, Verdict,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
 use crate::artifact;
 use crate::context::SessionContext;
 use crate::pipeline::group::batch_deferred;
-use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use crate::step::agent_run::{
+    AgentPrompt, ResultRecord, StageExit, StageStart, StageWords, run_stage,
+};
+use serde::Serialize;
 
 /// The largest git diff the reviewer prompt carries:
 /// 50 KB; a larger or empty diff falls back to the changed-file list.
@@ -26,7 +29,7 @@ const CLAIMS_MIN_BYTES: usize = 10;
 /// carries whether the task was batch-deferred: the deferral is not the
 /// group's last task, so the caller keeps the group's record open for its
 /// real last task; only a passed or skipped review closes the group.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub(crate) enum ReviewOutcome {
     /// The review passed: the task is validated.
     Passed { deferred: bool },
@@ -41,8 +44,8 @@ pub(crate) enum ReviewOutcome {
 
 /// The outcome of the reviewer sessions of one review.
 enum ReviewRun {
-    /// The final review report and its computed verdict.
-    Outcome(agents::ReviewOutcome),
+    /// The final review report, its computed verdict, and its result record.
+    Outcome(agents::ReviewOutcome, Box<ResultRecord>),
     /// The reviewer session failed: a missing report counts as one HIGH finding.
     Failed,
     /// A reviewer session was cancelled.
@@ -82,12 +85,13 @@ impl<'a> ReviewStep<'a> {
         plan: Option<&str>,
         claims: Option<&str>,
         group_base: Option<&str>,
+        review_dir: &std::path::Path,
     ) -> ReviewOutcome {
         let ctx = self.ctx;
         let complexity = complexity::classify(&task.description);
         // The skip decision, recorded with its reason.
         let pending_after: Vec<String> = ctx.pending_ids();
-        let history = ReviewHistory::load(ctx.review_history_path());
+        let confidence = ReviewConfidence::load(ctx.review_confidence_path());
         // The raw deferral decides the group's close beside the skip rule:
         // the batch deferral is not the group's last task, and its skip is
         // not a completed review.
@@ -99,7 +103,7 @@ impl<'a> ReviewStep<'a> {
             complexity: Some(complexity),
             builder_clean: true,
             review_confidence_threshold: ctx.settings().review_confidence_threshold,
-            history_consecutive_passes: history.match_shape(&task.description, complexity),
+            confidence_consecutive_passes: confidence.match_shape(&task.description, complexity),
             stage_enabled: ctx.review_stage_enabled(),
         };
         if let Some(reason) = skip_review(&inputs) {
@@ -175,7 +179,7 @@ impl<'a> ReviewStep<'a> {
             && reviewable.len() as u64 > ctx.settings().review_multipass_threshold
         {
             match multipass_review(ctx, task, &reviewable, &changed).await {
-                Ok(outcome) => ReviewRun::Outcome(outcome),
+                Ok((outcome, record)) => ReviewRun::Outcome(outcome, Box::new(record)),
                 Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
                 Err(ReviewExit::Failed) => ReviewRun::Failed,
             }
@@ -190,7 +194,7 @@ impl<'a> ReviewStep<'a> {
                 ctx.settings().confidence_threshold,
             );
             match one_review(ctx, task, &agent).await {
-                Ok(outcome) => ReviewRun::Outcome(outcome),
+                Ok((outcome, record)) => ReviewRun::Outcome(outcome, Box::new(record)),
                 Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
                 Err(ReviewExit::Failed) => ReviewRun::Failed,
             }
@@ -214,12 +218,12 @@ impl<'a> ReviewStep<'a> {
         }
 
         // The verdict.
-        let (report, verdict) = match run {
+        let (report, verdict, final_record) = match run {
             ReviewRun::Cancelled => {
                 ctx.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
                 return ReviewOutcome::Cancelled;
             }
-            ReviewRun::Outcome(outcome) => (outcome.report, outcome.verdict),
+            ReviewRun::Outcome(outcome, record) => (outcome.report, outcome.verdict, Some(*record)),
             ReviewRun::Failed => {
                 // The reviewer agent must succeed: a failed session counts as
                 // a missing report (one HIGH finding).
@@ -227,6 +231,7 @@ impl<'a> ReviewStep<'a> {
                 (
                     String::new(),
                     compute_verdict(None, ctx.settings().confidence_threshold),
+                    None,
                 )
             }
         };
@@ -239,12 +244,12 @@ impl<'a> ReviewStep<'a> {
                 below.finding.issue
             );
         }
-        let review_path = write_review_file(ctx, &task.id, &report);
+        let review_path = write_review_file(ctx, review_dir, &task.id, &report);
         // The pass/fail outcome is recorded in the persistent learned-confidence
-        // history in the background.
+        // store in the background.
         record_review_outcome(ctx, task, complexity, verdict.passed);
 
-        if verdict.passed {
+        let step_outcome = if verdict.passed {
             ctx.notice(NoticeLevel::Info, format!("Review passed for {}.", task.id));
             // The group's last task completed its review validated: the
             // caller closes the record. A failed review keeps it so the
@@ -262,7 +267,38 @@ impl<'a> ReviewStep<'a> {
                 ),
             );
             ReviewOutcome::Failed
+        };
+
+        // Write the final result JSON for the review step with the ReviewOutcome.
+        if let Some(record) = final_record {
+            let failure = if verdict.passed {
+                None
+            } else {
+                Some("HIGH/MEDIUM issues remain".to_string())
+            };
+            #[derive(Serialize)]
+            struct ReviewResult<'a> {
+                outcome: &'a crate::step::review::ReviewOutcome,
+                verdict: &'a Verdict,
+            }
+            let review_result = ReviewResult {
+                outcome: &step_outcome,
+                verdict: &verdict,
+            };
+            // Update the record with the correct failure and write it
+            let record = ResultRecord {
+                path: record.path,
+                agent: record.agent,
+                provider: record.provider,
+                model: record.model,
+                exit_kind: record.exit_kind,
+                success: record.success,
+                failure,
+            };
+            record.write(&review_result);
         }
+
+        step_outcome
     }
 }
 
@@ -280,16 +316,16 @@ fn file_hashes(ctx: &SessionContext, files: &[String]) -> Vec<Option<String>> {
         .collect()
 }
 
-/// Writes the review report to the project data directory as
-/// `reviews/<task id>-<timestamp>.md`, returning
+/// Writes the review report to the specified directory as
+/// `<task id>-review-<timestamp>.md`, returning
 /// its path for the failure notice.
 fn write_review_file(
     ctx: &SessionContext,
+    dir: &std::path::Path,
     task_id: &str,
     report: &str,
 ) -> Option<std::path::PathBuf> {
-    let dir = ctx.data_dir().join("reviews");
-    match artifact::write_artifact(&dir, task_id, report) {
+    match artifact::write_artifact(dir, &format!("{task_id}-review"), report) {
         Ok(path) => {
             ctx.notice(
                 NoticeLevel::Info,
@@ -307,7 +343,7 @@ fn write_review_file(
     }
 }
 
-/// Records one review outcome in the persistent learned-confidence history
+/// Records one review outcome in the persistent learned-confidence store
 /// in the background, for the
 /// simple and medium shapes the feature matches on.
 fn record_review_outcome(ctx: &SessionContext, task: &Task, complexity: Complexity, passed: bool) {
@@ -315,14 +351,14 @@ fn record_review_outcome(ctx: &SessionContext, task: &Task, complexity: Complexi
         return;
     }
     let description = task.description.clone();
-    let path = ctx.review_history_path().to_path_buf();
+    let path = ctx.review_confidence_path().to_path_buf();
     let date = artifact::unix_now().as_secs().to_string();
     tokio::spawn(async move {
-        let mut history = ReviewHistory::load(&path);
-        history.record(&description, complexity, passed, &date);
-        if let Err(error) = history.save(&path) {
+        let mut confidence = ReviewConfidence::load(&path);
+        confidence.record(&description, complexity, passed, &date);
+        if let Err(error) = confidence.save(&path) {
             tracing::warn!(
-                "cannot write the review history {}: {error}",
+                "cannot write the review confidence store {}: {error}",
                 path.display()
             );
         }
@@ -338,12 +374,12 @@ async fn one_review<A: Agent>(
     ctx: &SessionContext,
     task: &Task,
     agent: &A,
-) -> Result<A::Session, ReviewExit> {
+) -> Result<(A::Session, ResultRecord), ReviewExit> {
     // The starting line names the provider the review actually runs on
     // (mistral when the reviewer provider is mistral), so the reviewer
     // pair resolves first (T78.1).
     let (provider, model) = ctx.reviewer();
-    let exit = run_stage(
+    let (exit, record) = run_stage(
         ctx,
         &provider,
         model.as_deref(),
@@ -362,9 +398,23 @@ async fn one_review<A: Agent>(
     )
     .await;
     match exit {
-        StageExit::Completed(events) => agent.validate(&events).map_err(|_| ReviewExit::Failed),
-        StageExit::Cancelled => Err(ReviewExit::Cancelled),
-        StageExit::Failed => Err(ReviewExit::Failed),
+        StageExit::Completed(events) => match agent.validate(&events) {
+            Ok(session_outcome) => Ok((session_outcome, record)),
+            Err(reason) => {
+                record
+                    .failure(reason.to_string())
+                    .write(&serde_json::Value::Null);
+                Err(ReviewExit::Failed)
+            }
+        },
+        StageExit::Cancelled => {
+            record.write(&serde_json::Value::Null);
+            Err(ReviewExit::Cancelled)
+        }
+        StageExit::Failed => {
+            record.write(&serde_json::Value::Null);
+            Err(ReviewExit::Failed)
+        }
     }
 }
 
@@ -377,7 +427,7 @@ async fn multipass_review(
     task: &Task,
     reviewable: &[String],
     changed: &[String],
-) -> Result<agents::ReviewOutcome, ReviewExit> {
+) -> Result<(agents::ReviewOutcome, ResultRecord), ReviewExit> {
     let mut merged = Findings::default();
     for file in reviewable {
         let agent = FileReviewerAgent::new(task, file, 1);
@@ -387,8 +437,15 @@ async fn multipass_review(
                 // A failed file review is skipped and the loop continues.
                 continue;
             }
-            Ok(Some(findings)) => merge_findings(&mut merged, findings),
-            Ok(None) => {}
+            Ok((Some(findings), record)) => {
+                merge_findings(&mut merged, findings.clone());
+                // Write the per-file review record with its findings
+                record.write(&findings);
+            }
+            Ok((None, record)) => {
+                // Write the per-file review record with null outcome
+                record.write(&serde_json::Value::Null);
+            }
         }
     }
     let findings_json = serde_json::to_string_pretty(&merged).unwrap_or_default();

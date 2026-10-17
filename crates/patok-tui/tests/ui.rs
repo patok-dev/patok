@@ -9,8 +9,7 @@ use patok_core::event::{AgentEvent, EngineEvent, Phase, SessionOutcome, TaskOutc
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
 use patok_tui::{
-    App, finished_line, format_elapsed, human_duration, output_title, output_title_parts,
-    output_title_spans, render, started_line,
+    App, format_elapsed, output_title, output_title_parts, output_title_spans, render,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -946,38 +945,6 @@ fn finished_run(agent_name: &str, outcome: SessionOutcome, duration_ms: u64) -> 
 }
 
 #[test]
-fn human_duration_formats_seconds_minutes_and_hours() {
-    assert_eq!(human_duration(Duration::from_secs(0)), "0 sec");
-    assert_eq!(human_duration(Duration::from_secs(12)), "12 sec");
-    assert_eq!(human_duration(Duration::from_secs(59)), "59 sec");
-    assert_eq!(human_duration(Duration::from_secs(125)), "2 min 05 sec");
-    assert_eq!(human_duration(Duration::from_secs(825)), "13 min 45 sec");
-    assert_eq!(human_duration(Duration::from_secs(3600)), "1 h 00 min");
-    assert_eq!(human_duration(Duration::from_secs(3900)), "1 h 05 min");
-}
-
-#[test]
-fn started_line_names_the_agent_provider_and_model() {
-    assert_eq!(
-        started_line("builder", "mock", Some("m-brand")),
-        "Builder started (mock, m-brand)"
-    );
-    // No configured model: the model part is omitted cleanly (T78.1).
-    assert_eq!(
-        started_line("builder", "mock", None),
-        "Builder started (mock)"
-    );
-    assert_eq!(
-        started_line("planner", "mistral", Some("mistral-large")),
-        "Planner started (mistral, mistral-large)"
-    );
-    assert_eq!(
-        started_line("discovery", "claude", None),
-        "Discovery started (claude)"
-    );
-}
-
-#[test]
 fn a_started_builder_session_leaves_the_starting_line_before_the_finished_line() {
     let mut app = app();
     app.apply(EngineEvent::PhaseChanged {
@@ -1062,38 +1029,6 @@ fn a_started_line_with_a_model_shows_it() {
         "{screen}"
     );
     insta::assert_snapshot!(screen);
-}
-
-#[test]
-fn finished_line_names_the_agent_and_the_outcome() {
-    assert_eq!(
-        finished_line(
-            "builder",
-            SessionOutcome::Finished,
-            Duration::from_secs(125)
-        ),
-        "Builder finished in 2 min 05 sec"
-    );
-    assert_eq!(
-        finished_line(
-            "planner",
-            SessionOutcome::Finished,
-            Duration::from_secs(825)
-        ),
-        "Planner finished in 13 min 45 sec"
-    );
-    assert_eq!(
-        finished_line("builder", SessionOutcome::Failed, Duration::from_secs(12)),
-        "Builder failed in 12 sec"
-    );
-    assert_eq!(
-        finished_line(
-            "discovery",
-            SessionOutcome::Cancelled,
-            Duration::from_secs(45)
-        ),
-        "Discovery cancelled in 45 sec"
-    );
 }
 
 #[test]
