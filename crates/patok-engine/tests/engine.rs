@@ -3024,7 +3024,7 @@ mod provider_config {
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Claude]);
         let mut attachment = engine.attach().unwrap();
         assert_eq!(attachment.snapshot.provider, "claude");
-        assert_eq!(attachment.snapshot.model, "opus");
+        assert_eq!(attachment.snapshot.model, "");
         engine.start_build().unwrap();
         collect_until(&mut attachment.events, is_phase_startup).await;
     }
@@ -3097,9 +3097,10 @@ mod provider_config {
 
     #[tokio::test]
     async fn invalid_config_is_a_command_error_naming_the_file() {
-        let (_fixture, engine) = engine_with(None, Some("[daemon]\nbuilder_provider = \"gpt\"\n"), |_| {
-            unreachable!("an invalid config must not resolve a provider")
-        });
+        let (_fixture, engine) =
+            engine_with(None, Some("[daemon]\nbuilder_provider = \"gpt\"\n"), |_| {
+                unreachable!("an invalid config must not resolve a provider")
+            });
         let error = engine.start_build().unwrap_err();
         assert!(error.contains("patok.config.toml"), "{error}");
         assert!(error.contains("provider"), "{error}");
@@ -3618,7 +3619,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         picked.lock().unwrap()
     );
     assert!(
-        started(&events).contains(&("reviewer".into(), "claude".into(), Some("sonnet".into()))),
+        started(&events).contains(&("reviewer".into(), "claude".into(), None)),
         "{:#?}",
         started(&events)
     );
@@ -3627,7 +3628,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         .iter()
         .find(|s| s.label == "review")
         .expect("the review session ran");
-    assert_eq!(review.model.as_deref(), Some("sonnet"));
+    assert_eq!(review.model.as_deref(), None);
 }
 
 #[tokio::test]

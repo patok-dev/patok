@@ -16,8 +16,8 @@ expression: screen
      │      reviewer model  sonnet                                                           ││    │
      │      discovery provider  ‹ claude ›                                                   ││    │
      │      discovery model  opus                                                            ││    │
-     │      learning extraction model  (not set)                                             ││    │
-     │      learning extraction provider  ‹ claude ›                                         ││    │
+     │      orchestrator provider  ‹ claude ›                                                ││    │
+     │      orchestrator model  (not set)                                                    ││    │
      │      local model  (not set)                                                           ││    │
      │      model catalog refresh  (not set)                                                 ││    │
      │  ▾ Pipeline                                                                           ││    │

@@ -433,8 +433,7 @@ impl SessionContext {
     }
 
     /// The provider and model a role's session runs on: the role's provider
-    /// (`<role>_provider`, which follows the global `provider` when unset),
-    /// resolved like any other unit of work, with the role's model
+    /// (`<role>_provider`), resolved like any other unit of work, with the role's model
     /// (`<role>_model`, empty meaning the provider's default). A role model
     /// only reaches a provider that supports one (the claude provider)
     /// unless it is the single-model override on the configured provider.
@@ -475,15 +474,18 @@ impl SessionContext {
         };
         match resolve_provider(resolver, &name) {
             Ok(Some(provider)) => {
-                let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
+                let role_model = role_model.clone().filter(|m| !m.is_empty());
                 // When the resolved provider matches the session's builder provider,
-                // use the session's model (builder's model), falling back to the role's
-                // model if the session model is None.
-                // For a different provider, only use the role's model if the provider supports it.
+                // prefer role's model, fall back to session model.
+                // For a different provider, only use the role's model if the provider supports
+                // custom model names (currently only Claude).
+                let supports_custom_models = provider.slug() == "claude";
                 let model = if provider.slug() == self.provider.slug() {
-                    self.model.clone().or_else(|| role_model.filter(|_| provider.supports_reviewer_model()))
+                    role_model
+                        .filter(|_| supports_custom_models)
+                        .or(self.model.clone())
                 } else {
-                    role_model.filter(|_| provider.supports_reviewer_model())
+                    role_model.filter(|_| supports_custom_models)
                 };
                 (provider, model)
             }

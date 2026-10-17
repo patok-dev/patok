@@ -553,14 +553,14 @@ mod tests {
             app.tui.theme = key;
             app.tui.truecolor = Some(true);
             app.overlay.editor = Some(Editor {
-                field: "model",
+                field: "builder_model",
                 kind: FieldKind::Text,
                 buffer: "abc".into(),
             });
             let row = SECTIONS
                 .iter()
                 .flat_map(|section| section.rows.iter())
-                .find(|row| row.key == "model")
+                .find(|row| row.key == "builder_model")
                 .expect("model is a settings row");
             // Index 0 matches the overlay's default focus, so the row renders
             // focused like the real open-editor render does.

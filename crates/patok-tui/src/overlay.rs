@@ -145,8 +145,6 @@ static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
             schema: Schema::Daemon,
             kind: FieldKind::ReadOnly,
         },
-        daemon_row("provider"),
-        daemon_row("model"),
         daemon_row("research_provider"),
         daemon_row("research_model"),
         daemon_row("planner_provider"),
@@ -157,8 +155,8 @@ static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
         daemon_row("reviewer_model"),
         daemon_row("discovery_provider"),
         daemon_row("discovery_model"),
-        daemon_row("learning_extraction_model"),
-        daemon_row("learning_extraction_provider"),
+        daemon_row("orchestrator_provider"),
+        daemon_row("orchestrator_model"),
         daemon_row("local_model"),
         daemon_row("model_catalog_refresh_secs"),
     ]
@@ -1258,7 +1256,7 @@ mod tests {
         );
 
         // Inside an open text editor the four letters keep typing as characters.
-        focus_field(&mut subject, "model");
+        focus_field(&mut subject, "builder_model");
         subject.on_key(
             &mut modals,
             key(KeyCode::Enter),

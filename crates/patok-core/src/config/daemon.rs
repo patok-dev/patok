@@ -1051,12 +1051,12 @@ daemon_table! {
     /// pipeline, routing and learnings tasks pick them up.
     entries {
         // Routing (section 4).
-        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default." default "sonnet".into()],
-        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default." default "opus".into()],
-        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default." default "opus".into()],
-        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default." default "sonnet".into()],
-        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default." default "opus".into()],
-        [str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default." default "opus".into()],
+        [opt_str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default."],
+        [opt_str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default."],
+        [opt_str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default."],
+        [opt_str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default."],
+        [opt_str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default."],
+        [opt_str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default."],
         [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start." default ProviderName::Claude],
         [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start." default ProviderName::Claude],
         [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start." default ProviderName::Claude],

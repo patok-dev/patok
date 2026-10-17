@@ -278,8 +278,9 @@ enum Role {
   ROLE_REVIEWER = 4;
   ROLE_DISCOVERY = 5;
   ROLE_LEARNING_EXTRACTION = 6;
-  ROLE_ORCHESTRATOR_PROPOSER = 7;
-  ROLE_ORCHESTRATOR_REVIEWER = 8;
+  ROLE_ORCHESTRATOR = 7;
+  ROLE_ORCHESTRATOR_PROPOSER = 8;
+  ROLE_ORCHESTRATOR_REVIEWER = 9;
 }
 
 // Canonical provider identifiers. The parser-level aliases documented there

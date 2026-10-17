@@ -14,7 +14,7 @@ mod daemon;
 mod merge;
 mod persist;
 mod review;
-mod schema;
+pub mod schema;
 mod spelling;
 mod tui;
 

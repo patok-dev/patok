@@ -16,8 +16,8 @@ expression: "draw(&app, W, H)"
      │      reviewer model  sonnet                                                           ││    │
      │      discovery provider  ‹ claude ›                                                   ││    │
      │      discovery model  opus                                                            ││    │
-     │      learning extraction model  (not set)                                             ││    │
-     │      learning┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
+     │      orchestrator provider  ‹ claude ›                                                ││    │
+     │      orchestr┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
      │      local mo│  Save -- apply every drafted change and close            │             ││    │
      │      model ca│▶ Discard -- throw away the drafted changes and close     │             ││    │
      │  ▾ Pipeline  │  Cancel -- back to the settings                          │             ││    │

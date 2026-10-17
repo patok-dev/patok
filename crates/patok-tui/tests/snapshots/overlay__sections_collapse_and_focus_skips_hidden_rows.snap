@@ -13,13 +13,13 @@ expression: screen
      │      review multipass threshold  8                                                    ││    │
 [ Dis│      [ ] batch review                                                                 ││    │
      │      [ ] planner lookahead                                                            ││    │
-     │      [ ] review in loop                                                               ││    │
+     │      [ ] review in loop                                                               █│    │
      │      confidence threshold  0.5                                                        █│    │
      │      plan revision cycles  (not set)                                                  █│    │
      │      plan revision accept policy  ‹ no-high ›                                         █│    │
      │      [ ] semgrep enabled                                                              █│    │
      │      build command  (not set)                                                         █│    │
-     │      planning iterations  (not set)                                                   █│    │
+     │      planning iterations  (not set)                                                   ││    │
      │      [ ] require human approval                                                       ││    │
      │      on task complete hook  (not set)                                                 ││    │
      │▶ ▸ Timeouts and pauses                                                                ││    │

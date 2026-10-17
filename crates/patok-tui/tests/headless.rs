@@ -321,7 +321,7 @@ async fn unavailable_provider_is_an_engine_error() {
     // with a deterministic error.
     project_config(
         &setup,
-        "plan_enabled = false\nreview_in_loop = false\nprovider = \"opencode\"\n",
+        "plan_enabled = false\nreview_in_loop = false\nbuilder_provider = \"opencode\"\n",
     );
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![]);

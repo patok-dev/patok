@@ -14,8 +14,8 @@ use patok_core::event::Snapshot;
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{
     AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, InjectTask,
-    RunDiscovery, SettingsChange, ShutdownRequest, StartBuild, command_request, engine_update,
-    shutdown_request, shutdown_update,
+    RunDiscovery, SettingsChange, ShutdownRequest, StartBuild,
+    command_request, engine_update, shutdown_request, shutdown_update,
 };
 use ratatui::backend::Backend;
 use ratatui::{DefaultTerminal, Terminal};
@@ -1047,7 +1047,7 @@ mod tests {
     /// 0 (Save) selected, the choice rows' area recorded. The body rect lies
     /// outside any other recorded rect, so its rows 0-2 are the choices.
     fn confirm_app() -> (App, Rect) {
-        let mut app = save_app(&[("model", "opus")]);
+        let mut app = save_app(&[("builder_model", "opus")]);
         // The real flow opens the dialog: Esc on the dirty overlay.
         assert_eq!(
             app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
@@ -1395,7 +1395,7 @@ mod tests {
     #[tokio::test]
     async fn save_settings_applies_and_persists_every_draft_and_closes_the_overlay() {
         let (temp, mut shell) = shell();
-        let mut app = save_app(&[("model", "opus"), ("rail_mode", "detailed")]);
+        let mut app = save_app(&[("builder_model", "opus"), ("rail_mode", "detailed")]);
         let commands = Arc::new(Mutex::new(Vec::new()));
         let mut submit = RecordingSave {
             commands: Arc::clone(&commands),
@@ -1410,7 +1410,7 @@ mod tests {
             Some(command_request::Action::SettingsChange(change)) => {
                 assert_eq!(
                     change.change,
-                    Some(Change::ModelOverride("opus".into())),
+                    Some(Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
                     "{change:?}"
                 );
             }
@@ -1419,7 +1419,7 @@ mod tests {
         assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(
-            app.settings.get("model"),
+            app.settings.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
         assert_eq!(shell.settings().rail_mode, RailMode::Detailed);
@@ -1434,7 +1434,7 @@ mod tests {
     #[tokio::test]
     async fn a_rejection_keeps_the_overlay_open_and_a_retry_saves_the_rest() {
         let (_temp, mut shell) = shell();
-        let mut app = save_app(&[("provider", "mistral"), ("model", "opus")]);
+        let mut app = save_app(&[("builder_provider", "mistral"), ("builder_model", "opus")]);
         // `provider` precedes `model` in the pending rows, so the provider
         // draft applies and the model draft takes the rejection.
         let commands = Arc::new(Mutex::new(Vec::new()));
@@ -1448,7 +1448,7 @@ mod tests {
                 let accepted = matches!(
                     request.action,
                     Some(command_request::Action::SettingsChange(SettingsChange {
-                        change: Some(Change::Provider(_)),
+                        change: Some(Change::RoleProvider(_)),
                     }))
                 );
                 self.commands.lock().unwrap().push(request);
@@ -1478,12 +1478,12 @@ mod tests {
             app.overlay.pending(),
             vec![(
                 Schema::Daemon,
-                "model".to_string(),
+                "builder_model".to_string(),
                 SettingValue::Str("opus".into())
             )]
         );
         assert_eq!(
-            app.settings.get("provider"),
+            app.settings.get("builder_provider"),
             Some(&SettingValue::Str("mistral".into()))
         );
         assert_eq!(commands.lock().unwrap().len(), 2);
@@ -1501,7 +1501,7 @@ mod tests {
             Some(command_request::Action::SettingsChange(change)) => {
                 assert_eq!(
                     change.change,
-                    Some(Change::ModelOverride("opus".into())),
+                    Some(Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
                     "{change:?}"
                 );
             }
@@ -1510,7 +1510,7 @@ mod tests {
         assert!(!app.settings_open());
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(
-            app.settings.get("model"),
+            app.settings.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
     }
@@ -1558,7 +1558,7 @@ mod tests {
                 app.overlay.pending(),
                 vec![(
                     Schema::Daemon,
-                    "model".to_string(),
+                    "builder_model".to_string(),
                     SettingValue::Str("opus".into())
                 )]
             );
@@ -1592,7 +1592,7 @@ mod tests {
             Some(command_request::Action::SettingsChange(change)) => {
                 assert_eq!(
                     change.change,
-                    Some(Change::ModelOverride("opus".into())),
+                    Some(Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
                     "{change:?}"
                 );
             }

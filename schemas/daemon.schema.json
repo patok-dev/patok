@@ -28,7 +28,10 @@
       ]
     },
     "builder_model": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "builder_provider": {
       "$ref": "#/$defs/ProviderName"
@@ -54,7 +57,10 @@
       "minimum": 0
     },
     "discovery_model": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "discovery_provider": {
       "$ref": "#/$defs/ProviderName"
@@ -135,7 +141,10 @@
       ]
     },
     "orchestrator_model": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "orchestrator_provider": {
       "$ref": "#/$defs/ProviderName"
@@ -174,7 +183,10 @@
       "type": "boolean"
     },
     "planner_model": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "planner_provider": {
       "$ref": "#/$defs/ProviderName"
@@ -194,7 +206,10 @@
       "type": "boolean"
     },
     "research_model": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "research_provider": {
       "$ref": "#/$defs/ProviderName"
@@ -213,7 +228,10 @@
       "minimum": 0
     },
     "reviewer_model": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "reviewer_provider": {
       "$ref": "#/$defs/ProviderName"
@@ -260,12 +278,6 @@
     }
   },
   "required": [
-    "research_model",
-    "planner_model",
-    "builder_model",
-    "reviewer_model",
-    "discovery_model",
-    "orchestrator_model",
     "research_provider",
     "planner_provider",
     "builder_provider",

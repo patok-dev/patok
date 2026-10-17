@@ -1689,13 +1689,12 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         .into_inner();
     let (version, snapshot) = snapshot_of(updates.message().await.unwrap().unwrap());
     let mut app = patok_tui::App::new(snapshot, version);
-    assert_eq!(app.run.model, "");
 
     // A valid change: accepted, written to the project-local layer, with its apply timing.
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::SettingsChange(SettingsChange {
-                change: Some(settings_change::Change::ModelOverride("opus".into())),
+                change: Some(settings_change::Change::RoleModel(patok_proto::RoleModel { role: 3, model: "opus".into() })),
             })),
         })
         .await
@@ -1712,7 +1711,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         settings_change_result::ApplyTiming::NextUnitOfWork as i32
     );
     let text = std::fs::read_to_string(setup.config.data_dir.join("patok.config.toml")).unwrap();
-    assert!(text.contains("model = \"opus\""), "{text}");
+    assert!(text.contains("builder_model = \"opus\""), "{text}");
 
     // The broadcast reaches the attached shell and syncs its display.
     loop {
@@ -1727,14 +1726,13 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         let event = EngineEvent::from_payload(&event.payload).unwrap();
         let is_model_change = matches!(
             &event,
-            EngineEvent::ConfigChanged { field, .. } if field == "model"
+            EngineEvent::ConfigChanged { field, .. } if field == "builder_model"
         );
         app.apply(event);
         if is_model_change {
             break;
         }
     }
-    assert_eq!(app.run.model, "opus");
     // A non-display field arrives as a notice line with its apply-timing hint.
     let response = client
         .submit_command(CommandRequest {
@@ -1785,11 +1783,14 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         "{lines:?}"
     );
 
-    // Clearing the model is accepted and reported back as cleared.
+    // Clearing the builder model is accepted and reported back as cleared.
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::SettingsChange(SettingsChange {
-                change: Some(settings_change::Change::ModelOverride(String::new())),
+                change: Some(settings_change::Change::RoleModel(RoleModel {
+                    role: Role::Builder as i32,
+                    model: String::new(),
+                })),
             })),
         })
         .await

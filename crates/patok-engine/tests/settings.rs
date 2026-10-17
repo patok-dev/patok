@@ -267,18 +267,18 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     // The change lands mid-run: the running session keeps the snapshot it started with,
     // and the new values apply at the next build start.
     engine
-        .apply_settings_change("model", SettingValue::Str("opus".into()))
+        .apply_settings_change("builder_model", SettingValue::Str("opus".into()))
         .unwrap();
     engine
-        .apply_settings_change("provider", SettingValue::Str("mistral".into()))
+        .apply_settings_change("builder_provider", SettingValue::Str("mistral".into()))
         .unwrap();
     let events = collect_until(
         &mut attachment.events,
-        |event| matches!(event, EngineEvent::ConfigChanged { field, .. } if field == "provider"),
+        |event| matches!(event, EngineEvent::ConfigChanged { field, .. } if field == "builder_provider"),
     )
     .await;
     assert_eq!(
-        config_change(&events, "provider"),
+        config_change(&events, "builder_provider"),
         Some((
             SettingValue::Str("mistral".into()),
             ApplyTiming::NextUnitOfWork
@@ -303,7 +303,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         mistral_recorded.sessions().is_empty(),
         "the running unit was untouched"
     );
-    assert_eq!(engine.settings().builder_model, "opus");
+    assert_eq!(engine.settings().builder_model, Some("opus".to_string()));
 
     // The next build start takes the new routing.
     std::fs::write(

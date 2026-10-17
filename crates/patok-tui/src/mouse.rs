@@ -186,7 +186,7 @@ mod tests {
         let (mut app, list) = settings_app();
         app.overlay
             .drafts
-            .insert("model".into(), SettingValue::Str("opus".into()));
+            .insert("builder_model".into(), SettingValue::Str("opus".into()));
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
         assert!(app.confirm_open());
         assert_eq!(app.overlay.confirm_selected, 0);
@@ -268,7 +268,7 @@ mod tests {
 
         // A Text row's click opens the same inline editor Enter opens,
         // prefilled with the row's current value (no readout yet: empty).
-        let model = visible_index(&app, "model");
+        let model = visible_index(&app, "builder_model");
         assert_eq!(click_row(&mut app, list, model), Action::None);
         assert_eq!(app.overlay.focus, model);
         let editor = app
@@ -276,7 +276,7 @@ mod tests {
             .editor
             .take()
             .expect("the click opened the editor");
-        assert_eq!(editor.field, "model");
+        assert_eq!(editor.field, "builder_model");
         assert_eq!(editor.buffer, "");
 
         // A Bool row's click drafts the toggle Enter drafts. The wheel
@@ -333,7 +333,7 @@ mod tests {
     fn wheel_steps_are_swallowed_while_the_editor_is_open() {
         let (mut app, list) = settings_app();
         // The same Enter path a click on a Text row runs opens the editor.
-        let model = visible_index(&app, "model");
+        let model = visible_index(&app, "builder_model");
         click_row(&mut app, list, model);
         assert!(app.overlay.editor.is_some());
         for _ in 0..5 {
@@ -381,7 +381,7 @@ mod tests {
         // inline editor the click opens, prefilled with the row's current
         // value (no readout yet: empty).
         let (mut app, list) = settings_app();
-        let model = visible_index(&app, "model");
+        let model = visible_index(&app, "builder_model");
         assert_eq!(
             app.on_mouse(mouse(
                 MouseEventKind::Moved,
@@ -401,15 +401,15 @@ mod tests {
             .editor
             .take()
             .expect("Enter on the hovered row opens the editor");
-        assert_eq!(editor.field, "model");
+        assert_eq!(editor.field, "builder_model");
         assert_eq!(editor.buffer, "");
 
         // The click path is untouched by the hover (T136.1): a click on a
         // different row still selects and activates the clicked row, not
         // the hovered one.
         let (mut app, list) = settings_app();
-        let provider = visible_index(&app, "provider");
-        let model = visible_index(&app, "model");
+        let provider = visible_index(&app, "builder_provider");
+        let model = visible_index(&app, "builder_model");
         assert_eq!(
             app.on_mouse(mouse(
                 MouseEventKind::Moved,
@@ -423,14 +423,15 @@ mod tests {
             app.overlay.editor.is_none(),
             "the hover never activates the row"
         );
-        assert_eq!(click_row(&mut app, list, model), Action::None);
+        let scrolled_model = model.saturating_sub(app.overlay.scroll.get());
+        assert_eq!(click_row(&mut app, list, scrolled_model), Action::None);
         assert_eq!(app.overlay.focus, model);
         let editor = app
             .overlay
             .editor
             .take()
             .expect("the click still opens the editor");
-        assert_eq!(editor.field, "model");
+        assert_eq!(editor.field, "builder_model");
         assert_eq!(editor.buffer, "");
     }
 
@@ -541,7 +542,7 @@ mod tests {
     #[test]
     fn hovering_is_swallowed_while_the_editor_is_open() {
         let (mut app, list) = settings_app();
-        let model = visible_index(&app, "model");
+        let model = visible_index(&app, "builder_model");
         click_row(&mut app, list, model);
         assert!(app.overlay.editor.is_some());
         for row in 0..10 {
@@ -565,7 +566,7 @@ mod tests {
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
         assert!(app.overlay.editor.is_none());
         assert_eq!(
-            app.overlay.drafts.get("model"),
+            app.overlay.drafts.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
     }
@@ -590,7 +591,7 @@ mod tests {
             assert_eq!(app.overlay.confirm_selected, row);
             assert!(app.confirm_open());
             assert_eq!(
-                app.overlay.drafts.get("model"),
+                app.overlay.drafts.get("builder_model"),
                 Some(&SettingValue::Str("opus".into()))
             );
         }
@@ -636,7 +637,7 @@ mod tests {
         assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert_eq!(
-            app.overlay.drafts.get("model"),
+            app.overlay.drafts.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
     }
@@ -661,14 +662,14 @@ mod tests {
         assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert_eq!(
-            app.overlay.drafts.get("model"),
+            app.overlay.drafts.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
         assert_eq!(
             app.overlay.pending(),
             vec![(
                 Schema::Daemon,
-                "model".to_string(),
+                "builder_model".to_string(),
                 SettingValue::Str("opus".into())
             )]
         );
@@ -701,7 +702,7 @@ mod tests {
         assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert_eq!(
-            app.overlay.drafts.get("model"),
+            app.overlay.drafts.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
 
@@ -718,7 +719,7 @@ mod tests {
             assert!(app.confirm_open());
             assert_eq!(app.overlay.confirm_selected, 0);
             assert_eq!(
-                app.overlay.drafts.get("model"),
+                app.overlay.drafts.get("builder_model"),
                 Some(&SettingValue::Str("opus".into()))
             );
         }
@@ -745,7 +746,7 @@ mod tests {
         assert!(!app.confirm_open());
         assert!(app.settings_open());
         assert_eq!(
-            app.overlay.drafts.get("model"),
+            app.overlay.drafts.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
 

@@ -71,6 +71,7 @@ wire_roles! {
     [Reviewer "reviewer"]
     [Discovery "discovery"]
     [LearningExtraction "learning_extraction"]
+    [Orchestrator "orchestrator"]
     [OrchestratorProposer "orchestrator_proposer"]
     [OrchestratorReviewer "orchestrator_reviewer"]
 }
@@ -485,20 +486,18 @@ macro_rules! daemon_wire_table {
 daemon_wire_table! {
     registered {
         // Model and provider routing (proto section 3.4).
-        [provider "provider" Provider]
-        [text "model" ModelOverride]
         [role_model "research_model"]
         [role_model "planner_model"]
         [role_model "builder_model"]
         [role_model "reviewer_model"]
         [role_model "discovery_model"]
-        [role_model "learning_extraction_model"]
+        [role_model "orchestrator_model"]
         [role_provider "research_provider"]
         [role_provider "planner_provider"]
         [role_provider "builder_provider"]
         [role_provider "reviewer_provider"]
         [role_provider "discovery_provider"]
-        [role_provider "learning_extraction_provider"]
+        [role_provider "orchestrator_provider"]
         [text "local_model" LocalModel]
         [uint "model_catalog_refresh_secs" ModelCatalogRefreshSecs]
         // Run modes and pipeline flow (proto section 3.5).
@@ -549,6 +548,10 @@ daemon_wire_table! {
         [text "auto_push_remote" AutoPushRemote]
     }
     unregistered {
+        // Removed global settings: proto cases for the removed global provider and model
+        // fields; `from_proto` rejects them with a "no settings-change case" error.
+        [provider "provider" Provider]
+        [text "model" ModelOverride]
         // The orchestrator seats' settings: proto cases whose keys are deliberately
         // outside the core registry; `from_proto` maps them so the persist layer
         // rejects them uniformly, `to_proto` keeps rejecting the submit.

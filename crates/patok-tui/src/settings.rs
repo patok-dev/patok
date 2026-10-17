@@ -213,13 +213,13 @@ mod tests {
         }
         let mut wire_numbers = std::collections::HashSet::new();
         for &(name, spelling) in ProviderName::VARIANTS {
-            let change = to_proto("provider", SettingValue::Str(spelling.into())).unwrap();
+            let change = to_proto("builder_provider", SettingValue::Str(spelling.into())).unwrap();
             assert!(wire_numbers.insert(match change {
-                Change::Provider(raw) => raw,
+                Change::RoleProvider(rp) => rp.provider,
                 other => panic!("`{spelling}` did not map to a wire provider: {other:?}"),
             }));
             let (key, value) = from_proto(&change);
-            assert_eq!(key, "provider");
+            assert_eq!(key, "builder_provider");
             assert_eq!(value, SettingValue::Str(spelling.into()), "{spelling}");
             if let Some(kind) = name.kind() {
                 assert_eq!(kind.as_str(), spelling);

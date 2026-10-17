@@ -7,19 +7,19 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      model  (not set)                                                                 ││    │
+[  Bu│      shell version: 0.0.0                                                             █│    │
      │      research provider  ‹ claude ›                                                    █│────┘
 [  Re│      research model  sonnet                                                           █│────┐
      │      planner provider  ‹ claude ›                                                     █│    │
 [ Dis│      planner model  opus                                                              █│    │
      │      builder provider  ‹ claude ›                                                     █│    │
      │      builder model  opus                                                              █│    │
-     │      reviewer provider  ‹ claude ›                                                    █│    │
+     │      reviewer provider  ‹ claude ›                                                    ││    │
      │      reviewer model  sonnet                                                           ││    │
      │      discovery provider  ‹ claude ›                                                   ││    │
      │      discovery model  opus                                                            ││    │
-     │      learning extraction model  (not set)                                             ││    │
-     │      learning extraction provider  ‹ claude ›                                         ││    │
+     │      orchestrator provider  ‹ claude ›                                                ││    │
+     │      orchestrator model  (not set)                                                    ││    │
      │      local model  (not set)                                                           ││    │
      │      model catalog refresh  (not set)                                                 ││    │
      │▶ ▸ Pipeline                                                                           ││    │

@@ -24,8 +24,6 @@ const TASKS: &str = "## Phase 1\n- [ ] T1.1: scaffold the workspace\n";
 fn readout() -> BTreeMap<String, SettingValue> {
     let str = |value: &str| SettingValue::Str(value.into());
     [
-        ("provider", str("claude")),
-        ("model", SettingValue::Str(String::new())),
         ("research_provider", str("claude")),
         ("research_model", str("sonnet")),
         ("planner_provider", str("claude")),
@@ -608,15 +606,15 @@ fn row_key_handling_is_untouched_with_a_section_folded() {
         Some(&SettingValue::Bool(false))
     );
     // Left/Right on an enum row still cycle (drafting) and fold nothing.
-    focus_field(&mut app, "provider");
+    focus_field(&mut app, "builder_provider");
     assert_eq!(press(&mut app, KeyCode::Right), Action::None);
     assert_eq!(
-        app.overlay.drafts.get("provider"),
+        app.overlay.drafts.get("builder_provider"),
         Some(&SettingValue::Str("codex".into()))
     );
     assert_eq!(press(&mut app, KeyCode::Left), Action::None);
     assert_eq!(
-        app.overlay.drafts.get("provider"),
+        app.overlay.drafts.get("builder_provider"),
         Some(&SettingValue::Str("claude".into()))
     );
     // Enter on a number row still opens the inline editor, and while it is open
@@ -859,8 +857,6 @@ fn entry_rows_indent_under_their_section_headers() {
     for text in [
         "engine version",
         "shell version",
-        "provider  ‹",
-        "model  (not set)",
         "research provider  ‹",
         "research model",
         "planner provider  ‹",
@@ -871,8 +867,6 @@ fn entry_rows_indent_under_their_section_headers() {
         "reviewer model",
         "discovery provider  ‹",
         "discovery model",
-        "learning extraction model",
-        "learning extraction provider  ‹",
         "local model",
         "model catalog refresh",
         "run mode",
@@ -936,7 +930,7 @@ fn a_narrow_terminal_clamps_the_editor_to_the_modal_body() {
     let mut app = open();
     // A 50-column screen makes the modal full width; the model editor gets a buffer
     // far longer than the row has room for.
-    focus_field(&mut app, "model");
+    focus_field(&mut app, "builder_model");
     press(&mut app, KeyCode::Enter);
     for c in "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHTTTTTTTTTTTTTTTTTTTT".chars() {
         press(&mut app, KeyCode::Char(c));
@@ -1418,7 +1412,7 @@ fn hjkl_type_as_characters_in_the_open_editors() {
     // In the free-text editor the four letters append to the buffer, and nothing
     // folds or moves while the editor is open.
     let mut app = open();
-    focus_field(&mut app, "model");
+    focus_field(&mut app, "builder_model");
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
     assert_eq!(app.overlay.editor.as_ref().unwrap().buffer, "");
     let before = app.overlay.visible();
