@@ -3,14 +3,11 @@
 use std::time::Instant;
 
 use patok_core::event::NoticeLevel;
-use patok_providers::ExitKind;
 
 use crate::agents::{Agent, ResearchQueueAgent};
 use crate::context::SessionContext;
 use crate::pipeline::queue_creation::QueueCreation;
-use crate::step::agent_run::{
-    AgentPrompt, AgentResultRecord, StageExit, StageStart, StageWords, run_stage, write_result_json,
-};
+use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 use crate::step::research::write_research_report;
 
 /// The queue-creation research step (T180.4, section 9 of
@@ -35,13 +32,11 @@ impl<'a> QueueResearchStep<'a> {
             QueueCreation::Bootstrap => ResearchQueueAgent::bootstrap(),
             QueueCreation::Scan => ResearchQueueAgent::scan(),
         };
-        let label = agent.label().to_string();
-        let provider_slug = self.ctx.provider().slug().to_string();
-        let model = self.ctx.model().map(|s| s.to_string());
-        let (exit, session_result, seq) = run_stage(
+        let (provider, model) = self.ctx.for_role(agent.role());
+        let (exit, record) = run_stage(
             self.ctx,
-            self.ctx.provider(),
-            self.ctx.model(),
+            &provider,
+            model.as_deref(),
             StageStart::Announced(start),
             agent.role(),
             AgentPrompt::of(&agent),
@@ -56,34 +51,20 @@ impl<'a> QueueResearchStep<'a> {
             },
         )
         .await;
-        // Write result JSON for queue-creation research
-        let exit_kind = session_result
-            .as_ref()
-            .map(|r| r.exit)
-            .unwrap_or(ExitKind::Failed);
-        let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
-        let failure = session_result.as_ref().and_then(|r| r.failure.clone());
         // For queue-creation, we need to determine the outcome
-        let (outcome_value, report_text) = match exit {
+        match exit {
             StageExit::Completed(events) => {
                 // The research agent's validation is trivial acceptance, so this
                 // stays dead-safe.
                 let report = agent.validate(&events).unwrap_or_default();
-                (serde_json::to_value(&report).unwrap(), Some(report))
+                record.write(&report);
+                Some(report)
             }
-            _ => (serde_json::Value::Null, None),
-        };
-        let record = AgentResultRecord {
-            agent: label.clone(),
-            provider: provider_slug,
-            model,
-            exit_kind,
-            success,
-            failure,
-            outcome: outcome_value,
-        };
-        write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
-        report_text
+            _ => {
+                record.write(&serde_json::Value::Null);
+                None
+            }
+        }
     }
 
     /// Saves the run's research report under the kind's stem. Deliberately

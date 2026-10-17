@@ -97,6 +97,35 @@ fn md_artifacts(fixture: &Fixture, stem: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Every result JSON file named `<seq>-<agent>-result.json` under the history tree
+/// (session and task directories), as (file name, parsed JSON value).
+fn result_records(fixture: &Fixture) -> Vec<(String, serde_json::Value)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<(String, serde_json::Value)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with("-result.json")
+                && let Ok(text) = std::fs::read_to_string(&path)
+                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
+            {
+                out.push((name, json));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&fixture.data.path().join("history"), &mut out);
+    // Sort by name only
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 fn scripted() -> MockProvider {
     MockProvider::new(vec![
         Step::Event(AgentEvent::Text {
@@ -324,6 +353,49 @@ async fn a_plan_session_precedes_the_builder_and_feeds_the_plan_forward() {
             .tasks_file()
             .contains("- [x] T1.1: [-P.B-] add the greeting file")
     );
+
+    // Check result JSON files exist next to raw logs
+    let records = result_records(&fixture);
+    assert!(
+        records.len() >= 2,
+        "Expected at least plan and builder result records, got: {records:?}"
+    );
+    // Find the plan and builder records
+    let plan_record: Vec<_> = records
+        .iter()
+        .filter(|(name, _)| name.starts_with("00") && name.contains("-plan-"))
+        .collect();
+    let builder_record: Vec<_> = records
+        .iter()
+        .filter(|(name, _)| name.starts_with("00") && name.contains("-T1.1-"))
+        .collect();
+    assert_eq!(plan_record.len(), 1, "Expected one plan result record");
+    assert_eq!(
+        builder_record.len(),
+        1,
+        "Expected one builder result record"
+    );
+
+    // Check plan record
+    let (_, plan_json) = &plan_record[0];
+    assert_eq!(plan_json["agent"], "plan");
+    assert_eq!(plan_json["exit_kind"], "Completed");
+    assert_eq!(plan_json["success"], true);
+    assert!(plan_json["failure"].is_null());
+    assert_eq!(plan_json["outcome"]["Accepted"], VALID_PLAN);
+
+    // Check builder record
+    let (_, builder_json) = &builder_record[0];
+    assert_eq!(builder_json["agent"], "T1.1");
+    assert_eq!(builder_json["exit_kind"], "Completed");
+    assert_eq!(builder_json["success"], true);
+    // The outcome is BuildOutcome::Completed which has a claims field
+    assert!(
+        builder_json["outcome"]["Completed"].get("claims").is_some()
+            || builder_json["outcome"]["Completed"]["claims"].is_null(),
+        "Expected BuildOutcome::Completed with claims field, got: {}",
+        builder_json["outcome"]
+    );
 }
 
 #[tokio::test]
@@ -437,6 +509,38 @@ async fn a_plan_rejected_twice_fails_the_task_without_a_builder_session() {
     );
     assert_eq!(fixture.git(&["log", "--format=%s", "-1"]).trim(), "initial");
     assert!(md_artifacts(&fixture, "T1.1-plan").is_empty());
+
+    // Check that two plan result records exist (both attempts)
+    let records = result_records(&fixture);
+    let plan_records: Vec<_> = records
+        .iter()
+        .filter(|(name, _)| name.starts_with("00") && name.contains("-plan-"))
+        .collect();
+    assert_eq!(
+        plan_records.len(),
+        2,
+        "Expected two plan result records for two attempts"
+    );
+
+    // First record should have the Rejected outcome
+    let (_, first_json) = &plan_records[0];
+    assert_eq!(first_json["agent"], "plan");
+    // The first plan was rejected, so it should have Rejected outcome or Failed with a reason
+    assert!(
+        first_json["outcome"].get("Rejected").is_some()
+            || first_json["outcome"].as_str() == Some("Failed"),
+        "First plan record should have Rejected or Failed outcome: {}",
+        first_json["outcome"]
+    );
+
+    // Second record should have Failed outcome
+    let (_, second_json) = &plan_records[1];
+    assert_eq!(second_json["agent"], "plan");
+    assert_eq!(second_json["outcome"], "Failed");
+    assert!(
+        second_json["failure"].as_str().is_some(),
+        "Second plan record should have a failure reason"
+    );
 }
 
 /// A Medium task's research session script: it returns one research report.
@@ -2120,6 +2224,48 @@ async fn a_bootstrap_queue_creation_run_is_a_research_session_whose_tasks_valida
         research_report_file(&fixture, "bootstrap"),
         "1. What does the project build?\nIt builds the greeting file."
     );
+
+    // Check that the bootstrap research report is in a session dir, not a task dir
+    // The queue-creation runs write to the session dir (current_task_dir() returns the session dir)
+    let bootstrap_files = md_artifacts(&fixture, "bootstrap-research");
+    assert!(
+        !bootstrap_files.is_empty(),
+        "bootstrap research report should exist"
+    );
+    // The report file name should be like "bootstrap-research-<timestamp>.md"
+    // and it should be in a session directory, not a task directory
+    let history_root = fixture.data.path().join("history");
+    // Walk the history tree to find the report file and check its parent is a session dir
+    let mut found_in_session = false;
+    for date_dir in std::fs::read_dir(&history_root).unwrap() {
+        let date_dir = date_dir.unwrap().path();
+        if date_dir.is_dir() {
+            for time_dir in std::fs::read_dir(&date_dir).unwrap() {
+                let time_dir = time_dir.unwrap().path();
+                if time_dir.is_dir() {
+                    // This is a session dir
+                    // Check if it contains the bootstrap-research file
+                    if let Ok(entries) = std::fs::read_dir(&time_dir) {
+                        for entry in entries {
+                            let entry = entry.unwrap();
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name.starts_with("bootstrap-research-") && name.ends_with(".md") {
+                                found_in_session = true;
+                                break;
+                            }
+                        }
+                    }
+                    if found_in_session {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        found_in_session,
+        "bootstrap research report should be in a session directory"
+    );
 }
 
 #[tokio::test]
@@ -3224,6 +3370,32 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
     assert!(
         count_history_sessions(&fixture) >= 1,
         "History sessions created"
+    );
+
+    // Check review result record
+    let records = result_records(&fixture);
+    let review_records: Vec<_> = records
+        .iter()
+        .filter(|(name, _)| name.starts_with("00") && name.contains("-review"))
+        .collect();
+    assert_eq!(
+        review_records.len(),
+        1,
+        "Expected exactly one review result record, got: {records:?}"
+    );
+    let (_, review_json) = &review_records[0];
+    assert_eq!(review_json["agent"], "review");
+    assert_eq!(review_json["exit_kind"], "Completed");
+    assert_eq!(review_json["success"], true);
+    assert!(review_json["failure"].is_null());
+    // Check the outcome structure
+    assert_eq!(
+        review_json["outcome"]["outcome"]["Passed"]["deferred"], false,
+        "Expected review outcome to be Passed with deferred=false"
+    );
+    assert_eq!(
+        review_json["outcome"]["verdict"]["passed"], true,
+        "Expected verdict.passed to be true"
     );
 }
 

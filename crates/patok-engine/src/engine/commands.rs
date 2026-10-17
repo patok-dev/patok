@@ -222,11 +222,12 @@ impl Engine {
         // The planner announces itself before the planning flag flips (T24.1),
         // so the shell's header and output frame title show the Planner from
         // the moment the run starts.
+        let (role_provider, role_model) = ctx.for_role(AgentRole::Planner);
         let start = self.announce_session_locked(
             &mut state,
             AgentRole::Planner,
-            ctx.provider().slug(),
-            ctx.model(),
+            role_provider.slug(),
+            role_model.as_deref(),
         );
         state.run = state.run.planning_started();
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });
@@ -288,11 +289,12 @@ impl Engine {
         // The research agent announces itself before the planning flag flips,
         // so the shell's header and output frame title show Research from the
         // moment the run starts (T24.1).
+        let (role_provider, role_model) = ctx.for_role(AgentRole::Research);
         let start = self.announce_session_locked(
             &mut state,
             AgentRole::Research,
-            ctx.provider().slug(),
-            ctx.model(),
+            role_provider.slug(),
+            role_model.as_deref(),
         );
         state.run = state.run.planning_started();
         self.emit_locked(&mut state, EngineEvent::PlanningChanged { planning: true });

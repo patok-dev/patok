@@ -2,14 +2,11 @@
 
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
-use patok_providers::ExitKind;
 
 use crate::agents::{self, Agent, BuilderAgent};
 use crate::artifact;
 use crate::context::SessionContext;
-use crate::step::agent_run::{
-    AgentPrompt, AgentResultRecord, StageExit, StageStart, StageWords, run_stage, write_result_json,
-};
+use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
 use serde::Serialize;
 
 /// The outcome of one task's build step.
@@ -47,13 +44,11 @@ impl<'a> BuildStep<'a> {
         // The builder's final message carries the build claims section the review
         // step reviews, so the events are captured like the plan step's.
         let agent = BuilderAgent::new(task, plan, research);
-        let label = agent.label().to_string();
-        let provider_slug = self.ctx.provider().slug().to_string();
-        let model = self.ctx.model().map(|s| s.to_string());
-        let (exit, session_result, seq) = run_stage(
+        let (provider, model) = self.ctx.for_role(agent.role());
+        let (exit, record) = run_stage(
             self.ctx,
-            self.ctx.provider(),
-            self.ctx.model(),
+            &provider,
+            model.as_deref(),
             StageStart::Announce,
             agent.role(),
             AgentPrompt::of(&agent),
@@ -85,23 +80,7 @@ impl<'a> BuildStep<'a> {
                 BuildOutcome::Completed { claims }
             }
         };
-        // Write result JSON
-        let exit_kind = session_result
-            .as_ref()
-            .map(|r| r.exit)
-            .unwrap_or(ExitKind::Failed);
-        let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
-        let failure = session_result.as_ref().and_then(|r| r.failure.clone());
-        let record = AgentResultRecord {
-            agent: label.clone(),
-            provider: provider_slug,
-            model,
-            exit_kind,
-            success,
-            failure,
-            outcome: serde_json::to_value(&outcome).unwrap(),
-        };
-        write_result_json(self.ctx.current_task_dir().as_path(), seq, &label, record);
+        record.write(&outcome);
         outcome
     }
 }

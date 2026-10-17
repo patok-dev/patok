@@ -20,7 +20,7 @@ pub(crate) use self::discovery::DiscoveryAgent;
 pub(crate) use self::planner::{AppendPlannerAgent, PlanAgent};
 pub(crate) use self::research::{ResearchAgent, ResearchQueueAgent};
 pub(crate) use self::reviewer::{
-    FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs,
+    FileReviewerAgent, Findings, ReviewHistory, ReviewOutcome, ReviewerAgent, SkipInputs, Verdict,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
 

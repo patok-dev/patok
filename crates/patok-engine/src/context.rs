@@ -79,17 +79,6 @@ impl SessionContext {
         }
     }
 
-    /// The provider the session's runs use, unless a run names its own (the
-    /// review stage's reviewer provider).
-    pub(crate) fn provider(&self) -> &Arc<dyn Provider> {
-        &self.provider
-    }
-
-    /// The session's model override, if one is configured.
-    pub(crate) fn model(&self) -> Option<&str> {
-        self.model.as_deref()
-    }
-
     /// The session's settings snapshot, taken when it started.
     pub(crate) fn settings(&self) -> &DaemonSettings {
         &self.settings
@@ -437,45 +426,69 @@ impl SessionContext {
         self.inner.planning_done.notify_waiters();
     }
 
-    /// The reviewer session's provider and model when the reviewer provider
-    /// names a provider this build implements (`reviewer_provider`): that
-    /// provider, resolved like any other unit of work. A provider that
-    /// supports the reviewer model (the claude provider) runs with the
-    /// configured one (`reviewer_model`); the other providers keep their
-    /// default model. A name this build does not implement keeps the
-    /// configured pair silently; an unavailable provider warns and falls back
-    /// to the configured pair, as does a configured reviewer provider on a
-    /// fixed-provider engine without a resolver.
-    pub(crate) fn reviewer(&self) -> (Arc<dyn Provider>, Option<String>) {
+    /// The provider and model a role's session runs on: the role's provider
+    /// (`<role>_provider`, which follows the global `provider` when unset),
+    /// resolved like any other unit of work, with the role's model
+    /// (`<role>_model`, empty meaning the provider's default). A role model
+    /// only reaches a provider that supports one (the claude provider)
+    /// unless it is the single-model override on the configured provider.
+    /// A name this build does not implement keeps the configured pair
+    /// silently; an unavailable provider warns and falls back to the
+    /// configured pair, as does a role provider on a fixed-provider engine
+    /// without a resolver.
+    pub(crate) fn for_role(&self, role: AgentRole) -> (Arc<dyn Provider>, Option<String>) {
         let configured = (self.provider.clone(), self.model.clone());
+        let (name, role_model) = match role {
+            AgentRole::Research => (
+                self.settings.research_provider,
+                &self.settings.research_model,
+            ),
+            AgentRole::Planner => (self.settings.planner_provider, &self.settings.planner_model),
+            AgentRole::Builder => (self.settings.builder_provider, &self.settings.builder_model),
+            AgentRole::Reviewer => (
+                self.settings.reviewer_provider,
+                &self.settings.reviewer_model,
+            ),
+            AgentRole::Discovery => (
+                self.settings.discovery_provider,
+                &self.settings.discovery_model,
+            ),
+            AgentRole::Orchestrator => return configured,
+        };
         let Some(resolver) = self.inner.resolver.as_ref() else {
-            if self.settings.reviewer_provider.kind().is_some() {
-                let name = &self.settings.reviewer_provider;
+            if name.kind().is_some() && name != self.settings.provider {
                 tracing::warn!(
-                    "the {name} reviewer provider has no resolver; \
-                     the reviewer runs on the fixed provider"
+                    "the {name} {role} provider has no resolver; \
+                     the {role} runs on the fixed provider"
                 );
             }
             return configured;
         };
-        match resolve_provider(resolver, &self.settings.reviewer_provider) {
+        match resolve_provider(resolver, &name) {
             Ok(Some(provider)) => {
-                let model = provider
-                    .supports_reviewer_model()
-                    .then(|| self.settings.reviewer_model.clone());
+                let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
+                let model = if provider.slug() == self.provider.slug() {
+                    self.model
+                        .clone()
+                        .or_else(|| role_model.filter(|_| provider.supports_reviewer_model()))
+                } else {
+                    role_model.filter(|_| provider.supports_reviewer_model())
+                };
                 (provider, model)
             }
-            // A name this build does not implement: keep the configured
-            // provider silently, exactly like today.
             Ok(None) => configured,
             Err(error) => {
-                let name = &self.settings.reviewer_provider;
                 tracing::warn!(
-                    "the {name} reviewer provider is unavailable ({error}); \
-                     the reviewer runs on the configured provider"
+                    "the {name} {role} provider is unavailable ({error}); \
+                     the {role} runs on the configured provider"
                 );
                 configured
             }
         }
+    }
+
+    /// The reviewer session's provider and model ([`Self::for_role`]).
+    pub(crate) fn reviewer(&self) -> (Arc<dyn Provider>, Option<String>) {
+        self.for_role(AgentRole::Reviewer)
     }
 }

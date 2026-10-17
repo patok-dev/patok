@@ -88,15 +88,20 @@ pub(crate) enum StageExit {
 /// Runs one agent session on the given provider: its normalised events are streamed
 /// to attached shells and its raw stream is written to the history log. With `capture`,
 /// the normalised events are also collected and returned (the plan stage reads the plan
-/// out of them, T10.1). Returns the session's outcome, or the error when it could not
-/// start.
+/// out of them, T10.1). Returns the session's outcome, the captured events, the
+/// base directory and the sequence number.
 async fn run_agent_session(
     ctx: &SessionContext,
     provider: &Arc<dyn Provider>,
     model: Option<&str>,
     agent: AgentPrompt,
     capture: bool,
-) -> (Result<SessionResult, ProviderError>, Vec<AgentEvent>, u32) {
+) -> (
+    Result<SessionResult, ProviderError>,
+    Vec<AgentEvent>,
+    std::path::PathBuf,
+    u32,
+) {
     let (events, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
     let emit = ctx.event_sink();
     let forwarder = tokio::spawn(async move {
@@ -133,7 +138,7 @@ async fn run_agent_session(
         .await;
     // The request (and its sender) is gone: let the forwarder flush the tail of the stream.
     let captured = forwarder.await.unwrap_or_default();
-    (session, captured, seq)
+    (session, captured, base_dir, seq)
 }
 
 /// Runs one stage session through the shared announce-run-match-exit
@@ -146,8 +151,9 @@ async fn run_agent_session(
 /// after the agent output and before the stage's own outcome notices
 /// (T42.1). A session that could not start reports the provider's
 /// error, a cancelled one the stage's warning (the reviewer session
-/// stays silent), and a failed one the stage's level and wording; the
-/// caller continues with the stage-specific post-processing.
+/// stays silent), and a failed one the stage's level and wording.
+/// Returns the stage exit and a result record that the caller must write
+/// with the step's outcome.
 pub(crate) async fn run_stage(
     ctx: &SessionContext,
     provider: &Arc<dyn Provider>,
@@ -156,28 +162,53 @@ pub(crate) async fn run_stage(
     role: AgentRole,
     agent: AgentPrompt,
     words: StageWords,
-) -> (StageExit, Option<SessionResult>, u32) {
+) -> (StageExit, ResultRecord) {
+    let agent_label = agent.label.clone();
     let start = match start {
         StageStart::Announce => ctx.announce_agent(role, provider.slug(), model),
         StageStart::Announced(start) => start,
     };
-    let (session, events, seq) =
+    let (session, events, base_dir, seq) =
         run_agent_session(ctx, provider, model, agent, words.capture).await;
     ctx.finish_agent(role, start, session_outcome(&session));
-    match session {
+
+    // Build the result record from the session
+    let record = match &session {
         Err(error) => {
             tracing::error!("{}: {error}", words.could_not_start);
             ctx.notice(NoticeLevel::Error, error.to_string());
-            (StageExit::Failed, None, seq)
+            ResultRecord {
+                path: base_dir.join(format!("{:03}-{}-result.json", seq, agent_label)),
+                agent: agent_label,
+                provider: provider.slug().to_string(),
+                model: model.map(str::to_string),
+                exit_kind: ExitKind::Failed,
+                success: false,
+                failure: Some(error.to_string()),
+            }
         }
-        Ok(result) if result.exit == ExitKind::Completed => {
-            (StageExit::Completed(events), Some(result), seq)
-        }
+        Ok(result) if result.exit == ExitKind::Completed => ResultRecord {
+            path: base_dir.join(format!("{:03}-{}-result.json", seq, agent_label)),
+            agent: agent_label,
+            provider: provider.slug().to_string(),
+            model: model.map(str::to_string),
+            exit_kind: result.exit,
+            success: result.success,
+            failure: result.failure.clone(),
+        },
         Ok(result) if result.exit == ExitKind::Cancelled => {
             if let Some(text) = &words.cancelled_notice {
                 ctx.notice(NoticeLevel::Warning, text.clone());
             }
-            (StageExit::Cancelled, Some(result), seq)
+            ResultRecord {
+                path: base_dir.join(format!("{:03}-{}-result.json", seq, agent_label)),
+                agent: agent_label,
+                provider: provider.slug().to_string(),
+                model: model.map(str::to_string),
+                exit_kind: result.exit,
+                success: result.success,
+                failure: result.failure.clone(),
+            }
         }
         Ok(result) => {
             let reason = result
@@ -188,9 +219,26 @@ pub(crate) async fn run_stage(
                 words.failure_level,
                 format!("{}{reason}{}", words.failure_prefix, words.failure_suffix),
             );
-            (StageExit::Failed, Some(result), seq)
+            ResultRecord {
+                path: base_dir.join(format!("{:03}-{}-result.json", seq, agent_label)),
+                agent: agent_label,
+                provider: provider.slug().to_string(),
+                model: model.map(str::to_string),
+                exit_kind: result.exit,
+                success: result.success,
+                failure: result.failure.clone(),
+            }
         }
-    }
+    };
+
+    let exit = match session {
+        Err(_) => StageExit::Failed,
+        Ok(result) if result.exit == ExitKind::Completed => StageExit::Completed(events),
+        Ok(result) if result.exit == ExitKind::Cancelled => StageExit::Cancelled,
+        Ok(_) => StageExit::Failed,
+    };
+
+    (exit, record)
 }
 
 /// The finished line's outcome of one agent session.
@@ -205,28 +253,129 @@ fn session_outcome(session: &Result<SessionResult, ProviderError>) -> SessionOut
     }
 }
 
-/// Record written next to each agent's raw log: the agent details,
-/// the session outcome and the step's serializable outcome.
-#[derive(Serialize)]
-pub(crate) struct AgentResultRecord {
-    pub agent: String,
-    pub provider: String,
-    pub model: Option<String>,
-    pub exit_kind: ExitKind,
-    pub success: bool,
-    pub failure: Option<String>,
-    pub outcome: serde_json::Value,
+/// The `<seq>-<agent>-result.json` record of one stage session, filled by
+/// [`run_stage`] from the session's exit; the caller adds the step's outcome.
+#[must_use = "every stage session writes its result record"]
+pub(crate) struct ResultRecord {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) agent: String,
+    pub(crate) provider: String,
+    pub(crate) model: Option<String>,
+    pub(crate) exit_kind: ExitKind,
+    pub(crate) success: bool,
+    pub(crate) failure: Option<String>,
 }
 
-/// Writes the result JSON next to the raw log file.
-pub(crate) fn write_result_json(
-    base_dir: &std::path::Path,
-    seq: u32,
-    agent: &str,
-    record: AgentResultRecord,
-) {
-    let result_path = base_dir.join(format!("{:03}-{}-result.json", seq, agent));
-    if let Ok(json) = serde_json::to_string_pretty(&record) {
-        let _ = fs::write(result_path, json);
+impl ResultRecord {
+    /// Sets the failure text when the provider reported none (a rejected plan, an empty report).
+    pub(crate) fn failure(mut self, text: impl Into<String>) -> Self {
+        self.failure.get_or_insert_with(|| text.into());
+        self
+    }
+
+    /// Writes the record with the step's outcome next to the raw log; I/O errors are swallowed.
+    pub(crate) fn write(&self, outcome: &impl Serialize) {
+        #[derive(Serialize)]
+        struct Record<'a, T> {
+            agent: &'a str,
+            provider: &'a str,
+            model: Option<&'a str>,
+            exit_kind: ExitKind,
+            success: bool,
+            failure: Option<&'a str>,
+            outcome: &'a T,
+        }
+        let record = Record {
+            agent: &self.agent,
+            provider: &self.provider,
+            model: self.model.as_deref(),
+            exit_kind: self.exit_kind,
+            success: self.success,
+            failure: self.failure.as_deref(),
+            outcome,
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&record) {
+            let _ = fs::write(&self.path, json);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use patok_providers::ExitKind;
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct BuildOutcome {
+        completed: bool,
+        claims: Option<String>,
+    }
+
+    #[test]
+    fn result_record_writes_correct_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = ResultRecord {
+            path: dir.path().join("007-T1.1-result.json"),
+            agent: "T1.1".to_string(),
+            provider: "test-provider".to_string(),
+            model: Some("test-model".to_string()),
+            exit_kind: ExitKind::Completed,
+            success: true,
+            failure: None,
+        };
+        let outcome = BuildOutcome {
+            completed: true,
+            claims: Some("claims text".to_string()),
+        };
+        record.write(&outcome);
+
+        let path = dir.path().join("007-T1.1-result.json");
+        assert!(path.exists(), "result file should exist");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(json["agent"], "T1.1");
+        assert_eq!(json["provider"], "test-provider");
+        assert_eq!(json["model"], "test-model");
+        assert_eq!(json["exit_kind"], "Completed");
+        assert_eq!(json["success"], true);
+        assert!(json["failure"].is_null());
+        assert_eq!(json["outcome"]["completed"], true);
+        assert_eq!(json["outcome"]["claims"], "claims text");
+    }
+
+    #[test]
+    fn result_record_failure_does_not_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = ResultRecord {
+            path: dir.path().join("001-plan-result.json"),
+            agent: "plan".to_string(),
+            provider: "test-provider".to_string(),
+            model: None,
+            exit_kind: ExitKind::Completed,
+            success: true,
+            failure: Some("original failure".to_string()),
+        };
+        // Using .failure() should not overwrite existing failure
+        let record = record.failure("new failure");
+        assert_eq!(record.failure, Some("original failure".to_string()));
+    }
+
+    #[test]
+    fn result_record_failure_sets_when_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = ResultRecord {
+            path: dir.path().join("001-plan-result.json"),
+            agent: "plan".to_string(),
+            provider: "test-provider".to_string(),
+            model: None,
+            exit_kind: ExitKind::Completed,
+            success: true,
+            failure: None,
+        };
+        // Using .failure() should set when None
+        let record = record.failure("new failure");
+        assert_eq!(record.failure, Some("new failure".to_string()));
     }
 }

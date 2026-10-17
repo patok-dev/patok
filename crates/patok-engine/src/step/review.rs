@@ -4,17 +4,16 @@
 use patok_core::complexity::{self, Complexity};
 use patok_core::event::NoticeLevel;
 use patok_core::task::Task;
-use patok_providers::ExitKind;
 
 use crate::agents::{
-    self, Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewerAgent, SkipInputs,
+    self, Agent, FileReviewerAgent, Findings, ReviewHistory, ReviewerAgent, SkipInputs, Verdict,
     compute_verdict, is_generated, merge_findings, skip_review,
 };
 use crate::artifact;
 use crate::context::SessionContext;
 use crate::pipeline::group::batch_deferred;
 use crate::step::agent_run::{
-    AgentPrompt, AgentResultRecord, StageExit, StageStart, StageWords, run_stage, write_result_json,
+    AgentPrompt, ResultRecord, StageExit, StageStart, StageWords, run_stage,
 };
 use serde::Serialize;
 
@@ -45,8 +44,8 @@ pub(crate) enum ReviewOutcome {
 
 /// The outcome of the reviewer sessions of one review.
 enum ReviewRun {
-    /// The final review report, its computed verdict, and the sequence number.
-    OutcomeWithSeq(agents::ReviewOutcome, u32),
+    /// The final review report, its computed verdict, and its result record.
+    Outcome(agents::ReviewOutcome, Box<ResultRecord>),
     /// The reviewer session failed: a missing report counts as one HIGH finding.
     Failed,
     /// A reviewer session was cancelled.
@@ -179,7 +178,7 @@ impl<'a> ReviewStep<'a> {
             && reviewable.len() as u64 > ctx.settings().review_multipass_threshold
         {
             match multipass_review(ctx, task, &reviewable, &changed).await {
-                Ok((outcome, seq)) => ReviewRun::OutcomeWithSeq(outcome, seq),
+                Ok((outcome, record)) => ReviewRun::Outcome(outcome, Box::new(record)),
                 Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
                 Err(ReviewExit::Failed) => ReviewRun::Failed,
             }
@@ -194,7 +193,7 @@ impl<'a> ReviewStep<'a> {
                 ctx.settings().confidence_threshold,
             );
             match one_review(ctx, task, &agent).await {
-                Ok((outcome, seq)) => ReviewRun::OutcomeWithSeq(outcome, seq),
+                Ok((outcome, record)) => ReviewRun::Outcome(outcome, Box::new(record)),
                 Err(ReviewExit::Cancelled) => ReviewRun::Cancelled,
                 Err(ReviewExit::Failed) => ReviewRun::Failed,
             }
@@ -218,12 +217,12 @@ impl<'a> ReviewStep<'a> {
         }
 
         // The verdict.
-        let (report, verdict, last_seq) = match run {
+        let (report, verdict, final_record) = match run {
             ReviewRun::Cancelled => {
                 ctx.notice(NoticeLevel::Warning, "Review cancelled; nothing committed.");
                 return ReviewOutcome::Cancelled;
             }
-            ReviewRun::OutcomeWithSeq(outcome, seq) => (outcome.report, outcome.verdict, Some(seq)),
+            ReviewRun::Outcome(outcome, record) => (outcome.report, outcome.verdict, Some(*record)),
             ReviewRun::Failed => {
                 // The reviewer agent must succeed: a failed session counts as
                 // a missing report (one HIGH finding).
@@ -249,7 +248,7 @@ impl<'a> ReviewStep<'a> {
         // history in the background.
         record_review_outcome(ctx, task, complexity, verdict.passed);
 
-        let outcome = if verdict.passed {
+        let step_outcome = if verdict.passed {
             ctx.notice(NoticeLevel::Info, format!("Review passed for {}.", task.id));
             // The group's last task completed its review validated: the
             // caller closes the record. A failed review keeps it so the
@@ -270,38 +269,35 @@ impl<'a> ReviewStep<'a> {
         };
 
         // Write the final result JSON for the review step with the ReviewOutcome.
-        // Use the integration review's sequence number, or a fallback if unavailable.
-        if let Some(seq) = last_seq {
-            let exit_kind = ExitKind::Completed;
-            let success = verdict.passed;
+        if let Some(record) = final_record {
             let failure = if verdict.passed {
                 None
             } else {
                 Some("HIGH/MEDIUM issues remain".to_string())
             };
-            // Use a synthetic agent label for the overall review
-            let label = if ctx.settings().review_multipass_threshold > 0
-                && reviewable.len() as u64 > ctx.settings().review_multipass_threshold
-            {
-                "integration-review".to_string()
-            } else {
-                "review".to_string()
+            #[derive(Serialize)]
+            struct ReviewResult<'a> {
+                outcome: &'a crate::step::review::ReviewOutcome,
+                verdict: &'a Verdict,
+            }
+            let review_result = ReviewResult {
+                outcome: &step_outcome,
+                verdict: &verdict,
             };
-            let (provider, model_opt) = ctx.reviewer();
-            let label_clone = label.clone();
-            let record = AgentResultRecord {
-                agent: label,
-                provider: provider.slug().to_string(),
-                model: model_opt,
-                exit_kind,
-                success,
+            // Update the record with the correct failure and write it
+            let record = ResultRecord {
+                path: record.path,
+                agent: record.agent,
+                provider: record.provider,
+                model: record.model,
+                exit_kind: record.exit_kind,
+                success: record.success,
                 failure,
-                outcome: serde_json::to_value(&outcome).unwrap(),
             };
-            write_result_json(ctx.current_task_dir().as_path(), seq, &label_clone, record);
+            record.write(&review_result);
         }
 
-        outcome
+        step_outcome
     }
 }
 
@@ -377,15 +373,12 @@ async fn one_review<A: Agent>(
     ctx: &SessionContext,
     task: &Task,
     agent: &A,
-) -> Result<(A::Session, u32), ReviewExit> {
+) -> Result<(A::Session, ResultRecord), ReviewExit> {
     // The starting line names the provider the review actually runs on
     // (mistral when the reviewer provider is mistral), so the reviewer
     // pair resolves first (T78.1).
     let (provider, model) = ctx.reviewer();
-    let label = agent.label().to_string();
-    let provider_slug = provider.slug().to_string();
-    let model_opt = model.clone();
-    let (exit, session_result, seq) = run_stage(
+    let (exit, record) = run_stage(
         ctx,
         &provider,
         model.as_deref(),
@@ -404,65 +397,21 @@ async fn one_review<A: Agent>(
     )
     .await;
     match exit {
-        StageExit::Completed(events) => {
-            let exit_kind = session_result
-                .as_ref()
-                .map(|r| r.exit)
-                .unwrap_or(ExitKind::Completed);
-            let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
-            let failure = session_result.as_ref().and_then(|r| r.failure.clone());
-            let session_outcome = agent.validate(&events).map_err(|_| ReviewExit::Failed)?;
-            let label_clone = label.clone();
-            let record = AgentResultRecord {
-                agent: label,
-                provider: provider_slug,
-                model: model_opt,
-                exit_kind,
-                success,
-                failure,
-                outcome: serde_json::Value::String("completed".to_string()),
-            };
-            write_result_json(ctx.current_task_dir().as_path(), seq, &label_clone, record);
-            Ok((session_outcome, seq))
-        }
+        StageExit::Completed(events) => match agent.validate(&events) {
+            Ok(session_outcome) => Ok((session_outcome, record)),
+            Err(reason) => {
+                record
+                    .failure(reason.to_string())
+                    .write(&serde_json::Value::Null);
+                Err(ReviewExit::Failed)
+            }
+        },
         StageExit::Cancelled => {
-            let exit_kind = session_result
-                .as_ref()
-                .map(|r| r.exit)
-                .unwrap_or(ExitKind::Cancelled);
-            let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
-            let failure = session_result.as_ref().and_then(|r| r.failure.clone());
-            let label_clone = label.clone();
-            let record = AgentResultRecord {
-                agent: label,
-                provider: provider_slug,
-                model: model_opt,
-                exit_kind,
-                success,
-                failure,
-                outcome: serde_json::Value::Null,
-            };
-            write_result_json(ctx.current_task_dir().as_path(), seq, &label_clone, record);
+            record.write(&serde_json::Value::Null);
             Err(ReviewExit::Cancelled)
         }
         StageExit::Failed => {
-            let exit_kind = session_result
-                .as_ref()
-                .map(|r| r.exit)
-                .unwrap_or(ExitKind::Failed);
-            let success = session_result.as_ref().map(|r| r.success).unwrap_or(false);
-            let failure = session_result.as_ref().and_then(|r| r.failure.clone());
-            let label_clone = label.clone();
-            let record = AgentResultRecord {
-                agent: label,
-                provider: provider_slug,
-                model: model_opt,
-                exit_kind,
-                success,
-                failure,
-                outcome: serde_json::Value::Null,
-            };
-            write_result_json(ctx.current_task_dir().as_path(), seq, &label_clone, record);
+            record.write(&serde_json::Value::Null);
             Err(ReviewExit::Failed)
         }
     }
@@ -477,7 +426,7 @@ async fn multipass_review(
     task: &Task,
     reviewable: &[String],
     changed: &[String],
-) -> Result<(agents::ReviewOutcome, u32), ReviewExit> {
+) -> Result<(agents::ReviewOutcome, ResultRecord), ReviewExit> {
     let mut merged = Findings::default();
     for file in reviewable {
         let agent = FileReviewerAgent::new(task, file, 1);
@@ -487,10 +436,15 @@ async fn multipass_review(
                 // A failed file review is skipped and the loop continues.
                 continue;
             }
-            Ok((Some(findings), _)) => {
-                merge_findings(&mut merged, findings);
+            Ok((Some(findings), record)) => {
+                merge_findings(&mut merged, findings.clone());
+                // Write the per-file review record with its findings
+                record.write(&findings);
             }
-            Ok((None, _)) => {}
+            Ok((None, record)) => {
+                // Write the per-file review record with null outcome
+                record.write(&serde_json::Value::Null);
+            }
         }
     }
     let findings_json = serde_json::to_string_pretty(&merged).unwrap_or_default();

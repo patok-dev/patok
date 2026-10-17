@@ -432,7 +432,8 @@ macro_rules! daemon_materialize {
         $($tail:tt)*
     ) => {
         daemon_materialize! {
-            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
+            // An unset role provider follows the global `provider`.
+            settings [$($acc)* $f: $layer.$f.unwrap_or_else(|| $layer.provider.unwrap_or_default()),]
             $layer, $($tail)*
         }
     };
