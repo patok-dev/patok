@@ -7,7 +7,7 @@ Autonomous build loop driving agent CLIs.
 Supported platforms: macOS (arm64, x86_64) and Linux (x86_64).
 
 ```sh
-curl -fsSL https://github.com/patok-dev/patok/releases/latest/download/install.sh | sh
+curl -fsSL https://patok.dev/install.sh | sh
 ```
 
 The script downloads the latest release archive, verifies its SHA-256 against
@@ -19,5 +19,5 @@ Make sure that directory is on your `PATH`.
 Remove the binary and the per-user data directory:
 
 ```sh
-curl -fsSL https://github.com/patok-dev/patok/releases/latest/download/install.sh | sh -s -- --clean
+curl -fsSL https://patok.dev/install.sh | sh -s -- --clean
 ```
