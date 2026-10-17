@@ -13,10 +13,7 @@
       "minimum": 0
     },
     "auto_push_remote": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string"
     },
     "batch_review": {
       "type": "boolean"
@@ -292,6 +289,7 @@
     "semgrep_rulesets",
     "planning_iterations",
     "require_human_approval",
+    "auto_push_remote",
     "discovery_cooldown_secs",
     "discovery_cooldown_cap_secs",
     "plan_enabled",

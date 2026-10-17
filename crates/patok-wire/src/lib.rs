@@ -919,7 +919,7 @@ mod tests {
             to_proto("auto_push_remote", str("origin")).unwrap(),
             Change::AutoPushRemote("origin".into())
         );
-        // An empty optional string clears the key.
+        // An empty value switches the push off.
         assert_eq!(
             to_proto("auto_push_remote", str("")).unwrap(),
             Change::AutoPushRemote(String::new())

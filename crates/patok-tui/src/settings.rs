@@ -147,7 +147,9 @@ mod tests {
             | CoreFieldKind::Port
             | CoreFieldKind::Range(..) => SettingValue::Uint(7),
             CoreFieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) / 2.0),
-            CoreFieldKind::Str | CoreFieldKind::OptStr => SettingValue::Str("sample".into()),
+            CoreFieldKind::Str | CoreFieldKind::OptStr | CoreFieldKind::FreeStr => {
+                SettingValue::Str("sample".into())
+            }
             CoreFieldKind::Enum(accepted) => SettingValue::Str(accepted[0].into()),
             CoreFieldKind::Provider => SettingValue::Str("claude".into()),
             CoreFieldKind::Composite => panic!("composite keys are not registry fields"),

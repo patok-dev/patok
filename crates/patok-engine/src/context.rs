@@ -159,6 +159,12 @@ impl SessionContext {
         &self.settings
     }
 
+    /// The `auto_push_remote` value, read live from the central settings (an
+    /// `immediate` field), trimmed; empty means no push.
+    pub(crate) fn auto_push_remote(&self) -> String {
+        self.engine().settings().auto_push_remote.trim().to_string()
+    }
+
     /// The idle timeout of one agent session (`agent_timeout_secs`).
     pub(crate) fn agent_timeout(&self) -> Duration {
         Duration::from_secs(self.settings.agent_timeout_secs)

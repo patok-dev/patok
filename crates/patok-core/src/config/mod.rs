@@ -311,6 +311,16 @@ impl Fields<'_> {
         parsed
     }
 
+    /// A string field whose empty string is a real value (a feature switched
+    /// off), kept as written.
+    pub fn free_string(&mut self, key: &str, value: &toml::Value) -> Option<String> {
+        let parsed = value.as_str().map(str::to_string);
+        if parsed.is_none() {
+            self.wrong_type(key, "a string", value);
+        }
+        parsed
+    }
+
     /// A list of strings, replaced wholesale when a higher layer sets it.
     pub fn strings(&mut self, key: &str, value: &toml::Value) -> Option<Vec<String>> {
         let parsed = value.as_array().and_then(|entries| {

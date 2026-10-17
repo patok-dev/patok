@@ -9,6 +9,7 @@ use crate::pipeline::group;
 use crate::step::build::{BuildOutcome, BuildStep};
 use crate::step::commit::CommitStep;
 use crate::step::plan::{PlanOutcome, PlanStep};
+use crate::step::push::PushStep;
 use crate::step::research::{ResearchOutcome, ResearchStep};
 use crate::step::review::{ReviewOutcome, ReviewStep};
 
@@ -140,6 +141,9 @@ impl<'a> BuildPipeline<'a> {
                             self.close_group(task);
                         }
                         let commit = self.commit(task, &progress(true, true), true).await;
+                        if !deferred {
+                            PushStep::new(self.ctx).run().await;
+                        }
                         (TaskOutcome::Done, commit)
                     }
                     ReviewOutcome::Skipped { deferred } => {
@@ -147,6 +151,9 @@ impl<'a> BuildPipeline<'a> {
                             self.close_group(task);
                         }
                         let commit = self.commit(task, &progress(false, true), true).await;
+                        if !deferred {
+                            PushStep::new(self.ctx).run().await;
+                        }
                         (TaskOutcome::Done, commit)
                     }
                     ReviewOutcome::Failed => {

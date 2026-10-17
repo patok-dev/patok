@@ -180,6 +180,9 @@ pub enum FieldKind {
     Str,
     /// An optional string; the empty string removes the key so the default applies.
     OptStr,
+    /// A string with a default whose empty value is meaningful (it switches the
+    /// feature off), so the empty string is stored as written.
+    FreeStr,
     /// An enumerated field and its accepted spellings (trimmed, lowercased).
     Enum(&'static [&'static str]),
     /// A provider field, accepted by `ProviderName::parse` (trimmed,
@@ -205,7 +208,7 @@ pub enum FieldKind {
 //
 // Entry grammar, one bracketed item per field:
 // `[kind field "key" (label "text")? (help "text")? (immediate)? <kind tail>]` with `bool`,
-// `port` and `str` tail `default <expr>`, `uint` and `positive_uint` tail
+// `port`, `str` and `free_str` tail `default <expr>`, `uint` and `positive_uint` tail
 // `expect "<warning noun>" default <expr>`, `float_range` tail
 // `range <min> ..= <max> default <expr>`, `enum` its enum type right after the key,
 // and no tail for
@@ -233,6 +236,7 @@ macro_rules! daemon_ty {
     (port $($rest:tt)*) => (u16);
     (float_range $($rest:tt)*) => (f64);
     (str $($rest:tt)*) => (String);
+    (free_str $($rest:tt)*) => (String);
     (opt_str $($rest:tt)*) => (Option<String>);
     (enum $ty:ident $($rest:tt)*) => ($ty);
     (provider $($rest:tt)*) => (ProviderName);
@@ -399,6 +403,16 @@ macro_rules! daemon_materialize {
     (
         settings [$($acc:tt)*] $layer:ident,
         [$(#[$doc:meta])* str $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or_else(|| $d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* free_str $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -642,6 +656,15 @@ macro_rules! daemon_entry {
     };
     (
         parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
+        [$(#[$doc:meta])* free_str $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $key.as_str() == $k {
+            $layer.$f = $fields.free_string($key, $value);
+            continue;
+        }
+    };
+    (
+        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
         [$(#[$doc:meta])* opt_str $f:ident $k:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
@@ -734,6 +757,11 @@ macro_rules! daemon_entry {
             return Some(FieldKind::Str);
         }
     };
+    (kind, $name:ident, [$(#[$doc:meta])* free_str $f:ident $k:literal $($rest:tt)*]) => {
+        if $name == $k {
+            return Some(FieldKind::FreeStr);
+        }
+    };
     (kind, $name:ident, [$(#[$doc:meta])* opt_str $f:ident $k:literal $($rest:tt)*]) => {
         if $name == $k {
             return Some(FieldKind::OptStr);
@@ -817,6 +845,14 @@ macro_rules! daemon_entry {
     (
         value, $settings:ident, $field:ident,
         [$(#[$doc:meta])* str $f:ident $k:literal $($rest:tt)*]
+    ) => {
+        if $field == $k {
+            return Some(SettingValue::Str($settings.$f.clone()));
+        }
+    };
+    (
+        value, $settings:ident, $field:ident,
+        [$(#[$doc:meta])* free_str $f:ident $k:literal $($rest:tt)*]
     ) => {
         if $field == $k {
             return Some(SettingValue::Str($settings.$f.clone()));
@@ -1076,7 +1112,7 @@ daemon_table! {
         [opt_str build_command "build_command" label "build command" help "The command the builder runs to verify its work; empty uses the provider's default."],
         [uint planning_iterations "planning_iterations" label "planning iterations" help "How many planning passes the planner runs before handing the plan over; 0 means a single pass." expect "a whole number" default 0],
         [bool require_human_approval "require_human_approval" label "require human approval" help "Wait for human approval before each task's work continues (default off)." default false],
-        [opt_str auto_push_remote "auto_push_remote" label "auto-push remote" help "Push to this remote after each successful commit; empty means local commits only." immediate],
+        [free_str auto_push_remote "auto_push_remote" label "auto-push remote" help "Push to this remote (git push <remote> HEAD) after each completed task group; empty means local commits only. Default origin." immediate default "origin".into()],
         [opt_str on_task_complete_hook "on_task_complete_hook" label "on task complete hook" help "A command run after each completed task; empty means none." immediate],
         [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" label "discovery cooldown" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
         [positive_uint discovery_cooldown_cap_secs "discovery_cooldown_cap_secs" label "discovery cooldown cap" help "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS],
@@ -1407,6 +1443,16 @@ mod tests {
         assert!(!loaded.settings.skip_research_for_simple);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert!(DaemonSettings::default().skip_research_for_simple);
+    }
+
+    #[test]
+    fn auto_push_remote_defaults_to_origin_and_keeps_an_empty_value() {
+        assert_eq!(DaemonSettings::default().auto_push_remote, "origin");
+        let loaded = load_project("[daemon]\nauto_push_remote = \"\"\n");
+        assert_eq!(loaded.settings.auto_push_remote, "");
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let loaded = load_project("[daemon]\nauto_push_remote = \"backup\"\n");
+        assert_eq!(loaded.settings.auto_push_remote, "backup");
     }
 
     #[test]
@@ -1778,7 +1824,9 @@ enabled = false
                 SettingValue::Uint(default.as_uint().expect("a whole-number default") + 1)
             }
             FieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) * 3.0 / 4.0),
-            FieldKind::Str | FieldKind::OptStr => SettingValue::Str("round-trip-sample".into()),
+            FieldKind::Str | FieldKind::OptStr | FieldKind::FreeStr => {
+                SettingValue::Str("round-trip-sample".into())
+            }
             FieldKind::Enum(accepted) => SettingValue::Str(accepted[accepted.len() - 1].into()),
             FieldKind::Provider => SettingValue::Str("codex".into()),
             FieldKind::Composite => unreachable!("composite keys are not registry fields"),
@@ -1795,7 +1843,9 @@ enabled = false
             | FieldKind::Port
             | FieldKind::Range(..) => default.clone(),
             FieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) / 4.0),
-            FieldKind::Str | FieldKind::OptStr => SettingValue::Str("round-trip-lower".into()),
+            FieldKind::Str | FieldKind::OptStr | FieldKind::FreeStr => {
+                SettingValue::Str("round-trip-lower".into())
+            }
             FieldKind::Enum(accepted) => SettingValue::Str(accepted[0].into()),
             FieldKind::Provider => SettingValue::Str("claude".into()),
             FieldKind::Composite => unreachable!("composite keys are not registry fields"),

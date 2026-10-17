@@ -72,6 +72,27 @@ impl Git {
         self.succeeds(&["rev-parse", "--is-inside-work-tree"]).await
     }
 
+    /// Pushes HEAD to `remote` (`git push <remote> HEAD`). The error is git's
+    /// trimmed stderr (or the exit status when stderr is empty), for display.
+    pub async fn push(&self, remote: &str) -> Result<(), String> {
+        if remote.starts_with('-') {
+            return Err(format!("{remote:?} is not a remote name"));
+        }
+        let out = self
+            .run(&["push", remote, "HEAD"])
+            .await
+            .ok_or_else(|| "git could not run".to_string())?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            format!("git push exited with {}", out.status)
+        } else {
+            stderr
+        })
+    }
+
     /// The current HEAD's short SHA, or `None` outside a repository.
     #[cfg(test)]
     pub(crate) async fn head_sha(&self) -> Option<String> {
@@ -247,6 +268,42 @@ mod tests {
         assert!(log.contains("Implemented and validated by autonomous build loop."));
         assert!(log.contains("Automated by: patok"));
         assert!(log.contains("chore: initial commit"));
+    }
+
+    #[tokio::test]
+    async fn push_updates_a_bare_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let git = Git::new(dir.path());
+        assert!(
+            Git::new(bare.path())
+                .succeeds(&["init", "-q", "--bare", "-b", "main"])
+                .await
+        );
+        let url = bare.path().to_str().unwrap();
+        assert!(git.succeeds(&["remote", "add", "origin", url]).await);
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        git.commit_all(CommitKind::Feat, "do the thing", &[])
+            .await
+            .unwrap();
+        assert_eq!(git.push("origin").await, Ok(()));
+        let remote_head = Git::new(bare.path()).rev_parse(&["main"]).await;
+        assert_eq!(remote_head, git.head_full_sha().await);
+    }
+
+    #[tokio::test]
+    async fn push_to_a_missing_remote_returns_gits_error() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path()).await;
+        let git = Git::new(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        git.commit_all(CommitKind::Feat, "do the thing", &[])
+            .await
+            .unwrap();
+        let err = git.push("nowhere").await.unwrap_err();
+        assert!(err.contains("nowhere"), "{err}");
+        assert!(git.push("-x").await.is_err());
     }
 
     #[tokio::test]

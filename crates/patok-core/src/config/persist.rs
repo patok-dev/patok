@@ -204,6 +204,8 @@ fn validate(
         (FieldKind::OptStr, SettingValue::Str(s)) if s.trim().is_empty() => Ok(None),
         (FieldKind::OptStr, SettingValue::Str(s)) => Ok(Some(s.into())),
         (FieldKind::OptStr, _) => reject("a string"),
+        (FieldKind::FreeStr, SettingValue::Str(s)) => Ok(Some(s.into())),
+        (FieldKind::FreeStr, _) => reject("a string"),
         (FieldKind::Range(min, max), SettingValue::Uint(u)) if (*min..=*max).contains(&u) => {
             integer(u).map(Some).map_err(|_| {
                 PersistError::new(format!("{schema}.{name} must be between {min} and {max}"))

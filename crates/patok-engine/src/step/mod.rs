@@ -11,6 +11,7 @@ pub(crate) mod build;
 pub(crate) mod commit;
 pub(crate) mod discovery;
 pub(crate) mod plan;
+pub(crate) mod push;
 pub(crate) mod queue_research;
 pub(crate) mod research;
 pub(crate) mod review;

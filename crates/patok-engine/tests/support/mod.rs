@@ -64,6 +64,32 @@ impl Fixture {
         String::from_utf8_lossy(&out.stdout).to_string()
     }
 
+    /// Adds a bare repository as the remote `name` and returns its directory.
+    pub fn add_bare_remote(&self, name: &str) -> TempDir {
+        let bare = tempfile::tempdir().unwrap();
+        let out = Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main"])
+            .current_dir(bare.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        self.git(&["remote", "add", name, bare.path().to_str().unwrap()]);
+        bare
+    }
+
+    /// The commit the bare repository's `main` points at, or `None` when the
+    /// branch does not exist.
+    pub fn remote_head(bare: &Path) -> Option<String> {
+        let out = Command::new("git")
+            .args(["rev-parse", "--verify", "-q", "main"])
+            .current_dir(bare)
+            .output()
+            .unwrap();
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     pub fn config(&self) -> EngineConfig {
         self.config_for(false)
     }

@@ -366,7 +366,7 @@ message SettingsChange {
     string build_command = 22;
     uint32 planning_iterations = 23;
     bool require_human_approval = 24;
-    string auto_push_remote = 25; // empty clears it (Part III, section 2)
+    string auto_push_remote = 25; // empty switches the push off (Part III, section 2)
     string on_task_complete_hook = 26; // empty clears it
     uint32 discovery_cooldown_secs = 27;
 

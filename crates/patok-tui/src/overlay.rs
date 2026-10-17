@@ -109,7 +109,7 @@ pub(crate) fn overlay_kind(kind: &CoreFieldKind) -> FieldKind {
         }
         CoreFieldKind::PositiveUint => FieldKind::Number(Number::PositiveUint),
         CoreFieldKind::FloatRange(..) => FieldKind::Number(Number::Float),
-        CoreFieldKind::Str | CoreFieldKind::OptStr => FieldKind::Text,
+        CoreFieldKind::Str | CoreFieldKind::OptStr | CoreFieldKind::FreeStr => FieldKind::Text,
         CoreFieldKind::Enum(accepted) => FieldKind::Enum(accepted),
         CoreFieldKind::Provider => FieldKind::Enum(ProviderName::SPELLINGS),
         CoreFieldKind::Composite => unreachable!("composite keys are not registry fields"),

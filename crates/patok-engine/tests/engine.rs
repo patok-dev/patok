@@ -4118,6 +4118,150 @@ async fn batch_review_passes_the_groups_last_task_and_advances_to_the_next_group
     );
 }
 
+/// The push notices of a run, in event order.
+fn push_notices(events: &[EngineEvent]) -> Vec<(NoticeLevel, String)> {
+    notices(events)
+        .into_iter()
+        .filter(|(_, text)| text.starts_with("Push"))
+        .collect()
+}
+
+/// T190.1: the group is pushed once, after its last task's commit.
+#[tokio::test]
+async fn the_group_is_pushed_once_after_its_last_task() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n- [ ] T2.1: add the third file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("origin");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider, "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let pushes = push_notices(&events);
+    assert_eq!(
+        pushes,
+        [
+            (NoticeLevel::Info, "Pushed to origin".to_string()),
+            (NoticeLevel::Info, "Pushed to origin".to_string()),
+        ]
+    );
+    // The first push follows T1.2's commit, the second task of the group:
+    // two commits ("Committed") precede it.
+    let order: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::Notice { text, .. }
+                if text.starts_with("Committed") || text.starts_with("Pushed") =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .map(|text| {
+            if text.starts_with("Pushed") {
+                "push"
+            } else {
+                "commit"
+            }
+        })
+        .collect();
+    assert_eq!(order, ["commit", "commit", "push", "commit", "push"]);
+    assert_eq!(
+        Fixture::remote_head(bare.path()),
+        Some(fixture.git(&["rev-parse", "HEAD"]).trim().to_string())
+    );
+}
+
+/// T190.1: a failed push warns with git's error and the loop carries on.
+#[tokio::test]
+async fn a_failed_push_warns_with_gits_error_and_the_loop_continues() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T2.1: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider, "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let pushes = push_notices(&events);
+    assert_eq!(pushes.len(), 2, "{pushes:?}");
+    for (level, text) in &pushes {
+        assert_eq!(*level, NoticeLevel::Warning);
+        assert!(text.contains("Push to origin failed"), "{text}");
+        assert!(
+            text.contains("does not appear to be a git repository"),
+            "{text}"
+        );
+    }
+    let file = fixture.tasks_file();
+    assert!(file.contains("- [x] T1.1:"), "{file}");
+    assert!(file.contains("- [x] T2.1:"), "{file}");
+}
+
+/// T190.1: an empty `auto_push_remote` switches the push off.
+#[tokio::test]
+async fn an_empty_auto_push_remote_never_pushes() {
+    let tasks = "- [ ] T1.1: add the first file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("origin");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_remote = \"\"\n",
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert_eq!(push_notices(&events), []);
+    assert!(fixture.tasks_file().contains("- [x] T1.1:"));
+    assert_eq!(Fixture::remote_head(bare.path()), None);
+}
+
+/// T190.1: `auto_push_remote` names the remote that is pushed to.
+#[tokio::test]
+async fn auto_push_remote_names_the_remote() {
+    let tasks = "- [ ] T1.1: add the first file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("backup");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_remote = \"backup\"\n",
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert_eq!(
+        push_notices(&events),
+        [(NoticeLevel::Info, "Pushed to backup".to_string())]
+    );
+    assert!(Fixture::remote_head(bare.path()).is_some());
+}
+
 /// T107.1: the loop the fix removes. The group's last task fails its review
 /// once (the WIP commit preserves the work, the line stays unchecked), and
 /// the restart that reruns it must restore the group's diff base from the
