@@ -1183,7 +1183,7 @@ async fn agent_runs_push_their_starting_event_before_any_output() {
 async fn a_configured_model_names_the_model_in_the_starting_event() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::new(builder_steps());
-    let engine = fixture.engine_configured(provider, "model = \"mistral-small\"\n");
+    let engine = fixture.engine_configured(provider, "builder_model = \"mistral-small\"\n");
     let mut attachment = engine.attach().unwrap();
 
     engine.start_build().unwrap();
@@ -3024,7 +3024,7 @@ mod provider_config {
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Claude]);
         let mut attachment = engine.attach().unwrap();
         assert_eq!(attachment.snapshot.provider, "claude");
-        assert_eq!(attachment.snapshot.model, "");
+        assert_eq!(attachment.snapshot.model, "opus");
         engine.start_build().unwrap();
         collect_until(&mut attachment.events, is_phase_startup).await;
     }
@@ -3034,7 +3034,7 @@ mod provider_config {
         let picked = Arc::default();
         let (_fixture, engine) = engine_with(
             None,
-            Some("[daemon]\nprovider = \"mistral\"\nmodel = \"mistral-small\"\n"),
+            Some("[daemon]\nbuilder_provider = \"mistral\"\nbuilder_model = \"mistral-small\"\n"),
             picking(&picked),
         );
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Mistral]);
@@ -3047,8 +3047,8 @@ mod provider_config {
     async fn project_layer_overrides_user_layer() {
         let picked = Arc::default();
         let (_f, engine) = engine_with(
-            Some("[daemon]\nprovider = \"mistral\"\n"),
-            Some("[daemon]\nprovider = \"claude\"\n"),
+            Some("[daemon]\nbuilder_provider = \"mistral\"\n"),
+            Some("[daemon]\nbuilder_provider = \"claude\"\n"),
             picking(&picked),
         );
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Claude]);
@@ -3057,8 +3057,8 @@ mod provider_config {
         // The user layer applies where the project sets nothing.
         let picked = Arc::default();
         let (_f, _engine) = engine_with(
-            Some("[daemon]\nprovider = \"mistral\"\n"),
-            Some("[daemon]\nmodel = \"m\"\n"),
+            Some("[daemon]\nbuilder_provider = \"mistral\"\n"),
+            Some("[daemon]\nbuilder_model = \"m\"\n"),
             picking(&picked),
         );
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Mistral]);
@@ -3097,7 +3097,7 @@ mod provider_config {
 
     #[tokio::test]
     async fn invalid_config_is_a_command_error_naming_the_file() {
-        let (_fixture, engine) = engine_with(None, Some("[daemon]\nprovider = \"gpt\"\n"), |_| {
+        let (_fixture, engine) = engine_with(None, Some("[daemon]\nbuilder_provider = \"gpt\"\n"), |_| {
             unreachable!("an invalid config must not resolve a provider")
         });
         let error = engine.start_build().unwrap_err();
@@ -3453,7 +3453,7 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
     let recorded = provider.clone();
     std::fs::write(
         fixture.project_config(),
-        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nprovider = \"mistral\"\nreviewer_provider = \"claude\"\nreviewer_model = \"opus\"\n",
+        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nbuilder_provider = \"mistral\"\nreviewer_provider = \"claude\"\nreviewer_model = \"opus\"\n",
     )
     .unwrap();
     let picked: std::sync::Arc<std::sync::Mutex<Vec<ProviderKind>>> = std::sync::Arc::default();

@@ -428,12 +428,22 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
+        [$(#[$doc:meta])* provider $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
+        $($tail:tt)*
+    ) => {
+        daemon_materialize! {
+            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
+            $layer, $($tail)*
+        }
+    };
+    (
+        settings [$($acc:tt)*] $layer:ident,
         [$(#[$doc:meta])* provider $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
-            // An unset role provider follows the global `provider`.
-            settings [$($acc)* $f: $layer.$f.unwrap_or_else(|| $layer.provider.unwrap_or_default()),]
+            // An unset role provider uses Claude as default.
+            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
             $layer, $($tail)*
         }
     };
@@ -953,12 +963,11 @@ macro_rules! daemon_table {
         /// Turns the merged raw layer into the final settings: hardcoded defaults for
         /// unset fields, then the table's normalization.
         pub(crate) fn materialize(layer: DaemonLayer) -> DaemonSettings {
-            let mut $settings = daemon_materialize! {
+            let $settings = daemon_materialize! {
                 settings []
                 layer,
                 $( $entry )*
             };
-            $($norm)*
             $settings
         }
 
@@ -1037,26 +1046,23 @@ macro_rules! daemon_table {
 daemon_table! {
     /// The merged, normalized daemon settings.
     ///
-    /// Fields beyond `provider`, `model`, `plan_enabled` and the discovery cooldowns are
+    /// Fields beyond `plan_enabled` and the discovery cooldowns are
     /// parsed, merged and normalized here but not yet consumed by engine behaviour; the
     /// pipeline, routing and learnings tasks pick them up.
     entries {
         // Routing (section 4).
-        [provider provider "provider" label "provider" help "The provider every agent role runs on: claude, codex, opencode, ghcopilot or mistral. Any unrecognized value behaves as claude."],
-        [/// The single-model override; empty means none (normalization applies it per role).
-         opt_str model "model" label "model" help "Single-model override: when set, it replaces the model of every agent role (research, planner, builder, reviewer, discovery, learning extraction). Meant for subscriptions locked to one model; empty means each role keeps its own model."],
-        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
-        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
-        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
-        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
-        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "opus".into()],
-        [str learning_extraction_model "learning_extraction_model" label "learning extraction model" help "The model the learning extraction role runs on; empty uses the provider's default. Ignored while the single-model override is set." default "sonnet".into()],
-        [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start."],
-        [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start."],
-        [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start."],
-        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
-        [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
-        [provider learning_extraction_provider "learning_extraction_provider" label "learning extraction provider" help "The provider the learning extraction role runs on. Applies at the next learning extraction session start."],
+        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default." default "sonnet".into()],
+        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default." default "opus".into()],
+        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default." default "opus".into()],
+        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default." default "sonnet".into()],
+        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default." default "opus".into()],
+        [str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default." default "opus".into()],
+        [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start." default ProviderName::Claude],
+        [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start." default ProviderName::Claude],
+        [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start." default ProviderName::Claude],
+        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start." default ProviderName::Claude],
+        [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start." default ProviderName::Claude],
+        [provider orchestrator_provider "orchestrator_provider" label "orchestrator provider" help "The provider the orchestrator role runs on. Applies at the next orchestrator session start." default ProviderName::Claude],
         [opt_str local_model "local_model" label "local model" help "The model used for local runs; empty uses the provider's default."],
         [uint model_catalog_refresh_secs "model_catalog_refresh_secs" label "model catalog refresh" help "How often the model catalog refreshes from the provider, in seconds. Default 86400 (24 hours)." expect "a whole number of seconds" default 86400],
         [string_map catalog_url_overrides "catalog_url_overrides"],
@@ -1113,16 +1119,6 @@ daemon_table! {
         [bool show_retrieval_panel "show_retrieval_panel" label "show retrieval panel" help "Show the retrieval panel in the shell (default off)." immediate default false],
     }
     normalize settings {
-        // Normalization: a non-empty single-model override replaces the models of
-        // research, planner, builder, reviewer, discovery and learning extraction.
-        if let Some(model) = settings.model.clone() {
-            settings.research_model = model.clone();
-            settings.planner_model = model.clone();
-            settings.builder_model = model.clone();
-            settings.reviewer_model = model.clone();
-            settings.discovery_model = model.clone();
-            settings.learning_extraction_model = model;
-        }
     }
 }
 
@@ -1453,10 +1449,13 @@ mod tests {
     }
 
     #[test]
-    fn provider_codex_resolves_to_the_codex_kind() {
-        let loaded = load_project("[daemon]\nprovider = \"codex\"\n");
-        assert_eq!(loaded.settings.provider, ProviderName::Codex);
-        assert_eq!(loaded.settings.provider.kind(), Some(ProviderKind::Codex));
+    fn builder_provider_codex_resolves_to_the_codex_kind() {
+        let loaded = load_project("[daemon]\nbuilder_provider = \"codex\"\n");
+        assert_eq!(loaded.settings.builder_provider, ProviderName::Codex);
+        assert_eq!(
+            loaded.settings.builder_provider.kind(),
+            Some(ProviderKind::Codex)
+        );
         assert_eq!(ProviderKind::Codex.as_str(), "codex");
     }
 
@@ -1746,7 +1745,7 @@ enabled = false
     #[test]
     fn daemon_help_covers_its_keys_and_rejects_unknown_ones() {
         for key in [
-            "provider",
+            "builder_provider",
             "agent_timeout_secs",
             "auto_push_remote",
             "pipeline",

@@ -303,7 +303,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         mistral_recorded.sessions().is_empty(),
         "the running unit was untouched"
     );
-    assert_eq!(engine.settings().model.as_deref(), Some("opus"));
+    assert_eq!(engine.settings().builder_model, "opus");
 
     // The next build start takes the new routing.
     std::fs::write(

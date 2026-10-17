@@ -172,8 +172,8 @@ impl Engine {
             tracing::error!("{error}");
         }
         let settings = loaded.settings;
-        let name = settings.provider.to_string();
-        let model = settings.model.clone();
+        let name = settings.builder_provider.to_string();
+        let model = Some(settings.builder_model.clone());
         let central = Central {
             settings,
             provider_name: name.clone(),
@@ -185,7 +185,7 @@ impl Engine {
         let resolver: Resolver = Arc::new(resolve);
         let provider = match loaded.errors.first() {
             Some(error) => Err(error.clone()),
-            None => resolve_or_reject(&resolver, &central.settings.provider),
+            None => resolve_or_reject(&resolver, &central.settings.builder_provider),
         };
         Self::build(config, provider, central, Some(resolver), env.clone())
     }

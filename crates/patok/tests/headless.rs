@@ -114,7 +114,7 @@ async fn headless_exits_1_when_the_build_cannot_start() {
     std::fs::write(dir.path().join("TASKS.md"), "- [ ] T1.1: add hello\n").unwrap();
     // A provider spelling this build does not ship: every build command is refused
     // with a deterministic error, so no provider CLI on PATH is needed.
-    project_config(data.path(), dir.path(), "provider = \"opencode\"\n");
+    project_config(data.path(), dir.path(), "builder_provider = \"opencode\"\n");
     let mut child = spawn_headless(dir.path(), data.path(), logs.path(), &[]);
 
     let status = wait_for_exit(&mut child, logs.path()).await;

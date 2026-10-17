@@ -87,8 +87,8 @@ mod tests {
             (
                 daemon_json_schema(),
                 [
-                    "provider",
-                    "model",
+                    "builder_provider",
+                    "builder_model",
                     "stages",
                     "agent_timeout_secs",
                     "embedding_port",

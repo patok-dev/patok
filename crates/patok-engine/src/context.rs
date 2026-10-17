@@ -459,10 +459,13 @@ impl SessionContext {
                 self.settings.discovery_provider,
                 &self.settings.discovery_model,
             ),
-            AgentRole::Orchestrator => return configured,
+            AgentRole::Orchestrator => (
+                self.settings.orchestrator_provider,
+                &self.settings.orchestrator_model,
+            ),
         };
         let Some(resolver) = self.inner.resolver.as_ref() else {
-            if name.kind().is_some() && name != self.settings.provider {
+            if name.kind().is_some() && name != self.settings.builder_provider {
                 tracing::warn!(
                     "the {name} {role} provider has no resolver; \
                      the {role} runs on the fixed provider"
@@ -473,10 +476,12 @@ impl SessionContext {
         match resolve_provider(resolver, &name) {
             Ok(Some(provider)) => {
                 let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
+                // When the resolved provider matches the session's builder provider,
+                // use the session's model (builder's model), falling back to the role's
+                // model if the session model is None.
+                // For a different provider, only use the role's model if the provider supports it.
                 let model = if provider.slug() == self.provider.slug() {
-                    self.model
-                        .clone()
-                        .or_else(|| role_model.filter(|_| provider.supports_reviewer_model()))
+                    self.model.clone().or_else(|| role_model.filter(|_| provider.supports_reviewer_model()))
                 } else {
                     role_model.filter(|_| provider.supports_reviewer_model())
                 };

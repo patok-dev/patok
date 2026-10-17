@@ -382,8 +382,8 @@ mod tests {
         }
         // Unit-of-work fields wait for the next start.
         for field in [
-            "provider",
-            "model",
+            "builder_provider",
+            "builder_model",
             "run_mode",
             "plan_enabled",
             "agent_timeout_secs",
@@ -408,38 +408,29 @@ mod tests {
         let mut new = DaemonSettings::default();
         assert!(daemon_changed_fields(&DaemonSettings::default(), &new).is_empty());
         new.agent_timeout_secs = 120;
-        new.provider = ProviderName::Mistral;
-        assert_eq!(
-            daemon_changed_fields(&DaemonSettings::default(), &new),
-            ["provider", "agent_timeout_secs"]
-        );
-        // The single-model override normalization shows through the readout: setting it
-        // collapses the role models too, and the diff reports them.
-        new.model = Some("mistral-small".into());
-        assert_eq!(
-            daemon_changed_fields(&DaemonSettings::default(), &new),
-            ["provider", "model", "agent_timeout_secs"]
-        );
-        // A reload re-materializes first, so the override's collapsed role models count
-        // as changed there; the readout reports the collapsed value.
+        new.builder_provider = ProviderName::Mistral;
+        let changed = daemon_changed_fields(&DaemonSettings::default(), &new);
+        assert_eq!(changed.len(), 2);
+        assert!(changed.iter().any(|f| f == "agent_timeout_secs"));
+        assert!(changed.iter().any(|f| f == "builder_provider"));
+        // Role-specific model changes are independent.
+        new.builder_model = "mistral-small".into();
+        let changed = daemon_changed_fields(&DaemonSettings::default(), &new);
+        assert_eq!(changed.len(), 3);
+        assert!(changed.iter().any(|f| f == "agent_timeout_secs"));
+        assert!(changed.iter().any(|f| f == "builder_model"));
+        assert!(changed.iter().any(|f| f == "builder_provider"));
+        // A reload re-materializes role-specific settings.
         let materialized = {
             let raw = crate::config::daemon::DaemonLayer {
-                model: Some("mistral-small".into()),
+                builder_model: Some("mistral-small".into()),
                 ..Default::default()
             };
             crate::config::daemon::materialize(raw)
         };
         assert_eq!(
             daemon_changed_fields(&DaemonSettings::default(), &materialized),
-            [
-                "model",
-                "research_model",
-                "planner_model",
-                "builder_model",
-                "reviewer_model",
-                "discovery_model",
-                "learning_extraction_model",
-            ]
+            ["builder_model"]
         );
     }
 
@@ -447,7 +438,7 @@ mod tests {
     fn field_value_reports_effective_values() {
         let settings = DaemonSettings::default();
         assert_eq!(
-            daemon_field_value(&settings, "provider").unwrap(),
+            daemon_field_value(&settings, "builder_provider").unwrap(),
             SettingValue::Str("claude".into())
         );
         assert_eq!(
@@ -464,8 +455,8 @@ mod tests {
         );
         // An unset optional string reads back as cleared, not as a missing value.
         assert_eq!(
-            daemon_field_value(&settings, "model").unwrap(),
-            SettingValue::Str(String::new())
+            daemon_field_value(&settings, "builder_model").unwrap(),
+            SettingValue::Str("opus".into())
         );
         assert_eq!(daemon_field_value(&settings, "stages"), None);
         assert_eq!(daemon_field_value(&settings, "no_such_key"), None);
@@ -480,21 +471,21 @@ mod tests {
         let mut warnings = Vec::new();
         let error = set_daemon_field(
             dir.path(),
-            "provider",
+            "builder_provider",
             SettingValue::Str("bogus".into()),
             &mut warnings,
         )
         .unwrap_err();
         assert_eq!(
             error.message,
-            "daemon.provider must be one of `claude`, `codex`, `opencode`, `ghcopilot`, \
+            "daemon.builder_provider must be one of `claude`, `codex`, `opencode`, `ghcopilot`, \
              `gh-copilot`, `github-copilot`, `copilot`, `mistral`, `vibe`, got \"bogus\""
         );
         assert!(!dir.path().join("patok.config.toml").exists());
         // Aliases persist normalized, as submitted.
         set_daemon_field(
             dir.path(),
-            "provider",
+            "builder_provider",
             SettingValue::Str("vibe".into()),
             &mut warnings,
         )
@@ -507,7 +498,7 @@ mod tests {
         )
         .unwrap();
         let text = std::fs::read_to_string(dir.path().join("patok.config.toml")).unwrap();
-        assert!(text.contains("provider = \"vibe\""), "{text}");
+        assert!(text.contains("builder_provider = \"vibe\""), "{text}");
         assert!(
             text.contains("research_provider = \"github-copilot\""),
             "{text}"
@@ -602,7 +593,7 @@ mod tests {
         let readout = daemon_readout(&DaemonSettings::default());
         assert_eq!(readout.len(), DAEMON_FIELDS.len());
         assert_eq!(
-            readout.get("provider"),
+            readout.get("builder_provider"),
             Some(&SettingValue::Str("claude".into()))
         );
         assert_eq!(
@@ -619,10 +610,10 @@ mod tests {
                 crate::config::DEFAULT_DISCOVERY_COOLDOWN_SECS
             ))
         );
-        // A single-model override collapses the role models in the readout too.
+        // Role-specific model is independent.
         let materialized = {
             let raw = crate::config::daemon::DaemonLayer {
-                model: Some("mistral-small".into()),
+                builder_model: Some("mistral-small".into()),
                 ..Default::default()
             };
             crate::config::daemon::materialize(raw)
@@ -630,10 +621,6 @@ mod tests {
         let readout = daemon_readout(&materialized);
         assert_eq!(
             readout.get("builder_model"),
-            Some(&SettingValue::Str("mistral-small".into()))
-        );
-        assert_eq!(
-            readout.get("model"),
             Some(&SettingValue::Str("mistral-small".into()))
         );
     }
