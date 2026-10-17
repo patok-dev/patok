@@ -46,7 +46,7 @@ pub enum NoticeLevel {
     Error,
 }
 
-/// Everything the engine pushes to an attached shell after the initial snapshot.
+/// Everything the engine pushes to attached shells after the initial snapshot.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EngineEvent {

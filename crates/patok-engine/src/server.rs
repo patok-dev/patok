@@ -345,7 +345,7 @@ fn tile_status_proto(status: TileStatus) -> ProtoTileStatus {
 }
 
 /// Pushes live events to the attached shell until it goes away or the engine shuts down.
-/// Dropping `attachment` on the way out frees the attach slot.
+/// Dropping `attachment` on the way out decrements the attachment count.
 async fn forward(
     mut attachment: Attachment,
     tx: mpsc::Sender<Result<EngineUpdate, Status>>,

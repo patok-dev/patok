@@ -55,7 +55,7 @@ impl Engine {
         Ok(before)
     }
 
-    /// Takes an attachment slot and returns the current state plus a live feed.
+    /// Returns the current state plus a live event feed for an attached shell.
     pub fn attach(&self) -> Result<Attachment, AttachError> {
         let mut state = self.state();
         state.attach_count += 1;

@@ -10,7 +10,7 @@ use crate::artifact;
 const RECENT_LIMIT: usize = 2000;
 
 impl Engine {
-    /// Records the event for replay and pushes it to the attached shell, atomically with
+    /// Records the event for replay and pushes it to all attached shells, atomically with
     /// respect to [`Engine::attach`] so a snapshot never misses or duplicates an event.
     pub(crate) fn emit_locked(&self, state: &mut State, event: EngineEvent) {
         match (&event, state.recent.back_mut()) {

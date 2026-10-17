@@ -1,5 +1,5 @@
 //! The engine facade: a cheaply cloneable [`Engine`] handle on the shared
-//! `Inner`, plus the attach slot it hands the controlling shell
+//! `Inner`, plus the attachment counter it manages for every attached shell
 //! ([`Attachment`], [`AttachError`]). The directory holds the facade files
 //! only, one responsibility each: construction and configuration
 //! (`config`), the shared state vocabulary and the status queries
