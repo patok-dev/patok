@@ -65,6 +65,13 @@ async fn attach_build_reattach_and_soft_stop_keeps_the_engine_running() {
         .unwrap()
         .into_inner();
 
+    // Verify the second stream receives its own snapshot with the same state.
+    let (second_version, second_snapshot) =
+        snapshot_of(second_updates.message().await.unwrap().unwrap());
+    assert_eq!(second_version, version);
+    assert_eq!(second_snapshot.phase, Phase::Startup);
+    assert_eq!(second_snapshot.tasks.len(), 1);
+
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::StartBuild(StartBuild {})),
@@ -74,30 +81,74 @@ async fn attach_build_reattach_and_soft_stop_keeps_the_engine_running() {
         .into_inner();
     assert!(response.accepted, "{}", response.error);
 
-    let mut saw_agent_text = false;
-    let finished = loop {
-        let update = tokio::time::timeout(Duration::from_secs(20), updates.message())
+    // Both streams must receive the same live events.
+    let mut first_saw_agent_text = false;
+    let mut second_saw_agent_text = false;
+    let mut first_saw_finished = false;
+    let mut second_saw_finished = false;
+    loop {
+        let first_update = tokio::time::timeout(Duration::from_secs(20), updates.message())
             .await
-            .expect("build events arrive")
+            .expect("first stream events arrive")
             .unwrap()
-            .expect("stream open");
-        let Some(engine_update::Payload::Event(event)) = update.payload else {
-            continue;
-        };
-        match EngineEvent::from_payload(&event.payload).unwrap() {
-            EngineEvent::Agent {
-                event: AgentEvent::Text { text },
-            } if text == "hello from the agent" => saw_agent_text = true,
-            EngineEvent::TaskFinished { id, outcome, .. } => break (id, outcome),
-            _ => {}
+            .expect("first stream open");
+        let second_update = tokio::time::timeout(Duration::from_secs(20), second_updates.message())
+            .await
+            .expect("second stream events arrive")
+            .unwrap()
+            .expect("second stream open");
+
+        for (update, saw_agent_text, saw_finished) in [
+            (
+                first_update,
+                &mut first_saw_agent_text,
+                &mut first_saw_finished,
+            ),
+            (
+                second_update,
+                &mut second_saw_agent_text,
+                &mut second_saw_finished,
+            ),
+        ] {
+            if let Some(engine_update::Payload::Event(event)) = update.payload {
+                match EngineEvent::from_payload(&event.payload).unwrap() {
+                    EngineEvent::Agent {
+                        event: AgentEvent::Text { text },
+                    } if text == "hello from the agent" => *saw_agent_text = true,
+                    EngineEvent::TaskFinished { id, outcome, .. } => {
+                        assert_eq!(
+                            (id.clone(), outcome),
+                            ("T1.1".to_string(), TaskOutcome::Done)
+                        );
+                        *saw_finished = true;
+                    }
+                    _ => {}
+                }
+            }
         }
-    };
-    assert!(saw_agent_text);
-    assert_eq!(finished, ("T1.1".to_string(), TaskOutcome::Done));
+        if first_saw_agent_text
+            && second_saw_agent_text
+            && first_saw_finished
+            && second_saw_finished
+        {
+            break;
+        }
+    }
+    assert!(first_saw_agent_text);
+    assert!(second_saw_agent_text);
+    assert!(first_saw_finished);
+    assert!(second_saw_finished);
+
+    // Drop the second stream; the first stream remains attached and functional.
+    drop(second_updates);
+    // The first stream is still open: we can attempt to read from it without error.
+    // With no more events expected, this call will either return Some if there are
+    // stray events, or time out (which means the stream is still open, not closed).
+    // A closed stream would return Ok(Some(None)) or an error.
+    let _ = tokio::time::timeout(Duration::from_millis(50), updates.message()).await;
 
     // Close both shells and reattach: the engine kept the state.
     drop(updates);
-    drop(second_updates);
     let reattached = client
         .attach(AttachRequest::default())
         .await
