@@ -47,10 +47,7 @@ impl EngineApi for Service {
         request: Request<AttachRequest>,
     ) -> Result<Response<Self::AttachStream>, Status> {
         let shell_version = request.into_inner().shell_version;
-        let attachment = self
-            .engine
-            .attach()
-            .map_err(|e| Status::failed_precondition(e.to_string()))?;
+        let attachment = self.engine.attach().unwrap();
         tracing::info!("shell attached (version {shell_version})");
 
         let (tx, rx) = mpsc::channel(256);
@@ -348,7 +345,7 @@ fn tile_status_proto(status: TileStatus) -> ProtoTileStatus {
 }
 
 /// Pushes live events to the attached shell until it goes away or the engine shuts down.
-/// Dropping `attachment` on the way out frees the attach slot.
+/// Dropping `attachment` on the way out decrements the attachment count.
 async fn forward(
     mut attachment: Attachment,
     tx: mpsc::Sender<Result<EngineUpdate, Status>>,

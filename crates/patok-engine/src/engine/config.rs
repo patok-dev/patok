@@ -216,7 +216,7 @@ impl Engine {
                     run: RunState::default(),
                     current_task: None,
                     recent: VecDeque::new(),
-                    attached: false,
+                    attach_count: 0,
                     stop: Stop::default(),
                     schedule,
                     cancel: CancellationToken::new(),

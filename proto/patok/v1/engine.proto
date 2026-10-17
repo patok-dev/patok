@@ -9,13 +9,10 @@ package patok.v1;
 // domain socket -- never a network port.
 
 service Engine {
-  // Attach as the single controlling shell for this engine. The server
-  // rejects the call (FAILED_PRECONDITION) if another shell is already
-  // attached. On success,
-  // streams exactly one EngineInfo message first, then a live Event for
-  // every subsequent change, until the shell disconnects or the engine
-  // shuts down (in which case a final ShutdownNotice is sent before the
-  // stream closes).
+  // Attach a shell to this engine. Any number of shells can attach
+  // concurrently; each receives the current snapshot and a live feed of
+  // all subsequent engine events. The stream closes when the shell
+  // disconnects or the engine shuts down.
   rpc Attach(AttachRequest) returns (stream EngineUpdate);
 
   // Submit a user-initiated action (start build, start planning, task

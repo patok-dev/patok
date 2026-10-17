@@ -98,13 +98,13 @@ impl SessionContext {
 
     /// A `'static` emitter for the agent-event forwarder, which runs on its
     /// own task beside the provider session: each call records the event for
-    /// replay and pushes it to the attached shell.
+    /// replay and pushes it to all attached shells.
     pub(crate) fn event_sink(&self) -> impl Fn(EngineEvent) + Send + 'static {
         let engine = self.engine();
         move |event| engine.emit(event)
     }
 
-    /// Emits one notice to the attached shell.
+    /// Emits one notice to all attached shells.
     pub(crate) fn notice(&self, level: NoticeLevel, text: impl Into<String>) {
         self.engine().notice(level, text);
     }

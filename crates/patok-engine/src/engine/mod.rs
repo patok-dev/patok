@@ -1,5 +1,5 @@
 //! The engine facade: a cheaply cloneable [`Engine`] handle on the shared
-//! `Inner`, plus the attach slot it hands the controlling shell
+//! `Inner`, plus the attachment counter it manages for every attached shell
 //! ([`Attachment`], [`AttachError`]). The directory holds the facade files
 //! only, one responsibility each: construction and configuration
 //! (`config`), the shared state vocabulary and the status queries
@@ -36,7 +36,8 @@ pub struct Engine {
     pub(crate) inner: Arc<Inner>,
 }
 
-/// Held by the one controlling shell; dropping it frees the attach slot.
+/// Held by each attached shell; dropping it decrements the attachment counter.
+/// Commands like stop, shutdown, and restart remain global across all attached shells.
 pub struct Attachment {
     pub snapshot: Snapshot,
     pub events: broadcast::Receiver<EngineEvent>,
@@ -44,13 +45,10 @@ pub struct Attachment {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum AttachError {
-    #[error("another shell is already attached to the engine for {0}")]
-    AlreadyAttached(String),
-}
+pub enum AttachError {}
 
 impl Drop for Attachment {
     fn drop(&mut self) {
-        self.engine.state().attached = false;
+        self.engine.state().attach_count -= 1;
     }
 }

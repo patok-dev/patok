@@ -1648,28 +1648,23 @@ async fn a_cancel_soft_stop_without_a_pending_stop_is_a_command_error() {
 }
 
 #[tokio::test]
-async fn a_second_shell_is_rejected_until_the_first_detaches_and_sees_replayed_output() {
+async fn two_attached_shells_coexist_and_idle_requires_zero() {
     let fixture = Fixture::new("- [ ] T1.1: fix the only task\n");
     let engine = fixture.engine(scripted());
     let mut first = engine.attach().unwrap();
-    let error = engine.attach().err().unwrap().to_string();
-    assert!(
-        error.contains("already attached") && error.contains(&fixture.path().display().to_string())
-    );
+    let second = engine.attach().unwrap();
+
+    assert!(!engine.is_idle());
 
     engine.start_build().unwrap();
     collect_until(&mut first.events, is_phase_startup).await;
-    drop(first);
+    assert!(!engine.is_idle());
 
-    let second = engine.attach().unwrap();
-    assert_eq!(second.snapshot.phase, Phase::Startup);
-    assert!(second.snapshot.tasks[0].done);
-    assert!(second.snapshot.recent.iter().any(|e| matches!(
-        e,
-        EngineEvent::Agent {
-            event: AgentEvent::Result { .. }
-        }
-    )));
+    drop(first);
+    assert!(!engine.is_idle());
+
+    drop(second);
+    assert!(engine.is_idle());
 }
 
 #[tokio::test]
