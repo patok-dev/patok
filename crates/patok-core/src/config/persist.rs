@@ -182,14 +182,6 @@ fn validate(
             })
         }
         (FieldKind::PositiveUint, _) => reject("a whole number of seconds greater than zero"),
-        (FieldKind::Port, SettingValue::Uint(p)) if (1..=u16::MAX as u64).contains(&p) => {
-            integer(p).map(Some).map_err(|_| {
-                PersistError::new(format!("{schema}.{name} must be a port number (1-65535)"))
-            })
-        }
-        (FieldKind::Port, _) => Err(PersistError::new(format!(
-            "{schema}.{name} must be a port number (1-65535), got {got}"
-        ))),
         (FieldKind::FloatRange(min, max), SettingValue::Float(f)) if (*min..=*max).contains(&f) => {
             Ok(Some(f.into()))
         }
@@ -370,18 +362,10 @@ mod tests {
     #[test]
     fn apply_timing_follows_the_registry() {
         // Point-of-use fields apply immediately.
-        for field in [
-            "observatory_retention_days",
-            "auto_push_remote",
-            "on_task_complete_hook",
-            "show_retrieval_panel",
-        ] {
-            assert_eq!(
-                daemon_apply_timing(field),
-                Some(ApplyTiming::Immediate),
-                "{field}"
-            );
-        }
+        assert_eq!(
+            daemon_apply_timing("auto_push_remote"),
+            Some(ApplyTiming::Immediate)
+        );
         // Unit-of-work fields wait for the next start.
         for field in [
             "builder_provider",
@@ -389,7 +373,6 @@ mod tests {
             "run_mode",
             "plan_enabled",
             "agent_timeout_secs",
-            "phase_isolation",
             "history_dir",
             "history_retention_tasks",
             "history_retention_days",
@@ -448,16 +431,12 @@ mod tests {
             SettingValue::Str("sprint".into())
         );
         assert_eq!(
-            daemon_field_value(&settings, "plan_revision_accept_policy").unwrap(),
-            SettingValue::Str("no-high".into())
-        );
-        assert_eq!(
-            daemon_field_value(&settings, "embedding_port").unwrap(),
-            SettingValue::Uint(11434)
+            daemon_field_value(&settings, "review_multipass_threshold").unwrap(),
+            SettingValue::Uint(8)
         );
         // An unset optional string reads back as cleared, not as a missing value.
         assert_eq!(
-            daemon_field_value(&settings, "local_model").unwrap(),
+            daemon_field_value(&settings, "history_dir").unwrap(),
             SettingValue::Str("".into())
         );
         assert_eq!(daemon_field_value(&settings, "stages"), None);

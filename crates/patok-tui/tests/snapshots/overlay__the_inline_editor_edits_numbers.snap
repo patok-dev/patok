@@ -7,20 +7,20 @@ expression: "draw(&app, W, H)"
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      [ ] skip review for simple                                                       ││    │
-     │      review confidence threshold  5                                                   ││────┘
-[  Re│      review multipass threshold  8                                                    ││────┐
-     │      [ ] batch review                                                                 ││    │
-[ Dis│      [ ] planner lookahead                                                            ││    │
+[  Bu│      discovery provider  ‹ claude ›                                                   ││    │
+     │      discovery model  opus                                                            ││────┘
+[  Re│      orchestrator provider  ‹ claude ›                                                ││────┐
+     │      orchestrator model  (not set)                                                    ││    │
+[ Dis│  ▾ Pipeline                                                                           █│    │
+     │      run mode  ‹ sprint ›                                                             █│    │
+     │      [ ] plan enabled                                                                 █│    │
+     │      [ ] skip research for simple                                                     █│    │
+     │      [ ] skip review for simple                                                       █│    │
+     │      review confidence threshold  5                                                   █│    │
+     │      review multipass threshold  8                                                    █│    │
+     │      [ ] batch review                                                                 █│    │
      │      [ ] review in loop                                                               ││    │
-     │      confidence threshold  0.5                                                        █│    │
-     │      plan revision cycles  (not set)                                                  █│    │
-     │      plan revision accept policy  ‹ no-high ›                                         █│    │
-     │      [ ] semgrep enabled                                                              █│    │
-     │      build command  (not set)                                                         █│    │
-     │      planning iterations  (not set)                                                   ││    │
-     │      [ ] require human approval                                                       ││    │
-     │      on task complete hook  (not set)                                                 ││    │
+     │      confidence threshold  0.5                                                        ││    │
      │  ▾ Timeouts and pauses                                                                ││    │
      │▶     agent timeout  600                                                               ││    │
      │      pause between tasks  10                                                          ││    │

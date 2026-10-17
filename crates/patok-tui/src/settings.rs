@@ -142,10 +142,9 @@ mod tests {
         use patok_core::config::FieldKind as CoreFieldKind;
         match kind {
             CoreFieldKind::Bool => SettingValue::Bool(true),
-            CoreFieldKind::Uint
-            | CoreFieldKind::PositiveUint
-            | CoreFieldKind::Port
-            | CoreFieldKind::Range(..) => SettingValue::Uint(7),
+            CoreFieldKind::Uint | CoreFieldKind::PositiveUint | CoreFieldKind::Range(..) => {
+                SettingValue::Uint(7)
+            }
             CoreFieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) / 2.0),
             CoreFieldKind::Str | CoreFieldKind::OptStr | CoreFieldKind::FreeStr => {
                 SettingValue::Str("sample".into())

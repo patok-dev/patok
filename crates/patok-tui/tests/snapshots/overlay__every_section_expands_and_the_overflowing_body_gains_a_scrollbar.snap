@@ -7,20 +7,20 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      [ ] enforce phase rbac                                                           ││    │
-     │  ▾ Learnings, history and embeddings                                                  ││────┘
-[  Re│      history dir  (not set)                                                           ││────┐
-     │      max learning injection  (not set)                                                ││    │
-[ Dis│      min learning injection  (not set)                                                ││    │
-     │      history search results  (not set)                                                ││    │
-     │      history retention tasks  (not set)                                               ││    │
-     │      history retention days  (not set)                                                ││    │
-     │      observatory retention days  (not set)                                            ││    │
-     │      [ ] semantic match enabled                                                       ││    │
-     │      embedding model  (not set)                                                       ││    │
-     │      embedding port  (not set)                                                        ││    │
-     │      embedding timeout  (not set)                                                     ││    │
-     │      [ ] show retrieval panel                                                         ││    │
+[  Bu│      agent timeout  600                                                               ││    │
+     │      pause between tasks  10                                                          ││────┘
+[  Re│      pause between agents  3                                                          ││────┐
+     │      pause between cycles  30                                                         ││    │
+[ Dis│      engine idle timeout  1800                                                        ││    │
+     │      [x] adaptive pauses                                                              ││    │
+     │      discovery cooldown  300                                                          ││    │
+     │      discovery cooldown cap  1800                                                     ││    │
+     │  ▾ Git                                                                                ││    │
+     │      auto-push remote  (not set)                                                      ││    │
+     │  ▾ History                                                                            ││    │
+     │      history dir  (not set)                                                           █│    │
+     │      history retention tasks  (not set)                                               █│    │
+     │      history retention days  (not set)                                                █│    │
      │  ▾ Display and theme                                                                  █│    │
      │      theme  ‹ dark ›                                                                  █│    │
      │      truecolor  ‹ auto ›                                                              █│    │

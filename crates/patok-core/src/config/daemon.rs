@@ -173,7 +173,6 @@ pub enum FieldKind {
     /// An unsigned integer that must be greater than zero, validated exactly like the
     /// on-disk parser of the same field ("a whole number of seconds greater than zero").
     PositiveUint,
-    Port,
     /// A float field with an inclusive range.
     FloatRange(f64, f64),
     /// A non-optional string; an empty string is rejected.
@@ -208,11 +207,11 @@ pub enum FieldKind {
 //
 // Entry grammar, one bracketed item per field:
 // `[kind field "key" (label "text")? (help "text")? (immediate)? <kind tail>]` with `bool`,
-// `port`, `str` and `free_str` tail `default <expr>`, `uint` and `positive_uint` tail
+// `str` and `free_str` tail `default <expr>`, `uint` and `positive_uint` tail
 // `expect "<warning noun>" default <expr>`, `float_range` tail
 // `range <min> ..= <max> default <expr>`, `enum` its enum type right after the key,
 // and no tail for
-// `opt_str`, `provider`, `strings`, `string_map` and `stages`. A leading `//` documents
+// `opt_str`, `provider` and `stages`. A leading `//` documents
 // the settings-struct field (and so the JSON schema); `label` adds the settings-overlay
 // row label; `help` adds the settings-overlay help text (absent means the overlay
 // shows no label or help for the key); `immediate` marks a field read at the point of
@@ -233,15 +232,12 @@ macro_rules! daemon_ty {
     (bool $($rest:tt)*) => (bool);
     (uint $($rest:tt)*) => (u64);
     (positive_uint $($rest:tt)*) => (u64);
-    (port $($rest:tt)*) => (u16);
     (float_range $($rest:tt)*) => (f64);
     (str $($rest:tt)*) => (String);
     (free_str $($rest:tt)*) => (String);
     (opt_str $($rest:tt)*) => (Option<String>);
     (enum $ty:ident $($rest:tt)*) => ($ty);
     (provider $($rest:tt)*) => (ProviderName);
-    (strings $($rest:tt)*) => (Vec<String>);
-    (string_map $($rest:tt)*) => (std::collections::BTreeMap<String, String>);
     (stages $($rest:tt)*) => (Vec<StageConfig>);
 }
 
@@ -312,16 +308,6 @@ macro_rules! daemon_merge {
     };
     (
         merged [$($acc:tt)*] $lower:ident, $higher:ident,
-        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
-        $($tail:tt)*
-    ) => {
-        daemon_merge! {
-            merged [$($acc)* $f: merge_maps($lower.$f, $higher.$f),]
-            $lower, $higher, $($tail)*
-        }
-    };
-    (
-        merged [$($acc:tt)*] $lower:ident, $higher:ident,
         [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]
         $($tail:tt)*
     ) => {
@@ -373,16 +359,6 @@ macro_rules! daemon_materialize {
     (
         settings [$($acc:tt)*] $layer:ident,
         [$(#[$doc:meta])* positive_uint $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? expect $e:literal default $d:expr]
-        $($tail:tt)*
-    ) => {
-        daemon_materialize! {
-            settings [$($acc)* $f: $layer.$f.unwrap_or($d),]
-            $layer, $($tail)*
-        }
-    };
-    (
-        settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* port $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? default $d:expr]
         $($tail:tt)*
     ) => {
         daemon_materialize! {
@@ -452,26 +428,6 @@ macro_rules! daemon_materialize {
     };
     (
         settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* strings $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
-        $($tail:tt)*
-    ) => {
-        daemon_materialize! {
-            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
-            $layer, $($tail)*
-        }
-    };
-    (
-        settings [$($acc:tt)*] $layer:ident,
-        [$(#[$doc:meta])* string_map $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
-        $($tail:tt)*
-    ) => {
-        daemon_materialize! {
-            settings [$($acc)* $f: $layer.$f.unwrap_or_default(),]
-            $layer, $($tail)*
-        }
-    };
-    (
-        settings [$($acc:tt)*] $layer:ident,
         [$(#[$doc:meta])* stages $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)?]
         $($tail:tt)*
     ) => {
@@ -506,26 +462,6 @@ macro_rules! daemon_names {
         &[
             $($acc)*
         ]
-    };
-    (
-        keys [$($acc:tt)*]
-        [$(#[$doc:meta])* strings $f:ident $k:literal $($rest:tt)*]
-        $($tail:tt)*
-    ) => {
-        daemon_names! {
-            keys [$($acc)*]
-            $($tail)*
-        }
-    };
-    (
-        keys [$($acc:tt)*]
-        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
-        $($tail:tt)*
-    ) => {
-        daemon_names! {
-            keys [$($acc)*]
-            $($tail)*
-        }
     };
     (
         keys [$($acc:tt)*]
@@ -629,15 +565,6 @@ macro_rules! daemon_entry {
     };
     (
         parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
-        [$(#[$doc:meta])* port $f:ident $k:literal $($rest:tt)*]
-    ) => {
-        if $key.as_str() == $k {
-            $layer.$f = $fields.port($key, $value);
-            continue;
-        }
-    };
-    (
-        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
         [$(#[$doc:meta])* float_range $f:ident $k:literal $(label $l:literal)? $(help $h:literal)? $(immediate)? range $min:literal ..= $max:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
@@ -692,24 +619,6 @@ macro_rules! daemon_entry {
     };
     (
         parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
-        [$(#[$doc:meta])* strings $f:ident $k:literal $($rest:tt)*]
-    ) => {
-        if $key.as_str() == $k {
-            $layer.$f = $fields.strings($key, $value);
-            continue;
-        }
-    };
-    (
-        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
-        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
-    ) => {
-        if $key.as_str() == $k {
-            $layer.$f = $fields.string_map($key, $value);
-            continue;
-        }
-    };
-    (
-        parse, $layer:ident, $fields:ident, $key:ident, $value:ident, $errors:ident,
         [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]
     ) => {
         if $key.as_str() == $k {
@@ -737,11 +646,6 @@ macro_rules! daemon_entry {
     ) => {
         if $name == $k {
             return Some(FieldKind::PositiveUint);
-        }
-    };
-    (kind, $name:ident, [$(#[$doc:meta])* port $f:ident $k:literal $($rest:tt)*]) => {
-        if $name == $k {
-            return Some(FieldKind::Port);
         }
     };
     (
@@ -783,19 +687,6 @@ macro_rules! daemon_entry {
             return Some(FieldKind::Provider);
         }
     };
-    (kind, $name:ident, [$(#[$doc:meta])* strings $f:ident $k:literal $($rest:tt)*]) => {
-        if $name == $k {
-            return Some(FieldKind::Composite);
-        }
-    };
-    (
-        kind, $name:ident,
-        [$(#[$doc:meta])* string_map $f:ident $k:literal $($rest:tt)*]
-    ) => {
-        if $name == $k {
-            return Some(FieldKind::Composite);
-        }
-    };
     (kind, $name:ident, [$(#[$doc:meta])* stages $f:ident $k:literal $($rest:tt)*]) => {
         if $name == $k {
             return Some(FieldKind::Composite);
@@ -824,14 +715,6 @@ macro_rules! daemon_entry {
     ) => {
         if $field == $k {
             return Some(SettingValue::Uint($settings.$f));
-        }
-    };
-    (
-        value, $settings:ident, $field:ident,
-        [$(#[$doc:meta])* port $f:ident $k:literal $($rest:tt)*]
-    ) => {
-        if $field == $k {
-            return Some(SettingValue::Uint(u64::from($settings.$f)));
         }
     };
     (
@@ -950,8 +833,8 @@ macro_rules! daemon_table {
         }
 
         /// Merges two daemon layers, `higher` winning per key: structured fields merge
-        /// deeper (the stage list by stage, the catalog URL override map per key),
-        /// plain values and lists are replaced wholesale.
+        /// deeper (the stage list by stage), plain
+        /// values are replaced wholesale.
         fn merge(lower: DaemonLayer, higher: DaemonLayer) -> DaemonLayer {
             daemon_merge! {
                 merged []
@@ -997,9 +880,8 @@ macro_rules! daemon_table {
         }
 
         /// Every non-composite `[daemon]` key, in table order: exactly the fields the
-        /// settings-change flow can carry as a single value. Composite keys (`stages`,
-        /// `catalog_url_overrides`, `stage_overrides`, `semgrep_rulesets`, `plugins`)
-        /// have no single-value shape, so the diff skips them.
+        /// settings-change flow can carry as a single value. The composite key (`stages`)
+        /// has no single-value shape, so the diff skips it.
         ///
         /// Part of the cross-crate drift surface of finding 10: iterating this list,
         /// `patok-tui`'s drift test asserts every registry key has an overlay row and
@@ -1069,11 +951,8 @@ macro_rules! daemon_table {
     };
 }
 daemon_table! {
-    /// The merged, normalized daemon settings.
-    ///
-    /// Fields beyond `plan_enabled` and the discovery cooldowns are
-    /// parsed, merged and normalized here but not yet consumed by engine behaviour; the
-    /// pipeline, routing and learnings tasks pick them up.
+    /// The merged, normalized daemon settings. Every field here is read by the engine
+    /// or shell; add a field only together with its consumer.
     entries {
         // Routing (section 4).
         [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default." default "sonnet".into()],
@@ -1088,32 +967,18 @@ daemon_table! {
         [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
         [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
         [provider orchestrator_provider "orchestrator_provider" label "orchestrator provider" help "The provider the orchestrator role runs on. Applies at the next orchestrator session start."],
-        [opt_str local_model "local_model" label "local model" help "The model used for local runs; empty uses the provider's default."],
-        [uint model_catalog_refresh_secs "model_catalog_refresh_secs" label "model catalog refresh" help "How often the model catalog refreshes from the provider, in seconds. Default 86400 (24 hours)." expect "a whole number of seconds" default 86400],
-        [string_map catalog_url_overrides "catalog_url_overrides"],
-        [strings stage_overrides "stage_overrides"],
         // Pipeline flow (section 5).
         [enum run_mode "run_mode" RunMode label "run mode" help "sprint (default) or continuous. The running loop keeps the mode it started with; a change applies at the next run."],
         [stages stages "stages" help "The pipeline stage list. Only the review stage can be disabled: enabled = false on research, plan or build is ignored with a warning, and those stages still run."],
-        [bool skip_planner_for_simple "skip_planner_for_simple" label "skip planner for simple" help "Simple tasks go straight to the builder (default on)." default true],
         [/// Whether a Simple-classified task skips the research stage (T68.1).
          bool skip_research_for_simple "skip_research_for_simple" label "skip research for simple" help "Simple tasks skip the research stage (default on)." default true],
         [bool skip_review_for_simple "skip_review_for_simple" label "skip review for simple" help "Simple tasks skip the review stage, only when the builder's verification exited cleanly (default on)." default true],
         [uint review_confidence_threshold "review_confidence_threshold" label "review confidence threshold" help "Consecutive review passes needed before learned confidence may skip the review for matching task shapes (simple and medium tasks only); 0 disables. Default 5." expect "a whole number" default 5],
         [bool batch_review "batch_review" label "batch review" help "Skip the review for all but the last task in each contiguous run of same-numbered task IDs; that task's review covers every commit in the run (default on)." default true],
-        [bool planner_lookahead "planner_lookahead" label "planner lookahead" help "Plan task N+1 while task N builds; the plan is reused when that task comes up (default on)." default true],
-        [uint plan_revision_cycles "plan_revision_cycles" label "plan revision cycles" help "How many times the planner revises its own plan before accepting it; 0 disables plan self-review." expect "a whole number" default 0],
-        [enum plan_revision_accept_policy "plan_revision_accept_policy" AcceptPolicy label "plan revision accept policy" help "Which findings the plan self-review must clear before the plan is accepted: no-high (default), no-high-medium or no-findings."],
         [bool review_in_loop "review_in_loop" label "review in loop" help "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)." default true],
         [uint review_multipass_threshold "review_multipass_threshold" label "review multipass threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 8." expect "a whole number" default 8],
         [float_range confidence_threshold "confidence_threshold" label "confidence threshold" help "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5." range 0.0..=1.0 default 0.5],
-        [bool semgrep_enabled "semgrep_enabled" label "semgrep enabled" help "Run semgrep static analysis as part of the review stage (default off)." default false],
-        [strings semgrep_rulesets "semgrep_rulesets"],
-        [opt_str build_command "build_command" label "build command" help "The command the builder runs to verify its work; empty uses the provider's default."],
-        [uint planning_iterations "planning_iterations" label "planning iterations" help "How many planning passes the planner runs before handing the plan over; 0 means a single pass." expect "a whole number" default 0],
-        [bool require_human_approval "require_human_approval" label "require human approval" help "Wait for human approval before each task's work continues (default off)." default false],
         [free_str auto_push_remote "auto_push_remote" label "auto-push remote" help "Push to this remote (git push <remote> HEAD) after each completed task group; empty means local commits only. Default origin." immediate default "origin".into()],
-        [opt_str on_task_complete_hook "on_task_complete_hook" label "on task complete hook" help "A command run after each completed task; empty means none." immediate],
         [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" label "discovery cooldown" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
         [positive_uint discovery_cooldown_cap_secs "discovery_cooldown_cap_secs" label "discovery cooldown cap" help "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS],
         [/// Whether a plan session runs before each builder session (T10.1).
@@ -1125,23 +990,10 @@ daemon_table! {
         [uint pause_between_cycles_secs "pause_between_cycles_secs" label "pause between cycles" help "Pause between build cycles, in seconds. Default 30." expect "a whole number of seconds" default 30],
         [bool adaptive_pauses "adaptive_pauses" label "adaptive pauses" help "Shorten the pauses to about 500 ms when the last agent was not rate limited (default on)." default true],
         [uint engine_idle_timeout_secs "engine_idle_timeout_secs" label "engine idle timeout" help "When no shell is attached and the engine has been idle this long, it shuts itself down. Default 1800 (30 minutes)." expect "a whole number of seconds" default 1800],
-        // Isolation and security (section 7).
-        [bool phase_isolation "phase_isolation" label "phase isolation" help "Run each pipeline phase in its own isolated session (default on)." default true],
-        [bool enforce_phase_rbac "enforce_phase_rbac" label "enforce phase rbac" help "Enforce role-based access control between the pipeline phases (default on)." default true],
-        // Learnings, history and embeddings (section 8).
+        // History (section 8).
         [opt_str history_dir "history_dir" label "history dir" help "Root directory of the session history (per-session and per-task logs); empty uses history/ in the project data directory."],
-        [uint max_learning_injection "max_learning_injection" label "max learning injection" help "The most learned items injected into one prompt. Default 10." expect "a whole number" default 10],
-        [uint min_learning_injection "min_learning_injection" label "min learning injection" help "The fewest learned items injected into one prompt. Default 2." expect "a whole number" default 2],
-        [uint history_search_results "history_search_results" label "history search results" help "How many matches a history search returns. Default 5." expect "a whole number" default 5],
         [uint history_retention_tasks "history_retention_tasks" label "history retention tasks" help "How many tasks the history keeps. Default 1000." expect "a whole number" default 1000],
         [uint history_retention_days "history_retention_days" label "history retention days" help "How many days the history keeps its task records. Default 30." expect "a whole number" default 30],
-        [uint observatory_retention_days "observatory_retention_days" label "observatory retention days" help "How many days the observatory keeps its findings. Default 30." immediate expect "a whole number" default 30],
-        [bool semantic_match_enabled "semantic_match_enabled" label "semantic match enabled" help "Match learnings by semantic similarity as well as text (default on)." default true],
-        [str embedding_model "embedding_model" label "embedding model" help "The embedding model used for semantic matching. Default nomic-embed-text." default "nomic-embed-text".into()],
-        [port embedding_port "embedding_port" label "embedding port" help "The port of the local embedding server. Default 11434." default 11434],
-        [uint embedding_timeout_ms "embedding_timeout_ms" label "embedding timeout" help "How long the embedding request may take, in milliseconds. Default 2000." expect "a whole number of milliseconds" default 2000],
-        [strings plugins "plugins"],
-        [bool show_retrieval_panel "show_retrieval_panel" label "show retrieval panel" help "Show the retrieval panel in the shell (default off)." immediate default false],
     }
     normalize settings {
     }
@@ -1263,22 +1115,6 @@ fn merge_stages(
     }
 }
 
-/// A string map merges per key: keys a higher layer omits keep the lower value.
-fn merge_maps(
-    lower: Option<std::collections::BTreeMap<String, String>>,
-    higher: Option<std::collections::BTreeMap<String, String>>,
-) -> Option<std::collections::BTreeMap<String, String>> {
-    match (lower, higher) {
-        (None, None) => None,
-        (Some(lower), None) => Some(lower),
-        (lower, Some(higher)) => {
-            let mut merged = lower.unwrap_or_default();
-            merged.extend(higher);
-            Some(merged)
-        }
-    }
-}
-
 /// The daemon-schema environment overrides: the agent
 /// timeout, under two variable names (the first valid one wins).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1356,7 +1192,7 @@ pub fn load_daemon(
 /// The help text for one settings-overlay key of the daemon schema (T85.1):
 /// the description of a setting row, or of a whole overlay section when the
 /// key is a section's group id (`provider_and_model`, `pipeline`,
-/// `timeouts_and_pauses`, `git`, `isolation`, `learnings_history`). The per-field
+/// `timeouts_and_pauses`, `git`, `learnings_history`). The per-field
 /// texts come from the field table's `help` entries (a composite key such as
 /// `stages` carries its help there even though the overlay shows no row for
 /// it), the group and read-only ones are hardcoded here, on the side that owns
@@ -1377,11 +1213,8 @@ pub fn daemon_help(key: &str) -> Option<&'static str> {
             "Timing: how long an agent may idle, the pauses between tasks, agents and cycles, and how long an engine with no shell attached waits before shutting down."
         }
         "git" => "How finished work reaches git.",
-        "isolation" => {
-            "Whether each pipeline phase runs in its own isolated session, and whether role-based access between the phases is enforced."
-        }
         "learnings_history" => {
-            "Learnings, history and embeddings: how much is kept and injected, where history lives, and the semantic-matching setup."
+            "History: where the per-session and per-task logs live and how long they are kept."
         }
         "engine_version" => "The engine's version, as reported by the daemon. Read-only.",
         "shell_version" => "The shell's own version. Read-only.",
@@ -1796,22 +1629,14 @@ enabled = false
 
     /// Finding 10: every single-value registry key carries the settings-overlay row
     /// label the overlay builds its row from, so a new setting without one fails here
-    /// instead of surfacing as a missing overlay label; the composite keys carry none.
+    /// instead of surfacing as a missing overlay label; the composite `stages` key carries none.
     #[test]
     fn every_daemon_field_key_has_an_overlay_label() {
         for &key in DAEMON_FIELDS {
             let label = daemon_label(key).unwrap_or_else(|| panic!("`{key}` has no label"));
             assert!(!label.is_empty(), "`{key}` has an empty label");
         }
-        for key in [
-            "stages",
-            "stage_overrides",
-            "catalog_url_overrides",
-            "semgrep_rulesets",
-            "plugins",
-        ] {
-            assert_eq!(daemon_label(key), None, "`{key}` must carry no label");
-        }
+        assert_eq!(daemon_label("stages"), None, "`stages` must carry no label");
     }
 
     /// The per-field sample a round trip writes and reads back: valid for the field's
@@ -1820,7 +1645,7 @@ enabled = false
     fn sample_value(kind: &FieldKind, default: &SettingValue) -> SettingValue {
         match kind {
             FieldKind::Bool => SettingValue::Bool(!default.as_bool().expect("a boolean default")),
-            FieldKind::Uint | FieldKind::PositiveUint | FieldKind::Port | FieldKind::Range(..) => {
+            FieldKind::Uint | FieldKind::PositiveUint | FieldKind::Range(..) => {
                 SettingValue::Uint(default.as_uint().expect("a whole-number default") + 1)
             }
             FieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) * 3.0 / 4.0),
@@ -1837,11 +1662,9 @@ enabled = false
     /// the sample.
     fn lower_value(kind: &FieldKind, default: &SettingValue) -> SettingValue {
         match kind {
-            FieldKind::Bool
-            | FieldKind::Uint
-            | FieldKind::PositiveUint
-            | FieldKind::Port
-            | FieldKind::Range(..) => default.clone(),
+            FieldKind::Bool | FieldKind::Uint | FieldKind::PositiveUint | FieldKind::Range(..) => {
+                default.clone()
+            }
             FieldKind::FloatRange(min, max) => SettingValue::Float(min + (max - min) / 4.0),
             FieldKind::Str | FieldKind::OptStr | FieldKind::FreeStr => {
                 SettingValue::Str("round-trip-lower".into())

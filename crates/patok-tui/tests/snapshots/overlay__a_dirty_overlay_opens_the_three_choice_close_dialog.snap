@@ -7,26 +7,26 @@ expression: "draw(&app, W, H)"
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      research model  sonnet                                                           ││    │
-     │      planner provider  ‹ claude ›                                                     █│────┘
-[  Re│      planner model  opus                                                              █│────┐
+[  Bu│      shell version: 0.0.0                                                             █│    │
+     │      research provider  ‹ claude ›                                                    █│────┘
+[  Re│      research model  sonnet                                                           █│────┐
+     │      planner provider  ‹ claude ›                                                     █│    │
+[ Dis│      planner model  opus                                                              █│    │
      │      builder provider  ‹ claude ›                                                     █│    │
-[ Dis│      builder model  opus                                                              █│    │
+     │      builder model  opus                                                              █│    │
      │      reviewer provider  ‹ claude ›                                                    █│    │
      │      reviewer model  sonnet                                                           ││    │
      │      discovery provider  ‹ claude ›                                                   ││    │
-     │      discovery model  opus                                                            ││    │
-     │      orchestrator provider  ‹ claude ›                                                ││    │
-     │      orchestr┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
-     │      local mo│▶ Save -- apply every drafted change and close            │             ││    │
-     │      model ca│  Discard -- throw away the drafted changes and close     │             ││    │
+     │      discover┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
+     │      orchestr│▶ Save -- apply every drafted change and close            │             ││    │
+     │      orchestr│  Discard -- throw away the drafted changes and close     │             ││    │
      │  ▾ Pipeline  │  Cancel -- back to the settings                          │             ││    │
      │      run mode│                                                          │             ││    │
      │▶     [x] plan│                                                          │             ││    │
      │      [ ] skip│                                                          │             ││    │
      │      [ ] skip│ ↑↓ move                [ Enter ] Confirm  [ Esc ] Cancel │             ││    │
-     │      [ ] skip└──────────────────────────────────────────────────────────┘             ││    │
-     │      review confidence threshold  5                                                   ││    │
+     │      review c└──────────────────────────────────────────────────────────┘             ││    │
+     │      review multipass threshold  8                                                    ││    │
      │┌──────────────────────────────────── plan enabled ────────────────────────────────────┐│    │
      ││Whether a plan session runs before each builder session.                              ││    │
      ││                                                                                      ││    │

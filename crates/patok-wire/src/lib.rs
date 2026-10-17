@@ -135,15 +135,6 @@ fn proto_run_mode(mode: CoreRunMode) -> RunMode {
     }
 }
 
-/// The wire enum of a core accept policy.
-fn proto_accept_policy(policy: CoreAcceptPolicy) -> AcceptPolicy {
-    match policy {
-        CoreAcceptPolicy::NoHigh => AcceptPolicy::NoHigh,
-        CoreAcceptPolicy::NoHighMedium => AcceptPolicy::NoHighMedium,
-        CoreAcceptPolicy::NoFindings => AcceptPolicy::NoFindings,
-    }
-}
-
 /// The wire enum of a provider's canonical spelling; unknown text is a
 /// user-facing rejection. Only canonical spellings travel the wire (aliases
 /// are a TOML-only concern), so this uses the trait's canonical parse, not
@@ -371,28 +362,6 @@ macro_rules! wire_to_proto {
     (
         $field:ident, $value:ident, $boolean:ident, $uint:ident, $string:ident, $wrong:ident,
         arms [$($acc:tt)*]
-        [accept_policy $k:literal $case:ident] $($rest:tt)*
-    ) => {
-        wire_to_proto! {
-            $field, $value, $boolean, $uint, $string, $wrong,
-            arms [$($acc)*
-                $k => {
-                    let policy = CoreAcceptPolicy::parse(&$string()?).ok_or_else(|| {
-                        format!(
-                            "`{}` must be one of {}",
-                            $k,
-                            CoreAcceptPolicy::accepted_spellings()
-                        )
-                    })?;
-                    Change::$case(proto_accept_policy(policy) as i32)
-                },
-            ]
-            $($rest)*
-        }
-    };
-    (
-        $field:ident, $value:ident, $boolean:ident, $uint:ident, $string:ident, $wrong:ident,
-        arms [$($acc:tt)*]
         [role_model $k:literal] $($rest:tt)*
     ) => {
         wire_to_proto! {
@@ -498,26 +467,15 @@ daemon_wire_table! {
         [role_provider "reviewer_provider"]
         [role_provider "discovery_provider"]
         [role_provider "orchestrator_provider"]
-        [text "local_model" LocalModel]
-        [uint "model_catalog_refresh_secs" ModelCatalogRefreshSecs]
         // Run modes and pipeline flow (proto section 3.5).
         [run_mode "run_mode" RunMode]
-        [bool "skip_planner_for_simple" SkipPlannerForSimple]
         [bool "skip_research_for_simple" SkipResearchForSimple]
         [bool "skip_review_for_simple" SkipReviewForSimple]
         [uint "review_confidence_threshold" ReviewConfidenceThreshold]
         [bool "batch_review" BatchReview]
-        [bool "planner_lookahead" PlannerLookahead]
         [bool "review_in_loop" ReviewInLoop]
         [uint "review_multipass_threshold" ReviewMultipassThreshold]
         [float "confidence_threshold" ConfidenceThreshold]
-        [uint "plan_revision_cycles" PlanRevisionCycles]
-        [accept_policy "plan_revision_accept_policy" PlanRevisionAcceptPolicy]
-        [bool "semgrep_enabled" SemgrepEnabled]
-        [text "build_command" BuildCommand]
-        [uint "planning_iterations" PlanningIterations]
-        [bool "require_human_approval" RequireHumanApproval]
-        [text "on_task_complete_hook" OnTaskCompleteHook]
         [bool "plan_enabled" PlanEnabled]
         [uint "discovery_cooldown_secs" DiscoveryCooldownSecs]
         [uint "discovery_cooldown_cap_secs" DiscoveryCooldownCapSecs]
@@ -528,22 +486,10 @@ daemon_wire_table! {
         [uint "pause_between_cycles_secs" PauseBetweenCyclesSecs]
         [bool "adaptive_pauses" AdaptivePauses]
         [uint "engine_idle_timeout_secs" EngineIdleTimeoutSecs]
-        // Isolation and security (proto section 3.7).
-        [bool "phase_isolation" PhaseIsolation]
-        [bool "enforce_phase_rbac" EnforcePhaseRbac]
-        // Learnings, history and embeddings (proto section 3.8).
+        // History (proto section 3.8).
         [text "history_dir" HistoryDir]
-        [uint "max_learning_injection" MaxLearningInjection]
-        [uint "min_learning_injection" MinLearningInjection]
-        [uint "history_search_results" HistorySearchResults]
         [uint "history_retention_tasks" HistoryRetentionTasks]
         [uint "history_retention_days" HistoryRetentionDays]
-        [uint "observatory_retention_days" ObservatoryRetentionDays]
-        [bool "semantic_match_enabled" SemanticMatchEnabled]
-        [text "embedding_model" EmbeddingModel]
-        [uint "embedding_port" EmbeddingPort]
-        [uint "embedding_timeout_ms" EmbeddingTimeoutMs]
-        [bool "show_retrieval_panel" ShowRetrievalPanel]
         // Git.
         [text "auto_push_remote" AutoPushRemote]
     }
@@ -605,16 +551,6 @@ mod tests {
             string("opus"),
         );
         maps_to(
-            Change::LocalModel("local".into()),
-            "local_model",
-            string("local"),
-        );
-        maps_to(
-            Change::ModelCatalogRefreshSecs(60),
-            "model_catalog_refresh_secs",
-            uint(60),
-        );
-        maps_to(
             Change::Provider(Provider::Ghcopilot as i32),
             "provider",
             string("ghcopilot"),
@@ -623,11 +559,6 @@ mod tests {
             Change::RunMode(RunMode::Continuous as i32),
             "run_mode",
             string("continuous"),
-        );
-        maps_to(
-            Change::SkipPlannerForSimple(true),
-            "skip_planner_for_simple",
-            bool(true),
         );
         maps_to(
             Change::SkipResearchForSimple(true),
@@ -645,21 +576,6 @@ mod tests {
             uint(5),
         );
         maps_to(Change::BatchReview(false), "batch_review", bool(false));
-        maps_to(
-            Change::PlannerLookahead(true),
-            "planner_lookahead",
-            bool(true),
-        );
-        maps_to(
-            Change::PlanRevisionCycles(2),
-            "plan_revision_cycles",
-            uint(2),
-        );
-        maps_to(
-            Change::PlanRevisionAcceptPolicy(AcceptPolicy::NoFindings as i32),
-            "plan_revision_accept_policy",
-            string("no-findings"),
-        );
         maps_to(
             Change::OrchestratorMaxIterations(3),
             "orchestrator_max_iterations",
@@ -682,34 +598,9 @@ mod tests {
             SettingValue::Float(0.5),
         );
         maps_to(
-            Change::SemgrepEnabled(false),
-            "semgrep_enabled",
-            bool(false),
-        );
-        maps_to(
-            Change::BuildCommand("make".into()),
-            "build_command",
-            string("make"),
-        );
-        maps_to(
-            Change::PlanningIterations(1),
-            "planning_iterations",
-            uint(1),
-        );
-        maps_to(
-            Change::RequireHumanApproval(false),
-            "require_human_approval",
-            bool(false),
-        );
-        maps_to(
             Change::AutoPushRemote("origin".into()),
             "auto_push_remote",
             string("origin"),
-        );
-        maps_to(
-            Change::OnTaskCompleteHook("hook".into()),
-            "on_task_complete_hook",
-            string("hook"),
         );
         maps_to(
             Change::DiscoveryCooldownSecs(300),
@@ -748,28 +639,7 @@ mod tests {
             "engine_idle_timeout_secs",
             uint(600),
         );
-        maps_to(Change::PhaseIsolation(true), "phase_isolation", bool(true));
-        maps_to(
-            Change::EnforcePhaseRbac(true),
-            "enforce_phase_rbac",
-            bool(true),
-        );
         maps_to(Change::HistoryDir("h".into()), "history_dir", string("h"));
-        maps_to(
-            Change::MaxLearningInjection(10),
-            "max_learning_injection",
-            uint(10),
-        );
-        maps_to(
-            Change::MinLearningInjection(2),
-            "min_learning_injection",
-            uint(2),
-        );
-        maps_to(
-            Change::HistorySearchResults(5),
-            "history_search_results",
-            uint(5),
-        );
         maps_to(
             Change::HistoryRetentionTasks(1000),
             "history_retention_tasks",
@@ -780,39 +650,9 @@ mod tests {
             "history_retention_days",
             uint(30),
         );
-        maps_to(
-            Change::ObservatoryRetentionDays(30),
-            "observatory_retention_days",
-            uint(30),
-        );
-        maps_to(
-            Change::SemanticMatchEnabled(true),
-            "semantic_match_enabled",
-            bool(true),
-        );
-        maps_to(
-            Change::EmbeddingModel("m".into()),
-            "embedding_model",
-            string("m"),
-        );
-        maps_to(Change::EmbeddingPort(11434), "embedding_port", uint(11434));
-        maps_to(
-            Change::EmbeddingTimeoutMs(2000),
-            "embedding_timeout_ms",
-            uint(2000),
-        );
-        maps_to(
-            Change::ShowRetrievalPanel(false),
-            "show_retrieval_panel",
-            bool(false),
-        );
         // Empty optional strings clear the key.
         maps_to(Change::ModelOverride(String::new()), "model", string(""));
-        maps_to(
-            Change::BuildCommand(String::new()),
-            "build_command",
-            string(""),
-        );
+        maps_to(Change::HistoryDir(String::new()), "history_dir", string(""));
     }
 
     /// The inverse of `from_proto`: every case this shell can produce maps
@@ -856,16 +696,11 @@ mod tests {
         for (field, change) in [
             ("plan_enabled", Change::PlanEnabled(false)),
             (
-                "skip_planner_for_simple",
-                Change::SkipPlannerForSimple(true),
-            ),
-            (
                 "skip_research_for_simple",
                 Change::SkipResearchForSimple(true),
             ),
             ("skip_review_for_simple", Change::SkipReviewForSimple(true)),
             ("batch_review", Change::BatchReview(false)),
-            ("planner_lookahead", Change::PlannerLookahead(true)),
             ("review_in_loop", Change::ReviewInLoop(true)),
             ("adaptive_pauses", Change::AdaptivePauses(false)),
         ] {
@@ -930,11 +765,9 @@ mod tests {
     fn bool_of(change: &Change) -> bool {
         match change {
             Change::PlanEnabled(v)
-            | Change::SkipPlannerForSimple(v)
             | Change::SkipResearchForSimple(v)
             | Change::SkipReviewForSimple(v)
             | Change::BatchReview(v)
-            | Change::PlannerLookahead(v)
             | Change::ReviewInLoop(v)
             | Change::AdaptivePauses(v) => *v,
             _ => panic!("not a boolean case"),

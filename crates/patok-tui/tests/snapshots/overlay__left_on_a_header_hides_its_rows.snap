@@ -7,21 +7,21 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      shell version: 0.0.0                                                             █│    │
-     │      research provider  ‹ claude ›                                                    █│────┘
-[  Re│      research model  sonnet                                                           █│────┐
+[  Bu│  ▾ Provider and model                                                                 █│    │
+     │      engine version: 0.1.0                                                            █│────┘
+[  Re│      shell version: 0.0.0                                                             █│────┐
+     │      research provider  ‹ claude ›                                                    █│    │
+[ Dis│      research model  sonnet                                                           █│    │
      │      planner provider  ‹ claude ›                                                     █│    │
-[ Dis│      planner model  opus                                                              █│    │
+     │      planner model  opus                                                              █│    │
      │      builder provider  ‹ claude ›                                                     █│    │
      │      builder model  opus                                                              █│    │
-     │      reviewer provider  ‹ claude ›                                                    ││    │
+     │      reviewer provider  ‹ claude ›                                                    █│    │
      │      reviewer model  sonnet                                                           ││    │
      │      discovery provider  ‹ claude ›                                                   ││    │
      │      discovery model  opus                                                            ││    │
      │      orchestrator provider  ‹ claude ›                                                ││    │
      │      orchestrator model  (not set)                                                    ││    │
-     │      local model  (not set)                                                           ││    │
-     │      model catalog refresh  (not set)                                                 ││    │
      │▶ ▸ Pipeline                                                                           ││    │
      │  ▾ Timeouts and pauses                                                                ││    │
      │      agent timeout  600                                                               ││    │

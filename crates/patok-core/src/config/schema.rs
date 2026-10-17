@@ -91,7 +91,7 @@ mod tests {
                     "builder_model",
                     "stages",
                     "agent_timeout_secs",
-                    "embedding_port",
+                    "history_dir",
                 ]
                 .as_slice(),
             ),
