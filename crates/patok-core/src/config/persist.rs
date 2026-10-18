@@ -366,6 +366,10 @@ mod tests {
             daemon_apply_timing("auto_push_remote"),
             Some(ApplyTiming::Immediate)
         );
+        assert_eq!(
+            daemon_apply_timing("auto_push_enabled"),
+            Some(ApplyTiming::Immediate)
+        );
         // Unit-of-work fields wait for the next start.
         for field in [
             "builder_provider",

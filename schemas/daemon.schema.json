@@ -12,6 +12,9 @@
       "format": "uint64",
       "minimum": 0
     },
+    "auto_push_enabled": {
+      "type": "boolean"
+    },
     "auto_push_remote": {
       "type": "string"
     },
@@ -160,6 +163,7 @@
     "review_in_loop",
     "review_multipass_threshold",
     "confidence_threshold",
+    "auto_push_enabled",
     "auto_push_remote",
     "discovery_cooldown_secs",
     "discovery_cooldown_cap_secs",

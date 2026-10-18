@@ -358,7 +358,7 @@ message SettingsChange {
     bool review_in_loop = 17;
     uint32 review_multipass_threshold = 18;
     double confidence_threshold = 19; // findings-confidence, range 0.0-1.0
-    string auto_push_remote = 25; // empty switches the push off (Part III, section 2)
+    string auto_push_remote = 25; // the remote pushed to when auto_push_enabled is on; empty switches the push off
     uint32 discovery_cooldown_secs = 27;
 
     // -- Section 3.6, timing --
@@ -383,6 +383,9 @@ message SettingsChange {
     // How many days the history keeps its task records (section 9 of
     // docs/private/history-restructure.md).
     uint32 history_retention_days = 50;
+    // Whether the group-completion push runs at all (default off); the
+    // remote is auto_push_remote.
+    bool auto_push_enabled = 51;
   }
 }
 

@@ -7,15 +7,15 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      agent timeout  600                                                               ││    │
-     │      pause between tasks  10                                                          ││────┘
-[  Re│      pause between agents  3                                                          ││────┐
-     │      pause between cycles  30                                                         ││    │
-[ Dis│      engine idle timeout  1800                                                        ││    │
-     │      [x] adaptive pauses                                                              ││    │
+[  Bu│      pause between tasks  10                                                          ││    │
+     │      pause between agents  3                                                          ││────┘
+[  Re│      pause between cycles  30                                                         ││────┐
+     │      engine idle timeout  1800                                                        ││    │
+[ Dis│      [x] adaptive pauses                                                              ││    │
      │      discovery cooldown  300                                                          ││    │
      │      discovery cooldown cap  1800                                                     ││    │
      │  ▾ Git                                                                                ││    │
+     │      [ ] auto-push enabled                                                            ││    │
      │      auto-push remote  (not set)                                                      ││    │
      │  ▾ History                                                                            ││    │
      │      history dir  (not set)                                                           █│    │

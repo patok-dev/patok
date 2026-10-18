@@ -48,6 +48,7 @@ expression: screen
      │      discovery cooldown  300                                                           │    │
      │      discovery cooldown cap  1800                                                      │    │
      │  ▾ Git                                                                                 │    │
+     │      [ ] auto-push enabled                                                             │    │
      │      auto-push remote  (not set)                                                       │    │
      │  ▾ History                                                                             │    │
      │      history dir  (not set)                                                            │    │
@@ -59,7 +60,6 @@ expression: screen
      │      [x] preview wrap                                                                  │    │
      │      update channel  ‹ stable ›                                                        │    │
      │      rail mode  ‹ normal ›                                                             │    │
-     │                                                                                        │    │
      │                                                                                        │    │
      │                                                                                        │    │
      │                                                                                        │    │

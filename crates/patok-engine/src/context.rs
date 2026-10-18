@@ -159,6 +159,12 @@ impl SessionContext {
         &self.settings
     }
 
+    /// The `auto_push_enabled` flag, read live from the central settings (an
+    /// `immediate` field); off means no push.
+    pub(crate) fn auto_push_enabled(&self) -> bool {
+        self.engine().settings().auto_push_enabled
+    }
+
     /// The `auto_push_remote` value, read live from the central settings (an
     /// `immediate` field), trimmed; empty means no push.
     pub(crate) fn auto_push_remote(&self) -> String {

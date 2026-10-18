@@ -184,7 +184,12 @@ static TIMEOUTS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
     ]
 });
 
-static GIT_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| vec![daemon_row("auto_push_remote")]);
+static GIT_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+    vec![
+        daemon_row("auto_push_enabled"),
+        daemon_row("auto_push_remote"),
+    ]
+});
 
 static HISTORY_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
     vec![

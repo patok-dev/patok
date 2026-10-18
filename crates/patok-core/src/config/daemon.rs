@@ -975,7 +975,8 @@ daemon_table! {
         [bool review_in_loop "review_in_loop" label "review in loop" help "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)." default true],
         [uint review_multipass_threshold "review_multipass_threshold" label "review multipass threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 0." expect "a whole number" default 0],
         [float_range confidence_threshold "confidence_threshold" label "confidence threshold" help "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5." range 0.0..=1.0 default 0.5],
-        [free_str auto_push_remote "auto_push_remote" label "auto-push remote" help "Push to this remote (git push <remote> HEAD) after each completed task group; empty means local commits only. Default origin." immediate default "origin".into()],
+        [bool auto_push_enabled "auto_push_enabled" label "auto-push enabled" help "When on, push HEAD to auto_push_remote (git push <remote> HEAD) after each completed task group (default off)." immediate default false],
+        [free_str auto_push_remote "auto_push_remote" label "auto-push remote" help "The remote pushed to (git push <remote> HEAD) after each completed task group when auto-push is enabled; empty means no push. Default origin." immediate default "origin".into()],
         [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" label "discovery cooldown" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
         [positive_uint discovery_cooldown_cap_secs "discovery_cooldown_cap_secs" label "discovery cooldown cap" help "The discovery cooldown doubles after each round, up to this cap in seconds. Default 1800 (30 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS],
         [/// Whether a plan session runs before each builder session (T10.1).
@@ -1273,6 +1274,17 @@ mod tests {
         assert!(!loaded.settings.skip_research_for_simple);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert!(DaemonSettings::default().skip_research_for_simple);
+    }
+
+    #[test]
+    fn auto_push_enabled_defaults_off_while_the_remote_stays_origin() {
+        assert!(!DaemonSettings::default().auto_push_enabled);
+        let loaded = load_project("[daemon]\nrun_mode = \"sprint\"\n");
+        assert!(!loaded.settings.auto_push_enabled);
+        assert_eq!(loaded.settings.auto_push_remote, "origin");
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let loaded = load_project("[daemon]\nauto_push_enabled = true\n");
+        assert!(loaded.settings.auto_push_enabled);
     }
 
     #[test]
@@ -1624,6 +1636,7 @@ enabled = false
         for key in [
             "builder_provider",
             "agent_timeout_secs",
+            "auto_push_enabled",
             "auto_push_remote",
             "pipeline",
             "stages",

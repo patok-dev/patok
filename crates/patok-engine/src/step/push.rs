@@ -1,11 +1,13 @@
-//! The group-completion push: `git push <auto_push_remote> HEAD`.
+//! The group-completion push: `git push <auto_push_remote> HEAD`, run only
+//! when `auto_push_enabled` is on (default off).
 
 use patok_core::event::NoticeLevel;
 
 use crate::context::SessionContext;
 
 /// Pushes HEAD to the `auto_push_remote` remote once a task group completes.
-/// The setting is read live; empty means no push, and outside a git
+/// Runs only when `auto_push_enabled` is on. The settings are read live;
+/// an empty remote means no push, and outside a git
 /// repository nothing happens. A failure is a warning carrying git's error
 /// only: the commits stay local and the build loop continues.
 pub(crate) struct PushStep<'a> {
@@ -19,6 +21,9 @@ impl<'a> PushStep<'a> {
 
     pub(crate) async fn run(&self) {
         let ctx = self.ctx;
+        if !ctx.auto_push_enabled() {
+            return;
+        }
         let remote = ctx.auto_push_remote();
         if remote.is_empty() {
             return;

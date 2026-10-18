@@ -23,7 +23,7 @@ expression: screen
        │      orchestrator provider  ‹ claude ›                                            █│                                      ││      │
        │      orchestrator model  (not set)                                                █│                                      ││      │
        │  ▾ Pipeline                                                                       █│                                      ││      │
-       │      run mode  ‹ sprint ›                                                         █│                                      ││      │
+       │      run mode  ‹ sprint ›                                                         ││                                      ││      │
        │      [ ] plan enabled                                                             ││                                      ││      │
        │      [ ] skip research for simple                                                 ││                                      ││      │
        │      [ ] skip review for simple                                                   ││                                      ││      │

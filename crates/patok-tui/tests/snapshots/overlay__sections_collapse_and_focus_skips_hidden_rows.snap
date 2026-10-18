@@ -24,9 +24,9 @@ expression: screen
      │      confidence threshold  0.5                                                        █│    │
      │▶ ▸ Timeouts and pauses                                                                ││    │
      │  ▾ Git                                                                                ││    │
+     │      [ ] auto-push enabled                                                            ││    │
      │      auto-push remote  (not set)                                                      ││    │
      │  ▾ History                                                                            ││    │
-     │      history dir  (not set)                                                           ││    │
      │┌──────────────────────────────── Timeouts and pauses ─────────────────────────────────┐│    │
      ││Timing: how long an agent may idle, the pauses between tasks, agents and cycles, and  ││    │
      ││how long an engine with no shell attached waits before shutting down.                 ││    │

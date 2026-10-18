@@ -487,6 +487,7 @@ daemon_wire_table! {
         [uint "history_retention_tasks" HistoryRetentionTasks]
         [uint "history_retention_days" HistoryRetentionDays]
         // Git.
+        [bool "auto_push_enabled" AutoPushEnabled]
         [text "auto_push_remote" AutoPushRemote]
     }
     unregistered {
@@ -594,6 +595,11 @@ mod tests {
             SettingValue::Float(0.5),
         );
         maps_to(
+            Change::AutoPushEnabled(true),
+            "auto_push_enabled",
+            bool(true),
+        );
+        maps_to(
             Change::AutoPushRemote("origin".into()),
             "auto_push_remote",
             string("origin"),
@@ -699,6 +705,7 @@ mod tests {
             ("batch_review", Change::BatchReview(false)),
             ("review_in_loop", Change::ReviewInLoop(true)),
             ("adaptive_pauses", Change::AdaptivePauses(false)),
+            ("auto_push_enabled", Change::AutoPushEnabled(true)),
         ] {
             assert_eq!(
                 to_proto(field, SettingValue::Bool(bool_of(&change))).unwrap(),
@@ -765,7 +772,8 @@ mod tests {
             | Change::SkipReviewForSimple(v)
             | Change::BatchReview(v)
             | Change::ReviewInLoop(v)
-            | Change::AdaptivePauses(v) => *v,
+            | Change::AdaptivePauses(v)
+            | Change::AutoPushEnabled(v) => *v,
             _ => panic!("not a boolean case"),
         }
     }

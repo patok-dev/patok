@@ -4139,7 +4139,10 @@ async fn the_group_is_pushed_once_after_its_last_task() {
         builder_with_claims("third.txt", "third\n", "none"),
         review_pass(),
     ]);
-    let engine = fixture.engine_configured(provider, "skip_review_for_simple = false\n");
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_enabled = true\n",
+    );
     let mut attachment = engine.attach().unwrap();
 
     engine.start_build().unwrap();
@@ -4191,7 +4194,10 @@ async fn a_failed_push_warns_with_gits_error_and_the_loop_continues() {
         builder_with_claims("second.txt", "second\n", "none"),
         review_pass(),
     ]);
-    let engine = fixture.engine_configured(provider, "skip_review_for_simple = false\n");
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_enabled = true\n",
+    );
     let mut attachment = engine.attach().unwrap();
 
     engine.start_build().unwrap();
@@ -4224,7 +4230,7 @@ async fn an_empty_auto_push_remote_never_pushes() {
     ]);
     let engine = fixture.engine_configured(
         provider,
-        "skip_review_for_simple = false\nauto_push_remote = \"\"\n",
+        "skip_review_for_simple = false\nauto_push_enabled = true\nauto_push_remote = \"\"\n",
     );
     let mut attachment = engine.attach().unwrap();
 
@@ -4248,7 +4254,7 @@ async fn auto_push_remote_names_the_remote() {
     ]);
     let engine = fixture.engine_configured(
         provider,
-        "skip_review_for_simple = false\nauto_push_remote = \"backup\"\n",
+        "skip_review_for_simple = false\nauto_push_enabled = true\nauto_push_remote = \"backup\"\n",
     );
     let mut attachment = engine.attach().unwrap();
 
@@ -4260,6 +4266,27 @@ async fn auto_push_remote_names_the_remote() {
         [(NoticeLevel::Info, "Pushed to backup".to_string())]
     );
     assert!(Fixture::remote_head(bare.path()).is_some());
+}
+
+/// T194.1: with default settings the push is off: a completed group pushes nothing.
+#[tokio::test]
+async fn the_push_is_off_by_default() {
+    let tasks = "- [ ] T1.1: add the first file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("origin");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider, "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert_eq!(push_notices(&events), []);
+    assert!(fixture.tasks_file().contains("- [x] T1.1:"));
+    assert_eq!(Fixture::remote_head(bare.path()), None);
 }
 
 /// T107.1: the loop the fix removes. The group's last task fails its review
