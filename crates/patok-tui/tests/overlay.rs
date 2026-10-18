@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 use patok_core::config::{ApplyTiming, SettingValue};
 use patok_core::event::EngineEvent;
+use patok_core::update::UpdateChannel;
 use patok_tui::{
     Action, App, Entry, FieldKind, Modal, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
     SETTINGS_HELP_PANEL_WIDTH, settings_area, settings_body_areas,
@@ -969,7 +970,7 @@ fn assert_cursor_visible(app: &App, screen: &str, height: usize) {
 fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
     let mut app = open();
     // At W = 100, H = 40 the modal's body is 28 rows; the help box under the
-    // list (T85.1) leaves the list 20 rows, and the expanded row model is 46
+    // list (T85.1) leaves the list 20 rows, and the expanded row model is 45
     // rows, so the bottom edge of the viewport is viewport row 19 and the
     // 4-row margin sits at row 15.
     let screen = draw(&app, W, H);
@@ -989,7 +990,7 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
     assert!(!screen.contains("Close settings"), "{screen}");
     // From the margin on, each Down advances the offset by one, keeping the
     // cursor exactly 4 rows above the bottom edge (viewport row 15).
-    for (focus, scroll) in (16..=42).map(|focus| (focus, focus - 15)) {
+    for (focus, scroll) in (16..=41).map(|focus| (focus, focus - 15)) {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
@@ -997,41 +998,41 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
         assert_eq!(focus - scroll, 15);
         assert_cursor_visible(&app, &screen, 20);
     }
-    // The list-end clamp: the offset stops at 27 and the cursor rides the last
+    // The list-end clamp: the offset stops at 26 and the cursor rides the last
     // rows down to the bottom edge.
-    for focus in 43..=46 {
+    for focus in 42..=45 {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 27, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 26, "focus {focus}");
         assert_cursor_visible(&app, &screen, 20);
     }
-    assert!(draw(&app, W, H).contains("rail mode"));
+    assert!(draw(&app, W, H).contains("update channel"));
 }
 
 #[test]
 fn up_scrolls_only_once_the_cursor_is_four_rows_below_the_top() {
     let mut app = open();
     // Walk to the last row first, drawing every step; the offset ends at its
-    // maximum (27) with the last entry row in view.
-    for _ in 0..46 {
+    // maximum (26) with the last entry row in view.
+    for _ in 0..45 {
         press(&mut app, KeyCode::Down);
         draw(&app, W, H);
     }
-    assert_eq!(app.overlay.focus, 46);
-    assert_eq!(app.overlay.scroll.get(), 27);
+    assert_eq!(app.overlay.focus, 45);
+    assert_eq!(app.overlay.scroll.get(), 26);
     // Up from the bottom keeps the view stationary while the cursor has room:
     // it climbs from viewport row 19 down to 4 -- 4 rows below the top edge.
-    for focus in (31..=45).rev() {
+    for focus in (30..=44).rev() {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 27, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 26, "focus {focus}");
         assert_cursor_visible(&app, &screen, 20);
     }
     // Past the margin the offset decreases one row per Up press, keeping the
     // cursor exactly 4 rows below the top edge (viewport row 4).
-    for (focus, scroll) in (4..=30).rev().map(|focus| (focus, focus - 4)) {
+    for (focus, scroll) in (4..=29).rev().map(|focus| (focus, focus - 4)) {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
@@ -1100,7 +1101,7 @@ fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
         assert!(app.overlay.focus - app.overlay.scroll.get() < usize::from(list.height));
     }
     assert_eq!(app.overlay.focus, len - 1);
-    assert_eq!(app.overlay.scroll.get(), 27);
+    assert_eq!(app.overlay.scroll.get(), 26);
 
     // The hovered row's selection marker is on screen at the walk's end.
     let screen = draw(&app, W, H);
@@ -1133,7 +1134,7 @@ fn the_margin_holds_with_sections_folded() {
         app.overlay.focused(),
         Entry::Row(row) if row.key == "builder_provider"
     ));
-    for (focus, scroll) in (8..=33).map(|focus| (focus, focus - 7)) {
+    for (focus, scroll) in (8..=32).map(|focus| (focus, focus - 7)) {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
@@ -1151,28 +1152,28 @@ fn the_margin_holds_with_sections_folded() {
             assert_eq!(app.overlay.focused(), Entry::Header(2));
         }
     }
-    // The clamp: the offset stops at 26 and the cursor rides to the bottom edge.
-    for focus in 34..=37 {
+    // The clamp: the offset stops at 25 and the cursor rides to the bottom edge.
+    for focus in 33..=36 {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 26, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 25, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
     assert!(matches!(
         app.overlay.focused(),
-        Entry::Row(row) if row.key == "rail_mode"
+        Entry::Row(row) if row.key == "update_channel"
     ));
     // And back up: stationary to viewport row 4, then decreasing with the same
     // 4-row margin below the top edge.
-    for focus in (30..=36).rev() {
+    for focus in (29..=35).rev() {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 26, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 25, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    for (focus, scroll) in (4..=29).rev().map(|focus| (focus, focus - 4)) {
+    for (focus, scroll) in (4..=28).rev().map(|focus| (focus, focus - 4)) {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
@@ -1193,18 +1194,18 @@ fn the_margin_holds_with_sections_folded() {
 fn the_cursor_stays_visible_after_jumps_and_folds() {
     let mut app = open();
     // At H = 24 the list is 12 rows (a 20-row body minus the help box under it,
-    // T85.1) and the expanded row model 47 rows, so a PageDown jumps the cursor
+    // T85.1) and the expanded row model 46 rows, so a PageDown jumps the cursor
     // far past the stationary band; every draw must pull the stale offset along.
     let screen = draw(&app, W, 24);
     assert_cursor_visible(&app, &screen, 12);
-    for (focus, scroll) in [(10, 3), (20, 13), (30, 23), (40, 33), (46, 35)] {
+    for (focus, scroll) in [(10, 3), (20, 13), (30, 23), (40, 33), (45, 34)] {
         press(&mut app, KeyCode::PageDown);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
         assert_eq!(app.overlay.scroll.get(), scroll, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    // Folding Pipeline while scrolled to the bottom shortens the list to 38
+    // Folding Pipeline while scrolled to the bottom shortens the list to 37
     // rows: walking the focus to the header and back down with the keys keeps
     // every step visible, and the offset clamps into the shortened range.
     let header = app
@@ -1221,9 +1222,9 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         press(&mut app, KeyCode::Down);
     }
     let screen = draw(&app, W, 24);
-    assert_eq!(app.overlay.visible().len(), 38);
-    assert_eq!(app.overlay.focus, 37);
-    assert_eq!(app.overlay.scroll.get(), 26);
+    assert_eq!(app.overlay.visible().len(), 37);
+    assert_eq!(app.overlay.focus, 36);
+    assert_eq!(app.overlay.scroll.get(), 25);
     assert_cursor_visible(&app, &screen, 12);
     // Unfolding grows the list again; walking back down to the very bottom
     // keeps the cursor visible, back at the maximum offset.
@@ -1241,8 +1242,8 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         press(&mut app, KeyCode::Down);
     }
     let screen = draw(&app, W, 24);
-    assert_eq!(app.overlay.visible().len(), 47);
-    assert_eq!(app.overlay.scroll.get(), 35);
+    assert_eq!(app.overlay.visible().len(), 46);
+    assert_eq!(app.overlay.scroll.get(), 34);
     assert_cursor_visible(&app, &screen, 12);
 }
 
@@ -1419,7 +1420,7 @@ fn the_list_ends_with_the_last_entry_and_no_enter_button() {
     // model needs the 72-row list of a 105-row screen.
     let app = open();
     let screen = draw(&app, W, 105);
-    assert!(screen.contains("rail mode"), "{screen}");
+    assert!(screen.contains("update channel"), "{screen}");
     assert!(!screen.contains("Close settings"), "{screen}");
     // No line carries a stray Enter button: the only Enter hints are the status
     // bar's "Enter start" and the footer's "Enter/Space edit".
@@ -1436,7 +1437,7 @@ fn the_list_ends_with_the_last_entry_and_no_enter_button() {
     let lines: Vec<&str> = screen.split('\n').collect();
     let last = lines
         .iter()
-        .position(|line| line.contains("rail mode"))
+        .position(|line| line.contains("update channel"))
         .expect("the last entry row is on screen");
     let after: String = lines[last + 1].chars().skip(6).take(88).collect();
     assert!(
@@ -1475,13 +1476,13 @@ fn navigation_stops_on_the_last_real_entry_without_a_gap() {
     assert_eq!(app.overlay.focus, app.overlay.visible().len() - 1);
     assert!(matches!(
         app.overlay.focused(),
-        Entry::Row(row) if row.key == "rail_mode"
+        Entry::Row(row) if row.key == "update_channel"
     ));
     // Further presses leave it there.
     press(&mut app, KeyCode::Down);
     assert_eq!(app.overlay.focus, app.overlay.visible().len() - 1);
     let screen = draw(&app, W, H);
-    assert!(screen.contains("rail mode"), "{screen}");
+    assert!(screen.contains("update channel"), "{screen}");
     assert!(!screen.contains("Close settings"), "{screen}");
 
     // j and PageDown clamp to the same last row.
@@ -1511,32 +1512,31 @@ fn navigation_stops_on_the_last_real_entry_without_a_gap() {
 #[test]
 fn the_last_row_still_edits_and_drafts() {
     let mut app = open();
-    // Focus the last entry row: rail mode, a tui-schema enum reading "normal"
-    // -- the default since T58.1, shown when the key is unset. Enter cycles to
-    // the detailed view mode (T89.1). The keys walk the focus there so the
-    // offset follows the selection (T136.1).
+    // Focus the last entry row: update channel, a tui-schema enum reading
+    // "stable" when the key is unset. Enter cycles to `dev`. The keys walk
+    // the focus there so the offset follows the selection (T136.1).
     let _ = draw(&app, W, H);
     while app.overlay.focus < app.overlay.visible().len() - 1 {
         press(&mut app, KeyCode::PageDown);
     }
     assert!(matches!(
         app.overlay.focused(),
-        Entry::Row(row) if row.key == "rail_mode"
+        Entry::Row(row) if row.key == "update_channel"
     ));
     let screen = draw(&app, W, H);
-    assert!(screen.contains("‹ normal ›"), "{screen}");
-    assert_eq!(app.tui.rail_mode, patok_core::config::RailMode::Normal);
+    assert!(screen.contains("‹ stable ›"), "{screen}");
+    assert_eq!(app.tui.update_channel, UpdateChannel::Stable);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
     // The change lands in the draft, not in the shell's own settings.
     assert_eq!(
-        app.overlay.drafts.get("rail_mode"),
-        Some(&SettingValue::Str("detailed".into()))
+        app.overlay.drafts.get("update_channel"),
+        Some(&SettingValue::Str("dev".into()))
     );
-    assert_eq!(app.tui.rail_mode, patok_core::config::RailMode::Normal);
+    assert_eq!(app.tui.update_channel, UpdateChannel::Stable);
     assert!(app.overlay.dirty());
     // The row shows the drafted choice, with no saved status line.
     let screen = draw(&app, W, H);
-    assert!(screen.contains("‹ detailed ›"), "{screen}");
+    assert!(screen.contains("‹ dev ›"), "{screen}");
     assert!(!screen.contains("Saved."), "{screen}");
 }
 

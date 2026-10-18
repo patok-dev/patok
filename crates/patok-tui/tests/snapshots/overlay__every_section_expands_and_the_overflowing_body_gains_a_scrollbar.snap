@@ -2,43 +2,43 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: screen
 ---
-            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────┐
-[ Research ]│no output yet                                                                         │
-      ↓     │                                                                                      │
-[   Plan   ]│                                                                                      │
-     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      pause between tasks  10                                                          ││    │
-     │      pause between agents  3                                                          ││────┘
-[  Re│      pause between cycles  30                                                         ││────┐
-     │      engine idle timeout  1800                                                        ││    │
-[ Dis│      [x] adaptive pauses                                                              ││    │
-     │      discovery cooldown  300                                                          ││    │
-     │      discovery cooldown cap  1800                                                     ││    │
-     │  ▾ Git                                                                                ││    │
-     │      [ ] auto-push enabled                                                            ││    │
-     │      auto-push remote  (not set)                                                      ││    │
-     │  ▾ History                                                                            ││    │
-     │      history dir  (not set)                                                           █│    │
-     │      history retention tasks  (not set)                                               █│    │
-     │      history retention days  (not set)                                                █│    │
-     │  ▾ Display and theme                                                                  █│    │
-     │      theme  ‹ dark ›                                                                  █│    │
-     │      truecolor  ‹ auto ›                                                              █│    │
-     │      [x] preview wrap                                                                 █│    │
-     │      update channel  ‹ stable ›                                                       █│    │
-     │▶     rail mode  ‹ normal ›                                                            ││    │
-     │┌───────────────────────────────────── rail mode ──────────────────────────────────────┐│    │
-     ││The pipeline rail's density: compact, normal or detailed.                             ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
-     │                                                                                        │    │
-     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
-     └────────────────────────────────────────────────────────────────────────────────────────┘    │
-            │                                                                                      │
-            │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                   │
-            └──────────────────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                                        [ Enter ] start  [ m ] menu
+─ Stopped ─ sprint ─── [ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ] ─────────────
+┌ Builder | Claude ────────────────────────────────────────────────────────────────────────────────┐
+│no output yet                                                                                     │
+│                                                                                                  │
+│    ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+│    │      agent timeout  600                                                               ││    │
+│    │      pause between tasks  10                                                          ││    │
+└────│      pause between agents  3                                                          ││────┘
+┌ Tas│      pause between cycles  30                                                         ││────┐
+│○ T1│      engine idle timeout  1800                                                        ││    │
+│    │      [x] adaptive pauses                                                              ││    │
+│    │      discovery cooldown  300                                                          ││    │
+│    │      discovery cooldown cap  1800                                                     ││    │
+│    │  ▾ Git                                                                                ││    │
+│    │      [ ] auto-push enabled                                                            ││    │
+│    │      auto-push remote  (not set)                                                      ││    │
+│    │  ▾ History                                                                            █│    │
+│    │      history dir  (not set)                                                           █│    │
+│    │      history retention tasks  (not set)                                               █│    │
+│    │      history retention days  (not set)                                                █│    │
+│    │  ▾ Display and theme                                                                  █│    │
+│    │      theme  ‹ dark ›                                                                  █│    │
+│    │      truecolor  ‹ auto ›                                                              █│    │
+│    │      [x] preview wrap                                                                 █│    │
+│    │▶     update channel  ‹ stable ›                                                       ││    │
+│    │┌─────────────────────────────────── update channel ───────────────────────────────────┐│    │
+│    ││Which GitHub releases self-update considers: stable (default) or dev. patok update    ││    │
+│    ││uses this unless --channel is given.                                                  ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+│    │                                                                                        │    │
+│    │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+│    └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                  │
+│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                        [ Enter ] start  [ m ] menu

@@ -746,7 +746,6 @@ impl App {
                 "update_channel" => {
                     Some(SettingValue::Str(self.tui.update_channel.as_str().into()))
                 }
-                "rail_mode" => Some(SettingValue::Str(self.tui.rail_mode.as_str().into())),
                 _ => None,
             },
         }

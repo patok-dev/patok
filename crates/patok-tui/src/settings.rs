@@ -133,7 +133,7 @@ pub use patok_wire::to_proto;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patok_core::config::{EnumSpelling, ProviderName, RailMode, Theme};
+    use patok_core::config::{EnumSpelling, ProviderName, Theme};
     use patok_proto::settings_change::Change;
 
     /// A value valid for the core registry kind, the sample the drift test sends
@@ -260,100 +260,25 @@ mod tests {
         assert!(text.contains("agent_pane_split = 70"), "{text}");
     }
 
-    /// A rail-mode change (T57.1) persists to the user-local layer like every
-    /// tui field, so the choice survives a restart; since T58.1 the fresh
-    /// default is `normal`, and an explicit `compact` still wins.
+    /// The retired `rail_mode` key (the rail now follows the terminal width)
+    /// is ignored without a warning, keeping the file's other fields, and it
+    /// is no longer an applicable setting.
     #[test]
-    fn a_rail_mode_change_updates_memory_and_persists() {
+    fn a_leftover_rail_mode_key_is_ignored_silently() {
         let (dir, mut shell) = holder();
-        // A fresh config resolves the rail mode to the default, `normal`.
-        assert_eq!(shell.settings().rail_mode, RailMode::Normal);
-        shell
-            .apply("rail_mode", SettingValue::Str("compact".into()))
-            .unwrap();
-        assert_eq!(shell.settings().rail_mode, RailMode::Compact);
-        let text = user_local(&dir);
-        assert!(text.contains("rail_mode = \"compact\""), "{text}");
-        assert!(text.contains("[tui]"), "{text}");
-
-        // A restart over the same layers still resolves the explicit compact.
-        let files = ConfigFiles {
-            user_global: None,
-            user_local: Some(dir.path().join("config.local.toml")),
-        };
-        let (restarted, warnings) = ShellSettings::with_files(files, dir.path(), None);
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(restarted.settings().rail_mode, RailMode::Compact);
-
-        // And back to normal.
-        shell
-            .apply("rail_mode", SettingValue::Str("normal".into()))
-            .unwrap();
-        assert_eq!(shell.settings().rail_mode, RailMode::Normal);
-
-        // The detailed mode (T89.1) persists the same way.
-        shell
-            .apply("rail_mode", SettingValue::Str("detailed".into()))
-            .unwrap();
-        assert_eq!(shell.settings().rail_mode, RailMode::Detailed);
-        let text = user_local(&dir);
-        assert!(text.contains("rail_mode = \"detailed\""), "{text}");
-    }
-
-    /// A hand-edited `rail_mode` in the config file is picked up by the
-    /// reload, the config-file switch path of the rail mode (T57.1): an
-    /// explicit `compact` is honored over the `normal` default (T58.1).
-    #[test]
-    fn a_hand_edited_rail_mode_is_picked_up_by_the_reload() {
-        let (dir, mut shell) = holder();
-        assert!(shell.reload_if_changed().is_none());
         std::fs::write(
             dir.path().join("config.local.toml"),
-            "[tui]\nrail_mode = \"compact\"\n",
+            "[tui]\ntheme = \"solarized_dark\"\nrail_mode = \"compact\"\n",
         )
         .unwrap();
         let warnings = shell.reload_if_changed().expect("the change was picked up");
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(shell.settings().rail_mode, RailMode::Compact);
-        // Nothing changed since: no reload.
-        assert!(shell.reload_if_changed().is_none());
-    }
-
-    /// An invalid `rail_mode` in a config layer falls back to `normal` (the
-    /// default since T58.1) with a warning naming the field and the source
-    /// file, keeping the file's other fields; an invalid submitted change is
-    /// rejected without touching the file (T57.1).
-    #[test]
-    fn an_invalid_rail_mode_falls_back_to_normal_with_a_warning() {
-        let (dir, mut shell) = holder();
-        let path = dir.path().join("config.local.toml");
-        std::fs::write(
-            &path,
-            "[tui]\ntheme = \"solarized_dark\"\nrail_mode = \"fancy\"\n",
-        )
-        .unwrap();
-        let warnings = shell.reload_if_changed().expect("the change was picked up");
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(
-            warnings[0].contains("tui.rail_mode must be one of"),
-            "{warnings:?}"
-        );
-        assert!(
-            warnings[0].contains(path.to_string_lossy().as_ref()),
-            "{warnings:?}"
-        );
-        assert!(warnings[0].contains("fancy"), "{warnings:?}");
-        assert_eq!(shell.settings().rail_mode, RailMode::Normal);
         assert_eq!(shell.settings().theme, Theme::SolarizedDark);
-
-        // An invalid submitted value is rejected without touching the file.
-        let before = std::fs::read_to_string(&path).unwrap();
-        let error = shell
-            .apply("rail_mode", SettingValue::Str("fancy".into()))
-            .unwrap_err();
-        assert!(error.contains("must be one of"), "{error}");
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
-        assert_eq!(shell.settings().rail_mode, RailMode::Normal);
+        assert!(
+            shell
+                .apply("rail_mode", SettingValue::Str("compact".into()))
+                .is_err()
+        );
     }
 
     #[test]

@@ -215,7 +215,7 @@ pub(crate) use config_enum_aliased;
 mod tests {
     use super::*;
     use crate::config::{
-        AcceptPolicy, ProviderKind, ProviderName, RailMode, RunMode, Severity, Theme, UpdateChannel,
+        AcceptPolicy, ProviderKind, ProviderName, RunMode, Severity, Theme, UpdateChannel,
     };
     use crate::event::AgentRole;
     use crate::pipeline::Stage;
@@ -300,15 +300,6 @@ mod tests {
     fn update_channel_round_trips_every_variant() {
         check::<UpdateChannel>();
         assert_eq!(UpdateChannel::accepted_spellings(), "`stable`, `dev`");
-    }
-
-    #[test]
-    fn rail_mode_round_trips_every_variant() {
-        check::<RailMode>();
-        assert_eq!(
-            RailMode::accepted_spellings(),
-            "`compact`, `normal`, `detailed`"
-        );
     }
 
     #[test]

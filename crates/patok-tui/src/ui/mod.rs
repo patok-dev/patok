@@ -15,7 +15,7 @@ use ratatui::widgets::Block;
 
 use crate::app::App;
 use crate::modal::ModalLayer;
-use crate::pipeline::{rail_width, render_rail};
+use crate::pipeline::{RAIL_HEIGHT, render_rail};
 use crate::view::FrameFocus;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -42,32 +42,37 @@ pub fn render(frame: &mut Frame, app: &App) {
     // inherits the base foreground. For the default theme both colours are
     // `Reset`, so this is a no-op.
     frame.render_widget(Block::new().style(base_style(app.theme())), frame.area());
-    let [body, status] =
-        Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(frame.area());
-
-    // The pipeline rail of T50.1: the one
-    // rendering of the engine-reported state, drawn in every engine state
-    // (T53.1) -- a narrow fixed-width vertical rail to the left of the
-    // frames, so nothing about it changes when the engine moves between
-    // idle and running. The rail's fixed `Length` constraint makes its edge
-    // not draggable, and nothing in the app moves a layout edge. The width
-    // follows the rail mode (T57.1): the letter tiles' narrow column in
-    // compact mode, the full-name boxes' wider one in normal mode -- read
-    // live from the tui settings, so a mode change relayouts the next frame.
-    let [rail, frames] = Layout::horizontal([
-        Constraint::Length(rail_width(app.tui.rail_mode)),
+    // The pipeline rail: one line above the frames, drawn in every engine
+    // state. It carries the app status, the run mode, the pipeline and the
+    // session timer, and picks its detail from the terminal width alone.
+    let [rail, frames, status] = Layout::vertical([
+        Constraint::Length(RAIL_HEIGHT),
         Constraint::Min(3),
+        Constraint::Length(1),
     ])
-    .areas(body);
+    .areas(frame.area());
     render_rail(frame, app, rail);
     // One merged view (T30.1): the agent output frame stacked above the task list
     // frame, sized by the frame focus — the focused frame takes all the free space,
-    // the other shrinks to 5 content lines.
-    let [output, tasks] = Layout::vertical(frame_constraints(app.focus)).areas(frames);
+    // the other shrinks to 5 content lines, or to a single line on a short
+    // terminal.
+    let [output, tasks] =
+        Layout::vertical(frame_constraints(app.focus, frames.height)).areas(frames);
     app.layout.output_area.set(output);
     app.layout.tasks_area.set(tasks);
-    render_output(frame, app, output);
-    render_tasks(frame, app, tasks);
+    let line_only = collapses_to_line(frames.height);
+    render_output(
+        frame,
+        app,
+        output,
+        line_only && app.focus == FrameFocus::Tasks,
+    );
+    render_tasks(
+        frame,
+        app,
+        tasks,
+        line_only && app.focus == FrameFocus::Output,
+    );
     frame.render_widget(status_widget(app, status), status);
     // The open modals on top, the modal stack's order bottom first (finding
     // 20): the bottom layer is drawn first and the top modal -- the one that
@@ -78,13 +83,41 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
-/// The merged body's vertical split: the agent output frame above the task list
-/// frame, with the focused frame taking all the free space and the other fixed at
-/// 7 rows (5 content lines plus its border) — never an equal percentage split.
-pub fn frame_constraints(focus: FrameFocus) -> [Constraint; 2] {
+/// The unfocused frame's height when it shrinks: 5 content lines plus its
+/// border.
+const SHRUNK_HEIGHT: u16 = 7;
+
+/// The unfocused frame's height when it collapses: a single line, the whole
+/// frame.
+const COLLAPSED_HEIGHT: u16 = 1;
+
+/// The content lines the focused frame must keep while the other one still
+/// shrinks to 5 lines; below that the other frame collapses to a single line.
+const ROOMY_CONTENT_LINES: u16 = 10;
+
+/// Whether the unfocused frame collapses to a single line in a body
+/// `height` rows tall: the focused frame would get fewer than
+/// [`ROOMY_CONTENT_LINES`] content lines beside a shrunk frame. Decided from
+/// the shrunk size, so the focused frame is never squeezed by the check
+/// itself.
+pub fn collapses_to_line(height: u16) -> bool {
+    height.saturating_sub(SHRUNK_HEIGHT) < ROOMY_CONTENT_LINES + 2
+}
+
+/// The merged body's vertical split for a body `height` rows tall: the agent
+/// output frame above the task list frame, with the focused frame taking all
+/// the free space and the other fixed at 7 rows (5 content lines plus its
+/// border), or at one row when [`collapses_to_line`] — never an equal
+/// percentage split.
+pub fn frame_constraints(focus: FrameFocus, height: u16) -> [Constraint; 2] {
+    let other = Constraint::Length(if collapses_to_line(height) {
+        COLLAPSED_HEIGHT
+    } else {
+        SHRUNK_HEIGHT
+    });
     match focus {
-        FrameFocus::Output => [Constraint::Min(1), Constraint::Length(7)],
-        FrameFocus::Tasks => [Constraint::Length(7), Constraint::Min(1)],
+        FrameFocus::Output => [Constraint::Min(1), other],
+        FrameFocus::Tasks => [other, Constraint::Min(1)],
     }
 }
 

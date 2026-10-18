@@ -53,18 +53,6 @@ impl Theme {
     }
 }
 
-config_enum! {
-    /// The pipeline rail's visual mode (T57.1): `normal` full-name boxes (the default since T58.1) or `compact` letter tiles, the opt-in.
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-    #[schemars(rename_all = "lowercase")]
-    pub enum RailMode {
-        Compact => "compact",
-        #[default]
-        Normal => "normal",
-        Detailed => "detailed",
-    }
-}
-
 /// The agent pane split's valid range.
 pub const AGENT_PANE_SPLIT_MIN: u64 = 20;
 pub const AGENT_PANE_SPLIT_MAX: u64 = 80;
@@ -79,7 +67,6 @@ pub struct TuiSettings {
     /// The agent pane split, valid range 20-80.
     pub agent_pane_split: u64,
     pub update_channel: UpdateChannel,
-    pub rail_mode: RailMode,
 }
 
 impl Default for TuiSettings {
@@ -96,7 +83,6 @@ pub(crate) struct TuiLayer {
     pub preview_wrap: Option<bool>,
     pub agent_pane_split: Option<u64>,
     pub update_channel: Option<UpdateChannel>,
-    pub rail_mode: Option<RailMode>,
 }
 
 impl TuiLayer {
@@ -107,7 +93,6 @@ impl TuiLayer {
             preview_wrap: self.preview_wrap.unwrap_or(true),
             agent_pane_split: self.agent_pane_split.unwrap_or(50),
             update_channel: self.update_channel.unwrap_or_default(),
-            rail_mode: self.rail_mode.unwrap_or_default(),
         }
     }
 }
@@ -157,7 +142,6 @@ pub fn tui_help(key: &str) -> Option<&'static str> {
         "update_channel" => {
             "Which GitHub releases self-update considers: stable (default) or dev. patok update uses this unless --channel is given."
         }
-        "rail_mode" => "The pipeline rail's density: compact, normal or detailed.",
         _ => return None,
     })
 }
@@ -190,10 +174,9 @@ pub(crate) fn parse_layer(
                     UpdateChannel::parse,
                 );
             }
-            "rail_mode" => {
-                layer.rail_mode =
-                    f.enumerated(key, value, &RailMode::accepted_spellings(), RailMode::parse);
-            }
+            // The retired rail mode: the rail now picks its detail from the
+            // terminal width, so a leftover key is ignored without a warning.
+            "rail_mode" => {}
             other => f.unknown(other),
         }
     }
@@ -227,29 +210,11 @@ impl Fields<'_> {
 mod tests {
     use super::*;
 
-    /// `normal` is the rail's default mode (T58.1): the enum default every
-    /// unset or invalid `rail_mode` falls back to.
-    #[test]
-    fn normal_is_the_default_rail_mode() {
-        assert_eq!(RailMode::default(), RailMode::Normal);
-        assert_eq!(TuiSettings::default().rail_mode, RailMode::Normal);
-    }
-
-    /// A fresh or empty config resolves `rail_mode` to `normal` with no
-    /// warnings: only an explicit `compact` selects the letter tiles.
-    #[test]
-    fn a_fresh_config_resolves_the_rail_mode_to_normal() {
-        let dir = tempfile::tempdir().unwrap();
-        let (settings, warnings) = load_tui(&ConfigFiles::default(), dir.path(), None);
-        assert_eq!(settings.rail_mode, RailMode::Normal);
-        assert!(warnings.is_empty(), "{warnings:?}");
-    }
-
     /// The help registry (T85.1) answers every overlay key it owns with
     /// non-empty text, and nothing else.
     #[test]
     fn tui_help_covers_its_keys_and_rejects_unknown_ones() {
-        for key in ["theme", "rail_mode", "display_and_theme"] {
+        for key in ["theme", "display_and_theme"] {
             let help = tui_help(key).unwrap_or_else(|| panic!("`{key}` has no help text"));
             assert!(!help.is_empty());
         }

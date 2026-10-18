@@ -6,7 +6,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::hit::{button_line, footer_button_rects};
@@ -74,6 +74,49 @@ pub fn fitted_hints<'a>(hints: &[&'a str], width: usize) -> Vec<&'a str> {
     let costs = hints.iter().map(|hint| hint.chars().count());
     let (kept, _) = fitted_prefix(costs, 1, 3, width);
     hints[..kept].to_vec()
+}
+
+/// The columns a collapsed frame's line spends outside its title: the leading
+/// rule dash and the trailing `─ [ ↓ ] ─` button.
+const COLLAPSED_CHROME: usize = 10;
+
+/// The width a collapsed frame's title spans may use on a line `width`
+/// columns wide.
+pub(super) fn collapsed_title_width(width: u16) -> usize {
+    usize::from(width).saturating_sub(COLLAPSED_CHROME)
+}
+
+/// A frame collapsed to its single line: a rule with the title's `left` spans,
+/// the `right` spans (the output frame's timer) at the end of the rule, then
+/// the `[ arrow ]` button that expands it -- `─ Title ──── 00:00 ─ [ ↓ ] ─`.
+/// The title spans must fit [`collapsed_title_width`]; a click anywhere on the
+/// line focuses the frame like any frame click, so the button needs no rect of
+/// its own.
+pub(super) fn render_collapsed(
+    frame: &mut Frame,
+    area: Rect,
+    left: Vec<Span<'static>>,
+    right: Vec<Span<'static>>,
+    arrow: &str,
+    theme: Theme,
+) {
+    let used: usize = left
+        .iter()
+        .chain(&right)
+        .map(|span| span.content.chars().count())
+        .sum();
+    let fill = collapsed_title_width(area.width).saturating_sub(used);
+    let mut spans = vec![Span::raw("─")];
+    spans.extend(left);
+    spans.push(Span::raw("─".repeat(fill)));
+    spans.extend(right);
+    spans.push(Span::raw("─ "));
+    spans.push(Span::styled(
+        format!("[ {arrow} ]"),
+        Style::new().fg(theme.highlighted_text),
+    ));
+    spans.push(Span::raw(" ─"));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// The focused frame's inner split (T71.1): the bottom inner row reserved for

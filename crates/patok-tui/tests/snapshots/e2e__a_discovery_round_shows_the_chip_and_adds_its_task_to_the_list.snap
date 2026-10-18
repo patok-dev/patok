@@ -2,17 +2,17 @@
 source: crates/patok-tui/tests/e2e.rs
 expression: screen
 ---
-            ┌ Builder | mock ─────────────────────────────────────────── 00:00 ┐
-[ Research ]│Not committed (not a git repository, nothing to commit, or the com│
-      ↓     │mit failed).                                                      │
-[   Plan   ]│✔ T1.1 done                                                       │
-      ↓     │ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks              │
-[  Build   ]└──────────────────────────────────────────────────────────────────┘
-      ↓     ┌ Tasks | 1/1 - 0 left ────────────────────────────────────────────┐
-[  Review  ]│✔ T1.1  add hello                                                 │
-            │                                                                  │
-[ Discover ]│                                                                  │
-            │                                                                  │
-            │                                                                  │
-            └──────────────────────────────────────────────────────────────────┘
- DISCOVERING  continuous                               [ Esc ] stop  [ m ] menu
+─ Discovering ─ continuous ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─── 00:00 ─
+┌ Builder | mock ─────────────────────────────────────────────────────── 00:00 ┐
+│── T1.1: add hello                                                            │
+│Builder started (mock)                                                        │
+│Builder finished in 0 sec                                                     │
+│Review skipped for T1.1: review in loop is off; the task is validated by the b│
+│uilder's own verification.                                                    │
+│Not committed (not a git repository, nothing to commit, or the commit failed).│
+│✔ T1.1 done                                                                   │
+│                                                                              │
+│ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+─ Tasks | 1/1 - 0 left ───────────────────────────────────────────────── [ ↑ ] ─
+                                                       [ Esc ] stop  [ m ] menu

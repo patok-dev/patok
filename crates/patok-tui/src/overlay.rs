@@ -16,8 +16,8 @@ use std::sync::LazyLock;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use patok_core::config::{
-    EnumSpelling, FieldKind as CoreFieldKind, ProviderName, RailMode, SettingValue, Theme,
-    UpdateChannel, daemon_field, daemon_help, daemon_label, tui_help,
+    EnumSpelling, FieldKind as CoreFieldKind, ProviderName, SettingValue, Theme, UpdateChannel,
+    daemon_field, daemon_help, daemon_label, tui_help,
 };
 use ratatui::layout::Rect;
 
@@ -224,12 +224,6 @@ static DISPLAY_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
             label: "update channel",
             schema: Schema::Tui,
             kind: FieldKind::Enum(UpdateChannel::SPELLINGS),
-        },
-        Row {
-            key: "rail_mode",
-            label: "rail mode",
-            schema: Schema::Tui,
-            kind: FieldKind::Enum(RailMode::SPELLINGS),
         },
     ]
 });
@@ -1034,7 +1028,7 @@ mod tests {
         );
         assert_eq!(entries[0], Entry::Header(0));
         // The list ends on the last real entry row, with no button after it.
-        assert_eq!(*entries.last().unwrap(), Entry::Row(&DISPLAY_SECTION[4]));
+        assert_eq!(*entries.last().unwrap(), Entry::Row(&DISPLAY_SECTION[3]));
         assert!(entries.contains(&Entry::Row(&PROVIDER_SECTION[0])));
         assert!(entries.contains(&Entry::Row(&GIT_SECTION[0])));
         assert!(entries.contains(&Entry::Row(&DISPLAY_SECTION[0])));
@@ -1099,7 +1093,7 @@ mod tests {
         // Focus clamps into range and never lands on a hidden row.
         overlay.focus = usize::MAX / 2;
         assert!(overlay.focus >= entries.len());
-        assert_eq!(overlay.focused(), Entry::Row(&DISPLAY_SECTION[4]));
+        assert_eq!(overlay.focused(), Entry::Row(&DISPLAY_SECTION[3]));
         assert!(!entries.contains(&Entry::Row(&PIPELINE_SECTION[0])));
         // Expanding brings the rows back.
         toggle_section(&mut overlay, &mut modals, 1);
@@ -1322,23 +1316,6 @@ mod tests {
                 Action::None
             );
             assert_eq!(overlay.drafts.get("truecolor"), Some(&expected));
-        }
-
-        // rail_mode: compact -> normal -> detailed -> compact.
-        focus_field(&mut overlay, "rail_mode");
-        for (current, expected) in [
-            (str("compact"), "normal"),
-            (str("normal"), "detailed"),
-            (str("detailed"), "compact"),
-        ] {
-            assert_eq!(
-                overlay.on_key(&mut modals, key(KeyCode::Right), current),
-                Action::None
-            );
-            assert_eq!(
-                overlay.drafts.get("rail_mode"),
-                Some(&SettingValue::Str(expected.into()))
-            );
         }
     }
 

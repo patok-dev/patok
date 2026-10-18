@@ -1,34 +1,33 @@
-//! The pipeline rail: the one
-//! rendering of the engine-reported pipeline state of T49.1. The narrow
-//! fixed-width vertical rail sits to the left of the merged view's frames in
-//! every engine state, so nothing about it changes when the engine moves
-//! between idle and running (the merged view of T30.1 has one face per state,
-//! which stands in for the spec's Dashboard/Explore tabs). The renderer and
-//! the tile-locating tests share the same rect math, so a tile's rect can
+//! The pipeline rail: the one rendering of the engine-reported pipeline state.
+//! A single horizontal line above the agent output frame, drawn in every
+//! engine state, so nothing about it changes when the engine moves between
+//! idle and running. It carries the app's running status, the run mode, the
+//! pipeline tiles and the session timer, and picks how much of that to show
+//! from the terminal width alone -- there is no setting for it. The renderer
+//! and the tile-locating tests share the same piece list, so a tile's rect can
 //! never drift from what is drawn.
 
-use patok_core::config::RailMode;
-use patok_core::config::SettingValue;
+use patok_core::event::Phase;
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::theme::Theme;
+use crate::ui::output::format_elapsed;
 
-/// The rail column's width: narrow and fixed. A fixed `Length` constraint in
-/// the layout -- nothing in the app moves a layout edge, so the rail's edge is
-/// not draggable by construction.
-pub const RAIL_WIDTH: u16 = 6;
+/// The rail line's height: always one row.
+pub const RAIL_HEIGHT: u16 = 1;
 
-/// The blank row between the top of the rail column and the first tile
-/// (T63.1): every tile and its connector segments start this many rows below
-/// the top of the rail area, so the rail opens with one purely empty line.
-/// Nothing is drawn in that row: no border, connector, tile or colour.
-const RAIL_TOP_GAP: u16 = 1;
+/// The shortest run of rule dashes between the pipeline and the timer.
+const MIN_FILL: usize = 3;
+
+/// The timer's reserved width when no session runs, so the rail's detail does
+/// not flip between idle and running at the same terminal width.
+const TIMER_RESERVE: usize = 5;
 
 /// One rail tile: the four stage tiles and
 /// the standalone tile DI.
@@ -40,15 +39,6 @@ pub enum TileId {
     Review,
     Discover,
 }
-
-/// Every tile, stage and standalone, in rail order.
-const TILES: [TileId; 5] = [
-    TileId::Research,
-    TileId::Plan,
-    TileId::Build,
-    TileId::Review,
-    TileId::Discover,
-];
 
 impl TileId {
     /// The stage tile's id for `stage`.
@@ -72,19 +62,17 @@ impl TileId {
         }
     }
 
-    /// The tile's letter or letters: R, P, B, RV for the stages, DI for the standalone tile.
+    /// The tile's letter: R, P, B, R for the stages, D for the standalone tile.
     pub fn letters(self) -> &'static str {
         match self {
-            Self::Research => "R",
+            Self::Research | Self::Review => "R",
             Self::Plan => "P",
             Self::Build => "B",
-            Self::Review => "RV",
-            Self::Discover => "DI",
+            Self::Discover => "D",
         }
     }
 
-    /// The tile's full user-facing name, carried by the normal-mode box
-    /// (Research, Plan, Build, Review, Discover).
+    /// The tile's full user-facing name (Research, Plan, Build, Review, Discover).
     pub fn label(self) -> &'static str {
         match self {
             Self::Discover => "Discover",
@@ -93,39 +81,47 @@ impl TileId {
     }
 }
 
-/// The rail column's width in `mode` (T57.1): the narrow fixed width for the
-/// compact letter tiles, and for normal mode one width wide enough for the
-/// longest tile name plus the box padding, so every full-name box in the rail
-/// is equally wide.
-pub fn rail_width(mode: RailMode) -> u16 {
-    match mode {
-        RailMode::Compact => RAIL_WIDTH,
-        RailMode::Normal | RailMode::Detailed => {
-            u16::try_from(longest_label() + 4).unwrap_or(RAIL_WIDTH)
-        }
-    }
+/// How much the rail shows, from the least to the most; the widest that fits
+/// the terminal wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RailDetail {
+    /// Status and the pipeline as bare letters, then the timer.
+    Minimal,
+    /// The run mode joins the status.
+    Mode,
+    /// The pipeline steps get brackets: `[ R ]`.
+    Brackets,
+    /// The pipeline steps carry their full names: `[ Research ]`.
+    Names,
 }
 
-/// The longest tile name: the width every normal-mode box centres its name in.
-fn longest_label() -> usize {
-    TILES
-        .iter()
-        .map(|id| id.label().chars().count())
-        .max()
-        .unwrap_or(0)
+/// What a piece of the rail line is, which decides its colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Piece {
+    /// The horizontal rule, dashes and the spaces around the words.
+    Rule,
+    Status,
+    Mode,
+    /// The `>` between stage tiles and the gap before the standalone tile.
+    Separator,
+    Tile(TileId),
+    Timer,
 }
 
-/// The tile as drawn: brackets around the letter(s) in compact mode (the
-/// brackets stand in for the spec's tile border, so an accent-bordered tile is
-/// one whose brackets carry the accent colour), or in normal mode a bracketed
-/// box of the common rail width carrying the tile's full user-facing name,
-/// centred (T57.1).
-pub fn tile_text(id: TileId, mode: RailMode) -> String {
-    match mode {
-        RailMode::Compact => format!("[ {} ]", id.letters()),
-        RailMode::Normal | RailMode::Detailed => {
-            format!("[ {:^width$} ]", id.label(), width = longest_label())
-        }
+/// The text the rail line is built from.
+#[derive(Clone, Copy)]
+struct RailText<'a> {
+    status: &'a str,
+    mode: &'a str,
+    timer: Option<&'a str>,
+}
+
+/// The tile as drawn at `detail`.
+fn tile_text(id: TileId, detail: RailDetail) -> String {
+    match detail {
+        RailDetail::Minimal | RailDetail::Mode => id.letters().to_string(),
+        RailDetail::Brackets => format!("[ {} ]", id.letters()),
+        RailDetail::Names => format!("[ {} ]", id.label()),
     }
 }
 
@@ -143,7 +139,7 @@ pub fn tile_status(state: &PipelineState, id: TileId) -> TileStatus {
 
 /// One tile's style from its status: muted and
 /// pending tiles render in the theme's muted colour, done tiles in green, and
-/// the active tile is accent-bordered (accent brackets) and bold.
+/// the active tile is accent-coloured and bold.
 pub fn tile_style(_id: TileId, status: TileStatus, theme: Theme) -> Style {
     let colour = match status {
         TileStatus::Muted | TileStatus::Pending => theme.muted_text,
@@ -157,126 +153,156 @@ pub fn tile_style(_id: TileId, status: TileStatus, theme: Theme) -> Style {
     }
 }
 
-/// The rail's tile rects, top to bottom: one blank row (T63.1) between the
-/// top of the rail area and the first tile, then the enabled stage tiles in
-/// order, a gap and the standalone tiles -- all shifted down by exactly
-/// `RAIL_TOP_GAP` rows. Tiles past the area's bottom are dropped, so a short
-/// terminal clips the rail's tail.
-pub fn rail_tile_rects(state: &PipelineState, area: Rect, mode: RailMode) -> Vec<(TileId, Rect)> {
-    let mut rects = Vec::new();
-    let mut row = area.y + RAIL_TOP_GAP;
+/// The rail line as pieces, left to right, at `detail`: the status, the run
+/// mode from `Mode` up, the pipeline, then a rule that absorbs the spare width
+/// and the timer. The rule never gets shorter than [`MIN_FILL`]; the pieces
+/// are wider than `width` when the terminal is too narrow, and the line then
+/// clips at its right edge.
+fn rail_pieces(
+    state: &PipelineState,
+    text: &RailText,
+    detail: RailDetail,
+    width: usize,
+) -> Vec<(Piece, String)> {
+    let rule = |s: &str| (Piece::Rule, s.to_string());
+    let mut pieces = vec![rule("─ "), (Piece::Status, text.status.to_string())];
+    if detail >= RailDetail::Mode {
+        pieces.push(rule(" ─ "));
+        pieces.push((Piece::Mode, text.mode.to_string()));
+    }
+    pieces.push(rule(" ─── "));
     for (index, tile) in state.stages.iter().enumerate() {
-        // One connector row sits below every stage tile except the first.
-        let id = TileId::of_stage(tile.stage);
         if index > 0 {
-            row += if mode == RailMode::Detailed { 4 } else { 1 };
+            pieces.push((Piece::Separator, " > ".to_string()));
         }
-        if let Some(rect) = rail_tile_rect(id, area, row, mode) {
-            rects.push((id, rect));
-        }
-        row += if mode == RailMode::Detailed { 4 } else { 1 };
+        let id = TileId::of_stage(tile.stage);
+        pieces.push((Piece::Tile(id), tile_text(id, detail)));
     }
-    // The blank gap row between the stage tiles and the standalone tiles.
     if !state.stages.is_empty() {
-        row += if mode == RailMode::Detailed { 4 } else { 1 };
+        pieces.push((Piece::Separator, "   ".to_string()));
     }
-    let id = TileId::Discover;
-    if let Some(rect) = rail_tile_rect(id, area, row, mode) {
-        rects.push((id, rect));
+    pieces.push((
+        Piece::Tile(TileId::Discover),
+        tile_text(TileId::Discover, detail),
+    ));
+
+    let head: usize = pieces.iter().map(|(_, s)| s.chars().count()).sum();
+    match text.timer {
+        Some(timer) => {
+            // " ", the rule, " ", the timer, " ─".
+            let timer_width = timer.chars().count();
+            let fill = width.saturating_sub(head + timer_width + 4).max(MIN_FILL);
+            pieces.push(rule(&format!(" {} ", "─".repeat(fill))));
+            pieces.push((Piece::Timer, timer.to_string()));
+            pieces.push(rule(" ─"));
+        }
+        None => {
+            // No session: the rule runs on to the edge.
+            let fill = width.saturating_sub(head + 1).max(MIN_FILL);
+            pieces.push(rule(&format!(" {}", "─".repeat(fill))));
+        }
+    }
+    pieces
+}
+
+/// The widest detail whose natural width fits `width`; `Minimal` when even
+/// that does not.
+fn pick_detail(state: &PipelineState, text: &RailText, width: usize) -> RailDetail {
+    // The decision reserves the timer's room, shown or not.
+    let reserved = text.timer.unwrap_or("00:00");
+    let probe = RailText {
+        timer: Some(reserved),
+        ..*text
+    };
+    [RailDetail::Names, RailDetail::Brackets, RailDetail::Mode]
+        .into_iter()
+        .find(|detail| {
+            let natural: usize = rail_pieces(state, &probe, *detail, 0)
+                .iter()
+                .map(|(_, s)| s.chars().count())
+                .sum();
+            natural.max(TIMER_RESERVE) <= width
+        })
+        .unwrap_or(RailDetail::Minimal)
+}
+
+/// The status word and its colour: a discovery round runs either on an idle
+/// engine or inside a session's empty-queue gap, so it wins over the phase.
+fn rail_status(app: &App) -> (&'static str, Color) {
+    let theme = app.theme();
+    match (app.run.stopping, app.run.phase) {
+        (true, _) => ("Stopping", theme.highlighted_text),
+        (false, _) if app.run.planning => ("Planning", theme.chip_planning),
+        (false, _) if app.run.discovering => ("Discovering", theme.chip_discovering),
+        (false, Phase::Running) => ("Running", theme.success),
+        (false, Phase::Startup) => ("Stopped", theme.chip_neutral),
+    }
+}
+
+/// The rail's pieces for `app` at `width`, with the detail picked from it.
+fn app_pieces(app: &App, width: u16) -> (RailDetail, Vec<(Piece, String)>) {
+    let (status, _) = rail_status(app);
+    let timer = app.session_elapsed().map(format_elapsed);
+    let text = RailText {
+        status,
+        mode: app.run_mode(),
+        timer: timer.as_deref(),
+    };
+    let width = usize::from(width);
+    let detail = pick_detail(&app.pipeline, &text, width);
+    (detail, rail_pieces(&app.pipeline, &text, detail, width))
+}
+
+/// The detail the rail shows at `width` for `app`.
+#[cfg(any(test, feature = "test-support"))]
+pub fn rail_detail(app: &App, width: u16) -> RailDetail {
+    app_pieces(app, width).0
+}
+
+/// The tiles' rects on the rail line inside `area`, left to right, clipped to
+/// the area: a tile the terminal cuts off is dropped. The same pieces the
+/// renderer draws, so the rects are exactly where the tiles are.
+#[cfg(any(test, feature = "test-support"))]
+pub fn rail_tile_rects(app: &App, area: Rect) -> Vec<(TileId, Rect)> {
+    let mut rects = Vec::new();
+    let mut x = 0usize;
+    for (piece, text) in app_pieces(app, area.width).1 {
+        let width = text.chars().count();
+        if let Piece::Tile(id) = piece
+            && x + width <= usize::from(area.width)
+        {
+            let x = area.x + u16::try_from(x).unwrap_or(0);
+            rects.push((
+                id,
+                Rect::new(x, area.y, u16::try_from(width).unwrap_or(0), 1),
+            ));
+        }
+        x += width;
     }
     rects
 }
 
-/// One rail tile's rect on `row`: the tile centred in the rail's width for the
-/// mode, or `None` when the row falls past the area's bottom.
-fn rail_tile_rect(id: TileId, area: Rect, row: u16, mode: RailMode) -> Option<Rect> {
-    if row >= area.y + area.height {
-        return None;
-    }
-    let width = u16::try_from(tile_text(id, mode).chars().count()).unwrap_or(0);
-    let x = area.x + rail_width(mode).saturating_sub(width).div_ceil(2);
-    Some(Rect::new(x, row, width, 1))
-}
-
-/// The rail's down-arrow connectors: one cell below every stage tile except
-/// the last, centred in the rail's width so the arrow lines up under the
-/// tile's letter in compact mode and under the centre of the box column in
-/// normal mode. The same `RAIL_TOP_GAP` shift (T63.1) keeps each arrow exactly
-/// one row below the stage tile above it. Connectors past the area's bottom
-/// are dropped.
-pub fn rail_connector_rects(state: &PipelineState, area: Rect, mode: RailMode) -> Vec<Rect> {
-    (1..state.stages.len() as u16)
-        .map(|index| {
-            area.y + RAIL_TOP_GAP + index * if mode == RailMode::Detailed { 4 } else { 2 } - 1
-        })
-        .filter(|row| *row < area.y + area.height)
-        .map(|row| Rect::new(area.x + rail_width(mode) / 2, row, 1, 1))
-        .collect()
-}
-
-/// Draws the vertical rail into its fixed-width
-/// column left of the frames, in every engine state (T53.1): one small tile
-/// per enabled stage in order, connected by down-arrow lines, then a gap and
-/// the standalone tile DI -- the letter tiles of compact
-/// mode or the equal-width full-name boxes of normal mode (T57.1), the mode
-/// read live from the tui settings so a change relayouts the next frame.
-/// The rail opens with one purely blank row above its first tile (T63.1),
-/// which the renderer never writes into. Records the rail's rect at the last
-/// render.
+/// Draws the rail line into `area`, one row, in every engine state. Records
+/// the rail's rect at the last render.
 pub fn render_rail(frame: &mut Frame, app: &App, area: Rect) {
     app.layout.pipeline_area.set(area);
     let theme = app.theme();
-    let mode = app.tui.rail_mode;
-    let state = &app.pipeline;
-    for (id, rect) in rail_tile_rects(state, area, mode) {
-        let style = tile_style(id, tile_status(state, id), theme);
-        frame.render_widget(
-            Paragraph::new(Span::styled(tile_text(id, mode), style)),
-            rect,
-        );
-        if mode == RailMode::Detailed
-            && let Some((provider, model)) = agent_details(app, id)
-        {
-            let x = area.x + 1;
-            let width = area.width.saturating_sub(2);
-            for (offset, label) in [provider, model].into_iter().enumerate() {
-                let detail_rect = Rect::new(x, rect.y.saturating_add(1 + offset as u16), width, 1);
-                if detail_rect.y < area.y.saturating_add(area.height) {
-                    frame.render_widget(
-                        Paragraph::new(label)
-                            .style(Style::new().fg(theme.muted_text))
-                            .wrap(ratatui::widgets::Wrap { trim: true }),
-                        detail_rect,
-                    );
-                }
-            }
-        }
-    }
-    for rect in rail_connector_rects(state, area, mode) {
-        frame.render_widget(
-            Paragraph::new(Span::styled("↓", Style::new().fg(theme.muted_text))),
-            rect,
-        );
-    }
-}
-
-fn agent_details(app: &App, id: TileId) -> Option<(String, String)> {
-    let (provider_key, model_key) = match id {
-        TileId::Research => ("research_provider", "research_model"),
-        TileId::Plan => ("planner_provider", "planner_model"),
-        TileId::Build => ("builder_provider", "builder_model"),
-        TileId::Review => ("reviewer_provider", "reviewer_model"),
-        TileId::Discover => ("discovery_provider", "discovery_model"),
-    };
-    let value = |key: &str| {
-        app.settings.get(key).and_then(|v| match v {
-            SettingValue::Str(s) if !s.is_empty() => Some(s.clone()),
-            _ => None,
+    let (_, status_colour) = rail_status(app);
+    let muted = Style::new().fg(theme.muted_text);
+    let spans: Vec<Span> = app_pieces(app, area.width)
+        .1
+        .into_iter()
+        .map(|(piece, text)| {
+            let style = match piece {
+                Piece::Rule => Style::new(),
+                Piece::Status => Style::new().fg(status_colour).add_modifier(Modifier::BOLD),
+                Piece::Mode | Piece::Separator | Piece::Timer => muted,
+                Piece::Tile(id) => tile_style(id, tile_status(&app.pipeline, id), theme),
+            };
+            Span::styled(text, style)
         })
-    };
-    let provider = value(provider_key)?;
-    let model = value(model_key)?;
-    Some((provider, model))
+        .collect();
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 #[cfg(test)]
@@ -287,138 +313,89 @@ mod tests {
         PipelineState::today()
     }
 
-    /// Today's rail: the four stage tiles in order with one blank row (T63.1)
-    /// above the first, a connector between consecutive stage tiles, a gap,
-    /// then the standalone tile.
+    fn line(text: &RailText, detail: RailDetail, width: usize) -> String {
+        rail_pieces(&today(), text, detail, width)
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect()
+    }
+
+    const CONTINUOUS: RailText = RailText {
+        status: "Running",
+        mode: "continuous",
+        timer: Some("00:00"),
+    };
+    const SPRINT: RailText = RailText {
+        status: "Running",
+        mode: "sprint",
+        timer: Some("00:00"),
+    };
+
+    /// Each detail draws the line the design shows, at its natural width.
     #[test]
-    fn rail_rects_run_top_to_bottom_with_a_connector_row() {
-        let area = Rect::new(0, 1, RAIL_WIDTH, 22);
-        let rects = rail_tile_rects(&today(), area, RailMode::Compact);
-        let rows: Vec<(TileId, u16)> = rects.iter().map(|(id, rect)| (*id, rect.y)).collect();
+    fn each_detail_draws_its_line() {
         assert_eq!(
-            rows,
-            vec![
-                (TileId::Research, 2),
-                (TileId::Plan, 4),
-                (TileId::Build, 6),
-                (TileId::Review, 8),
-                (TileId::Discover, 10),
-            ]
+            line(&CONTINUOUS, RailDetail::Minimal, 0),
+            "─ Running ─── R > P > B > R   D ─── 00:00 ─"
         );
-        // The top row of the rail area holds no tile: the first tile sits
-        // exactly one row below it (T63.1).
-        assert!(
-            !rects.iter().any(|(_, rect)| rect.y == area.y),
-            "the row above the first tile is blank"
-        );
-        assert_eq!(rects.first().unwrap().1.y, area.y + RAIL_TOP_GAP);
-        // The tiles stay inside the rail column and never overlap.
-        for (_, rect) in &rects {
-            assert!(rect.x >= area.x && rect.right() <= area.right());
-        }
-        // The connectors sit between consecutive stage tiles, under the letter.
         assert_eq!(
-            rail_connector_rects(&today(), area, RailMode::Compact),
-            vec![
-                Rect::new(3, 3, 1, 1),
-                Rect::new(3, 5, 1, 1),
-                Rect::new(3, 7, 1, 1)
-            ]
+            line(&CONTINUOUS, RailDetail::Mode, 0),
+            "─ Running ─ continuous ─── R > P > B > R   D ─── 00:00 ─"
+        );
+        assert_eq!(
+            line(&CONTINUOUS, RailDetail::Brackets, 0),
+            "─ Running ─ continuous ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─── 00:00 ─"
+        );
+        assert_eq!(
+            line(&CONTINUOUS, RailDetail::Names, 0),
+            "─ Running ─ continuous ─── [ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ] ─── 00:00 ─"
         );
     }
 
-    /// A short rail keeps the tiles that fit and clips the tail; the blank
-    /// top row (T63.1) counts against the tiles that fit.
+    /// A shorter mode word leaves the spare width to the rule.
     #[test]
-    fn rail_rects_clip_tiles_past_the_bottom() {
-        let rects = rail_tile_rects(&today(), Rect::new(0, 0, RAIL_WIDTH, 3), RailMode::Compact);
+    fn the_rule_absorbs_the_spare_width() {
+        let width = line(&CONTINUOUS, RailDetail::Brackets, 0).chars().count();
         assert_eq!(
-            rects.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            vec![TileId::Research]
+            line(&SPRINT, RailDetail::Brackets, width),
+            "─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────── 00:00 ─"
         );
-        assert!(
-            rail_connector_rects(&today(), Rect::new(0, 0, RAIL_WIDTH, 1), RailMode::Compact)
-                .is_empty()
+        assert_eq!(
+            line(&SPRINT, RailDetail::Brackets, width).chars().count(),
+            width
         );
     }
 
-    /// Normal mode (T57.1): every box is the width of the longest tile name
-    /// plus the bracket-and-space padding, so all boxes in the rail are
-    /// equally wide, each name is centred in its box, the boxes fill the rail
-    /// column, and the connector arrows centre on the box column.
+    /// With no session the rule runs to the edge instead of the timer.
     #[test]
-    fn normal_mode_boxes_are_equally_wide_with_centred_names_and_arrows() {
-        let mode = RailMode::Normal;
-        let longest = longest_label();
-        assert_eq!(longest, "Discover".len());
-        assert_eq!(rail_width(mode), u16::try_from(longest + 4).unwrap());
-        assert_eq!(rail_width(RailMode::Compact), RAIL_WIDTH);
+    fn an_idle_rail_has_no_timer() {
+        let idle = RailText {
+            timer: None,
+            ..CONTINUOUS
+        };
+        let text = line(&idle, RailDetail::Minimal, 50);
+        assert_eq!(
+            text,
+            format!("─ Running ─── R > P > B > R   D {}", "─".repeat(18))
+        );
+    }
 
-        // Every tile's box carries its full name, centred, all the same width.
-        for id in TILES {
-            let text = tile_text(id, mode);
-            assert_eq!(text.chars().count(), longest + 4, "{id:?}: {text}");
-            let name = id.label();
-            let left = text.find(name).unwrap_or_else(|| panic!("{id:?}: {text}"));
-            let right = text.chars().count() - left - name.chars().count();
-            // The name is centred in the common name field: the odd pad cell
-            // always falls on the same (right) side, so the padding is
-            // consistent across every box.
-            assert!(right >= left, "{id:?}: {text}");
-            let padding = (longest - name.chars().count()) / 2;
-            assert_eq!(left - 2, padding, "{id:?}: {text}");
-        }
-        assert_eq!(tile_text(TileId::Plan, mode), "[   Plan   ]");
-        assert_eq!(tile_text(TileId::Discover, mode), "[ Discover ]");
-
-        // The rects fill the column's width, one per tile, in the same order
-        // and rows as compact mode.
-        let area = Rect::new(0, 1, rail_width(mode), 22);
+    /// The detail follows the width alone: each step up appears exactly at the
+    /// previous natural width of the richer line.
+    #[test]
+    fn the_detail_grows_with_the_width() {
         let state = today();
-        let rects = rail_tile_rects(&state, area, mode);
-        let compact = rail_tile_rects(&state, Rect::new(0, 1, RAIL_WIDTH, 22), RailMode::Compact);
-        assert_eq!(
-            rects.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            compact.iter().map(|(id, _)| *id).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            rects.iter().map(|(_, r)| r.y).collect::<Vec<_>>(),
-            compact.iter().map(|(_, r)| r.y).collect::<Vec<_>>()
-        );
-        for (_, rect) in &rects {
-            assert_eq!(rect.width, rail_width(mode));
-            assert_eq!(rect.x, area.x);
-            assert_eq!(rect.height, 1);
+        let natural = |detail| line(&CONTINUOUS, detail, 0).chars().count();
+        for (detail, width) in [
+            (RailDetail::Mode, natural(RailDetail::Mode)),
+            (RailDetail::Brackets, natural(RailDetail::Brackets)),
+            (RailDetail::Names, natural(RailDetail::Names)),
+        ] {
+            assert_eq!(pick_detail(&state, &CONTINUOUS, width), detail);
+            assert!(pick_detail(&state, &CONTINUOUS, width - 1) < detail);
         }
-
-        // The arrows sit on the box column's centre, between the stage tiles.
-        let connectors = rail_connector_rects(&state, area, mode);
-        assert_eq!(
-            connectors,
-            vec![
-                Rect::new(rail_width(mode) / 2, 3, 1, 1),
-                Rect::new(rail_width(mode) / 2, 5, 1, 1),
-                Rect::new(rail_width(mode) / 2, 7, 1, 1)
-            ]
-        );
-        for rect in &connectors {
-            assert!(rect.x >= area.x && rect.right() <= area.right());
-        }
-    }
-
-    /// A short normal-mode rail keeps the tiles that fit and clips the tail,
-    /// like compact mode; the blank top row (T63.1) counts against the tiles
-    /// that fit.
-    #[test]
-    fn normal_mode_rects_clip_tiles_past_the_bottom() {
-        let mode = RailMode::Normal;
-        let width = rail_width(mode);
-        let rects = rail_tile_rects(&today(), Rect::new(0, 0, width, 3), mode);
-        assert_eq!(
-            rects.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            vec![TileId::Research]
-        );
-        assert!(rail_connector_rects(&today(), Rect::new(0, 0, width, 1), mode).is_empty());
+        assert_eq!(pick_detail(&state, &CONTINUOUS, 10), RailDetail::Minimal);
+        assert_eq!(pick_detail(&state, &CONTINUOUS, 500), RailDetail::Names);
     }
 
     /// The spec's tile colouring: muted and
@@ -448,7 +425,10 @@ mod tests {
     #[test]
     fn tiles_carry_their_letters_and_names() {
         assert_eq!(TileId::Plan.letters(), "P");
-        assert_eq!(tile_text(TileId::Plan, RailMode::Compact), "[ P ]");
+        assert_eq!(TileId::Review.letters(), "R");
+        assert_eq!(TileId::Discover.letters(), "D");
+        assert_eq!(tile_text(TileId::Plan, RailDetail::Brackets), "[ P ]");
+        assert_eq!(tile_text(TileId::Plan, RailDetail::Names), "[ Plan ]");
         assert_eq!(
             [
                 TileId::Research.label(),

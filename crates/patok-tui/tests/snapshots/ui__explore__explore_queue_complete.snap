@@ -2,17 +2,17 @@
 source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
-            ┌ Builder ─────────────────────────────────────────────────────────┐
-[ Research ]│no output yet                                                     │
-      ↓     │                                                                  │
-[   Plan   ]│                                                                  │
-      ↓     │                                                                  │
-[  Build   ]│                                                                  │
-      ↓     └──────────────────────────────────────────────────────────────────┘
-[  Review  ]┌ Tasks | 2/2 - 0 left ────────────────────────────────────────────┐
-            │✔ T1.2  second done                                               │
-[ Discover ]│                                                                  │
-            │                                                                  │
-            │ a add tasks · i inject task · Enter run discovery · ↑↓ scroll    │
-            └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                               transient warning
+─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
+─ Builder ────────────────────────────────────────────────────────────── [ ↓ ] ─
+┌ Tasks | 2/2 - 0 left ────────────────────────────────────────────────────────┐
+│✔ T1.1  first done                                                            │
+│✔ T1.2  second done                                                           │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│ a add tasks · i inject task · Enter run discovery · ↑↓ scroll · Tab output   │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                                               transient warning

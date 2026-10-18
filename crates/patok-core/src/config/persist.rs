@@ -18,7 +18,7 @@ use super::daemon::{
     DAEMON_FIELDS, DaemonSettings, FieldKind, IMMEDIATE_DAEMON_FIELDS, ProviderName, daemon_field,
     daemon_field_value,
 };
-use super::tui::{RailMode, Theme};
+use super::tui::Theme;
 use super::{ConfigFiles, EnumSpelling, project_file};
 use crate::update::UpdateChannel;
 use crate::utils::atomic_write::write_atomic;
@@ -108,7 +108,6 @@ fn tui_field(name: &str) -> Option<FieldKind> {
             super::tui::AGENT_PANE_SPLIT_MAX,
         ),
         "update_channel" => FieldKind::Enum(UpdateChannel::SPELLINGS),
-        "rail_mode" => FieldKind::Enum(RailMode::SPELLINGS),
         _ => return None,
     })
 }

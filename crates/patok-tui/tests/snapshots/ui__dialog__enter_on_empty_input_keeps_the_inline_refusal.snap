@@ -2,27 +2,27 @@
 source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 80, 24)"
 ---
-            ┌ Builder ─────────────────────────────────────────────────────────┐
-[ Research ]│no output yet                                                     │
-    ┌ What do you want to do? ────────────────────────────────────── [ x ] ┐   │
-[   │Press Enter to run Discovery agent                                    │   │
-    │                                                                      │   │
-[  B│                                                                      │   │
-    │                                                                      │───┘
-[  R│                                                                      │───┐
-    │                                                                      │   │
-[ Di│                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │Nothing to submit -- type a request first.                            │   │
-    │ ↑↓←→ move · Shift-Enter new line ·    [ Enter ] Start  [ Esc ] Close │   │
-    └──────────────────────────────────────────────────────────────────────┘   │
-            └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                    [ Enter ] start  [ m ] menu
+─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
+┌ Builder ─────────────────────────────────────────────────────────────────────┐
+│no ┌ What do you want to do? ────────────────────────────────────── [ x ] ┐   │
+│   │Press Enter to run Discovery agent                                    │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+└───│                                                                      │───┘
+┌ Ta│                                                                      │───┐
+│✔ T│                                                                      │   │
+│○ T│                                                                      │   │
+│○ T│                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │Nothing to submit -- type a request first.                            │   │
+│   │ ↑↓←→ move · Shift-Enter new line ·    [ Enter ] Start  [ Esc ] Close │   │
+│ a └──────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                                    [ Enter ] start  [ m ] menu

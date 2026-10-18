@@ -1010,7 +1010,7 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
         if seen_planning && app.run.planning {
             // The planner streams into the main agent output frame on the Dashboard tab.
             let screen = draw(&app);
-            assert!(screen.contains(" PLANNING"), "{screen}");
+            assert!(screen.contains("─ Planning ─"), "{screen}");
             drew_planner_frame |= app.run.agent == "planner" && screen.contains(" Planner ");
             drew_streaming_output |= screen.contains("Planning the new work.");
         }
@@ -1156,7 +1156,7 @@ async fn the_plan_stage_shows_the_planner_then_the_builder_for_one_task() {
 
     // The planner phase: the status line's chips and the frame title carry the planner, the plan is visible.
     let planner = planner_screen.expect("the planner phase was on screen");
-    assert!(planner.contains(" RUNNING  sprint"), "{planner}");
+    assert!(planner.contains("─ Running ─ sprint ─"), "{planner}");
     assert!(planner.contains(" Planner "), "{planner}");
     assert!(planner.contains("File Operations"), "{planner}");
     // The timer runs from the agent's announce: the frame the planner's output
@@ -1165,7 +1165,7 @@ async fn the_plan_stage_shows_the_planner_then_the_builder_for_one_task() {
 
     // The builder phase follows for the same task, with its own output.
     let builder = builder_screen.expect("the builder phase was on screen");
-    assert!(builder.contains(" RUNNING  sprint"), "{builder}");
+    assert!(builder.contains("─ Running ─ sprint ─"), "{builder}");
     assert!(builder.contains(" Builder "), "{builder}");
     assert!(builder.contains("Creating greeting.txt."), "{builder}");
 
@@ -1402,7 +1402,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
         if app.run.discovering && !chip_snapshot_taken {
             chip_snapshot_taken = true;
             let screen = draw(&app);
-            assert!(screen.contains(" DISCOVERING"), "{screen}");
+            assert!(screen.contains("─ Discovering ─"), "{screen}");
             insta::assert_snapshot!(screen);
         }
         if app.is_new_task("D1.1") {
@@ -1420,7 +1420,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
 
     // The discovered task was built in the same session; the list shows it done.
     assert!(app.run.tasks.iter().any(|t| t.id == "D1.1" && t.done));
-    assert!(draw(&app).contains("STOPPED"));
+    assert!(draw(&app).contains("─ Stopped ─"));
     let tasks = std::fs::read_to_string(setup.config.project_dir.join("TASKS.md")).unwrap();
     assert_eq!(
         tasks,
@@ -1558,7 +1558,7 @@ async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
 
     assert!(saw_discovering, "the round reached the typed run state");
     let chip = chip_screen.expect("the chip was on screen");
-    assert!(chip.contains(" DISCOVERING"), "{chip}");
+    assert!(chip.contains("─ Discovering ─"), "{chip}");
     assert!(saw_output, "the discovery output reached the pane");
     assert!(saw_notice, "the added-task notice arrived");
     assert!(
@@ -1615,13 +1615,13 @@ async fn the_frame_focus_follows_the_engine_state() {
             .unwrap();
     };
 
-    // Idle at attach: the pipeline rail takes its fixed column left of the
-    // frames (T53.1), the task list takes the free space, the output frame
-    // shrinks to 5 content lines.
+    // Idle at attach: the pipeline rail takes the top line above the frames,
+    // the task list takes the free space, the output frame shrinks to 5
+    // content lines.
     draw(&app);
     assert_eq!(app.focus, FrameFocus::Tasks);
     assert_eq!(app.layout.output_area.get().height, 7);
-    assert_eq!(app.layout.tasks_area.get().height, 16);
+    assert_eq!(app.layout.tasks_area.get().height, 15);
 
     let response = client
         .submit_command(CommandRequest {
@@ -1661,7 +1661,7 @@ async fn the_frame_focus_follows_the_engine_state() {
     draw(&app);
     assert_eq!(app.focus, FrameFocus::Tasks);
     assert_eq!(app.layout.output_area.get().height, 7);
-    assert_eq!(app.layout.tasks_area.get().height, 16);
+    assert_eq!(app.layout.tasks_area.get().height, 15);
 
     engine.shutdown_token().cancel();
     server.await.unwrap().unwrap();
@@ -1975,7 +1975,7 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
     focus_field(&mut app, "run_mode");
     assert_eq!(press(&mut app, KeyCode::Right), Action::None);
     assert!(
-        draw(&app).contains(" STOPPED  sprint "),
+        draw(&app).contains("─ Stopped ─ sprint ─"),
         "the chip did not move"
     );
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
@@ -1996,7 +1996,7 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
     }
     app.close_settings();
     assert!(
-        draw(&app).contains(" STOPPED  continuous "),
+        draw(&app).contains("─ Stopped ─ continuous ─"),
         "the chip follows the save"
     );
     let saved = std::fs::read_to_string(&config_file).unwrap();
@@ -2024,7 +2024,7 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
         }
     }
     assert!(
-        draw(&app).contains(" STOPPED  continuous "),
+        draw(&app).contains("─ Stopped ─ continuous ─"),
         "still in sync"
     );
 

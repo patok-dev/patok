@@ -2,43 +2,43 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: screen
 ---
-            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────┐
-[ Research ]│no output yet                                                                         │
-      ↓     │                                                                                      │
-[   Plan   ]│                                                                                      │
-     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│  ▸ Provider and model                                                                  │    │
-     │  ▸ Pipeline                                                                            │────┘
-[  Re│  ▸ Timeouts and pauses                                                                 │────┐
-     │  ▸ Git                                                                                 │    │
-[ Dis│  ▸ History                                                                             │    │
-     │▶ ▸ Display and theme                                                                   │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │                                                                                        │    │
-     │┌───────────────────────────────── Display and theme ──────────────────────────────────┐│    │
-     ││The shell's own display preferences. The shell applies and persists them itself -- no ││    │
-     ││engine involved -- and each takes effect immediately.                                 ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
-     │                                                                                        │    │
-     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
-     └────────────────────────────────────────────────────────────────────────────────────────┘    │
-            │                                                                                      │
-            │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                   │
-            └──────────────────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                                        [ Enter ] start  [ m ] menu
+─ Stopped ─ sprint ─── [ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ] ─────────────
+┌ Builder | Claude ────────────────────────────────────────────────────────────────────────────────┐
+│no output yet                                                                                     │
+│                                                                                                  │
+│    ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+│    │  ▸ Provider and model                                                                  │    │
+│    │  ▸ Pipeline                                                                            │    │
+└────│  ▸ Timeouts and pauses                                                                 │────┘
+┌ Tas│  ▸ Git                                                                                 │────┐
+│○ T1│  ▸ History                                                                             │    │
+│    │▶ ▸ Display and theme                                                                   │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │┌───────────────────────────────── Display and theme ──────────────────────────────────┐│    │
+│    ││The shell's own display preferences. The shell applies and persists them itself -- no ││    │
+│    ││engine involved -- and each takes effect immediately.                                 ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+│    │                                                                                        │    │
+│    │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+│    └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                  │
+│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                        [ Enter ] start  [ m ] menu

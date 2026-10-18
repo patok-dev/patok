@@ -929,9 +929,9 @@ fn styled_rows(buffer: &ratatui::buffer::Buffer, rows: &[u16]) -> String {
         .join("\n")
 }
 
-/// A live preview recolours the whole shell (T43.1): the status chip carries
-/// the preview's chip colour and the frame its background, with the committed
-/// setting untouched.
+/// A live preview recolours the whole shell (T43.1): the rail's status word
+/// carries the preview's chip colour and the frame its background, with the
+/// committed setting untouched.
 #[test]
 fn a_preview_recolours_the_whole_shell() {
     let mut app = open();
@@ -940,10 +940,11 @@ fn a_preview_recolours_the_whole_shell() {
     assert_eq!(app.theme(), preview);
     assert_eq!(app.tui.theme, ThemeKey::Dark);
     let buffer = draw_buffer(&app);
-    // The status line's chip (row 23, T86.1) and a base row under the modal.
-    assert_eq!(buffer[(0, 23)].bg, preview.chip_neutral);
+    // The rail's status word (row 0) and a base row under the modal.
+    assert_eq!(buffer[(2, 0)].fg, preview.chip_neutral);
+    assert_eq!(buffer[(0, 0)].bg, preview.background);
     assert_eq!(buffer[(40, 21)].bg, preview.background);
-    insta::assert_snapshot!(styled_rows(&buffer, &[23, 21]));
+    insta::assert_snapshot!(styled_rows(&buffer, &[0, 21]));
 }
 
 /// The picker's bottom line (T59.1, T64.1): the preview hints on the left

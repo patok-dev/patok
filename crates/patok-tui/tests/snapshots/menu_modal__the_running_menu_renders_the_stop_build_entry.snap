@@ -2,17 +2,17 @@
 source: crates/patok-tui/tests/menu_modal.rs
 expression: screen
 ---
-            ┌ Builder | Claude ───────────────────────────────────────── 00:00 ┐
-[ Research ]│no output yet                                                     │
-      ↓     │                                                                  │
-[   Plan   ]│┌─────────────────────── Menu ──────────────── [ x ] ┐            │
-      ↓     ││▶ Settings -- open the settings overlay             │            │
-[  Build   ]└│  Theme -- pick the colour theme                    │────────────┘
-      ↓     ┌│  Detach -- leave the engine running                │────────────┐
-[  Review  ]││  Quit -- stop the app                              │            │
-            ││  Stop -- open the stop dialog                      │            │
-[ Discover ]││ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │            │
-            │└────────────────────────────────────────────────────┘            │
-            │                                                                  │
-            └──────────────────────────────────────────────────────────────────┘
- RUNNING  sprint                                       [ Esc ] stop  [ m ] menu
+─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
+┌ Builder | Claude ───────────────────────────────────────────────────── 00:00 ┐
+│no output yet                                                                 │
+│            ┌─────────────────────── Menu ──────────────── [ x ] ┐            │
+│            │▶ Settings -- open the settings overlay             │            │
+│            │  Theme -- pick the colour theme                    │            │
+│            │  Detach -- leave the engine running                │            │
+│            │  Quit -- stop the app                              │            │
+│            │  Stop -- open the stop dialog                      │            │
+│            │ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │            │
+│ ↑↓ scroll ·└────────────────────────────────────────────────────┘            │
+└──────────────────────────────────────────────────────────────────────────────┘
+─ Tasks | 0/1 - 1 left ───────────────────────────────────────────────── [ ↑ ] ─
+                                                       [ Esc ] stop  [ m ] menu
