@@ -253,4 +253,23 @@ mod tests {
         assert!(research_queue_bootstrap().contains("initial task queue"));
         assert!(research_queue_scan().contains("gaps and worthwhile follow-up work"));
     }
+
+    /// T1.1: the planner's own ID rule leaves the queue-creation guidelines
+    /// byte-identical.
+    #[test]
+    fn queue_guidelines_are_unchanged() {
+        let expected = "- Prefer fewer, larger tasks. Each task should deliver working software that a builder can implement and verify in one session, not scaffolding, stubs or documentation. Only split the work when the parts are truly independent.\n\
+- Do not modify existing tasks, their text, their order or their checkbox state.\n\
+- Each task is a single line in exactly this format: `- [ ] T<N>.1: <description>`, where <N> is the next unused number after the highest T number in the task list (for example `- [ ] T4.1: Add ...`). Use a new number for each task you append, always with the `.1` suffix, and always the `T` prefix, never an `H` or `D` prefix.\n\
+- Write the description as plain text on one line: no markdown, no backticks, no bold or italics, no links, no nested lists and no line breaks inside a task line.\n\
+- Make the description specific enough to implement without further questions: what to build, where it plugs in, and how to tell it works.\n\
+- If you find nothing credible to add, add no task and say so.\n\
+\n\
+Finish with your research report as your final message, opening with the investigation questions you pursued and then the answers to them.";
+        assert_eq!(queue_guidelines(), expected);
+        for p in [research_queue_bootstrap(), research_queue_scan()] {
+            assert!(p.contains(&queue_guidelines()));
+            assert!(!p.contains("<M+1>"));
+        }
+    }
 }

@@ -172,6 +172,52 @@ pub fn next_task_number(file: &str) -> usize {
         .map_or(1, |highest| highest + 1)
 }
 
+/// The last task group of a task file (T1.1): the well-formed `T` tasks
+/// sharing the highest major number, in file order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastGroup {
+    /// The group's leading number `N`.
+    pub number: usize,
+    /// The group's task lines in file order, each with its done state.
+    pub tasks: Vec<Task>,
+    /// The highest minor number `M` in the group.
+    pub highest_minor: usize,
+    /// How many of the group's tasks are still unchecked.
+    pub pending: usize,
+}
+
+/// Summarizes the last group of `file` (T1.1): the group with the highest
+/// major number of a well-formed `T`-prefixed task line, the same number
+/// [`next_task_number`] counts past. `None` when `file` has no well-formed
+/// `T` task. `H`-, `D`-, bare-numbered and malformed lines are ignored, as
+/// in [`next_task_number`].
+pub fn last_group(file: &str) -> Option<LastGroup> {
+    let numbered: Vec<(usize, usize, Task)> = task::parse(file)
+        .into_iter()
+        .filter(|t| !t.is_malformed() && t.origin == Some('T'))
+        .filter_map(|t| t_id_numbers(&t.id).map(|(major, minor)| (major, minor, t)))
+        .collect();
+    let number = numbered.iter().map(|(major, _, _)| *major).max()?;
+    let (minors, tasks): (Vec<usize>, Vec<Task>) = numbered
+        .into_iter()
+        .filter(|(major, _, _)| *major == number)
+        .map(|(_, minor, t)| (minor, t))
+        .unzip();
+    Some(LastGroup {
+        number,
+        highest_minor: minors.into_iter().max().unwrap_or(0),
+        pending: tasks.iter().filter(|t| !t.done).count(),
+        tasks,
+    })
+}
+
+/// The major and minor numbers of a `T<major>.<minor>` id, or `None` when
+/// either half is not a number.
+fn t_id_numbers(id: &str) -> Option<(usize, usize)> {
+    let (major, minor) = id.get(1..)?.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
 /// Normalizes the inject modal's confirmed input (T77.1) into a
 /// well-formed unchecked task line: the trimmed text gains the
 /// `- [ ] ` checkbox when it does not already start with it, and a fresh
@@ -230,7 +276,8 @@ fn strip_progress_token(description: &str) -> &str {
 /// Checks the planner's result: `after` must be `before` plus appended content, and every task
 /// line in the appended part must be unchecked with a well-formed `T`-prefixed ID that is
 /// unique in the whole file. Existing `H` and `D` lines in `before` are untouched and stay
-/// valid. Returns the number of tasks added.
+/// valid. Each appended group number must join the last group or open the next one (T2.1).
+/// Returns the number of tasks added.
 #[cfg(test)]
 pub(crate) fn validate_append(before: &str, after: &str) -> Result<usize, String> {
     validate_append_ids(before, after).map(|ids| ids.len())
@@ -257,7 +304,8 @@ pub(crate) fn validate_discovery_append_ids(
 /// exact chunks the engine itself appended through `inject_task` during the
 /// session are filtered out of the appended region first, so an injected
 /// line -- whatever its shape -- neither fails the session's append
-/// validation nor counts as one of the session's tasks.
+/// validation nor counts as one of the session's tasks. Appended group
+/// numbers must join the last group or open the next one (T2.1).
 pub fn validate_append_ignoring(
     before: &str,
     after: &str,
@@ -286,6 +334,12 @@ pub fn validate_discovery_append_ignoring(
 /// -- before the remainder is validated, so a line injected mid-session
 /// (even a malformed or duplicate one) is not this run's doing and does not
 /// reject it.
+///
+/// In planner mode (`prefix == 'T'`, T2.1) each appended `T` task must join
+/// the last group, the group the injected lines reached, or open the next
+/// number; the baseline advances past every accepted task, so a multi-group
+/// queue can be created in one run. An older group or a skipped number
+/// rejects the run. Discovery `D` appends are not group-checked.
 fn validate_appended_ignoring(
     before: &str,
     after: &str,
@@ -319,6 +373,10 @@ fn validate_appended_ignoring(
         .map(|t| t.id)
         .collect();
     let added = task::parse(&remaining);
+    let mut last = last_group(before).map(|g| g.number);
+    let mut top = last_group(&format!("{before}{}", injected.concat()))
+        .map(|g| g.number)
+        .max(last);
     for t in &added {
         if t.is_malformed() {
             return Err(format!(
@@ -338,6 +396,27 @@ fn validate_appended_ignoring(
                 "the {role} added an already checked task: {}",
                 t.id
             ));
+        }
+        if prefix == 'T'
+            && let Some((g, _)) = t_id_numbers(&t.id)
+        {
+            let next = top.map_or(1, |n| n + 1);
+            if Some(g) != last && Some(g) != top && g != next {
+                let hint = match top {
+                    Some(n) => format!("join group {n} or open group {next}"),
+                    None => format!("open group {next}"),
+                };
+                return Err(if g > next {
+                    format!("the {role} skipped a task group number: {} ({hint})", t.id)
+                } else {
+                    format!(
+                        "the {role} reused an older task group number: {} ({hint})",
+                        t.id
+                    )
+                });
+            }
+            last = last.max(Some(g));
+            top = top.max(Some(g));
         }
         if !seen.insert(t.id.clone()) {
             return Err(format!("the {role} added a duplicate task ID: {}", t.id));
@@ -582,7 +661,7 @@ mod tests {
     fn validate_accepts_existing_h_and_d_lines_but_only_t_appends() {
         let with_origins = "# T\n- [x] H1.1: a\n- [ ] D1.2: b\n";
         assert_eq!(validate_append(with_origins, with_origins), Ok(0));
-        let after = format!("{with_origins}- [ ] T2.1: c\n");
+        let after = format!("{with_origins}- [ ] T1.1: c\n");
         assert_eq!(validate_append(with_origins, &after), Ok(1));
     }
 
@@ -630,6 +709,116 @@ mod tests {
         assert!(validate_discovery_append_ids(base, &checked).is_err());
         let edited = base.replace("[ ] D1.2", "[x] D1.2");
         assert!(validate_discovery_append_ids(base, &edited).is_err());
+    }
+
+    /// T2.1: discovery `D` appends are not group-checked, so a skipped
+    /// number stays valid there.
+    #[test]
+    fn validate_discovery_append_skips_the_group_check() {
+        let base = "# T\n- [x] T1.1: a\n- [ ] D1.2: b\n";
+        let after = format!("{base}- [ ] D2.1: c\n- [ ] D9.1: d\n");
+        assert_eq!(
+            validate_discovery_append_ids(base, &after),
+            Ok(vec!["D2.1".to_string(), "D9.1".to_string()])
+        );
+    }
+
+    /// T2.1: an appended task may join the last group, even a fully done one
+    /// (whether it should is the prompt's call, not the validator's).
+    #[test]
+    fn validate_append_accepts_joining_the_last_group() {
+        let after = format!("{BASE}- [ ] T1.3: c\n");
+        assert_eq!(
+            validate_append_ids(BASE, &after),
+            Ok(vec!["T1.3".to_string()])
+        );
+        let done = "# T\n- [x] T1.1: a\n- [x] T2.1: b\n";
+        let after = format!("{done}- [ ] T2.2: c\n");
+        assert_eq!(
+            validate_append_ids(done, &after),
+            Ok(vec!["T2.2".to_string()])
+        );
+    }
+
+    /// T2.1: an appended task may open the next group number, and the
+    /// baseline advances past each accepted task, so one run can open
+    /// several groups in a row.
+    #[test]
+    fn validate_append_accepts_opening_a_new_group() {
+        let after = format!("{BASE}- [ ] T2.1: c\n- [ ] T2.2: d\n");
+        assert_eq!(validate_append(BASE, &after), Ok(2));
+        let after = format!("{BASE}- [ ] T1.3: c\n- [ ] T2.1: d\n- [ ] T3.1: e\n");
+        assert_eq!(validate_append(BASE, &after), Ok(3));
+        // Initial queue creation from an empty file.
+        assert_eq!(
+            validate_append_ids("", "- [ ] T1.1: a\n- [ ] T2.1: b\n"),
+            Ok(vec!["T1.1".to_string(), "T2.1".to_string()])
+        );
+        // H and D lines do not count as groups.
+        let other = "# T\n- [x] H1.1: a\n- [ ] D5.1: b\n";
+        let after = format!("{other}- [ ] T1.1: c\n");
+        assert_eq!(
+            validate_append_ids(other, &after),
+            Ok(vec!["T1.1".to_string()])
+        );
+    }
+
+    /// T2.1: an appended task reusing an older group number rejects the run.
+    #[test]
+    fn validate_append_rejects_reusing_an_older_group() {
+        let base = "# T\n- [x] T1.1: a\n- [x] T2.1: b\n- [ ] T3.1: c\n";
+        let after = format!("{base}- [ ] T2.2: d\n");
+        assert_eq!(
+            validate_append_ids(base, &after),
+            Err("the planner reused an older task group number: T2.2 (join group 3 or open group 4)"
+                .to_string())
+        );
+        // Once the run opened group 2, group 1 is an older group.
+        let after = format!("{BASE}- [ ] T2.1: c\n- [ ] T1.3: d\n");
+        let err = validate_append_ids(BASE, &after).unwrap_err();
+        assert!(err.contains("reused"), "{err}");
+    }
+
+    /// T2.1: an appended task skipping a group number rejects the run.
+    #[test]
+    fn validate_append_rejects_skipping_a_group_number() {
+        let after = format!("{BASE}- [ ] T3.1: c\n");
+        assert_eq!(
+            validate_append_ids(BASE, &after),
+            Err(
+                "the planner skipped a task group number: T3.1 (join group 1 or open group 2)"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            validate_append_ids("", "- [ ] T2.1: a\n"),
+            Err("the planner skipped a task group number: T2.1 (open group 1)".to_string())
+        );
+        let err = validate_append_ids("", "- [ ] T0.1: a\n").unwrap_err();
+        assert!(err.contains("reused"), "{err}");
+    }
+
+    /// T2.1: injected lines raise the highest group number, while the group
+    /// the planner was shown stays joinable.
+    #[test]
+    fn validate_append_group_check_counts_injected_lines() {
+        let before = "# T\n- [ ] T1.1: a\n";
+        let injected = "- [ ] T2.1: injected\n";
+        let chunks = [injected.to_string()];
+        for (line, id) in [
+            ("- [ ] T3.1: next\n", "T3.1"),
+            ("- [ ] T1.2: joins the shown group\n", "T1.2"),
+            ("- [ ] T2.2: joins the injected group\n", "T2.2"),
+        ] {
+            let after = format!("{before}{injected}{line}");
+            assert_eq!(
+                validate_append_ignoring(before, &after, &chunks),
+                Ok(vec![id.to_string()])
+            );
+        }
+        let after = format!("{before}{injected}- [ ] T4.1: skip\n");
+        let err = validate_append_ignoring(before, &after, &chunks).unwrap_err();
+        assert!(err.contains("skipped"), "{err}");
     }
 
     #[test]
@@ -1115,6 +1304,63 @@ mod tests {
         assert_eq!(next_task_number("- [ ] D9.1: only discovery\n"), 1);
     }
 
+    /// T1.1: a partly done last group is summarized with its tasks in file
+    /// order; `H`, `D`, bare-numbered and malformed lines are ignored.
+    #[test]
+    fn last_group_of_a_partly_done_group() {
+        let file = "# Tasks\n\
+                    Some prose.\n\
+                    - [x] T1.1: a\n\
+                    - [x] T2.1: b\n\
+                    - [ ] T2.2: c\n\
+                    - [x] H9.1: d\n\
+                    - [ ] D7.1: e\n\
+                    - [ ] 9.1: f\n\
+                    - [ ] no id\n";
+        let group = last_group(file).unwrap();
+        assert_eq!(group.number, 2);
+        let ids: Vec<&str> = group.tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["T2.1", "T2.2"]);
+        let done: Vec<bool> = group.tasks.iter().map(|t| t.done).collect();
+        assert_eq!(done, [true, false]);
+        assert_eq!(group.highest_minor, 2);
+        assert_eq!(group.pending, 1);
+    }
+
+    /// T1.1: a fully done last group has no pending tasks.
+    #[test]
+    fn last_group_of_a_fully_done_group() {
+        let group = last_group("- [x] T3.1: a\n- [x] T3.2: b\n").unwrap();
+        assert_eq!(group.number, 3);
+        assert_eq!(group.pending, 0);
+        assert_eq!(group.highest_minor, 2);
+    }
+
+    /// T1.1: the last group is the highest number across headings, not the
+    /// group of the file's last line.
+    #[test]
+    fn last_group_is_the_highest_number_across_headings() {
+        let file = "## Phase 1\n\
+                    - [x] T4.1: a\n\
+                    ## Phase 2\n\
+                    - [ ] T2.1: b\n\
+                    - [ ] T4.3: c\n";
+        let group = last_group(file).unwrap();
+        assert_eq!(group.number, 4);
+        let ids: Vec<&str> = group.tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["T4.1", "T4.3"]);
+        assert_eq!(group.highest_minor, 3);
+        assert_eq!(group.pending, 1);
+    }
+
+    /// T1.1: a file without well-formed `T` tasks has no last group.
+    #[test]
+    fn last_group_is_none_without_t_tasks() {
+        assert_eq!(last_group(""), None);
+        assert_eq!(last_group("# Tasks\n\nSome prose.\n"), None);
+        assert_eq!(last_group("- [ ] D9.1: x\n- [x] H2.1: y\n"), None);
+    }
+
     /// T77.1: `write_progress` is byte-exact -- a CRLF file keeps every `\r`
     /// on the untouched lines (and the target line keeps its own CRLF), and
     /// an appended non-target line survives verbatim.
@@ -1157,12 +1403,12 @@ mod tests {
     fn validate_append_ignores_injected_chunks() {
         let before = "# T\n- [ ] T1.1: a\n";
         let injected = "- [ ] no valid id\n";
-        let after = format!("{before}{injected}- [ ] T9.1: planned\n");
+        let after = format!("{before}{injected}- [ ] T2.1: planned\n");
         // Without the accounting the malformed injected line rejects the run.
         assert!(validate_append_ids(before, &after).is_err());
         assert_eq!(
             validate_append_ignoring(before, &after, &[injected.into()]),
-            Ok(vec!["T9.1".to_string()])
+            Ok(vec!["T2.1".to_string()])
         );
         // An unmatched record (the line is part of `before`) is ignored.
         assert_eq!(
