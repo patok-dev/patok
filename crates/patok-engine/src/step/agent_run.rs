@@ -11,7 +11,7 @@ use patok_providers::{ExitKind, Provider, ProviderError, SessionRequest, Session
 use tokio::sync::mpsc;
 
 use crate::agents::Agent;
-use crate::context::SessionContext;
+use crate::context::{Pause, SessionContext};
 
 /// One agent session's prompt bundle: the user prompt, the system prompt, the transcript
 /// label and the tool allowlist.
@@ -165,11 +165,15 @@ pub(crate) async fn run_stage(
 ) -> (StageExit, ResultRecord) {
     let agent_label = agent.label.clone();
     let start = match start {
-        StageStart::Announce => ctx.announce_agent(role, provider.slug(), model),
+        StageStart::Announce => {
+            ctx.pause(Pause::Agent).await;
+            ctx.announce_agent(role, provider.slug(), model)
+        }
         StageStart::Announced(start) => start,
     };
     let (session, events, base_dir, seq) =
         run_agent_session(ctx, provider, model, agent, words.capture).await;
+    ctx.record_agent(session.as_ref().is_ok_and(|result| result.rate_limited));
     ctx.finish_agent(role, start, session_outcome(&session));
 
     // Build the result record from the session

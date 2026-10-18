@@ -64,6 +64,32 @@ impl Fixture {
         String::from_utf8_lossy(&out.stdout).to_string()
     }
 
+    /// Adds a bare repository as the remote `name` and returns its directory.
+    pub fn add_bare_remote(&self, name: &str) -> TempDir {
+        let bare = tempfile::tempdir().unwrap();
+        let out = Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main"])
+            .current_dir(bare.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        self.git(&["remote", "add", name, bare.path().to_str().unwrap()]);
+        bare
+    }
+
+    /// The commit the bare repository's `main` points at, or `None` when the
+    /// branch does not exist.
+    pub fn remote_head(bare: &Path) -> Option<String> {
+        let out = Command::new("git")
+            .args(["rev-parse", "--verify", "-q", "main"])
+            .current_dir(bare)
+            .output()
+            .unwrap();
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     pub fn config(&self) -> EngineConfig {
         self.config_for(false)
     }
@@ -87,6 +113,10 @@ impl Fixture {
             idle_shutdown: Duration::from_secs(3600),
             discovery_cooldown: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN,
             discovery_cooldown_cap: EngineConfig::DEFAULT_DISCOVERY_COOLDOWN_CAP,
+            // No pauses, so the existing tests keep their timing; the pause tests opt in.
+            pause_between_tasks: Duration::ZERO,
+            pause_between_agents: Duration::ZERO,
+            pause_between_cycles: Duration::ZERO,
             plan_enabled,
             run_mode: RunMode::Continuous,
             skip_research_for_simple,
@@ -135,7 +165,7 @@ impl Fixture {
     ) -> Engine {
         std::fs::write(
             self.project_config(),
-            format!("[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\n{daemon_toml}"),
+            format!("[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\npause_between_tasks_secs = 0\npause_between_agents_secs = 0\npause_between_cycles_secs = 0\n{daemon_toml}"),
         )
         .unwrap();
         let config = self.config_review();

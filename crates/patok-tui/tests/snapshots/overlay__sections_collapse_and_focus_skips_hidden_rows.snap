@@ -7,26 +7,26 @@ expression: screen
       ↓     │                                                                                      │
 [   Plan   ]│                                                                                      │
      ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      [ ] skip research for simple                                                     ││    │
-     │      [ ] skip review for simple                                                       ││────┘
-[  Re│      review confidence threshold  5                                                   ││────┐
-     │      review multipass threshold  8                                                    ││    │
-[ Dis│      [ ] batch review                                                                 ││    │
-     │      [ ] planner lookahead                                                            ││    │
-     │      [ ] review in loop                                                               ││    │
+[  Bu│      reviewer model  sonnet                                                           ││    │
+     │      discovery provider  ‹ claude ›                                                   ││────┘
+[  Re│      discovery model  opus                                                            ││────┐
+     │      orchestrator provider  ‹ claude ›                                                ││    │
+[ Dis│      orchestrator model  (not set)                                                    ││    │
+     │  ▾ Pipeline                                                                           █│    │
+     │      run mode  ‹ sprint ›                                                             █│    │
+     │      [ ] plan enabled                                                                 █│    │
+     │      [ ] skip research for simple                                                     █│    │
+     │      [ ] skip review for simple                                                       █│    │
+     │      review confidence threshold  5                                                   █│    │
+     │      review multipass threshold  8                                                    █│    │
+     │      [ ] batch review                                                                 █│    │
+     │      [ ] review in loop                                                               █│    │
      │      confidence threshold  0.5                                                        █│    │
-     │      plan revision cycles  (not set)                                                  █│    │
-     │      plan revision accept policy  ‹ no-high ›                                         █│    │
-     │      [ ] semgrep enabled                                                              █│    │
-     │      build command  (not set)                                                         █│    │
-     │      planning iterations  (not set)                                                   █│    │
-     │      [ ] require human approval                                                       ││    │
-     │      on task complete hook  (not set)                                                 ││    │
      │▶ ▸ Timeouts and pauses                                                                ││    │
      │  ▾ Git                                                                                ││    │
+     │      [ ] auto-push enabled                                                            ││    │
      │      auto-push remote  (not set)                                                      ││    │
-     │  ▾ Isolation and security                                                             ││    │
-     │      [ ] phase isolation                                                              ││    │
+     │  ▾ History                                                                            ││    │
      │┌──────────────────────────────── Timeouts and pauses ─────────────────────────────────┐│    │
      ││Timing: how long an agent may idle, the pauses between tasks, agents and cycles, and  ││    │
      ││how long an engine with no shell attached waits before shutting down.                 ││    │

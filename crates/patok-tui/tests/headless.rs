@@ -6,6 +6,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use patok_core::config::ProviderKind;
 use patok_core::event::AgentEvent;
 use patok_engine::Engine;
 use patok_providers::mock::{MockProvider, Step};
@@ -317,18 +318,25 @@ async fn unavailable_provider_is_an_engine_error() {
         "- [ ] T1.1: add hello\n",
     )
     .unwrap();
-    // A provider spelling this build does not ship: every build command is refused
+    // The codex builder's CLI is reported missing: every build command is refused
     // with a deterministic error.
     project_config(
         &setup,
-        "plan_enabled = false\nreview_in_loop = false\nprovider = \"opencode\"\n",
+        "plan_enabled = false\nreview_in_loop = false\nbuilder_provider = \"codex\"\n",
     );
     let socket = setup.config.socket_path();
     let provider = MockProvider::new(vec![]);
     let engine = Engine::configured_with_env(
         setup.config.clone(),
         &patok_core::config::DaemonEnv::default(),
-        move |_kind| -> Result<Arc<dyn Provider>, ProviderError> { Ok(Arc::new(provider.clone())) },
+        move |kind| -> Result<Arc<dyn Provider>, ProviderError> {
+            match kind {
+                ProviderKind::Codex => Err(ProviderError::CliNotFound {
+                    cli: "codex".into(),
+                }),
+                _ => Ok(Arc::new(provider.clone())),
+            }
+        },
     );
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
 
@@ -339,7 +347,7 @@ async fn unavailable_provider_is_an_engine_error() {
         panic!("a refused build must end the run as Failed")
     };
     assert!(
-        error.contains("not available in this build"),
+        error.contains("the `codex` CLI was not found on PATH"),
         "the provider error reaches the operator: {error}"
     );
 

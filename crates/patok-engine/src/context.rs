@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use patok_core::config::DaemonSettings;
@@ -21,6 +22,36 @@ use crate::engine::{Inner, Tiles, resolve_provider};
 use crate::git::Git;
 use crate::task_list::{AppendMode, AppendRejection};
 
+/// Which configured pause the loop waits before the next unit of work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pause {
+    Agent,
+    Task,
+    Cycle,
+}
+
+/// The adaptive pause: what a pause shrinks to when the last agent was not rate limited.
+pub(crate) const ADAPTIVE_PAUSE: Duration = Duration::from_millis(500);
+
+/// The pause of `kind` (`pause_between_*_secs`); with `adaptive_pauses` on and the last
+/// agent not rate limited, it shrinks to at most [`ADAPTIVE_PAUSE`].
+pub(crate) fn pause_duration(
+    settings: &DaemonSettings,
+    kind: Pause,
+    rate_limited: bool,
+) -> Duration {
+    let full = Duration::from_secs(match kind {
+        Pause::Agent => settings.pause_between_agents_secs,
+        Pause::Task => settings.pause_between_tasks_secs,
+        Pause::Cycle => settings.pause_between_cycles_secs,
+    });
+    if settings.adaptive_pauses && !rate_limited {
+        full.min(ADAPTIVE_PAUSE)
+    } else {
+        full
+    }
+}
+
 /// One session's context (section 8 of docs/private/engine-restructure.md):
 /// the unit-of-work snapshot taken at the session's start -- the provider,
 /// the model and the merged settings it relies on -- plus the session's
@@ -30,28 +61,72 @@ use crate::task_list::{AppendMode, AppendRejection};
 pub(crate) struct SessionContext {
     inner: Arc<Inner>,
     provider: Arc<dyn Provider>,
-    model: Option<String>,
     settings: DaemonSettings,
     cancel: CancellationToken,
     /// The session directory path for history logging.
     session_path: Option<std::path::PathBuf>,
+    /// Whether the last agent session was rate limited.
+    last_rate_limited: AtomicBool,
+    /// Whether an agent has run since the session started or since the last task or cycle pause.
+    agent_since_pause: AtomicBool,
 }
 
 impl SessionContext {
     pub(crate) fn new(
         inner: Arc<Inner>,
         provider: Arc<dyn Provider>,
-        model: Option<String>,
         settings: DaemonSettings,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             inner,
             provider,
-            model,
             settings,
             cancel,
             session_path: None,
+            last_rate_limited: AtomicBool::new(false),
+            agent_since_pause: AtomicBool::new(false),
+        }
+    }
+
+    /// Records one finished agent session's rate-limit status for the next pause.
+    pub(crate) fn record_agent(&self, rate_limited: bool) {
+        self.last_rate_limited
+            .store(rate_limited, Ordering::Relaxed);
+        self.agent_since_pause.store(true, Ordering::Relaxed);
+    }
+
+    /// Waits the `kind` pause before the next agent, task or discovery cycle; the session's
+    /// cancel token cuts it short. An agent pause only follows an agent of the same task:
+    /// the first agent of a task or session starts at once.
+    pub(crate) async fn pause(&self, kind: Pause) {
+        if kind == Pause::Agent && !self.agent_since_pause.load(Ordering::Relaxed) {
+            return;
+        }
+        if kind != Pause::Agent {
+            self.agent_since_pause.store(false, Ordering::Relaxed);
+        }
+        let duration = pause_duration(
+            &self.settings,
+            kind,
+            self.last_rate_limited.load(Ordering::Relaxed),
+        );
+        if duration.is_zero() {
+            return;
+        }
+        // A soft stop does not fire the cancel token, so poll for it in short slices.
+        let deadline = tokio::time::Instant::now() + duration;
+        while !self.stop_pending() {
+            let slice = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .min(Duration::from_millis(100));
+            if slice.is_zero() {
+                break;
+            }
+            tokio::select! {
+                () = tokio::time::sleep(slice) => {}
+                () = self.cancel.cancelled() => break,
+            }
         }
     }
 
@@ -82,6 +157,18 @@ impl SessionContext {
     /// The session's settings snapshot, taken when it started.
     pub(crate) fn settings(&self) -> &DaemonSettings {
         &self.settings
+    }
+
+    /// The `auto_push_enabled` flag, read live from the central settings (an
+    /// `immediate` field); off means no push.
+    pub(crate) fn auto_push_enabled(&self) -> bool {
+        self.engine().settings().auto_push_enabled
+    }
+
+    /// The `auto_push_remote` value, read live from the central settings (an
+    /// `immediate` field), trimmed; empty means no push.
+    pub(crate) fn auto_push_remote(&self) -> String {
+        self.engine().settings().auto_push_remote.trim().to_string()
     }
 
     /// The idle timeout of one agent session (`agent_timeout_secs`).
@@ -433,17 +520,16 @@ impl SessionContext {
     }
 
     /// The provider and model a role's session runs on: the role's provider
-    /// (`<role>_provider`, which follows the global `provider` when unset),
-    /// resolved like any other unit of work, with the role's model
+    /// (`<role>_provider`), resolved like any other unit of work, with the role's model
     /// (`<role>_model`, empty meaning the provider's default). A role model
-    /// only reaches a provider that supports one (the claude provider)
-    /// unless it is the single-model override on the configured provider.
-    /// A name this build does not implement keeps the configured pair
+    /// only reaches a provider that supports one
+    /// ([`Provider::supports_reviewer_model`]).
+    /// A name this build does not implement keeps the session's (builder) provider
     /// silently; an unavailable provider warns and falls back to the
-    /// configured pair, as does a role provider on a fixed-provider engine
-    /// without a resolver.
+    /// session's provider, as does a role provider on a fixed-provider engine
+    /// without a resolver. The fallback keeps the role's own model when the
+    /// session's provider supports one.
     pub(crate) fn for_role(&self, role: AgentRole) -> (Arc<dyn Provider>, Option<String>) {
-        let configured = (self.provider.clone(), self.model.clone());
         let (name, role_model) = match role {
             AgentRole::Research => (
                 self.settings.research_provider,
@@ -459,36 +545,39 @@ impl SessionContext {
                 self.settings.discovery_provider,
                 &self.settings.discovery_model,
             ),
-            AgentRole::Orchestrator => return configured,
+            AgentRole::Orchestrator => (
+                self.settings.orchestrator_provider,
+                &self.settings.orchestrator_model,
+            ),
+        };
+        let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
+        let fallback = || {
+            let model = role_model
+                .clone()
+                .filter(|_| self.provider.supports_reviewer_model());
+            (self.provider.clone(), model)
         };
         let Some(resolver) = self.inner.resolver.as_ref() else {
-            if name.kind().is_some() && name != self.settings.provider {
+            if name.kind().is_some() && name != self.settings.builder_provider {
                 tracing::warn!(
                     "the {name} {role} provider has no resolver; \
                      the {role} runs on the fixed provider"
                 );
             }
-            return configured;
+            return fallback();
         };
         match resolve_provider(resolver, &name) {
             Ok(Some(provider)) => {
-                let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
-                let model = if provider.slug() == self.provider.slug() {
-                    self.model
-                        .clone()
-                        .or_else(|| role_model.filter(|_| provider.supports_reviewer_model()))
-                } else {
-                    role_model.filter(|_| provider.supports_reviewer_model())
-                };
+                let model = role_model.filter(|_| provider.supports_reviewer_model());
                 (provider, model)
             }
-            Ok(None) => configured,
+            Ok(None) => fallback(),
             Err(error) => {
                 tracing::warn!(
                     "the {name} {role} provider is unavailable ({error}); \
                      the {role} runs on the configured provider"
                 );
-                configured
+                fallback()
             }
         }
     }
@@ -496,5 +585,74 @@ impl SessionContext {
     /// The reviewer session's provider and model ([`Self::for_role`]).
     pub(crate) fn reviewer(&self) -> (Arc<dyn Provider>, Option<String>) {
         self.for_role(AgentRole::Reviewer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(adaptive_pauses: bool) -> DaemonSettings {
+        DaemonSettings {
+            pause_between_agents_secs: 3,
+            pause_between_tasks_secs: 10,
+            pause_between_cycles_secs: 30,
+            adaptive_pauses,
+            ..DaemonSettings::default()
+        }
+    }
+
+    #[test]
+    fn adaptive_not_rate_limited_shrinks_every_pause() {
+        let s = settings(true);
+        for kind in [Pause::Agent, Pause::Task, Pause::Cycle] {
+            assert_eq!(pause_duration(&s, kind, false), ADAPTIVE_PAUSE);
+        }
+    }
+
+    #[test]
+    fn adaptive_rate_limited_keeps_the_full_pause() {
+        let s = settings(true);
+        assert_eq!(
+            pause_duration(&s, Pause::Agent, true),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            pause_duration(&s, Pause::Task, true),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            pause_duration(&s, Pause::Cycle, true),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn non_adaptive_keeps_the_full_pause_either_way() {
+        let s = settings(false);
+        for rate_limited in [false, true] {
+            assert_eq!(
+                pause_duration(&s, Pause::Agent, rate_limited),
+                Duration::from_secs(3)
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_pause_stays_zero_when_adaptive() {
+        let s = DaemonSettings {
+            pause_between_agents_secs: 0,
+            adaptive_pauses: true,
+            ..DaemonSettings::default()
+        };
+        assert_eq!(pause_duration(&s, Pause::Agent, false), Duration::ZERO);
+    }
+
+    #[test]
+    fn the_defaults_adapt_to_500_ms() {
+        let s = DaemonSettings::default();
+        for kind in [Pause::Agent, Pause::Task, Pause::Cycle] {
+            assert_eq!(pause_duration(&s, kind, false), ADAPTIVE_PAUSE);
+        }
     }
 }

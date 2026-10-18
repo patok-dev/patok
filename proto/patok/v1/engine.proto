@@ -280,17 +280,20 @@ enum Role {
   ROLE_LEARNING_EXTRACTION = 6;
   ROLE_ORCHESTRATOR_PROPOSER = 7;
   ROLE_ORCHESTRATOR_REVIEWER = 8;
+  ROLE_ORCHESTRATOR = 9;
 }
 
-// Canonical provider identifiers. The parser-level aliases documented there
-// (gh-copilot/github-copilot/copilot -> PROVIDER_GHCOPILOT, vibe ->
-// PROVIDER_MISTRAL) are a TOML text-parsing concern and are not carried
-// over the wire: the settings overlay always sends one of these five.
+// Canonical provider identifiers. The parser-level alias documented there
+// (vibe -> PROVIDER_MISTRAL) is a TOML text-parsing concern and is not
+// carried over the wire: the settings overlay always sends one of these three.
 enum Provider {
+  // Values 2 and 3 were opencode and ghcopilot, providers that parsed but
+  // could not start, removed in T192.1. Numbers and names stay reserved for
+  // wire compatibility.
+  reserved 2, 3;
+  reserved "PROVIDER_OPENCODE", "PROVIDER_GHCOPILOT";
   PROVIDER_CLAUDE = 0;
   PROVIDER_CODEX = 1;
-  PROVIDER_OPENCODE = 2;
-  PROVIDER_GHCOPILOT = 3;
   PROVIDER_MISTRAL = 4;
 }
 
@@ -299,17 +302,14 @@ enum RunMode {
   RUN_MODE_CONTINUOUS = 1;
 }
 
-// Shared by plan_revision_accept_policy and orchestrator_accept_policy
-//: both rows document the same
-// three alternatives.
+// Used by orchestrator_accept_policy.
 enum AcceptPolicy {
   ACCEPT_POLICY_NO_HIGH = 0;
   ACCEPT_POLICY_NO_HIGH_MEDIUM = 1;
   ACCEPT_POLICY_NO_FINDINGS = 2;
 }
 
-// The model route for one role. Also carries the "learning
-// extraction model" row via ROLE_LEARNING_EXTRACTION.
+// The model route for one role.
 message RoleModel {
   Role role = 1;
   string model = 2;
@@ -330,44 +330,35 @@ message RoleProvider {
 //
 // Every case below corresponds to exactly one row of Part III, sections
 // 4-8 (grouped and commented the same way); a case name matches that
-// row's setting name. Rows whose value is a list or map (stages,
-// catalog_url_overrides, stage_overrides, semgrep_rulesets, plugins) have
+// row's setting name. The row whose value is a list (stages) has
 // no case: the settings overlay has no list-editing field kind (Part VIII,
-// section 5, "Field kinds") to produce one, so those rows currently have
+// section 5, "Field kinds") to produce one, so that row currently has
 // no live single-field edit path at all, on disk or over the wire.
 message SettingsChange {
-  // Field 20 was a removed duplicate of the RoleProvider route (T91.1); the
-  // number stays reserved for wire compatibility.
-  reserved 20;
+  // Field 20 was a removed duplicate of the RoleProvider route (T91.1); fields
+  // 4, 5, 7, 12-14, 21-24, 26, 34, 35, 37-39 and 41-46 were settings nothing
+  // read, removed in T191.1. The numbers and names stay reserved for wire
+  // compatibility.
+  reserved 4, 5, 7, 12 to 14, 20 to 24, 26, 34, 35, 37 to 39, 41 to 46;
+  reserved "local_model", "model_catalog_refresh_secs", "skip_planner_for_simple", "planner_lookahead", "plan_revision_cycles", "plan_revision_accept_policy", "semgrep_enabled", "build_command", "planning_iterations", "require_human_approval", "on_task_complete_hook", "phase_isolation", "enforce_phase_rbac", "max_learning_injection", "min_learning_injection", "history_search_results", "observatory_retention_days", "semantic_match_enabled", "embedding_model", "embedding_port", "embedding_timeout_ms", "show_retrieval_panel";
   oneof change {
     // -- Section 3.4, model and provider routing --
     RoleModel role_model = 1;
     RoleProvider role_provider = 2;
-    string model_override = 3; // the "model" single-model-override row
-    string local_model = 4;
-    uint32 model_catalog_refresh_secs = 5;
+    string model_override = 3; // retired: the global "model" row was removed; from_proto rejects it
 
     // -- Section 3.5, run modes and pipeline flow --
     RunMode run_mode = 6;
-    bool skip_planner_for_simple = 7;
     bool skip_research_for_simple = 8;
     bool skip_review_for_simple = 9;
     uint32 review_confidence_threshold = 10;
     bool batch_review = 11;
-    bool planner_lookahead = 12;
-    uint32 plan_revision_cycles = 13;
-    AcceptPolicy plan_revision_accept_policy = 14;
     uint32 orchestrator_max_iterations = 15;
     AcceptPolicy orchestrator_accept_policy = 16;
     bool review_in_loop = 17;
     uint32 review_multipass_threshold = 18;
     double confidence_threshold = 19; // findings-confidence, range 0.0-1.0
-    bool semgrep_enabled = 21;
-    string build_command = 22;
-    uint32 planning_iterations = 23;
-    bool require_human_approval = 24;
-    string auto_push_remote = 25; // empty clears it (Part III, section 2)
-    string on_task_complete_hook = 26; // empty clears it
+    string auto_push_remote = 25; // the remote pushed to when auto_push_enabled is on; empty switches the push off
     uint32 discovery_cooldown_secs = 27;
 
     // -- Section 3.6, timing --
@@ -378,26 +369,10 @@ message SettingsChange {
     bool adaptive_pauses = 32;
     uint32 engine_idle_timeout_secs = 33;
 
-    // -- Section 3.7, isolation and security --
-    bool phase_isolation = 34;
-    bool enforce_phase_rbac = 35;
 
     // -- Section 3.8, learnings, history and embeddings --
     string history_dir = 36;
-    uint32 max_learning_injection = 37;
-    uint32 min_learning_injection = 38;
-    uint32 history_search_results = 39;
     uint32 history_retention_tasks = 40;
-    uint32 observatory_retention_days = 41;
-    bool semantic_match_enabled = 42;
-    string embedding_model = 43;
-    // The port of the local embedding server (Part III, section 8's
-    // "embedding model / port / timeout" row, default 11434); validated
-    // as the "port number" type named in section 2's persistence
-    // rules, not a free-form URL.
-    uint32 embedding_port = 44;
-    uint32 embedding_timeout_ms = 45;
-    bool show_retrieval_panel = 46;
     // The base `provider` key (Part III, section 4's routing table).
     Provider provider = 47;
     // Whether a plan session runs before each builder session
@@ -408,6 +383,9 @@ message SettingsChange {
     // How many days the history keeps its task records (section 9 of
     // docs/private/history-restructure.md).
     uint32 history_retention_days = 50;
+    // Whether the group-completion push runs at all (default off); the
+    // remote is auto_push_remote.
+    bool auto_push_enabled = 51;
   }
 }
 

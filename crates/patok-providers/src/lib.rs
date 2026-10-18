@@ -74,6 +74,8 @@ pub struct SessionResult {
     /// The provider and model actually used.
     pub provider: String,
     pub model: String,
+    /// The provider's stream reported a rate limit during the session.
+    pub rate_limited: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

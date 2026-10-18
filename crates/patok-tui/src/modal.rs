@@ -723,7 +723,7 @@ mod tests {
         app.open_settings();
         app.overlay
             .drafts
-            .insert("model".into(), SettingValue::Str("opus".into()));
+            .insert("builder_model".into(), SettingValue::Str("opus".into()));
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
         assert_eq!(app.modals.top(), Some(Modal::Confirm));
         assert_eq!(

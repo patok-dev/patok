@@ -90,9 +90,8 @@ pub struct Section {
 // here, and the drift test in `crate::settings`
 // (`every_daemon_field_has_an_overlay_row_and_round_trips_the_wire`) fails the
 // build if a row, a mapper arm or an editor kind disagrees with the registry.
-// Deliberate exclusions: the composite keys (`stages`, `stage_overrides`,
-// `catalog_url_overrides`, `semgrep_rulesets`, `plugins` -- no single-value editor)
-// and `agent_pane_split` (the TUI has a fixed split and no dragging). The two
+// Deliberate exclusions: the composite key (`stages` -- no single-value
+// editor) and `agent_pane_split` (the TUI has a fixed split and no dragging). The two
 // read-only report rows (`engine_version`, `shell_version`) report engine and shell
 // state instead of a setting; the display section is the shell's own tui schema, so
 // its rows stay literal.
@@ -104,12 +103,10 @@ pub struct Section {
 pub(crate) fn overlay_kind(kind: &CoreFieldKind) -> FieldKind {
     match kind {
         CoreFieldKind::Bool => FieldKind::Bool,
-        CoreFieldKind::Uint | CoreFieldKind::Port | CoreFieldKind::Range(..) => {
-            FieldKind::Number(Number::Uint)
-        }
+        CoreFieldKind::Uint | CoreFieldKind::Range(..) => FieldKind::Number(Number::Uint),
         CoreFieldKind::PositiveUint => FieldKind::Number(Number::PositiveUint),
         CoreFieldKind::FloatRange(..) => FieldKind::Number(Number::Float),
-        CoreFieldKind::Str | CoreFieldKind::OptStr => FieldKind::Text,
+        CoreFieldKind::Str | CoreFieldKind::OptStr | CoreFieldKind::FreeStr => FieldKind::Text,
         CoreFieldKind::Enum(accepted) => FieldKind::Enum(accepted),
         CoreFieldKind::Provider => FieldKind::Enum(ProviderName::SPELLINGS),
         CoreFieldKind::Composite => unreachable!("composite keys are not registry fields"),
@@ -145,8 +142,6 @@ static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
             schema: Schema::Daemon,
             kind: FieldKind::ReadOnly,
         },
-        daemon_row("provider"),
-        daemon_row("model"),
         daemon_row("research_provider"),
         daemon_row("research_model"),
         daemon_row("planner_provider"),
@@ -157,10 +152,8 @@ static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
         daemon_row("reviewer_model"),
         daemon_row("discovery_provider"),
         daemon_row("discovery_model"),
-        daemon_row("learning_extraction_model"),
-        daemon_row("learning_extraction_provider"),
-        daemon_row("local_model"),
-        daemon_row("model_catalog_refresh_secs"),
+        daemon_row("orchestrator_provider"),
+        daemon_row("orchestrator_model"),
     ]
 });
 
@@ -168,22 +161,13 @@ static PIPELINE_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
     vec![
         daemon_row("run_mode"),
         daemon_row("plan_enabled"),
-        daemon_row("skip_planner_for_simple"),
         daemon_row("skip_research_for_simple"),
         daemon_row("skip_review_for_simple"),
         daemon_row("review_confidence_threshold"),
         daemon_row("review_multipass_threshold"),
         daemon_row("batch_review"),
-        daemon_row("planner_lookahead"),
         daemon_row("review_in_loop"),
         daemon_row("confidence_threshold"),
-        daemon_row("plan_revision_cycles"),
-        daemon_row("plan_revision_accept_policy"),
-        daemon_row("semgrep_enabled"),
-        daemon_row("build_command"),
-        daemon_row("planning_iterations"),
-        daemon_row("require_human_approval"),
-        daemon_row("on_task_complete_hook"),
     ]
 });
 
@@ -200,29 +184,18 @@ static TIMEOUTS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
     ]
 });
 
-static GIT_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| vec![daemon_row("auto_push_remote")]);
-
-static ISOLATION_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+static GIT_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
     vec![
-        daemon_row("phase_isolation"),
-        daemon_row("enforce_phase_rbac"),
+        daemon_row("auto_push_enabled"),
+        daemon_row("auto_push_remote"),
     ]
 });
 
-static LEARNINGS_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
+static HISTORY_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
     vec![
         daemon_row("history_dir"),
-        daemon_row("max_learning_injection"),
-        daemon_row("min_learning_injection"),
-        daemon_row("history_search_results"),
         daemon_row("history_retention_tasks"),
         daemon_row("history_retention_days"),
-        daemon_row("observatory_retention_days"),
-        daemon_row("semantic_match_enabled"),
-        daemon_row("embedding_model"),
-        daemon_row("embedding_port"),
-        daemon_row("embedding_timeout_ms"),
-        daemon_row("show_retrieval_panel"),
     ]
 });
 
@@ -288,16 +261,10 @@ pub(crate) static SECTIONS: &[Section] = &[
         rows: &GIT_SECTION,
     },
     Section {
-        title: "Isolation and security",
-        expanded: true,
-        group: "isolation",
-        rows: &ISOLATION_SECTION,
-    },
-    Section {
-        title: "Learnings, history and embeddings",
+        title: "History",
         expanded: true,
         group: "learnings_history",
-        rows: &LEARNINGS_SECTION,
+        rows: &HISTORY_SECTION,
     },
     Section {
         title: "Display and theme",
@@ -364,13 +331,12 @@ pub fn clamp_focus(focus: usize, len: usize) -> usize {
 
 /// The sections' row groups in display order, read by
 /// [`SettingsOverlay::visible`]; parallel to [`SECTIONS`].
-static SECTION_ROWS: [&LazyLock<Vec<Row>>; 7] = [
+static SECTION_ROWS: [&LazyLock<Vec<Row>>; 6] = [
     &PROVIDER_SECTION,
     &PIPELINE_SECTION,
     &TIMEOUTS_SECTION,
     &GIT_SECTION,
-    &ISOLATION_SECTION,
-    &LEARNINGS_SECTION,
+    &HISTORY_SECTION,
     &DISPLAY_SECTION,
 ];
 
@@ -1063,8 +1029,7 @@ mod tests {
                 + PIPELINE_SECTION.len()
                 + TIMEOUTS_SECTION.len()
                 + GIT_SECTION.len()
-                + ISOLATION_SECTION.len()
-                + LEARNINGS_SECTION.len()
+                + HISTORY_SECTION.len()
                 + DISPLAY_SECTION.len()
         );
         assert_eq!(entries[0], Entry::Header(0));
@@ -1075,7 +1040,7 @@ mod tests {
         assert!(entries.contains(&Entry::Row(&DISPLAY_SECTION[0])));
         // A folded section contributes only its header.
         let mut overlay = overlay();
-        overlay.toggle_section(6);
+        overlay.toggle_section(5);
         assert!(
             overlay
                 .visible()
@@ -1258,7 +1223,7 @@ mod tests {
         );
 
         // Inside an open text editor the four letters keep typing as characters.
-        focus_field(&mut subject, "model");
+        focus_field(&mut subject, "builder_model");
         subject.on_key(
             &mut modals,
             key(KeyCode::Enter),

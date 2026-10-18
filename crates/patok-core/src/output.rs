@@ -226,7 +226,7 @@ pub fn event_lines(event: &EngineEvent, open: bool) -> EventLines {
             timing,
         } => {
             // The routing fields update the run state, not the pane.
-            if matches!(field.as_str(), "provider" | "model") {
+            if matches!(field.as_str(), "builder_provider" | "builder_model") {
                 no_lines(open)
             } else {
                 let mut text = format!("Setting `{field}` changed to `{value}`");
@@ -574,8 +574,8 @@ mod tests {
     }
 
     #[test]
-    fn config_changed_routes_provider_and_model_away_from_the_pane() {
-        for field in ["provider", "model"] {
+    fn config_changed_routes_builder_provider_and_model_away_from_the_pane() {
+        for field in ["builder_provider", "builder_model"] {
             let event = EngineEvent::ConfigChanged {
                 field: field.into(),
                 value: SettingValue::Str("mock".into()),

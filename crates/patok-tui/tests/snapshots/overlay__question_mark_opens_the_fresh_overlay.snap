@@ -16,8 +16,6 @@ expression: screen
      │▶ ▾ Provider and model                                                                  │    │
      │      engine version: 0.1.0                                                             │    │
      │      shell version: 0.0.0                                                              │    │
-     │      provider  ‹ claude ›                                                              │    │
-     │      model  (not set)                                                                  │    │
      │      research provider  ‹ claude ›                                                     │    │
      │      research model  sonnet                                                            │    │
      │      planner provider  ‹ claude ›                                                      │    │
@@ -28,29 +26,18 @@ expression: screen
      │      reviewer model  sonnet                                                            │    │
      │      discovery provider  ‹ claude ›                                                    │    │
      │      discovery model  opus                                                             │    │
-     │      learning extraction model  (not set)                                              │    │
-     │      learning extraction provider  ‹ claude ›                                          │    │
-     │      local model  (not set)                                                            │    │
-     │      model catalog refresh  (not set)                                                  │    │
+     │      orchestrator provider  ‹ claude ›                                                 │    │
+     │      orchestrator model  (not set)                                                     │    │
      │  ▾ Pipeline                                                                            │    │
      │      run mode  ‹ sprint ›                                                              │    │
      │      [ ] plan enabled                                                                  │    │
-     │      [ ] skip planner for simple                                                       │    │
      │      [ ] skip research for simple                                                      │    │
      │      [ ] skip review for simple                                                        │    │
      │      review confidence threshold  5                                                    │    │
      │      review multipass threshold  8                                                     │    │
      │      [ ] batch review                                                                  │    │
-     │      [ ] planner lookahead                                                             │    │
      │      [ ] review in loop                                                                │    │
      │      confidence threshold  0.5                                                         │    │
-     │      plan revision cycles  (not set)                                                   │    │
-     │      plan revision accept policy  ‹ no-high ›                                          │    │
-     │      [ ] semgrep enabled                                                               │    │
-     │      build command  (not set)                                                          │    │
-     │      planning iterations  (not set)                                                    │    │
-     │      [ ] require human approval                                                        │    │
-     │      on task complete hook  (not set)                                                  │    │
      │  ▾ Timeouts and pauses                                                                 │    │
      │      agent timeout  600                                                                │    │
      │      pause between tasks  10                                                           │    │
@@ -61,29 +48,42 @@ expression: screen
      │      discovery cooldown  300                                                           │    │
      │      discovery cooldown cap  1800                                                      │    │
      │  ▾ Git                                                                                 │    │
+     │      [ ] auto-push enabled                                                             │    │
      │      auto-push remote  (not set)                                                       │    │
-     │  ▾ Isolation and security                                                              │    │
-     │      [ ] phase isolation                                                               │    │
-     │      [ ] enforce phase rbac                                                            │    │
-     │  ▾ Learnings, history and embeddings                                                   │    │
+     │  ▾ History                                                                             │    │
      │      history dir  (not set)                                                            │    │
-     │      max learning injection  (not set)                                                 │    │
-     │      min learning injection  (not set)                                                 │    │
-     │      history search results  (not set)                                                 │    │
      │      history retention tasks  (not set)                                                │    │
      │      history retention days  (not set)                                                 │    │
-     │      observatory retention days  (not set)                                             │    │
-     │      [ ] semantic match enabled                                                        │    │
-     │      embedding model  (not set)                                                        │    │
-     │      embedding port  (not set)                                                         │    │
-     │      embedding timeout  (not set)                                                      │    │
-     │      [ ] show retrieval panel                                                          │    │
      │  ▾ Display and theme                                                                   │    │
      │      theme  ‹ dark ›                                                                   │    │
      │      truecolor  ‹ auto ›                                                               │    │
      │      [x] preview wrap                                                                  │    │
      │      update channel  ‹ stable ›                                                        │    │
      │      rail mode  ‹ normal ›                                                             │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
+     │                                                                                        │    │
      │                                                                                        │    │
      │┌───────────────────────────────── Provider and model ─────────────────────────────────┐│    │
      ││Which CLI provider and model the agent roles run on. A change applies at the next task││    │

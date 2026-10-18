@@ -24,8 +24,6 @@ const TASKS: &str = "## Phase 1\n- [ ] T1.1: scaffold the workspace\n";
 fn readout() -> BTreeMap<String, SettingValue> {
     let str = |value: &str| SettingValue::Str(value.into());
     [
-        ("provider", str("claude")),
-        ("model", SettingValue::Str(String::new())),
         ("research_provider", str("claude")),
         ("research_model", str("sonnet")),
         ("planner_provider", str("claude")),
@@ -36,6 +34,8 @@ fn readout() -> BTreeMap<String, SettingValue> {
         ("reviewer_model", str("sonnet")),
         ("discovery_provider", str("claude")),
         ("discovery_model", str("opus")),
+        ("orchestrator_provider", str("claude")),
+        ("orchestrator_model", SettingValue::Str(String::new())),
         ("run_mode", str("sprint")),
         ("plan_enabled", SettingValue::Bool(false)),
         ("review_confidence_threshold", SettingValue::Uint(5)),
@@ -49,6 +49,7 @@ fn readout() -> BTreeMap<String, SettingValue> {
         ("adaptive_pauses", SettingValue::Bool(true)),
         ("discovery_cooldown_secs", SettingValue::Uint(300)),
         ("discovery_cooldown_cap_secs", SettingValue::Uint(1800)),
+        ("auto_push_enabled", SettingValue::Bool(false)),
         ("auto_push_remote", SettingValue::Str(String::new())),
     ]
     .into_iter()
@@ -279,11 +280,7 @@ fn question_mark_opens_the_fresh_overlay() {
     assert!(screen.contains("▾ Pipeline"), "{screen}");
     assert!(screen.contains("▾ Timeouts and pauses"), "{screen}");
     assert!(screen.contains("▾ Git"), "{screen}");
-    assert!(screen.contains("▾ Isolation and security"), "{screen}");
-    assert!(
-        screen.contains("▾ Learnings, history and embeddings"),
-        "{screen}"
-    );
+    assert!(screen.contains("▾ History"), "{screen}");
     assert!(screen.contains("▾ Display and theme"), "{screen}");
     assert!(screen.contains("[ ] plan enabled"), "{screen}");
     assert!(screen.contains("‹ sprint ›"), "{screen}");
@@ -303,7 +300,6 @@ fn the_pipeline_section_shows_the_skip_research_row_and_no_folded_role_text() {
     // screen's 36-row list reaches them.
     let screen = draw(&app, W, 60);
     assert!(screen.contains("[ ] skip research for simple"), "{screen}");
-    assert!(screen.contains("[ ] skip planner for simple"), "{screen}");
     // The folded role's old name is gone from every rendered settings surface;
     // the needle is assembled so the sweep does not find it here either.
     let folded = ["s", "c", "o", "u", "t"].concat();
@@ -564,11 +560,11 @@ fn navigation_skips_folded_rows() {
     assert_eq!(app.overlay.focused(), Entry::Header(1));
 
     // With every section folded, Up/Down walk only the headers.
-    for index in 0..7 {
+    for index in 0..6 {
         focus_header(&mut app, index);
         press(&mut app, KeyCode::Left);
     }
-    assert_eq!(app.overlay.visible().len(), 7);
+    assert_eq!(app.overlay.visible().len(), 6);
     app.overlay.focus = 0;
     for expected in [
         Entry::Header(1),
@@ -576,13 +572,11 @@ fn navigation_skips_folded_rows() {
         Entry::Header(3),
         Entry::Header(4),
         Entry::Header(5),
-        Entry::Header(6),
     ] {
         press(&mut app, KeyCode::Down);
         assert_eq!(app.overlay.focused(), expected);
     }
     for expected in [
-        Entry::Header(5),
         Entry::Header(4),
         Entry::Header(3),
         Entry::Header(2),
@@ -608,15 +602,15 @@ fn row_key_handling_is_untouched_with_a_section_folded() {
         Some(&SettingValue::Bool(false))
     );
     // Left/Right on an enum row still cycle (drafting) and fold nothing.
-    focus_field(&mut app, "provider");
+    focus_field(&mut app, "builder_provider");
     assert_eq!(press(&mut app, KeyCode::Right), Action::None);
     assert_eq!(
-        app.overlay.drafts.get("provider"),
+        app.overlay.drafts.get("builder_provider"),
         Some(&SettingValue::Str("codex".into()))
     );
     assert_eq!(press(&mut app, KeyCode::Left), Action::None);
     assert_eq!(
-        app.overlay.drafts.get("provider"),
+        app.overlay.drafts.get("builder_provider"),
         Some(&SettingValue::Str("claude".into()))
     );
     // Enter on a number row still opens the inline editor, and while it is open
@@ -635,7 +629,7 @@ fn row_key_handling_is_untouched_with_a_section_folded() {
 #[test]
 fn all_sections_folded_show_only_their_headers() {
     let mut app = open();
-    for index in 0..7 {
+    for index in 0..6 {
         focus_header(&mut app, index);
         assert_eq!(press(&mut app, KeyCode::Left), Action::None);
     }
@@ -645,8 +639,7 @@ fn all_sections_folded_show_only_their_headers() {
         "Pipeline",
         "Timeouts and pauses",
         "Git",
-        "Isolation and security",
-        "Learnings, history and embeddings",
+        "History",
         "Display and theme",
     ] {
         assert!(screen.contains(&format!("▸ {title}")), "{screen}");
@@ -671,7 +664,7 @@ fn every_section_expands_and_the_overflowing_body_gains_a_scrollbar() {
         press(&mut app, KeyCode::PageDown);
     }
     let screen = draw(&app, W, H);
-    assert!(screen.contains("show retrieval panel"), "{screen}");
+    assert!(screen.contains("history retention days"), "{screen}");
     assert!(screen.contains("‹ dark ›"), "{screen}");
     assert!(screen.contains("‹ auto ›"), "{screen}");
     assert!(screen.contains("[x] preview wrap"), "{screen}");
@@ -839,7 +832,7 @@ fn arrows_move_focus_and_pages_jump() {
 #[test]
 fn entry_rows_indent_under_their_section_headers() {
     let mut app = open();
-    // Every section opens expanded, so all seven sections show entry rows.
+    // Every section opens expanded, so all six sections show entry rows.
     focus_field(&mut app, "plan_enabled");
     // All seven sections expanded need the 72-row list of a 105-row screen to
     // keep every row of the model on screen at once.
@@ -859,8 +852,6 @@ fn entry_rows_indent_under_their_section_headers() {
     for text in [
         "engine version",
         "shell version",
-        "provider  ‹",
-        "model  (not set)",
         "research provider  ‹",
         "research model",
         "planner provider  ‹",
@@ -871,28 +862,17 @@ fn entry_rows_indent_under_their_section_headers() {
         "reviewer model",
         "discovery provider  ‹",
         "discovery model",
-        "learning extraction model",
-        "learning extraction provider  ‹",
-        "local model",
-        "model catalog refresh",
+        "orchestrator provider  ‹",
+        "orchestrator model",
         "run mode",
-        "skip planner for simple",
         "confidence threshold",
-        "plan revision accept policy  ‹",
-        "semgrep enabled",
-        "build command",
         "agent timeout",
         "pause between tasks",
         "adaptive pauses",
         "discovery cooldown cap",
         "auto-push remote",
-        "phase isolation",
-        "enforce phase rbac",
         "history dir",
-        "max learning injection",
-        "embedding model",
-        "embedding timeout",
-        "show retrieval panel",
+        "history retention days",
         "theme  ‹",
         "truecolor  ‹",
         "preview wrap",
@@ -910,14 +890,13 @@ fn entry_rows_indent_under_their_section_headers() {
         focused.starts_with("▶     "),
         "focused entry row: {focused:?}"
     );
-    // The seven section headers keep the bare marker margin.
+    // The six section headers keep the bare marker margin.
     for title in [
         "Provider and model",
         "Pipeline",
         "Timeouts and pauses",
         "Git",
-        "Isolation and security",
-        "Learnings, history and embeddings",
+        "History",
         "Display and theme",
     ] {
         let header = body(title);
@@ -936,7 +915,7 @@ fn a_narrow_terminal_clamps_the_editor_to_the_modal_body() {
     let mut app = open();
     // A 50-column screen makes the modal full width; the model editor gets a buffer
     // far longer than the row has room for.
-    focus_field(&mut app, "model");
+    focus_field(&mut app, "research_model");
     press(&mut app, KeyCode::Enter);
     for c in "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHTTTTTTTTTTTTTTTTTTTT".chars() {
         press(&mut app, KeyCode::Char(c));
@@ -959,8 +938,7 @@ fn focused_text(app: &App) -> &'static str {
             1 => "Pipeline",
             2 => "Timeouts and pauses",
             3 => "Git",
-            4 => "Isolation and security",
-            5 => "Learnings, history and embeddings",
+            4 => "History",
             _ => "Display and theme",
         },
     }
@@ -991,7 +969,7 @@ fn assert_cursor_visible(app: &App, screen: &str, height: usize) {
 fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
     let mut app = open();
     // At W = 100, H = 40 the modal's body is 28 rows; the help box under the
-    // list (T85.1) leaves the list 20 rows, and the expanded row model is 71
+    // list (T85.1) leaves the list 20 rows, and the expanded row model is 46
     // rows, so the bottom edge of the viewport is viewport row 19 and the
     // 4-row margin sits at row 15.
     let screen = draw(&app, W, H);
@@ -1011,7 +989,7 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
     assert!(!screen.contains("Close settings"), "{screen}");
     // From the margin on, each Down advances the offset by one, keeping the
     // cursor exactly 4 rows above the bottom edge (viewport row 15).
-    for (focus, scroll) in (16..=66).map(|focus| (focus, focus - 15)) {
+    for (focus, scroll) in (16..=42).map(|focus| (focus, focus - 15)) {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
@@ -1019,13 +997,13 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
         assert_eq!(focus - scroll, 15);
         assert_cursor_visible(&app, &screen, 20);
     }
-    // The list-end clamp: the offset stops at 51 and the cursor rides the last
+    // The list-end clamp: the offset stops at 27 and the cursor rides the last
     // rows down to the bottom edge.
-    for focus in 67..=70 {
+    for focus in 43..=46 {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 51, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 27, "focus {focus}");
         assert_cursor_visible(&app, &screen, 20);
     }
     assert!(draw(&app, W, H).contains("rail mode"));
@@ -1035,25 +1013,25 @@ fn down_scrolls_only_once_the_cursor_is_four_rows_above_the_bottom() {
 fn up_scrolls_only_once_the_cursor_is_four_rows_below_the_top() {
     let mut app = open();
     // Walk to the last row first, drawing every step; the offset ends at its
-    // maximum (51) with the last entry row in view.
-    for _ in 0..70 {
+    // maximum (27) with the last entry row in view.
+    for _ in 0..46 {
         press(&mut app, KeyCode::Down);
         draw(&app, W, H);
     }
-    assert_eq!(app.overlay.focus, 70);
-    assert_eq!(app.overlay.scroll.get(), 51);
+    assert_eq!(app.overlay.focus, 46);
+    assert_eq!(app.overlay.scroll.get(), 27);
     // Up from the bottom keeps the view stationary while the cursor has room:
     // it climbs from viewport row 19 down to 4 -- 4 rows below the top edge.
-    for focus in (55..=69).rev() {
+    for focus in (31..=45).rev() {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 51, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 27, "focus {focus}");
         assert_cursor_visible(&app, &screen, 20);
     }
     // Past the margin the offset decreases one row per Up press, keeping the
     // cursor exactly 4 rows below the top edge (viewport row 4).
-    for (focus, scroll) in (4..=54).rev().map(|focus| (focus, focus - 4)) {
+    for (focus, scroll) in (4..=30).rev().map(|focus| (focus, focus - 4)) {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, H);
         assert_eq!(app.overlay.focus, focus);
@@ -1081,7 +1059,7 @@ fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
     let mut app = open();
     draw(&app, W, H);
     // At W = 100, H = 40 the help box under the list (T85.1) leaves the list
-    // 20 rows over the 71-row expanded model -- the same geometry the Down
+    // 20 rows over the 46-row expanded model -- the same geometry the Down
     // key test pins.
     let list = app.overlay.list.get();
     assert_eq!(list.height, 20);
@@ -1122,7 +1100,7 @@ fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
         assert!(app.overlay.focus - app.overlay.scroll.get() < usize::from(list.height));
     }
     assert_eq!(app.overlay.focus, len - 1);
-    assert_eq!(app.overlay.scroll.get(), 51);
+    assert_eq!(app.overlay.scroll.get(), 27);
 
     // The hovered row's selection marker is on screen at the walk's end.
     let screen = draw(&app, W, H);
@@ -1132,7 +1110,7 @@ fn hovering_the_bottom_row_scrolls_the_list_like_the_down_key() {
 #[test]
 fn the_margin_holds_with_sections_folded() {
     let mut app = open();
-    // Fold the Pipeline section: 53 visible rows in a 12-row list (the 20-row
+    // Fold the Pipeline section: 37 visible rows in a 12-row list (the 20-row
     // body of a full-screen modal at H = 24 minus the help box under it,
     // T85.1), so the margin band is viewport rows 4..=7.
     focus_header(&mut app, 1);
@@ -1153,9 +1131,9 @@ fn the_margin_holds_with_sections_folded() {
     // section longer than the band.
     assert!(matches!(
         app.overlay.focused(),
-        Entry::Row(row) if row.key == "planner_provider"
+        Entry::Row(row) if row.key == "builder_provider"
     ));
-    for (focus, scroll) in (8..=48).map(|focus| (focus, focus - 7)) {
+    for (focus, scroll) in (8..=33).map(|focus| (focus, focus - 7)) {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
@@ -1166,19 +1144,19 @@ fn the_margin_holds_with_sections_folded() {
         // contributes its header alone, so the walk crosses straight from the
         // Pipeline header to the Timeouts header without landing on a hidden
         // row.
-        if focus == 19 {
+        if focus == 15 {
             assert_eq!(app.overlay.focused(), Entry::Header(1));
         }
-        if focus == 20 {
+        if focus == 16 {
             assert_eq!(app.overlay.focused(), Entry::Header(2));
         }
     }
-    // The clamp: the offset stops at 41 and the cursor rides to the bottom edge.
-    for focus in 49..=52 {
+    // The clamp: the offset stops at 26 and the cursor rides to the bottom edge.
+    for focus in 34..=37 {
         press(&mut app, KeyCode::Down);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 41, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 26, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
     assert!(matches!(
@@ -1187,14 +1165,14 @@ fn the_margin_holds_with_sections_folded() {
     ));
     // And back up: stationary to viewport row 4, then decreasing with the same
     // 4-row margin below the top edge.
-    for focus in (45..=51).rev() {
+    for focus in (30..=36).rev() {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
-        assert_eq!(app.overlay.scroll.get(), 41, "focus {focus}");
+        assert_eq!(app.overlay.scroll.get(), 26, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    for (focus, scroll) in (4..=44).rev().map(|focus| (focus, focus - 4)) {
+    for (focus, scroll) in (4..=29).rev().map(|focus| (focus, focus - 4)) {
         press(&mut app, KeyCode::Up);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
@@ -1215,26 +1193,18 @@ fn the_margin_holds_with_sections_folded() {
 fn the_cursor_stays_visible_after_jumps_and_folds() {
     let mut app = open();
     // At H = 24 the list is 12 rows (a 20-row body minus the help box under it,
-    // T85.1) and the expanded row model 71 rows, so a PageDown jumps the cursor
+    // T85.1) and the expanded row model 47 rows, so a PageDown jumps the cursor
     // far past the stationary band; every draw must pull the stale offset along.
     let screen = draw(&app, W, 24);
     assert_cursor_visible(&app, &screen, 12);
-    for (focus, scroll) in [
-        (10, 3),
-        (20, 13),
-        (30, 23),
-        (40, 33),
-        (50, 43),
-        (60, 53),
-        (70, 59),
-    ] {
+    for (focus, scroll) in [(10, 3), (20, 13), (30, 23), (40, 33), (46, 35)] {
         press(&mut app, KeyCode::PageDown);
         let screen = draw(&app, W, 24);
         assert_eq!(app.overlay.focus, focus);
         assert_eq!(app.overlay.scroll.get(), scroll, "focus {focus}");
         assert_cursor_visible(&app, &screen, 12);
     }
-    // Folding Pipeline while scrolled to the bottom shortens the list to 53
+    // Folding Pipeline while scrolled to the bottom shortens the list to 38
     // rows: walking the focus to the header and back down with the keys keeps
     // every step visible, and the offset clamps into the shortened range.
     let header = app
@@ -1251,9 +1221,9 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         press(&mut app, KeyCode::Down);
     }
     let screen = draw(&app, W, 24);
-    assert_eq!(app.overlay.visible().len(), 53);
-    assert_eq!(app.overlay.focus, 52);
-    assert_eq!(app.overlay.scroll.get(), 41);
+    assert_eq!(app.overlay.visible().len(), 38);
+    assert_eq!(app.overlay.focus, 37);
+    assert_eq!(app.overlay.scroll.get(), 26);
     assert_cursor_visible(&app, &screen, 12);
     // Unfolding grows the list again; walking back down to the very bottom
     // keeps the cursor visible, back at the maximum offset.
@@ -1271,8 +1241,8 @@ fn the_cursor_stays_visible_after_jumps_and_folds() {
         press(&mut app, KeyCode::Down);
     }
     let screen = draw(&app, W, 24);
-    assert_eq!(app.overlay.visible().len(), 71);
-    assert_eq!(app.overlay.scroll.get(), 59);
+    assert_eq!(app.overlay.visible().len(), 47);
+    assert_eq!(app.overlay.scroll.get(), 35);
     assert_cursor_visible(&app, &screen, 12);
 }
 
@@ -1283,7 +1253,7 @@ fn j_and_k_move_focus_exactly_like_down_and_up() {
     // the scroll offset (the T22.1 margin behaviour) is recomputed identically.
     let mut hjkl = open();
     let mut arrows = open();
-    for _ in 0..70 {
+    for _ in 0..45 {
         press(&mut hjkl, KeyCode::Char('j'));
         press(&mut arrows, KeyCode::Down);
         let screen = draw(&hjkl, W, H);
@@ -1299,7 +1269,7 @@ fn j_and_k_move_focus_exactly_like_down_and_up() {
     }
     // The bottom of the list is reached with j alone and the last entry row shows.
     assert!(draw(&hjkl, W, H).contains("update channel"));
-    for _ in 0..70 {
+    for _ in 0..45 {
         press(&mut hjkl, KeyCode::Char('k'));
         press(&mut arrows, KeyCode::Up);
         let screen = draw(&hjkl, W, H);
@@ -1330,11 +1300,11 @@ fn j_and_k_skip_folded_sections() {
     assert_eq!(app.overlay.focused(), Entry::Header(1));
 
     // With every section folded, j/k walk only the headers.
-    for index in 0..7 {
+    for index in 0..6 {
         focus_header(&mut app, index);
         press(&mut app, KeyCode::Left);
     }
-    assert_eq!(app.overlay.visible().len(), 7);
+    assert_eq!(app.overlay.visible().len(), 6);
     app.overlay.focus = 0;
     for expected in [
         Entry::Header(1),
@@ -1342,13 +1312,11 @@ fn j_and_k_skip_folded_sections() {
         Entry::Header(3),
         Entry::Header(4),
         Entry::Header(5),
-        Entry::Header(6),
     ] {
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.overlay.focused(), expected);
     }
     for expected in [
-        Entry::Header(5),
         Entry::Header(4),
         Entry::Header(3),
         Entry::Header(2),
@@ -1418,7 +1386,7 @@ fn hjkl_type_as_characters_in_the_open_editors() {
     // In the free-text editor the four letters append to the buffer, and nothing
     // folds or moves while the editor is open.
     let mut app = open();
-    focus_field(&mut app, "model");
+    focus_field(&mut app, "orchestrator_model");
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
     assert_eq!(app.overlay.editor.as_ref().unwrap().buffer, "");
     let before = app.overlay.visible();
@@ -1479,7 +1447,7 @@ fn the_list_ends_with_the_last_entry_and_no_enter_button() {
 
     // All folded: only the headers show, still with no button under them.
     let mut app = open();
-    for index in 0..7 {
+    for index in 0..6 {
         focus_header(&mut app, index);
         press(&mut app, KeyCode::Left);
     }
@@ -1489,8 +1457,7 @@ fn the_list_ends_with_the_last_entry_and_no_enter_button() {
         "▸ Pipeline",
         "▸ Timeouts and pauses",
         "▸ Git",
-        "▸ Isolation and security",
-        "▸ Learnings, history and embeddings",
+        "▸ History",
         "▸ Display and theme",
     ] {
         assert!(screen.contains(title), "{screen}");
@@ -1531,14 +1498,14 @@ fn navigation_stops_on_the_last_real_entry_without_a_gap() {
 
     // All folded: the walk stops on the last header instead.
     let mut folded = open();
-    for index in 0..7 {
+    for index in 0..6 {
         focus_header(&mut folded, index);
         press(&mut folded, KeyCode::Left);
     }
     for _ in 0..10 {
         press(&mut folded, KeyCode::Down);
     }
-    assert_eq!(folded.overlay.focused(), Entry::Header(6));
+    assert_eq!(folded.overlay.focused(), Entry::Header(5));
 }
 
 #[test]

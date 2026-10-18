@@ -92,9 +92,19 @@ fn claude_tools(tool: Tool) -> &'static [&'static str] {
 pub struct StreamParser {
     delta_emitted: bool,
     last_turn_input: Option<u64>,
+    /// A rate-limit event with a status other than `allowed` was seen.
+    rate_limited: bool,
 }
 
-crate::cli::forward_line_parser!(StreamParser);
+impl crate::process::LineParser for StreamParser {
+    fn parse_line(&mut self, line: &str) -> Parsed {
+        self.parse(line)
+    }
+
+    fn rate_limited(&self) -> bool {
+        self.rate_limited
+    }
+}
 
 impl StreamParser {
     pub fn parse(&mut self, line: &str) -> Parsed {
@@ -131,11 +141,24 @@ impl StreamParser {
                 text: error_text(value),
             }],
             "result" => self.result(value),
-            "rate_limit_event" => rate_limit(value),
+            "rate_limit_event" => self.rate_limit(value),
             other => vec![AgentEvent::Text {
                 text: format!("[{other}]"),
             }],
         }
+    }
+
+    fn rate_limit(&mut self, value: &Value) -> Vec<AgentEvent> {
+        let status = value["rate_limit_info"]["status"]
+            .as_str()
+            .unwrap_or("unknown");
+        if status == "allowed" {
+            return vec![];
+        }
+        self.rate_limited = true;
+        vec![AgentEvent::Text {
+            text: format!("[rate limited] {status}"),
+        }]
     }
 
     fn stream_event(&mut self, event: &Value) -> Vec<AgentEvent> {
@@ -281,18 +304,6 @@ fn system(value: &Value) -> Vec<AgentEvent> {
     } else {
         vec![]
     }
-}
-
-fn rate_limit(value: &Value) -> Vec<AgentEvent> {
-    let status = value["rate_limit_info"]["status"]
-        .as_str()
-        .unwrap_or("unknown");
-    if status == "allowed" {
-        return vec![];
-    }
-    vec![AgentEvent::Text {
-        text: format!("[rate limited] {status}"),
-    }]
 }
 
 fn error_text(value: &Value) -> String {
@@ -547,6 +558,7 @@ mod tests {
             )
             .is_empty()
         );
+        assert!(!crate::process::LineParser::rate_limited(&p));
         assert_eq!(
             events(
                 &mut p,
@@ -556,6 +568,7 @@ mod tests {
                 text: "[rate limited] rejected".into()
             }]
         );
+        assert!(crate::process::LineParser::rate_limited(&p));
         assert_eq!(
             events(
                 &mut p,

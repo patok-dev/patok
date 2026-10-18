@@ -690,6 +690,74 @@ async fn the_report_reaches_the_builder_prompt_when_the_plan_stage_is_off() {
     assert!(!sessions[1].prompt.contains("carry it out"));
 }
 
+/// Builds `tasks` on an engine whose pauses are set by `configure`, and returns how long the
+/// build took.
+async fn timed_build(
+    fixture: &Fixture,
+    provider: MockProvider,
+    configure: impl FnOnce(&mut patok_engine::EngineConfig),
+    skip_research_for_simple: bool,
+) -> Duration {
+    let mut config = fixture.config_full(false, skip_research_for_simple);
+    configure(&mut config);
+    let engine = patok_engine::Engine::new(config, std::sync::Arc::new(provider));
+    let mut attachment = engine.attach().unwrap();
+    let started = std::time::Instant::now();
+    engine.start_build().unwrap();
+    let _events = collect_until(&mut attachment.events, is_phase_startup).await;
+    started.elapsed()
+}
+
+#[tokio::test]
+async fn an_adaptive_agent_pause_is_short_when_not_rate_limited() {
+    let fixture = Fixture::new(SUBSTANTIAL_TASK);
+    let provider = MockProvider::per_session(vec![research_steps("report"), builder_steps()]);
+    let elapsed = timed_build(
+        &fixture,
+        provider.clone(),
+        |config| config.pause_between_agents = Duration::from_secs(3),
+        false,
+    )
+    .await;
+    assert!(elapsed < Duration::from_secs(3), "took {elapsed:?}");
+    assert_eq!(provider.sessions()[1].label, "T1.1");
+}
+
+#[tokio::test]
+async fn a_rate_limited_agent_waits_the_full_agent_pause() {
+    let fixture = Fixture::new(SUBSTANTIAL_TASK);
+    let provider = MockProvider::per_session(vec![research_steps("report"), builder_steps()])
+        .with_rate_limited(true);
+    let elapsed = timed_build(
+        &fixture,
+        provider.clone(),
+        |config| config.pause_between_agents = Duration::from_secs(3),
+        false,
+    )
+    .await;
+    assert!(elapsed >= Duration::from_secs(3), "took {elapsed:?}");
+    assert_eq!(provider.sessions()[1].label, "T1.1");
+}
+
+#[tokio::test]
+async fn a_rate_limited_task_waits_the_full_task_pause() {
+    let fixture = Fixture::new(TASKS);
+    let provider = MockProvider::new(builder_steps()).with_rate_limited(true);
+    let elapsed = timed_build(
+        &fixture,
+        provider,
+        |config| config.pause_between_tasks = Duration::from_secs(2),
+        true,
+    )
+    .await;
+    assert!(elapsed >= Duration::from_secs(2), "took {elapsed:?}");
+    let tasks = fixture.tasks_file();
+    assert!(
+        tasks.contains("[x] T1.1") && tasks.contains("[x] T1.2"),
+        "{tasks}"
+    );
+}
+
 #[tokio::test]
 async fn a_simple_task_skips_research_with_the_key_on_and_runs_it_when_off() {
     // "add the greeting file" is a Simple description, so the skip key decides.
@@ -1182,8 +1250,8 @@ async fn agent_runs_push_their_starting_event_before_any_output() {
 #[tokio::test]
 async fn a_configured_model_names_the_model_in_the_starting_event() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
-    let provider = MockProvider::new(builder_steps());
-    let engine = fixture.engine_configured(provider, "model = \"mistral-small\"\n");
+    let provider = MockProvider::new(builder_steps()).with_reviewer_model(true);
+    let engine = fixture.engine_configured(provider, "builder_model = \"mistral-small\"\n");
     let mut attachment = engine.attach().unwrap();
 
     engine.start_build().unwrap();
@@ -1192,6 +1260,46 @@ async fn a_configured_model_names_the_model_in_the_starting_event() {
     // The configured model rides along with the provider the run uses; the
     // resolver hands back the mock whatever the configured kind (T78.1).
     assert_one_starting_line(&events, "builder", "mock", Some("mistral-small"));
+}
+
+#[tokio::test]
+async fn each_role_runs_on_its_own_model_not_the_builders() {
+    let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
+    let provider = MockProvider::per_session(vec![
+        vec![Step::Event(AgentEvent::Result {
+            text: VALID_PLAN.into(),
+        })],
+        builder_steps(),
+    ])
+    .with_reviewer_model(true);
+    let recorded = provider.clone();
+    std::fs::write(
+        fixture.project_config(),
+        "[daemon]\nplan_enabled = true\nrun_mode = \"sprint\"\nreview_in_loop = false\nbuilder_model = \"opus\"\nplanner_model = \"sonnet\"\n",
+    )
+    .unwrap();
+    let provider = std::sync::Arc::new(provider);
+    let engine = patok_engine::Engine::configured_with_env(
+        fixture.config_review(),
+        &patok_core::config::DaemonEnv::default(),
+        move |_kind| Ok(provider.clone()),
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let sessions = recorded.sessions();
+    let plan = sessions
+        .iter()
+        .find(|s| s.label == "plan")
+        .expect("plan ran");
+    assert_eq!(plan.model.as_deref(), Some("sonnet"));
+    let build = sessions
+        .iter()
+        .find(|s| s.label == "T1.1")
+        .expect("build ran");
+    assert_eq!(build.model.as_deref(), Some("opus"));
 }
 
 #[tokio::test]
@@ -3024,7 +3132,7 @@ mod provider_config {
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Claude]);
         let mut attachment = engine.attach().unwrap();
         assert_eq!(attachment.snapshot.provider, "claude");
-        assert_eq!(attachment.snapshot.model, "");
+        assert_eq!(attachment.snapshot.model, "opus");
         engine.start_build().unwrap();
         collect_until(&mut attachment.events, is_phase_startup).await;
     }
@@ -3034,7 +3142,7 @@ mod provider_config {
         let picked = Arc::default();
         let (_fixture, engine) = engine_with(
             None,
-            Some("[daemon]\nprovider = \"mistral\"\nmodel = \"mistral-small\"\n"),
+            Some("[daemon]\nbuilder_provider = \"mistral\"\nbuilder_model = \"mistral-small\"\n"),
             picking(&picked),
         );
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Mistral]);
@@ -3047,8 +3155,8 @@ mod provider_config {
     async fn project_layer_overrides_user_layer() {
         let picked = Arc::default();
         let (_f, engine) = engine_with(
-            Some("[daemon]\nprovider = \"mistral\"\n"),
-            Some("[daemon]\nprovider = \"claude\"\n"),
+            Some("[daemon]\nbuilder_provider = \"mistral\"\n"),
+            Some("[daemon]\nbuilder_provider = \"claude\"\n"),
             picking(&picked),
         );
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Claude]);
@@ -3057,8 +3165,8 @@ mod provider_config {
         // The user layer applies where the project sets nothing.
         let picked = Arc::default();
         let (_f, _engine) = engine_with(
-            Some("[daemon]\nprovider = \"mistral\"\n"),
-            Some("[daemon]\nmodel = \"m\"\n"),
+            Some("[daemon]\nbuilder_provider = \"mistral\"\n"),
+            Some("[daemon]\nbuilder_model = \"m\"\n"),
             picking(&picked),
         );
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Mistral]);
@@ -3097,9 +3205,10 @@ mod provider_config {
 
     #[tokio::test]
     async fn invalid_config_is_a_command_error_naming_the_file() {
-        let (_fixture, engine) = engine_with(None, Some("[daemon]\nprovider = \"gpt\"\n"), |_| {
-            unreachable!("an invalid config must not resolve a provider")
-        });
+        let (_fixture, engine) =
+            engine_with(None, Some("[daemon]\nbuilder_provider = \"gpt\"\n"), |_| {
+                unreachable!("an invalid config must not resolve a provider")
+            });
         let error = engine.start_build().unwrap_err();
         assert!(error.contains("patok.config.toml"), "{error}");
         assert!(error.contains("provider"), "{error}");
@@ -3453,7 +3562,7 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
     let recorded = provider.clone();
     std::fs::write(
         fixture.project_config(),
-        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nprovider = \"mistral\"\nreviewer_provider = \"claude\"\nreviewer_model = \"opus\"\n",
+        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nbuilder_provider = \"mistral\"\nreviewer_provider = \"claude\"\nreviewer_model = \"opus\"\n",
     )
     .unwrap();
     let picked: std::sync::Arc<std::sync::Mutex<Vec<ProviderKind>>> = std::sync::Arc::default();
@@ -4007,6 +4116,177 @@ async fn batch_review_passes_the_groups_last_task_and_advances_to_the_next_group
         !second_reviewer_prompt.contains("first.txt"),
         "the second group's diff should not span the first group: {second_reviewer_prompt}"
     );
+}
+
+/// The push notices of a run, in event order.
+fn push_notices(events: &[EngineEvent]) -> Vec<(NoticeLevel, String)> {
+    notices(events)
+        .into_iter()
+        .filter(|(_, text)| text.starts_with("Push"))
+        .collect()
+}
+
+/// T190.1: the group is pushed once, after its last task's commit.
+#[tokio::test]
+async fn the_group_is_pushed_once_after_its_last_task() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T1.2: add the second file\n- [ ] T2.1: add the third file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("origin");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+        builder_with_claims("third.txt", "third\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_enabled = true\n",
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let pushes = push_notices(&events);
+    assert_eq!(
+        pushes,
+        [
+            (NoticeLevel::Info, "Pushed to origin".to_string()),
+            (NoticeLevel::Info, "Pushed to origin".to_string()),
+        ]
+    );
+    // The first push follows T1.2's commit, the second task of the group:
+    // two commits ("Committed") precede it.
+    let order: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::Notice { text, .. }
+                if text.starts_with("Committed") || text.starts_with("Pushed") =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .map(|text| {
+            if text.starts_with("Pushed") {
+                "push"
+            } else {
+                "commit"
+            }
+        })
+        .collect();
+    assert_eq!(order, ["commit", "commit", "push", "commit", "push"]);
+    assert_eq!(
+        Fixture::remote_head(bare.path()),
+        Some(fixture.git(&["rev-parse", "HEAD"]).trim().to_string())
+    );
+}
+
+/// T190.1: a failed push warns with git's error and the loop carries on.
+#[tokio::test]
+async fn a_failed_push_warns_with_gits_error_and_the_loop_continues() {
+    let tasks = "- [ ] T1.1: add the first file\n- [ ] T2.1: add the second file\n";
+    let fixture = Fixture::new(tasks);
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+        builder_with_claims("second.txt", "second\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_enabled = true\n",
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    let pushes = push_notices(&events);
+    assert_eq!(pushes.len(), 2, "{pushes:?}");
+    for (level, text) in &pushes {
+        assert_eq!(*level, NoticeLevel::Warning);
+        assert!(text.contains("Push to origin failed"), "{text}");
+        assert!(
+            text.contains("does not appear to be a git repository"),
+            "{text}"
+        );
+    }
+    let file = fixture.tasks_file();
+    assert!(file.contains("- [x] T1.1:"), "{file}");
+    assert!(file.contains("- [x] T2.1:"), "{file}");
+}
+
+/// T190.1: an empty `auto_push_remote` switches the push off.
+#[tokio::test]
+async fn an_empty_auto_push_remote_never_pushes() {
+    let tasks = "- [ ] T1.1: add the first file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("origin");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_enabled = true\nauto_push_remote = \"\"\n",
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert_eq!(push_notices(&events), []);
+    assert!(fixture.tasks_file().contains("- [x] T1.1:"));
+    assert_eq!(Fixture::remote_head(bare.path()), None);
+}
+
+/// T190.1: `auto_push_remote` names the remote that is pushed to.
+#[tokio::test]
+async fn auto_push_remote_names_the_remote() {
+    let tasks = "- [ ] T1.1: add the first file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("backup");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(
+        provider,
+        "skip_review_for_simple = false\nauto_push_enabled = true\nauto_push_remote = \"backup\"\n",
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert_eq!(
+        push_notices(&events),
+        [(NoticeLevel::Info, "Pushed to backup".to_string())]
+    );
+    assert!(Fixture::remote_head(bare.path()).is_some());
+}
+
+/// T194.1: with default settings the push is off: a completed group pushes nothing.
+#[tokio::test]
+async fn the_push_is_off_by_default() {
+    let tasks = "- [ ] T1.1: add the first file\n";
+    let fixture = Fixture::new(tasks);
+    let bare = fixture.add_bare_remote("origin");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("first.txt", "first\n", "none"),
+        review_pass(),
+    ]);
+    let engine = fixture.engine_configured(provider, "skip_review_for_simple = false\n");
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert_eq!(push_notices(&events), []);
+    assert!(fixture.tasks_file().contains("- [x] T1.1:"));
+    assert_eq!(Fixture::remote_head(bare.path()), None);
 }
 
 /// T107.1: the loop the fix removes. The group's last task fails its review

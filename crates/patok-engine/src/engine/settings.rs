@@ -39,14 +39,13 @@ impl Engine {
                 if let Err(error) = self.inner.provider.as_ref() {
                     return Err(error.clone());
                 }
-                resolve_or_reject(resolver, &central.settings.provider)?
+                resolve_or_reject(resolver, &central.settings.builder_provider)?
             }
             None => self.inner.provider.clone()?,
         };
         Ok(SessionContext::new(
             self.inner.clone(),
             provider,
-            central.model.clone(),
             central.settings.clone(),
             cancel,
         ))
@@ -100,8 +99,8 @@ impl Engine {
             let mut central = self.central();
             let old = std::mem::replace(&mut central.settings, new.clone());
             if self.inner.resolver.is_some() {
-                central.provider_name = new.provider.to_string();
-                central.model = new.model.clone();
+                central.provider_name = new.builder_provider.to_string();
+                central.model = Some(new.builder_model.clone()).filter(|m| !m.is_empty());
             }
             daemon_changed_fields(&old, &new)
         };

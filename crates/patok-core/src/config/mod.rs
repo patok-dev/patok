@@ -284,21 +284,6 @@ impl Fields<'_> {
         parsed
     }
 
-    /// A port number (1-65535), on top of [`Fields::uint`]: the range beyond
-    /// `u16::MAX` is the only rejection `uint` cannot report itself.
-    pub fn port(&mut self, key: &str, value: &toml::Value) -> Option<u16> {
-        let Some(number) = self.uint(key, value, "a port number (1-65535)", true) else {
-            return None; // uint already warned
-        };
-        match u16::try_from(number) {
-            Ok(port) => Some(port),
-            Err(_) => {
-                self.wrong_type(key, "a port number (1-65535)", value);
-                None
-            }
-        }
-    }
-
     /// A string field; an empty string means "unset" and also yields `None`.
     pub fn string(&mut self, key: &str, value: &toml::Value) -> Option<String> {
         let parsed = value
@@ -311,34 +296,12 @@ impl Fields<'_> {
         parsed
     }
 
-    /// A list of strings, replaced wholesale when a higher layer sets it.
-    pub fn strings(&mut self, key: &str, value: &toml::Value) -> Option<Vec<String>> {
-        let parsed = value.as_array().and_then(|entries| {
-            entries
-                .iter()
-                .map(|e| e.as_str().map(str::to_string))
-                .collect::<Option<Vec<_>>>()
-        });
+    /// A string field whose empty string is a real value (a feature switched
+    /// off), kept as written.
+    pub fn free_string(&mut self, key: &str, value: &toml::Value) -> Option<String> {
+        let parsed = value.as_str().map(str::to_string);
         if parsed.is_none() {
-            self.wrong_type(key, "an array of strings", value);
-        }
-        parsed
-    }
-
-    /// A string map, merged per key across layers.
-    pub fn string_map(
-        &mut self,
-        key: &str,
-        value: &toml::Value,
-    ) -> Option<std::collections::BTreeMap<String, String>> {
-        let parsed = value.as_table().and_then(|table| {
-            table
-                .iter()
-                .map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect::<Option<std::collections::BTreeMap<_, _>>>()
-        });
-        if parsed.is_none() {
-            self.wrong_type(key, "a table of strings", value);
+            self.wrong_type(key, "a string", value);
         }
         parsed
     }

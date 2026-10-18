@@ -45,6 +45,8 @@ pub struct MockProvider {
     /// Whether `supports_reviewer_model()` reports true, so tests can script
     /// either answer; defaults to false like the non-claude providers.
     supports_reviewer_model: bool,
+    /// Whether every session reports a rate limit.
+    rate_limited: bool,
     sessions: Arc<Mutex<Vec<RecordedSession>>>,
 }
 
@@ -56,6 +58,7 @@ impl MockProvider {
             exit: ExitKind::Completed,
             slug: None,
             supports_reviewer_model: false,
+            rate_limited: false,
             sessions: Arc::default(),
         }
     }
@@ -70,6 +73,7 @@ impl MockProvider {
             exit: ExitKind::Completed,
             slug: None,
             supports_reviewer_model: false,
+            rate_limited: false,
             sessions: Arc::default(),
         }
     }
@@ -92,6 +96,12 @@ impl MockProvider {
     /// claude provider) or without it.
     pub fn with_reviewer_model(mut self, on: bool) -> Self {
         self.supports_reviewer_model = on;
+        self
+    }
+
+    /// Reports every session as rate limited, so tests can drive the full (non-adaptive) pause.
+    pub fn with_rate_limited(mut self, on: bool) -> Self {
+        self.rate_limited = on;
         self
     }
 
@@ -215,6 +225,7 @@ impl MockProvider {
             log_path: Some(log_path),
             provider: "mock".into(),
             model: String::new(),
+            rate_limited: self.rate_limited,
         }
     }
 }

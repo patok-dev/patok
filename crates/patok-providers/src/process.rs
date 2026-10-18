@@ -23,6 +23,11 @@ pub struct Parsed {
 
 pub trait LineParser: Send {
     fn parse_line(&mut self, line: &str) -> Parsed;
+
+    /// Whether any line so far reported a rate limit (provider-specific shape).
+    fn rate_limited(&self) -> bool {
+        false
+    }
 }
 
 pub struct ProcessSpec {
@@ -161,6 +166,7 @@ pub async fn run(
         log_path: Some(request.raw_log_path.clone()),
         provider: provider.to_string(),
         model: model.to_string(),
+        rate_limited: parser.rate_limited(),
     })
 }
 
@@ -237,6 +243,22 @@ mod tests {
         }
     }
 
+    /// Reports a rate limit once it has seen the line `limit`.
+    #[derive(Default)]
+    struct LimitSeen(bool);
+    impl LineParser for LimitSeen {
+        fn parse_line(&mut self, line: &str) -> Parsed {
+            self.0 |= line == "limit";
+            Parsed {
+                events: vec![],
+                json: false,
+            }
+        }
+        fn rate_limited(&self) -> bool {
+            self.0
+        }
+    }
+
     fn sh(script: &str) -> ProcessSpec {
         ProcessSpec {
             program: "sh".into(),
@@ -258,6 +280,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_parsers_rate_limit_flag_reaches_the_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let (request, _rx) = request(dir.path(), Duration::from_secs(30));
+        let result = run(sh("echo limit"), &request, LimitSeen::default(), "sh", "m")
+            .await
+            .unwrap();
+        assert!(result.rate_limited);
+    }
+
+    #[tokio::test]
     async fn streams_lines_logs_them_and_completes() {
         let dir = tempfile::tempdir().unwrap();
         let (request, mut rx) = request(dir.path(), Duration::from_secs(30));
@@ -272,6 +304,7 @@ mod tests {
         .unwrap();
         assert_eq!(result.exit, ExitKind::Completed);
         assert!(result.success);
+        assert!(!result.rate_limited);
         let mut texts = vec![];
         while let Ok(event) = rx.try_recv() {
             texts.push(format!("{event:?}"));

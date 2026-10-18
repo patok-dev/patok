@@ -1,8 +1,8 @@
 //! The deep merge of the file layers, applied independently
 //! per schema: a higher-precedence value at a given key overrides the lower one, keys a
 //! file omits keep the lower layer's value. The daemon schema's layer merge is generated
-//! with the rest of its field tables in `daemon.rs` (including the deeper merges: the
-//! stage list by stage id, the catalog URL override map per key); this module holds the
+//! with the rest of its field tables in `daemon.rs` (including the deeper merge of the
+//! stage list by stage id); this module holds the
 //! tui schema's merge.
 
 use super::tui::TuiLayer;

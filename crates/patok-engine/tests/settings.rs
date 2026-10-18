@@ -37,6 +37,9 @@ fn defaults_config(fixture: &Fixture) -> EngineConfig {
     let mut config = fixture.config_for(true);
     config.agent_timeout = EngineConfig::DEFAULT_AGENT_TIMEOUT;
     config.idle_shutdown = EngineConfig::DEFAULT_IDLE_SHUTDOWN;
+    config.pause_between_tasks = EngineConfig::DEFAULT_PAUSE_BETWEEN_TASKS;
+    config.pause_between_agents = EngineConfig::DEFAULT_PAUSE_BETWEEN_AGENTS;
+    config.pause_between_cycles = EngineConfig::DEFAULT_PAUSE_BETWEEN_CYCLES;
     // The file default for the run mode is sprint (the fixture's continuous
     // default is for the scheduled-round tests, T103.1).
     config.run_mode = RunMode::Sprint;
@@ -74,7 +77,7 @@ async fn a_valid_settings_change_updates_the_config_the_file_and_broadcasts() {
         "{events:#?}"
     );
     assert!(
-        config_change(&events, "provider").is_none(),
+        config_change(&events, "builder_provider").is_none(),
         "only the changed field is reported"
     );
 }
@@ -117,7 +120,7 @@ async fn a_run_mode_settings_change_updates_the_config_the_file_and_broadcasts()
         "{events:#?}"
     );
     assert!(
-        config_change(&events, "provider").is_none(),
+        config_change(&events, "builder_provider").is_none(),
         "only the changed field is reported"
     );
 }
@@ -240,10 +243,12 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     ]);
     let claude_recorded = claude.clone();
     let claude = Arc::new(claude);
+    // The mock stands in for a provider that runs the role's model.
     let mistral = MockProvider::new(vec![Step::WriteFile {
         path: "two.txt".into(),
         contents: "two\n".into(),
-    }]);
+    }])
+    .with_reviewer_model(true);
     let mistral_recorded = mistral.clone();
     let mistral = Arc::new(mistral);
     let engine = Engine::configured_with_env(
@@ -267,18 +272,18 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     // The change lands mid-run: the running session keeps the snapshot it started with,
     // and the new values apply at the next build start.
     engine
-        .apply_settings_change("model", SettingValue::Str("opus".into()))
+        .apply_settings_change("builder_model", SettingValue::Str("sonnet".into()))
         .unwrap();
     engine
-        .apply_settings_change("provider", SettingValue::Str("mistral".into()))
+        .apply_settings_change("builder_provider", SettingValue::Str("mistral".into()))
         .unwrap();
     let events = collect_until(
         &mut attachment.events,
-        |event| matches!(event, EngineEvent::ConfigChanged { field, .. } if field == "provider"),
+        |event| matches!(event, EngineEvent::ConfigChanged { field, .. } if field == "builder_provider"),
     )
     .await;
     assert_eq!(
-        config_change(&events, "provider"),
+        config_change(&events, "builder_provider"),
         Some((
             SettingValue::Str("mistral".into()),
             ApplyTiming::NextUnitOfWork
@@ -303,7 +308,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         mistral_recorded.sessions().is_empty(),
         "the running unit was untouched"
     );
-    assert_eq!(engine.settings().model.as_deref(), Some("opus"));
+    assert_eq!(engine.settings().builder_model, "sonnet");
 
     // The next build start takes the new routing.
     std::fs::write(
@@ -318,7 +323,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     .await;
     let sessions = mistral_recorded.sessions();
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].model.as_deref(), Some("opus"));
+    assert_eq!(sessions[0].model.as_deref(), Some("sonnet"));
     assert_eq!(
         claude_recorded.sessions().len(),
         2,
