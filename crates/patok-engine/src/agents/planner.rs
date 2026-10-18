@@ -4,11 +4,12 @@
 //! appended to the project's task list.
 
 use patok_core::event::{AgentEvent, AgentRole};
-use patok_core::task::Task;
+use patok_core::task::{CHECKED, Task, UNCHECKED};
 use patok_providers::{PLAN_TOOLS, PLANNER_TOOLS, Tool};
 
-use super::{Agent, SPEC_FILE, append_guidelines, captured_text, research_block};
+use super::{Agent, SPEC_FILE, append_guidelines_with, captured_text, research_block};
 use crate::TASK_FILE;
+use crate::task_list::file::LastGroup;
 
 /// The two sections a plan must have to pass the gate.
 const REQUIRED_SECTIONS: [&str; 2] = ["File Operations", "Verification"];
@@ -99,23 +100,66 @@ You turn a short user request into task lines appended to the project's task lis
 You may only read, edit and write files; you have no shell. \
 Never modify, reorder, check off or delete existing tasks or any other existing text: only append new lines at the end of the task list.";
 
-fn planner(request: &str) -> String {
+fn planner(request: &str, last: Option<&LastGroup>) -> String {
     format!(
         "Expand the request below into one or a few comprehensive tasks and append them to {TASK_FILE}.\n\n\
          Request:\n{request}\n\n\
+         Current task groups:\n{state}\n\n\
          Steps:\n\
          1. If {SPEC_FILE} exists in the project root, read it for context.\n\
-         2. Read the last 20 lines of {TASK_FILE} to find the highest task number in use, so you can pick the next number.\n\
+         2. Read the last 20 lines of {TASK_FILE} to see the most recent tasks and confirm the group state above.\n\
          3. Append the new task lines at the end of {TASK_FILE}. Do not change anything above them.\n\n\
          Guidelines:\n{guidelines}",
+        state = last_group_block(last),
         guidelines = planner_guidelines(),
     )
 }
 
+/// The last task group's state and the join-or-open decision rule (T1.1),
+/// with the concrete IDs worked out so the planner does not compute them.
+fn last_group_block(last: Option<&LastGroup>) -> String {
+    let Some(group) = last else {
+        return format!("{TASK_FILE} has no T tasks yet: open the first group at T1.1.");
+    };
+    let (n, m) = (group.number, group.highest_minor);
+    let mut block = format!(
+        "The last task group in {TASK_FILE} is T{n} ({pending} of {total} tasks pending, highest minor number {m}):\n",
+        pending = group.pending,
+        total = group.tasks.len(),
+    );
+    for task in &group.tasks {
+        let checkbox = if task.done { CHECKED } else { UNCHECKED };
+        block.push_str(&format!("{checkbox}{}: {}\n", task.id, task.description));
+    }
+    block.push('\n');
+    if group.pending > 0 {
+        block.push_str(&format!(
+            "The group still has pending work (a partly done group counts). \
+             If the request belongs to the same concern as this group, join it: your first task is T{n}.{next_minor}. \
+             Otherwise open a new group: your first task is T{next}.1.\n\
+             Never reuse an older group number or skip a number: every task you append belongs to group T{n} or T{next}.",
+            next_minor = m + 1,
+            next = n + 1,
+        ));
+    } else {
+        block.push_str(&format!(
+            "Every task in this group is done, so never join it: open a new group starting at T{next}.1.\n\
+             Never reuse an older group number or skip a number: every task you append belongs to group T{next}.",
+            next = n + 1,
+        ));
+    }
+    block
+}
+
+/// The append-tasks planner's ID-format bullet (T1.1): a task either joins
+/// the last group or opens the next one.
+const PLANNER_ID_RULE: &str = "Each task is a single line in exactly one of two formats: `- [ ] T<N>.<M+1>: <description>` to join the last group, or `- [ ] T<N+1>.1: <description>` to open a new group, where <N> is the last group's number and <M> its highest minor number as shown above. Further tasks continue the minor numbers of the same group (for example T<N+1>.2). Always use the `T` prefix, never an `H` or `D` prefix.";
+
 /// The append-tasks planner's guidelines.
 fn planner_guidelines() -> String {
-    append_guidelines(
+    append_guidelines_with(
         "request",
+        PLANNER_ID_RULE,
         None,
         "Finish with a one-line summary of the tasks you added.",
     )
@@ -189,15 +233,18 @@ impl Agent for PlanAgent {
 
 /// The append-tasks planner: its session appends task lines; the file-based
 /// `check_appended` validation runs engine-side, so this agent's own gate is
-/// trivial acceptance.
+/// trivial acceptance. The prompt carries the task file's last group (T1.1)
+/// so the planner can decide between joining it and opening a new one.
 pub(crate) struct AppendPlannerAgent {
     request: String,
+    last_group: Option<LastGroup>,
 }
 
 impl AppendPlannerAgent {
-    pub(crate) fn new(request: &str) -> Self {
+    pub(crate) fn new(request: &str, last_group: Option<LastGroup>) -> Self {
         Self {
             request: request.into(),
+            last_group,
         }
     }
 }
@@ -214,7 +261,7 @@ impl Agent for AppendPlannerAgent {
     }
 
     fn user_prompt(&self) -> String {
-        planner(&self.request)
+        planner(&self.request, self.last_group.as_ref())
     }
 
     fn label(&self) -> String {
@@ -234,6 +281,7 @@ impl Agent for AppendPlannerAgent {
 mod tests {
     use super::*;
     use crate::agents::test_task;
+    use crate::task_list::file::last_group;
 
     #[test]
     fn a_valid_plan_is_accepted() {
@@ -338,12 +386,41 @@ Update src/lib.rs to declare the module.";
 
     #[test]
     fn planner_prompt_carries_request_and_format_rules() {
-        let p = planner("add a login page");
+        let p = planner("add a login page", None);
         assert!(p.contains("add a login page"));
         assert!(p.contains(TASK_FILE) && p.contains(SPEC_FILE));
         assert!(p.contains("last 20 lines"));
-        assert!(p.contains("- [ ] T<N>.1: <description>"));
+        assert!(p.contains("- [ ] T<N>.<M+1>: <description>"));
+        assert!(p.contains("- [ ] T<N+1>.1: <description>"));
+        assert!(p.contains("T1.1"));
         assert!(p.contains("no markdown"));
+        // The prompt is real newlines, not literal escape sequences.
+        assert!(!p.contains("\\n"));
+    }
+
+    /// T1.1: a partly done last group is shown with its state, and the
+    /// planner may join it or open the next group.
+    #[test]
+    fn planner_prompt_offers_joining_a_partly_done_group() {
+        let group = last_group("- [x] T3.1: a\n- [ ] T3.2: b\n").unwrap();
+        let p = planner("add a login page", Some(&group));
+        assert!(p.contains("- [x] T3.1: a"));
+        assert!(p.contains("- [ ] T3.2: b"));
+        assert!(p.contains("1 of 2"));
+        assert!(p.contains("T3.3"));
+        assert!(p.contains("T4.1"));
+        assert!(p.contains("same concern"));
+        assert!(!p.contains("\\n"));
+    }
+
+    /// T1.1: a fully done last group is never joined.
+    #[test]
+    fn planner_prompt_never_joins_a_fully_done_group() {
+        let group = last_group("- [x] T3.1: a\n- [x] T3.2: b\n").unwrap();
+        let p = planner("add a login page", Some(&group));
+        assert!(p.contains("T4.1"));
+        assert!(p.contains("never join"));
+        assert!(!p.contains("T3.3"));
     }
 
     #[test]

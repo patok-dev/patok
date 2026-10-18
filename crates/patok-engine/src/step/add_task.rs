@@ -7,6 +7,7 @@ use patok_core::event::NoticeLevel;
 use crate::agents::{Agent, AppendPlannerAgent};
 use crate::context::SessionContext;
 use crate::step::agent_run::{AgentPrompt, StageExit, StageStart, StageWords, run_stage};
+use crate::task_list::file::last_group;
 
 /// The append-tasks step (T180.4, section 9 of docs/private/engine-restructure.md):
 /// one planner session for the append-tasks request. The shell is told the
@@ -25,9 +26,11 @@ impl<'a> AddTaskStep<'a> {
 
     /// One planner session for `request`. `start` is the instant the run was
     /// announced in `start_add_tasks` under the state guard (T24.1). Returns
-    /// the agent exit.
+    /// the agent exit. The task file is read first to give the planner the
+    /// last group's state (T1.1); a missing or unreadable file has none.
     pub(crate) async fn run(&self, request: &str, start: Instant) -> StageExit {
-        let agent = AppendPlannerAgent::new(request);
+        let file = std::fs::read_to_string(self.ctx.task_file()).unwrap_or_default();
+        let agent = AppendPlannerAgent::new(request, last_group(&file));
         let (provider, model) = self.ctx.for_role(agent.role());
         let (exit, record) = run_stage(
             self.ctx,

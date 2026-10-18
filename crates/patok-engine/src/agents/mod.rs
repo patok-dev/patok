@@ -72,16 +72,32 @@ fn captured_text(events: &[AgentEvent]) -> String {
 /// Name of the optional spec file in the project root, read by the planner for context.
 const SPEC_FILE: &str = "SPEC.md";
 
+/// The ID-format bullet of the queue-creation prompts: every appended task
+/// opens a new group.
+const T_ID_RULE: &str = "Each task is a single line in exactly this format: `- [ ] T<N>.1: <description>`, where <N> is the next unused number after the highest T number in the task list (for example `- [ ] T4.1: Add ...`). Use a new number for each task you append, always with the `.1` suffix, and always the `T` prefix, never an `H` or `D` prefix.";
+
+/// The task-append guideline bullets of the two queue-creation prompts, with
+/// the [`T_ID_RULE`] ID bullet; see [`append_guidelines_with`].
+fn append_guidelines(split_word: &str, nothing: Option<&str>, finish: &str) -> String {
+    append_guidelines_with(split_word, T_ID_RULE, nothing, finish)
+}
+
 /// The task-append guideline bullets shared by the append-tasks planner and
 /// the two queue-creation prompts: `split_word` is the planner's "request" or
-/// the queue prompts' "work", `nothing` is the queue prompts' honesty bullet
-/// (the planner passes `None`), and `finish` is the closing line. The bullets
+/// the queue prompts' "work", `id_rule` is the ID-format bullet (the planner
+/// has its own, T1.1), `nothing` is the queue prompts' honesty bullet (the
+/// planner passes `None`), and `finish` is the closing line. The bullets
 /// follow the caller's own "Guidelines:" header.
-fn append_guidelines(split_word: &str, nothing: Option<&str>, finish: &str) -> String {
+fn append_guidelines_with(
+    split_word: &str,
+    id_rule: &str,
+    nothing: Option<&str>,
+    finish: &str,
+) -> String {
     let mut guidelines = format!(
         "- Prefer fewer, larger tasks. Each task should deliver working software that a builder can implement and verify in one session, not scaffolding, stubs or documentation. Only split the {split_word} when the parts are truly independent.\n\
          - Do not modify existing tasks, their text, their order or their checkbox state.\n\
-         - Each task is a single line in exactly this format: `- [ ] T<N>.1: <description>`, where <N> is the next unused number after the highest T number in the task list (for example `- [ ] T4.1: Add ...`). Use a new number for each task you append, always with the `.1` suffix, and always the `T` prefix, never an `H` or `D` prefix.\n\
+         - {id_rule}\n\
          - Write the description as plain text on one line: no markdown, no backticks, no bold or italics, no links, no nested lists and no line breaks inside a task line.\n\
          - Make the description specific enough to implement without further questions: what to build, where it plugs in, and how to tell it works."
     );

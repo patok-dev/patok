@@ -172,6 +172,52 @@ pub fn next_task_number(file: &str) -> usize {
         .map_or(1, |highest| highest + 1)
 }
 
+/// The last task group of a task file (T1.1): the well-formed `T` tasks
+/// sharing the highest major number, in file order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastGroup {
+    /// The group's leading number `N`.
+    pub number: usize,
+    /// The group's task lines in file order, each with its done state.
+    pub tasks: Vec<Task>,
+    /// The highest minor number `M` in the group.
+    pub highest_minor: usize,
+    /// How many of the group's tasks are still unchecked.
+    pub pending: usize,
+}
+
+/// Summarizes the last group of `file` (T1.1): the group with the highest
+/// major number of a well-formed `T`-prefixed task line, the same number
+/// [`next_task_number`] counts past. `None` when `file` has no well-formed
+/// `T` task. `H`-, `D`-, bare-numbered and malformed lines are ignored, as
+/// in [`next_task_number`].
+pub fn last_group(file: &str) -> Option<LastGroup> {
+    let numbered: Vec<(usize, usize, Task)> = task::parse(file)
+        .into_iter()
+        .filter(|t| !t.is_malformed() && t.origin == Some('T'))
+        .filter_map(|t| t_id_numbers(&t.id).map(|(major, minor)| (major, minor, t)))
+        .collect();
+    let number = numbered.iter().map(|(major, _, _)| *major).max()?;
+    let (minors, tasks): (Vec<usize>, Vec<Task>) = numbered
+        .into_iter()
+        .filter(|(major, _, _)| *major == number)
+        .map(|(_, minor, t)| (minor, t))
+        .unzip();
+    Some(LastGroup {
+        number,
+        highest_minor: minors.into_iter().max().unwrap_or(0),
+        pending: tasks.iter().filter(|t| !t.done).count(),
+        tasks,
+    })
+}
+
+/// The major and minor numbers of a `T<major>.<minor>` id, or `None` when
+/// either half is not a number.
+fn t_id_numbers(id: &str) -> Option<(usize, usize)> {
+    let (major, minor) = id.get(1..)?.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
 /// Normalizes the inject modal's confirmed input (T77.1) into a
 /// well-formed unchecked task line: the trimmed text gains the
 /// `- [ ] ` checkbox when it does not already start with it, and a fresh
@@ -1113,6 +1159,63 @@ mod tests {
         assert_eq!(next_task_number(""), 1);
         assert_eq!(next_task_number("# Tasks\n\nSome prose.\n"), 1);
         assert_eq!(next_task_number("- [ ] D9.1: only discovery\n"), 1);
+    }
+
+    /// T1.1: a partly done last group is summarized with its tasks in file
+    /// order; `H`, `D`, bare-numbered and malformed lines are ignored.
+    #[test]
+    fn last_group_of_a_partly_done_group() {
+        let file = "# Tasks\n\
+                    Some prose.\n\
+                    - [x] T1.1: a\n\
+                    - [x] T2.1: b\n\
+                    - [ ] T2.2: c\n\
+                    - [x] H9.1: d\n\
+                    - [ ] D7.1: e\n\
+                    - [ ] 9.1: f\n\
+                    - [ ] no id\n";
+        let group = last_group(file).unwrap();
+        assert_eq!(group.number, 2);
+        let ids: Vec<&str> = group.tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["T2.1", "T2.2"]);
+        let done: Vec<bool> = group.tasks.iter().map(|t| t.done).collect();
+        assert_eq!(done, [true, false]);
+        assert_eq!(group.highest_minor, 2);
+        assert_eq!(group.pending, 1);
+    }
+
+    /// T1.1: a fully done last group has no pending tasks.
+    #[test]
+    fn last_group_of_a_fully_done_group() {
+        let group = last_group("- [x] T3.1: a\n- [x] T3.2: b\n").unwrap();
+        assert_eq!(group.number, 3);
+        assert_eq!(group.pending, 0);
+        assert_eq!(group.highest_minor, 2);
+    }
+
+    /// T1.1: the last group is the highest number across headings, not the
+    /// group of the file's last line.
+    #[test]
+    fn last_group_is_the_highest_number_across_headings() {
+        let file = "## Phase 1\n\
+                    - [x] T4.1: a\n\
+                    ## Phase 2\n\
+                    - [ ] T2.1: b\n\
+                    - [ ] T4.3: c\n";
+        let group = last_group(file).unwrap();
+        assert_eq!(group.number, 4);
+        let ids: Vec<&str> = group.tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["T4.1", "T4.3"]);
+        assert_eq!(group.highest_minor, 3);
+        assert_eq!(group.pending, 1);
+    }
+
+    /// T1.1: a file without well-formed `T` tasks has no last group.
+    #[test]
+    fn last_group_is_none_without_t_tasks() {
+        assert_eq!(last_group(""), None);
+        assert_eq!(last_group("# Tasks\n\nSome prose.\n"), None);
+        assert_eq!(last_group("- [ ] D9.1: x\n- [x] H2.1: y\n"), None);
     }
 
     /// T77.1: `write_progress` is byte-exact -- a CRLF file keeps every `\r`
