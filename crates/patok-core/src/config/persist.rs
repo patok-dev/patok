@@ -432,7 +432,7 @@ mod tests {
         );
         assert_eq!(
             daemon_field_value(&settings, "review_multipass_threshold").unwrap(),
-            SettingValue::Uint(8)
+            SettingValue::Uint(0)
         );
         // An unset optional string reads back as cleared, not as a missing value.
         assert_eq!(

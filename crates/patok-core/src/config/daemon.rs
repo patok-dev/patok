@@ -973,7 +973,7 @@ daemon_table! {
         [uint review_confidence_threshold "review_confidence_threshold" label "review confidence threshold" help "Consecutive review passes needed before learned confidence may skip the review for matching task shapes (simple and medium tasks only); 0 disables. Default 5." expect "a whole number" default 5],
         [bool batch_review "batch_review" label "batch review" help "Skip the review for all but the last task in each contiguous run of same-numbered task IDs; that task's review covers every commit in the run (default on)." default true],
         [bool review_in_loop "review_in_loop" label "review in loop" help "Run the reviewer stage; when off, a task counts as validated by the builder's verification alone (default on)." default true],
-        [uint review_multipass_threshold "review_multipass_threshold" label "review multipass threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 8." expect "a whole number" default 8],
+        [uint review_multipass_threshold "review_multipass_threshold" label "review multipass threshold" help "Above this many changed files the reviewer splits into per-file passes plus one integration pass; 0 disables. Default 0." expect "a whole number" default 0],
         [float_range confidence_threshold "confidence_threshold" label "confidence threshold" help "Findings below this confidence are logged for manual review instead of being auto-fixed. Range 0.0-1.0, default 0.5." range 0.0..=1.0 default 0.5],
         [free_str auto_push_remote "auto_push_remote" label "auto-push remote" help "Push to this remote (git push <remote> HEAD) after each completed task group; empty means local commits only. Default origin." immediate default "origin".into()],
         [positive_uint discovery_cooldown_secs "discovery_cooldown_secs" label "discovery cooldown" help "Minimum time between discovery rounds, in seconds. Default 300 (5 minutes)." expect "a whole number of seconds greater than zero" default super::DEFAULT_DISCOVERY_COOLDOWN_SECS],
@@ -1291,6 +1291,17 @@ mod tests {
         assert!(!loaded.settings.skip_review_for_simple);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert!(DaemonSettings::default().skip_review_for_simple);
+    }
+
+    #[test]
+    fn review_multipass_threshold_defaults_to_zero_and_parses() {
+        assert_eq!(DaemonSettings::default().review_multipass_threshold, 0);
+        let loaded = load_project("[daemon]\n");
+        assert_eq!(loaded.settings.review_multipass_threshold, 0);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let loaded = load_project("[daemon]\nreview_multipass_threshold = 8\n");
+        assert_eq!(loaded.settings.review_multipass_threshold, 8);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
     #[test]
