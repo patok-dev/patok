@@ -364,6 +364,47 @@ mod tests {
         );
     }
 
+    /// T2.1: a planner append that skips a group number is rejected and the
+    /// file is restored, keeping a line injected during the session.
+    #[tokio::test]
+    async fn check_appended_rejects_a_skipped_group_and_restores() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        std::fs::write(&path, "# Tasks\n- [ ] T1.1: a\n").unwrap();
+        let list = TaskList::new(path.clone());
+        let before = list.snapshot_before().unwrap();
+        std::fs::write(&path, format!("{before}- [ ] T3.1: b\n")).unwrap();
+        let rejection = list
+            .check_appended(&before, AppendMode::Tasks, AgentRole::Planner)
+            .await
+            .unwrap_err();
+        assert!(rejection.restored);
+        assert_eq!(
+            rejection.reason,
+            "the planner skipped a task group number: T3.1 (join group 1 or open group 2)"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+
+        // With an injected T2.1, T5.1 still skips; the restore keeps the
+        // injected line.
+        list.inject("do a thing").await.unwrap();
+        std::fs::write(
+            &path,
+            format!("{}- [ ] T5.1: b\n", std::fs::read_to_string(&path).unwrap()),
+        )
+        .unwrap();
+        let rejection = list
+            .check_appended(&before, AppendMode::Tasks, AgentRole::Planner)
+            .await
+            .unwrap_err();
+        assert!(rejection.restored);
+        assert!(rejection.reason.contains("skipped"), "{}", rejection.reason);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("{before}- [ ] T2.1: do a thing\n")
+        );
+    }
+
     #[test]
     fn ui_added_ids_are_recorded_and_queried() {
         let dir = tempfile::tempdir().unwrap();
