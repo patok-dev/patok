@@ -180,8 +180,6 @@
       "enum": [
         "claude",
         "codex",
-        "opencode",
-        "ghcopilot",
         "mistral"
       ]
     },

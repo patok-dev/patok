@@ -283,15 +283,17 @@ enum Role {
   ROLE_ORCHESTRATOR = 9;
 }
 
-// Canonical provider identifiers. The parser-level aliases documented there
-// (gh-copilot/github-copilot/copilot -> PROVIDER_GHCOPILOT, vibe ->
-// PROVIDER_MISTRAL) are a TOML text-parsing concern and are not carried
-// over the wire: the settings overlay always sends one of these five.
+// Canonical provider identifiers. The parser-level alias documented there
+// (vibe -> PROVIDER_MISTRAL) is a TOML text-parsing concern and is not
+// carried over the wire: the settings overlay always sends one of these three.
 enum Provider {
+  // Values 2 and 3 were opencode and ghcopilot, providers that parsed but
+  // could not start, removed in T192.1. Numbers and names stay reserved for
+  // wire compatibility.
+  reserved 2, 3;
+  reserved "PROVIDER_OPENCODE", "PROVIDER_GHCOPILOT";
   PROVIDER_CLAUDE = 0;
   PROVIDER_CODEX = 1;
-  PROVIDER_OPENCODE = 2;
-  PROVIDER_GHCOPILOT = 3;
   PROVIDER_MISTRAL = 4;
 }
 

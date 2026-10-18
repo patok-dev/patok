@@ -18,6 +18,8 @@ fn spawn_headless(dir: &Path, data: &Path, logs: &Path, args: &[&str]) -> std::p
         .env("XDG_DATA_HOME", data)
         // No user config layers: the test's project-local config is the only one.
         .env("XDG_CONFIG_HOME", data.join("config"))
+        // No provider CLI is reachable, so the run never depends on what the host has installed.
+        .env("PATH", data.join("empty-path"))
         .stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()))
         .stderr(Stdio::from(std::fs::File::create(&stderr).unwrap()))
         .spawn()
@@ -112,9 +114,9 @@ async fn headless_exits_1_when_the_build_cannot_start() {
     let data = tempfile::tempdir().unwrap();
     let logs = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("TASKS.md"), "- [ ] T1.1: add hello\n").unwrap();
-    // A provider spelling this build does not ship: every build command is refused
-    // with a deterministic error, so no provider CLI on PATH is needed.
-    project_config(data.path(), dir.path(), "builder_provider = \"opencode\"\n");
+    // A supported non-default provider whose CLI is off the isolated PATH: the build
+    // is refused with a deterministic error.
+    project_config(data.path(), dir.path(), "builder_provider = \"codex\"\n");
     let mut child = spawn_headless(dir.path(), data.path(), logs.path(), &[]);
 
     let status = wait_for_exit(&mut child, logs.path()).await;
@@ -128,7 +130,7 @@ async fn headless_exits_1_when_the_build_cannot_start() {
     let stderr = read_log(logs.path(), "headless.err");
     assert!(stderr.contains("patok:"), "stderr: {stderr}");
     assert!(
-        stderr.contains("not available in this build"),
+        stderr.contains("the `codex` CLI was not found on PATH"),
         "the provider error reaches the operator: {stderr}"
     );
 

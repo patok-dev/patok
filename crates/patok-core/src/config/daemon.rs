@@ -51,20 +51,17 @@ config_enum_aliased! {
         #[default]
         Claude => "claude",
         Codex => "codex",
-        OpenCode => "opencode",
-        GhCopilot => "ghcopilot", [aliases "gh-copilot", "github-copilot", "copilot"],
         Mistral => "mistral", [alias "vibe"],
     }
 }
 
 impl ProviderName {
-    /// The engine-implemented kind, or `None` for a provider this build does not ship yet.
+    /// The engine-implemented kind of this provider name.
     pub fn kind(self) -> Option<ProviderKind> {
         match self {
             Self::Claude => Some(ProviderKind::Claude),
             Self::Codex => Some(ProviderKind::Codex),
             Self::Mistral => Some(ProviderKind::Mistral),
-            Self::OpenCode | Self::GhCopilot => None,
         }
     }
 }
@@ -964,7 +961,7 @@ daemon_table! {
         [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start."],
         [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start."],
         [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start."],
-        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex, opencode, ghcopilot or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
+        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
         [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
         [provider orchestrator_provider "orchestrator_provider" label "orchestrator provider" help "The provider the orchestrator role runs on. Applies at the next orchestrator session start."],
         // Pipeline flow (section 5).
@@ -1331,28 +1328,18 @@ mod tests {
     /// trimmed and case-insensitive; anything else is rejected.
     #[test]
     fn provider_aliases_parse_to_their_variants() {
-        assert_eq!(
-            ProviderName::parse("gh-copilot"),
-            Some(ProviderName::GhCopilot)
-        );
-        assert_eq!(
-            ProviderName::parse("github-copilot"),
-            Some(ProviderName::GhCopilot)
-        );
-        assert_eq!(
-            ProviderName::parse("copilot"),
-            Some(ProviderName::GhCopilot)
-        );
         assert_eq!(ProviderName::parse("vibe"), Some(ProviderName::Mistral));
-        assert_eq!(
-            ProviderName::parse(" GitHub-Copilot "),
-            Some(ProviderName::GhCopilot)
-        );
+        assert_eq!(ProviderName::parse(" Vibe "), Some(ProviderName::Mistral));
         assert_eq!(ProviderName::parse("CLAUDE"), Some(ProviderName::Claude));
-        assert_eq!(
-            ProviderName::parse("ghcopilot"),
-            Some(ProviderName::GhCopilot)
-        );
+        for removed in [
+            "opencode",
+            "ghcopilot",
+            "gh-copilot",
+            "github-copilot",
+            "copilot",
+        ] {
+            assert_eq!(ProviderName::parse(removed), None, "{removed}");
+        }
         assert_eq!(ProviderName::parse("not-a-provider"), None);
         assert_eq!(ProviderName::parse(""), None);
     }
@@ -1363,18 +1350,29 @@ mod tests {
     fn accepted_spellings_list_every_alias_after_its_variant() {
         assert_eq!(
             ProviderName::accepted().collect::<Vec<_>>(),
-            [
-                "claude",
-                "codex",
-                "opencode",
-                "ghcopilot",
-                "gh-copilot",
-                "github-copilot",
-                "copilot",
-                "mistral",
-                "vibe",
-            ]
+            ["claude", "codex", "mistral", "vibe"]
         );
+    }
+
+    /// A config naming a removed provider is a load error listing only the
+    /// supported spellings, and the field falls back to the default.
+    #[test]
+    fn removed_providers_are_rejected_on_load() {
+        for s in [
+            "opencode",
+            "ghcopilot",
+            "gh-copilot",
+            "github-copilot",
+            "copilot",
+        ] {
+            let loaded = load_project(&format!("[daemon]\nbuilder_provider = \"{s}\"\n"));
+            assert_eq!(loaded.settings.builder_provider, ProviderName::Claude);
+            assert_eq!(loaded.errors.len(), 1, "{:?}", loaded.errors);
+            let expected = format!(
+                "must be a provider name (claude, codex, mistral (alias vibe)), got \"{s}\""
+            );
+            assert!(loaded.errors[0].contains(&expected), "{:?}", loaded.errors);
+        }
     }
 
     /// The generated prose names every spelling once, each variant's aliases in
@@ -1383,7 +1381,7 @@ mod tests {
     fn accepted_spellings_prose_names_every_spelling_and_alias() {
         assert_eq!(
             ProviderName::ACCEPTED_SPELLINGS,
-            "claude, codex, opencode, ghcopilot (aliases gh-copilot, github-copilot, copilot), mistral (alias vibe)"
+            "claude, codex, mistral (alias vibe)"
         );
     }
 

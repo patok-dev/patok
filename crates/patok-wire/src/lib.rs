@@ -90,8 +90,6 @@ fn core_provider(provider: Provider) -> ProviderName {
     match provider {
         Provider::Claude => ProviderName::Claude,
         Provider::Codex => ProviderName::Codex,
-        Provider::Opencode => ProviderName::OpenCode,
-        Provider::Ghcopilot => ProviderName::GhCopilot,
         Provider::Mistral => ProviderName::Mistral,
     }
 }
@@ -150,8 +148,6 @@ fn proto_provider(name: ProviderName) -> Provider {
     match name {
         ProviderName::Claude => Provider::Claude,
         ProviderName::Codex => Provider::Codex,
-        ProviderName::OpenCode => Provider::Opencode,
-        ProviderName::GhCopilot => Provider::Ghcopilot,
         ProviderName::Mistral => Provider::Mistral,
     }
 }
@@ -551,9 +547,9 @@ mod tests {
             string("opus"),
         );
         maps_to(
-            Change::Provider(Provider::Ghcopilot as i32),
+            Change::Provider(Provider::Mistral as i32),
             "provider",
-            string("ghcopilot"),
+            string("mistral"),
         );
         maps_to(
             Change::RunMode(RunMode::Continuous as i32),

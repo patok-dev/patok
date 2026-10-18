@@ -459,8 +459,20 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error.message,
-            "daemon.builder_provider must be one of `claude`, `codex`, `opencode`, `ghcopilot`, \
-             `gh-copilot`, `github-copilot`, `copilot`, `mistral`, `vibe`, got \"bogus\""
+            "daemon.builder_provider must be one of `claude`, `codex`, `mistral`, `vibe`, \
+             got \"bogus\""
+        );
+        let error = set_daemon_field(
+            dir.path(),
+            "research_provider",
+            SettingValue::Str("copilot".into()),
+            &mut warnings,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message,
+            "daemon.research_provider must be one of `claude`, `codex`, `mistral`, `vibe`, \
+             got \"copilot\""
         );
         assert!(!dir.path().join("patok.config.toml").exists());
         // Aliases persist normalized, as submitted.
@@ -474,16 +486,13 @@ mod tests {
         set_daemon_field(
             dir.path(),
             "research_provider",
-            SettingValue::Str(" GitHub-Copilot ".into()),
+            SettingValue::Str(" Codex ".into()),
             &mut warnings,
         )
         .unwrap();
         let text = std::fs::read_to_string(dir.path().join("patok.config.toml")).unwrap();
         assert!(text.contains("builder_provider = \"vibe\""), "{text}");
-        assert!(
-            text.contains("research_provider = \"github-copilot\""),
-            "{text}"
-        );
+        assert!(text.contains("research_provider = \"codex\""), "{text}");
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
