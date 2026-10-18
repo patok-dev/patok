@@ -2129,6 +2129,85 @@ async fn a_planner_may_append_t_tasks_to_a_file_with_h_and_d_lines() {
     assert_eq!(ids, ["H1.1", "D1.1", "T1.1", "T2.1"]);
 }
 
+/// (T2.2) A request against a partly done last group is told to join it, and the
+/// task the planner appends there is accepted without opening a new group.
+#[tokio::test]
+async fn a_planner_joins_a_partly_done_last_group() {
+    let tasks = "# Tasks\n\n## Phase 1\n- [x] T1.1: setup\n\n## Phase 2\n- [x] T2.1: done part\n- [ ] T2.2: pending part\n";
+    let fixture = Fixture::new(tasks);
+    let after = format!("{tasks}- [ ] T2.3: joins the group\n");
+    let provider = planner_writing(&after);
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_add_tasks("more of the same concern").unwrap();
+    let events = collect_until(&mut attachment.events, planning_finished).await;
+
+    assert_eq!(
+        notices(&events),
+        [(NoticeLevel::Info, "1 task added.".to_string())]
+    );
+    assert_eq!(fixture.tasks_file(), after);
+    let Some(EngineEvent::TasksChanged { tasks }) = events
+        .iter()
+        .rev()
+        .find(|e| matches!(e, EngineEvent::TasksChanged { .. }))
+    else {
+        panic!("no TasksChanged in {events:#?}");
+    };
+    let ids: Vec<_> = tasks.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["T1.1", "T2.1", "T2.2", "T2.3"]);
+    assert_eq!(engine.ui_added_task_ids(), ["T2.3"]);
+
+    let sessions = provider.sessions();
+    assert_eq!(sessions.len(), 1);
+    let prompt = &sessions[0].prompt;
+    assert!(prompt.contains("is T2 (1 of 2 tasks pending, highest minor number 2)"));
+    assert!(prompt.contains("join it: your first task is T2.3."));
+    assert!(prompt.contains("more of the same concern"));
+    assert!(!prompt.contains("never join it"));
+}
+
+/// (T2.2) A request against a fully done last group is told to open a new group,
+/// and the task the planner appends under that new group is accepted.
+#[tokio::test]
+async fn a_planner_opens_a_new_group_after_a_fully_done_last_group() {
+    let tasks = "# Tasks\n\n## Phase 1\n- [x] T1.1: setup\n\n## Phase 2\n- [x] T2.1: done\n- [x] T2.2: also done\n";
+    let fixture = Fixture::new(tasks);
+    let after = format!("{tasks}\n## Phase 3\n- [ ] T3.1: opens a new group\n");
+    let provider = planner_writing(&after);
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_add_tasks("a new concern").unwrap();
+    let events = collect_until(&mut attachment.events, planning_finished).await;
+
+    assert_eq!(
+        notices(&events),
+        [(NoticeLevel::Info, "1 task added.".to_string())]
+    );
+    assert_eq!(fixture.tasks_file(), after);
+    let Some(EngineEvent::TasksChanged { tasks }) = events
+        .iter()
+        .rev()
+        .find(|e| matches!(e, EngineEvent::TasksChanged { .. }))
+    else {
+        panic!("no TasksChanged in {events:#?}");
+    };
+    let ids: Vec<_> = tasks.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["T1.1", "T2.1", "T2.2", "T3.1"]);
+    assert!(!tasks[3].done);
+    assert_eq!(engine.ui_added_task_ids(), ["T3.1"]);
+
+    let sessions = provider.sessions();
+    assert_eq!(sessions.len(), 1);
+    let prompt = &sessions[0].prompt;
+    assert!(prompt.contains(
+        "Every task in this group is done, so never join it: open a new group starting at T3.1."
+    ));
+    assert!(!prompt.contains("your first task is T2.3"));
+}
+
 #[tokio::test]
 async fn an_invalid_planner_result_is_rolled_back_with_an_error() {
     let invalid = [
