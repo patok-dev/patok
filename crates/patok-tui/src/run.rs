@@ -858,11 +858,12 @@ mod tests {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use patok_core::config::{ConfigFiles, RailMode, SettingValue, Theme as ThemeKey};
+    use patok_core::config::{ConfigFiles, SettingValue, Theme as ThemeKey};
     use patok_core::event::{EngineEvent, Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
     use patok_core::scenario::{SPEC_FILE, SpecState};
     use patok_core::task;
+    use patok_core::update::UpdateChannel;
     use patok_proto::{
         AddTasksKind, CommandRequest, CommandResponse, SettingsChange, command_request,
         settings_change::Change,
@@ -1395,7 +1396,7 @@ mod tests {
     #[tokio::test]
     async fn save_settings_applies_and_persists_every_draft_and_closes_the_overlay() {
         let (temp, mut shell) = shell();
-        let mut app = save_app(&[("builder_model", "opus"), ("rail_mode", "detailed")]);
+        let mut app = save_app(&[("builder_model", "opus"), ("update_channel", "dev")]);
         let commands = Arc::new(Mutex::new(Vec::new()));
         let mut submit = RecordingSave {
             commands: Arc::clone(&commands),
@@ -1425,10 +1426,10 @@ mod tests {
             app.settings.get("builder_model"),
             Some(&SettingValue::Str("opus".into()))
         );
-        assert_eq!(shell.settings().rail_mode, RailMode::Detailed);
-        assert_eq!(app.tui.rail_mode, RailMode::Detailed);
+        assert_eq!(shell.settings().update_channel, UpdateChannel::Dev);
+        assert_eq!(app.tui.update_channel, UpdateChannel::Dev);
         let text = std::fs::read_to_string(temp.path().join("config.local.toml")).unwrap();
-        assert!(text.contains("rail_mode = \"detailed\""), "{text}");
+        assert!(text.contains("update_channel = \"dev\""), "{text}");
     }
 
     /// A rejected change stops the save loop: the overlay stays open with

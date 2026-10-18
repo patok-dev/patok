@@ -2,43 +2,43 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: "draw(&app, W, H)"
 ---
-            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────┐
-[ Research ]│no output yet                                                                         │
-      ↓     │                                                                                      │
-[   Plan   ]│                                                                                      │
-     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      shell version: 0.0.0                                                             █│    │
-     │      research provider  ‹ claude ›                                                    █│────┘
-[  Re│      research model  sonnet                                                           █│────┐
-     │      planner provider  ‹ claude ›                                                     █│    │
-[ Dis│      planner model  opus                                                              █│    │
-     │      builder provider  ‹ claude ›                                                     █│    │
-     │      builder model  opus                                                              █│    │
-     │      reviewer provider  ‹ claude ›                                                    █│    │
-     │      reviewer model  sonnet                                                           ││    │
-     │      discovery provider  ‹ claude ›                                                   ││    │
-     │      discover┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
-     │      orchestr│  Save -- apply every drafted change and close            │             ││    │
-     │      orchestr│▶ Discard -- throw away the drafted changes and close     │             ││    │
-     │  ▾ Pipeline  │  Cancel -- back to the settings                          │             ││    │
-     │      run mode│                                                          │             ││    │
-     │▶     [x] plan│                                                          │             ││    │
-     │      [ ] skip│                                                          │             ││    │
-     │      [ ] skip│ ↑↓ move                [ Enter ] Confirm  [ Esc ] Cancel │             ││    │
-     │      review c└──────────────────────────────────────────────────────────┘             ││    │
-     │      review multipass threshold  8                                                    ││    │
-     │┌──────────────────────────────────── plan enabled ────────────────────────────────────┐│    │
-     ││Whether a plan session runs before each builder session.                              ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
-     │                                                                                        │    │
-     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
-     └────────────────────────────────────────────────────────────────────────────────────────┘    │
-            │                                                                                      │
-            │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                   │
-            └──────────────────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                                        [ Enter ] start  [ m ] menu
+─ Stopped ─ sprint ─── [ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ] ─────────────
+┌ Builder | Claude ────────────────────────────────────────────────────────────────────────────────┐
+│no output yet                                                                                     │
+│                                                                                                  │
+│    ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+│    │      shell version: 0.0.0                                                             █│    │
+│    │      research provider  ‹ claude ›                                                    █│    │
+└────│      research model  sonnet                                                           █│────┘
+┌ Tas│      planner provider  ‹ claude ›                                                     █│────┐
+│○ T1│      planner model  opus                                                              █│    │
+│    │      builder provider  ‹ claude ›                                                     █│    │
+│    │      builder model  opus                                                              █│    │
+│    │      reviewer provider  ‹ claude ›                                                    █│    │
+│    │      reviewer model  sonnet                                                           ││    │
+│    │      discovery provider  ‹ claude ›                                                   ││    │
+│    │      discover┌──────────────────── Unsaved changes ────────────── [ x ] ┐             ││    │
+│    │      orchestr│  Save -- apply every drafted change and close            │             ││    │
+│    │      orchestr│▶ Discard -- throw away the drafted changes and close     │             ││    │
+│    │  ▾ Pipeline  │  Cancel -- back to the settings                          │             ││    │
+│    │      run mode│                                                          │             ││    │
+│    │▶     [x] plan│                                                          │             ││    │
+│    │      [ ] skip│                                                          │             ││    │
+│    │      [ ] skip│ ↑↓ move                [ Enter ] Confirm  [ Esc ] Cancel │             ││    │
+│    │      review c└──────────────────────────────────────────────────────────┘             ││    │
+│    │      review multipass threshold  8                                                    ││    │
+│    │┌──────────────────────────────────── plan enabled ────────────────────────────────────┐│    │
+│    ││Whether a plan session runs before each builder session.                              ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+│    │                                                                                        │    │
+│    │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+│    └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                  │
+│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                        [ Enter ] start  [ m ] menu

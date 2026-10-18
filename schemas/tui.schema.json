@@ -13,9 +13,6 @@
     "preview_wrap": {
       "type": "boolean"
     },
-    "rail_mode": {
-      "$ref": "#/$defs/RailMode"
-    },
     "theme": {
       "$ref": "#/$defs/Theme"
     },
@@ -34,19 +31,9 @@
     "theme",
     "preview_wrap",
     "agent_pane_split",
-    "update_channel",
-    "rail_mode"
+    "update_channel"
   ],
   "$defs": {
-    "RailMode": {
-      "description": "The pipeline rail's visual mode (T57.1): `normal` full-name boxes (the default since T58.1) or `compact` letter tiles, the opt-in.",
-      "type": "string",
-      "enum": [
-        "compact",
-        "normal",
-        "detailed"
-      ]
-    },
     "Theme": {
       "description": "The shell theme.",
       "type": "string",

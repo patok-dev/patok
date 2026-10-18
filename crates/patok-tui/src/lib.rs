@@ -47,7 +47,7 @@ pub use overlay::{Entry, FieldKind, SETTINGS_CHOICES, Schema, StatusLevel};
 #[cfg(any(test, feature = "test-support"))]
 pub use patok_core::output::{finished_line, human_duration, started_line};
 #[cfg(any(test, feature = "test-support"))]
-pub use pipeline::{RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width};
+pub use pipeline::{RailDetail, TileId, rail_detail, rail_tile_rects};
 #[cfg(any(test, feature = "test-support"))]
 pub use run::{restart, save_theme, shutdown_progress};
 #[cfg(any(test, feature = "test-support"))]
@@ -57,8 +57,8 @@ pub use theme::{Theme, theme_modal_groups};
 #[cfg(any(test, feature = "test-support"))]
 pub use ui::{
     DIALOG_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
-    SETTINGS_HELP_PANEL_WIDTH, dialog_area, fitted_hints, format_elapsed, frame_constraints,
-    output_title, output_title_parts, output_title_spans, render, settings_area,
+    SETTINGS_HELP_PANEL_WIDTH, collapses_to_line, dialog_area, fitted_hints, format_elapsed,
+    frame_constraints, output_title, output_title_parts, output_title_spans, render, settings_area,
     settings_body_areas, settings_confirm_area, stop_area, theme_area,
 };
 #[cfg(any(test, feature = "test-support"))]

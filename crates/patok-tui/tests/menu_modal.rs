@@ -514,13 +514,13 @@ fn the_menu_chip_is_inert_while_a_status_message_shows() {
     );
     assert!(!app.menu_open());
 
-    // A narrow terminal fits no hint pair (" STOPPED  sprint" only), so the
-    // dropped chip leaves the zero rect too.
+    // A narrow terminal fits no hint pair, so the dropped chip leaves the
+    // zero rect too.
     app.status = None;
-    draw(&app, 18, 10);
+    draw(&app, 10, 10);
     assert_eq!(app.layout.menu_chip.get(), ratatui::layout::Rect::default());
     assert_eq!(
-        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 17, 9)),
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 9, 9)),
         Action::None
     );
     assert!(!app.menu_open());

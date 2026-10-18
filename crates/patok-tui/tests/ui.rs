@@ -14,7 +14,7 @@ use patok_tui::{
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use support::{ctrl, draw, draw_buffer, mouse, press, snapshot};
+use support::{ctrl, draw, draw_buffer, draw_buffer_of, mouse, press, snapshot};
 
 const TASKS: &str = "## Phase 1\n- [x] T1.1: scaffold the workspace\n- [ ] T1.2: add the parser for task files\n- [ ] T1.3: wire the engine to the shell\n";
 
@@ -205,7 +205,7 @@ fn narrow_terminal_wraps_output() {
 }
 
 #[test]
-fn header_shows_only_the_status_chip_and_run_mode() {
+fn the_rail_holds_status_and_run_mode_and_the_status_line_only_the_buttons() {
     let mut app = app();
     let idle = draw(&app, 80, 14);
     // The merged status line (T86.1): the chips on the left, the hint
@@ -214,24 +214,21 @@ fn header_shows_only_the_status_chip_and_run_mode() {
     // two buttons, rendered through the shared modal button formatting
     // (T141.1).
     assert_eq!(
-        idle.lines().last().unwrap(),
-        format!(
-            " STOPPED  sprint {} [ Enter ] start  [ m ] menu",
-            " ".repeat(34)
-        )
+        idle.lines().last().unwrap().trim_start(),
+        "[ Enter ] start  [ m ] menu"
     );
     assert!(!idle.contains("Waiting..."));
-    // The body starts on the frame's first row (the header row is gone,
-    // T86.1): the rail column opens with its blank top row (T63.1) beside
-    // the frames' top border, and the first tile sits one row lower.
+    // The rail is the first row and carries the status and the run mode; the
+    // frames start right below it. At 14 rows the idle output frame is
+    // collapsed to its one line, the task list expanded.
     assert!(
         idle.lines()
             .next()
             .unwrap()
-            .trim_start()
-            .starts_with("┌ Builder")
+            .starts_with("─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─")
     );
-    assert!(idle.lines().nth(1).unwrap().starts_with("[ Research ]"));
+    assert!(idle.lines().nth(1).unwrap().starts_with("─ Builder "));
+    assert!(idle.lines().nth(2).unwrap().starts_with("┌ Tasks"));
 
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
@@ -247,7 +244,14 @@ fn header_shows_only_the_status_chip_and_run_mode() {
     })));
     let running = draw(&app, 80, 14);
     let status = running.lines().last().unwrap();
-    assert!(status.starts_with(" RUNNING  sprint"), "{status}");
+    assert!(
+        running
+            .lines()
+            .next()
+            .unwrap()
+            .starts_with("─ Running ─ sprint"),
+        "{running}"
+    );
     assert!(!status.contains("builder"));
     assert!(!status.contains("context"));
 }
@@ -275,9 +279,9 @@ fn header_and_frame_title_show_the_active_agent_of_the_plan_stage() {
     assert!(
         planner_screen
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" RUNNING  sprint")
+            .starts_with("─ Running ─ sprint")
     );
     assert!(planner_screen.contains(" Planner | Claude - claude-sonnet-5.5 "));
     // The plan output keeps its markdown rendering.
@@ -293,9 +297,9 @@ fn header_and_frame_title_show_the_active_agent_of_the_plan_stage() {
     assert!(
         builder_screen
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" RUNNING  sprint")
+            .starts_with("─ Running ─ sprint")
     );
     assert!(builder_screen.contains(" Builder | Claude - claude-sonnet-5.5 "));
     insta::assert_snapshot!(builder_screen);
@@ -327,9 +331,9 @@ fn header_and_frame_title_show_the_research_agent_of_the_research_stage() {
     assert!(
         screen
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" RUNNING  sprint")
+            .starts_with("─ Running ─ sprint")
     );
     assert!(screen.contains(" Research | Claude - claude-sonnet-5.5 "));
     assert!(screen.contains("What does the parser do today?"));
@@ -366,9 +370,9 @@ fn header_and_frame_title_show_the_reviewer_agent_of_the_review_stage() {
     assert!(
         screen
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" RUNNING  sprint")
+            .starts_with("─ Running ─ sprint")
     );
     assert!(screen.contains(" Reviewer | Claude - claude-sonnet-5.5 "));
     assert!(screen.contains("Verifying the builder's claims."));
@@ -458,67 +462,97 @@ fn replayed_events_set_the_active_agent() {
     assert!(
         draw(&app, 80, 12)
             .lines()
-            .next()
+            .nth(1)
             .unwrap()
             .contains("┌ Planner")
     );
 }
 
 #[test]
-fn narrow_header_drops_the_run_mode_chip() {
-    // 18 columns fit both chips and no hint pair.
-    let screen = draw(&app(), 18, 10);
-    assert_eq!(screen.lines().last().unwrap(), " STOPPED  sprint");
-    insta::assert_snapshot!(screen);
-    // 12 columns fit only the status chip; the run-mode chip goes next.
-    let screen = draw(&app(), 12, 10);
-    assert_eq!(screen.lines().last().unwrap(), " STOPPED");
-    insta::assert_snapshot!(screen);
-    // 60 columns keep both chips and every hint button: the secondary hints
-    // moved behind the m menu (T128.1), so the two buttons that remain -- the
-    // idle Enter button and the menu button -- fit whole, right-aligned.
+fn the_status_line_drops_whole_buttons_from_the_tail_when_narrow() {
+    // 60 columns keep every hint button: the secondary hints moved behind the
+    // m menu (T128.1), so the two buttons that remain -- the idle Enter
+    // button and the menu button -- fit whole, right-aligned.
     let screen = draw(&app(), 60, 12);
     let status = screen.lines().last().unwrap();
-    assert_eq!(
-        status,
-        format!(
-            " STOPPED  sprint {} [ Enter ] start  [ m ] menu",
-            " ".repeat(14)
-        )
-    );
+    assert_eq!(status.trim_start(), "[ Enter ] start  [ m ] menu");
+    assert_eq!(status.chars().count(), 59);
     assert!(!status.contains(" detach"), "{status}");
     assert!(!status.contains(" quit"), "{status}");
-    // 45 columns fit only the Enter button whole: the m button drops whole
+    // 29 columns fit both buttons exactly.
+    let screen = draw(&app(), 29, 12);
+    assert_eq!(
+        screen.lines().last().unwrap(),
+        " [ Enter ] start  [ m ] menu"
+    );
+    // 28 columns fit only the Enter button whole: the m button drops whole
     // from the tail (T141.1), no half-cut ` [ m` fragment stays behind and
     // the menu chip's rect goes zero.
     let narrow_app = app();
-    let mut terminal = Terminal::new(TestBackend::new(45, 12)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(28, 12)).unwrap();
     terminal.draw(|frame| render(frame, &narrow_app)).unwrap();
-    let status: String = (0..45)
+    let status: String = (0..28)
         .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
         .collect::<String>()
         .trim_end()
         .to_string();
-    assert_eq!(
-        status,
-        format!(" STOPPED  sprint {} [ Enter ] start", " ".repeat(11))
-    );
+    assert_eq!(status.trim_start(), "[ Enter ] start");
     assert!(!status.contains(" [ m"), "{status}");
     assert_eq!(
         narrow_app.layout.menu_chip.get(),
         ratatui::layout::Rect::default()
     );
-    // 46 columns fit both buttons whole -- exactly, with no pad between the
-    // mode chip and the Enter button.
-    let screen = draw(&app(), 46, 12);
-    let status = screen.lines().last().unwrap();
-    assert_eq!(status, " STOPPED  sprint  [ Enter ] start  [ m ] menu");
-    // 40 columns still fit only the Enter button (the labels are never cut).
-    let screen = draw(&app(), 40, 12);
-    assert_eq!(
-        screen.lines().last().unwrap(),
-        format!(" STOPPED  sprint {} [ Enter ] start", " ".repeat(6))
+    // Nothing fits in 10 columns: the line stays blank.
+    let screen = draw(&app(), 10, 12);
+    assert!(
+        !screen.contains("Enter") && !screen.contains("menu"),
+        "{screen}"
     );
+}
+
+/// The rail picks its detail from the terminal width alone, at the widths
+/// each line's natural width marks.
+#[test]
+fn the_rail_follows_the_terminal_width() {
+    let first = |width: u16| draw(&app(), width, 12).lines().next().unwrap().to_string();
+    // Names: from 98 columns up.
+    for width in [98, 140] {
+        let line = first(width);
+        assert!(
+            line.contains("[ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ]"),
+            "{line}"
+        );
+        assert_eq!(line.chars().count(), usize::from(width));
+    }
+    // Brackets: from 72 columns up to 97.
+    for width in [72, 97] {
+        let line = first(width);
+        assert!(
+            line.contains("[ R ] > [ P ] > [ B ] > [ R ]   [ D ]"),
+            "{line}"
+        );
+        assert!(!line.contains("Research"), "{line}");
+        assert!(line.contains("─ sprint ─"), "{line}");
+        assert_eq!(line.chars().count(), usize::from(width));
+    }
+    // The mode stays with bare letters from 52 columns up to 71.
+    for width in [52, 71] {
+        let line = first(width);
+        assert!(line.contains("─ sprint ─── R > P > B > R   D ─"), "{line}");
+        assert_eq!(line.chars().count(), usize::from(width));
+    }
+    // Below that the mode is gone too, down to 43 columns.
+    for width in [43, 51] {
+        let line = first(width);
+        assert!(!line.contains("sprint"), "{line}");
+        assert!(
+            line.starts_with("─ Stopped ─── R > P > B > R   D ─"),
+            "{line}"
+        );
+        assert_eq!(line.chars().count(), usize::from(width));
+    }
+    // The line only clips below the minimum.
+    assert_eq!(first(30), "─ Stopped ─── R > P > B > R");
 }
 
 #[test]
@@ -664,7 +698,7 @@ fn output_title_parts_without_a_timer_reproduce_the_plain_title() {
     );
 }
 
-/// One title segment of row 0 (the output frame's top border): every cell shows
+/// One title segment of row 1 (the output frame's top border, below the rail): every cell shows
 /// `text` in `colour`, bold only when the agent name is under test.
 #[test]
 fn output_frame_title_colours_only_the_agent_type() {
@@ -674,19 +708,19 @@ fn output_frame_title_colours_only_the_agent_type() {
 
     fn assert_segment(buffer: &Buffer, x: u16, text: &str, colour: Color, bold: bool) {
         for (i, ch) in text.chars().enumerate() {
-            let cell = &buffer[(x + i as u16, 0)];
-            assert_eq!(cell.symbol(), ch.to_string(), "cell ({}, 0)", x + i as u16);
+            let cell = &buffer[(x + i as u16, 1)];
+            assert_eq!(cell.symbol(), ch.to_string(), "cell ({}, 1)", x + i as u16);
             assert_eq!(
                 cell.style().fg,
                 Some(colour),
-                "cell ({}, 0) colour: {:?}",
+                "cell ({}, 1) colour: {:?}",
                 x + i as u16,
                 cell.style()
             );
             assert_eq!(
                 cell.style().add_modifier.contains(Modifier::BOLD),
                 bold,
-                "cell ({}, 0) bold: {:?}",
+                "cell ({}, 1) bold: {:?}",
                 x + i as u16,
                 cell.style()
             );
@@ -813,9 +847,6 @@ fn format_elapsed_pads_minutes_and_seconds() {
 #[test]
 fn the_timer_renders_right_aligned_on_the_title_line_while_a_session_runs() {
     let mut app = app();
-    // The title's truncation thresholds are the pane's widths, so pin the
-    // narrow compact rail: this test probes the title, not the rail mode.
-    app.tui.rail_mode = patok_core::config::RailMode::Compact;
     let t0 = Instant::now();
     app.clock.now.set(t0);
     app.apply(EngineEvent::PhaseChanged {
@@ -824,8 +855,8 @@ fn the_timer_renders_right_aligned_on_the_title_line_while_a_session_runs() {
     // A frozen clock advanced by hand makes the timer deterministic.
     app.clock.now.set(t0 + Duration::from_secs(65));
     let screen = draw(&app, 80, 14);
-    let title = screen.lines().next().unwrap();
-    // A run is active, so the rail's Plan tile precedes the frame border.
+    // The rail takes the first row; the output frame's title is the second.
+    let title = screen.lines().nth(1).unwrap();
     assert!(title.contains("┌ Builder"), "{title}");
     assert!(
         title.ends_with(" 01:05 ┐"),
@@ -834,34 +865,29 @@ fn the_timer_renders_right_aligned_on_the_title_line_while_a_session_runs() {
     // Narrowing drops the model first, then the provider; the timer survives both.
     app.run.provider = "claude".into();
     app.run.model = "claude-sonnet-5.5".into();
-    let title = draw(&app, 40, 12).lines().next().unwrap().to_string();
+    let title = draw(&app, 40, 12).lines().nth(1).unwrap().to_string();
     assert!(title.contains(" Builder | Claude "), "{title}");
     assert!(title.ends_with(" 01:05 ┐"), "{title}");
-    let title = draw(&app, 26, 10).lines().next().unwrap().to_string();
+    let title = draw(&app, 26, 10).lines().nth(1).unwrap().to_string();
     assert!(title.contains("┌ Builder "), "{title}");
     assert!(title.ends_with(" 01:05 ┐"), "{title}");
     // Very narrow: the timer is the last element to disappear.
-    let title = draw(&app, 17, 10).lines().next().unwrap().to_string();
+    let title = draw(&app, 17, 10).lines().nth(1).unwrap().to_string();
     assert!(title.contains("┌ Builder"), "{title}");
     assert!(!title.contains("01:05"), "{title}");
 }
 
 #[test]
 fn the_timer_hides_while_idle_and_returns_for_the_next_session() {
-    // Idle: no timer on the title line, and the rail's first tile sits below
-    // its blank top row (T63.1) beside the output frame's first content row.
+    // Idle: no timer on the rail or on the title line (the idle output frame
+    // is collapsed to its one line at this height).
     let mut app = app();
-    let title = draw(&app, 80, 14).lines().next().unwrap().to_string();
-    assert!(title.trim_start().starts_with("┌ Builder"), "{title}");
-    assert!(
-        draw(&app, 80, 14)
-            .lines()
-            .nth(1)
-            .unwrap()
-            .starts_with("[ Research ]"),
-        "the rail's first tile sits one row below the top"
-    );
+    let screen = draw(&app, 80, 14);
+    let rail = screen.lines().next().unwrap();
+    let title = screen.lines().nth(1).unwrap().to_string();
+    assert!(title.starts_with("─ Builder"), "{title}");
     assert!(!title.contains("00:00"), "{title}");
+    assert!(!rail.contains("00:00"), "{rail}");
 
     // A session starts and the timer appears.
     let t0 = Instant::now();
@@ -869,17 +895,23 @@ fn the_timer_hides_while_idle_and_returns_for_the_next_session() {
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
     });
-    let title = draw(&app, 80, 14).lines().next().unwrap().to_string();
+    let screen = draw(&app, 80, 14);
+    let title = screen.lines().nth(1).unwrap().to_string();
     assert!(title.ends_with(" 00:00 ┐"), "{title}");
+    // The rail's timer is the same session clock.
+    let rail = screen.lines().next().unwrap();
+    assert!(rail.ends_with(" 00:00 ─"), "{rail}");
 
     // The session ends: the timer hides again, the left side stays.
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Startup,
     });
     assert_eq!(app.session_elapsed(), None);
-    let title = draw(&app, 80, 14).lines().next().unwrap().to_string();
-    assert!(title.trim_start().starts_with("┌ Builder"), "{title}");
+    let screen = draw(&app, 80, 14);
+    let title = screen.lines().nth(1).unwrap().to_string();
+    assert!(title.starts_with("─ Builder"), "{title}");
     assert!(!title.contains("00:00"), "{title}");
+    assert!(!screen.lines().next().unwrap().contains("00:00"));
 
     // The next session restarts it from zero.
     app.clock.now.set(t0 + Duration::from_secs(3 * 60 + 7));
@@ -887,13 +919,13 @@ fn the_timer_hides_while_idle_and_returns_for_the_next_session() {
         phase: Phase::Running,
     });
     assert_eq!(app.session_elapsed(), Some(Duration::from_secs(0)));
-    let title = draw(&app, 80, 14).lines().next().unwrap().to_string();
+    let title = draw(&app, 80, 14).lines().nth(1).unwrap().to_string();
     assert!(title.ends_with(" 00:00 ┐"), "{title}");
     app.clock
         .now
         .set(app.clock.now.get() + Duration::from_secs(3 * 60 + 7));
     assert_eq!(app.session_elapsed(), Some(Duration::from_secs(3 * 60 + 7)));
-    let title = draw(&app, 80, 14).lines().next().unwrap().to_string();
+    let title = draw(&app, 80, 14).lines().nth(1).unwrap().to_string();
     assert!(title.ends_with(" 03:07 ┐"), "{title}");
 }
 
@@ -1036,7 +1068,7 @@ fn a_finished_builder_session_leaves_one_status_line_and_hides_the_timer() {
     let app = finished_run("builder", SessionOutcome::Finished, 125_000);
     // The session is over: the title timer hides as before (T31.1).
     assert_eq!(app.session_elapsed(), None);
-    let screen = draw(&app, 80, 14);
+    let screen = draw(&app, 80, 24);
     assert!(
         screen.contains("Builder finished in 2 min 05 sec"),
         "{screen}"
@@ -1094,14 +1126,14 @@ fn a_finished_plan_stage_planner_line_precedes_the_builder_announcement() {
 #[test]
 fn a_sub_minute_run_formats_seconds_alone() {
     let app = finished_run("builder", SessionOutcome::Finished, 12_000);
-    let screen = draw(&app, 80, 14);
+    let screen = draw(&app, 80, 24);
     assert!(screen.contains("Builder finished in 12 sec"), "{screen}");
 }
 
 #[test]
 fn an_over_an_hour_run_formats_hours_and_minutes() {
     let app = finished_run("builder", SessionOutcome::Finished, 3_900_000);
-    let screen = draw(&app, 80, 14);
+    let screen = draw(&app, 80, 24);
     assert!(
         screen.contains("Builder finished in 1 h 05 min"),
         "{screen}"
@@ -1111,7 +1143,7 @@ fn an_over_an_hour_run_formats_hours_and_minutes() {
 #[test]
 fn a_failed_session_still_shows_its_duration() {
     let app = finished_run("builder", SessionOutcome::Failed, 125_000);
-    let screen = draw(&app, 80, 14);
+    let screen = draw(&app, 80, 24);
     assert!(
         screen.contains("Builder failed in 2 min 05 sec"),
         "{screen}"
@@ -1135,7 +1167,7 @@ fn a_discovery_run_leaves_its_own_finished_line() {
         duration_ms: 45_000,
     });
     app.apply(EngineEvent::DiscoveryChanged { discovering: false });
-    let screen = draw(&app, 80, 14);
+    let screen = draw(&app, 80, 24);
     assert!(screen.contains("Discovery finished in 45 sec"), "{screen}");
     insta::assert_snapshot!(screen);
 }
@@ -1252,7 +1284,7 @@ fn a_reattaching_shell_shows_the_finished_line_from_the_replayed_events() {
     let app = App::new(snapshot, "0.1.0".into());
     assert!(app.is_idle());
     assert_eq!(app.session_elapsed(), None);
-    let screen = draw(&app, 80, 14);
+    let screen = draw(&app, 80, 24);
     assert!(
         screen.contains("Builder finished in 2 min 05 sec"),
         "{screen}"
@@ -1515,19 +1547,13 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     };
 
     let idle = app();
-    assert_eq!(
-        strip(&idle),
-        merged(" STOPPED  sprint ", " [ Enter ] start  [ m ] menu")
-    );
+    assert_eq!(strip(&idle), merged("", " [ Enter ] start  [ m ] menu"));
 
     let mut running = app();
     running.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
     });
-    assert_eq!(
-        strip(&running),
-        merged(" RUNNING  sprint ", " [ Esc ] stop  [ m ] menu")
-    );
+    assert_eq!(strip(&running), merged("", " [ Esc ] stop  [ m ] menu"));
 
     let mut planning = app();
     planning.apply(EngineEvent::AgentChanged {
@@ -1536,17 +1562,11 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     });
     planning.apply(EngineEvent::PlanningChanged { planning: true });
     assert_eq!(planning.status, None);
-    assert_eq!(
-        strip(&planning),
-        merged(" PLANNING  sprint ", " [ Esc ] stop  [ m ] menu")
-    );
+    assert_eq!(strip(&planning), merged("", " [ Esc ] stop  [ m ] menu"));
 
     let mut discovering = app();
     discovering.apply(EngineEvent::DiscoveryChanged { discovering: true });
-    assert_eq!(
-        strip(&discovering),
-        merged(" DISCOVERING  sprint ", " [ Esc ] stop  [ m ] menu")
-    );
+    assert_eq!(strip(&discovering), merged("", " [ Esc ] stop  [ m ] menu"));
 
     // The add-tasks, Tab and scroll chips are gone from the status line
     // (T73.1), and so are the secondary chips the m menu replaced: their keys
@@ -1854,13 +1874,13 @@ fn version_check_flags_only_differing_builds() {
 fn version_mismatch_indicator() {
     let mut app = app();
     app.check_version("0.2.0");
-    let screen = draw(&app, 80, 14);
+    let screen = draw(&app, 80, 24);
     assert!(
         screen
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" STOPPED  sprint"),
+            .starts_with("─ Stopped ─ sprint"),
         "{screen}"
     );
     assert!(!screen.contains("restart engine"));
@@ -1882,9 +1902,9 @@ fn planning_chip_and_task_list_update_keep_running_task() {
     assert!(
         draw(&app, 60, 12)
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" PLANNING  sprint")
+            .starts_with("─ Planning ─ sprint")
     );
     app.run.current_task = Some("T1.2".into());
     app.apply(EngineEvent::TasksChanged {
@@ -1896,9 +1916,9 @@ fn planning_chip_and_task_list_update_keep_running_task() {
     assert!(
         draw(&app, 60, 12)
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" STOPPED  sprint")
+            .starts_with("─ Stopped ─ sprint")
     );
 }
 
@@ -1909,9 +1929,9 @@ fn discovery_chip_shows_while_a_round_runs() {
     assert!(
         draw(&app, 60, 12)
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" DISCOVERING  sprint")
+            .starts_with("─ Discovering ─ sprint")
     );
     app.apply(agent(AgentEvent::Text {
         text: "Scanning the project for follow-up work.".into(),
@@ -1921,9 +1941,9 @@ fn discovery_chip_shows_while_a_round_runs() {
     assert!(
         draw(&app, 60, 12)
             .lines()
-            .last()
+            .next()
             .unwrap()
-            .starts_with(" STOPPED  sprint")
+            .starts_with("─ Stopped ─ sprint")
     );
 }
 
@@ -2541,7 +2561,7 @@ mod dialog {
     fn planner_running_on_the_dashboard() {
         let app = planner_running();
         let screen = draw(&app, 80, 24);
-        assert!(screen.contains(" PLANNING"), "{screen}");
+        assert!(screen.contains("─ Planning ─"), "{screen}");
         assert!(screen.contains(" Planner "), "{screen}");
         assert!(
             screen.contains("Reading TASKS.md to see what exists."),
@@ -3831,13 +3851,13 @@ mod view {
         draw(&app, 80, 24);
         let output = app.layout.output_area.get();
         let tasks = app.layout.tasks_area.get();
-        // The rail's fixed column (T53.1) sits left of the frames in the idle
-        // state too, so the unfocused output frame shrinks to 5 content lines
-        // plus its border beside it.
-        assert_eq!((output.y, output.height), (0, 7));
+        // The rail line takes the top row; the unfocused output frame shrinks
+        // to 5 content lines plus its border below it.
+        assert_eq!((output.y, output.height), (1, 7));
         // The focused task list takes the rest, stacked below the output frame.
-        assert_eq!((tasks.y, tasks.height), (7, 16));
+        assert_eq!((tasks.y, tasks.height), (8, 15));
         assert_eq!(tasks.x, output.x);
+        assert_eq!(output.x, 0);
     }
 
     #[test]
@@ -3850,12 +3870,11 @@ mod view {
         draw(&app, 80, 24);
         let output = app.layout.output_area.get();
         let tasks = app.layout.tasks_area.get();
-        assert_eq!((output.y, output.height), (0, 16));
+        assert_eq!((output.y, output.height), (1, 15));
         assert_eq!((tasks.y, tasks.height), (16, 7));
-        // The rail column (T50.1) shifts both frames right by its width --
-        // the normal-mode column, the default since T58.1.
-        let rail = patok_tui::rail_width(patok_core::config::RailMode::Normal);
-        assert_eq!((output.x, tasks.x), (rail, rail));
+        // The horizontal rail costs the frames no columns.
+        assert_eq!((output.x, tasks.x), (0, 0));
+        assert_eq!((output.width, tasks.width), (80, 80));
     }
 
     #[test]
@@ -3876,13 +3895,142 @@ mod view {
         use patok_tui::frame_constraints;
         use ratatui::layout::Constraint;
         assert_eq!(
-            frame_constraints(FrameFocus::Output),
+            frame_constraints(FrameFocus::Output, 22),
             [Constraint::Min(1), Constraint::Length(7)]
         );
         assert_eq!(
-            frame_constraints(FrameFocus::Tasks),
+            frame_constraints(FrameFocus::Tasks, 22),
             [Constraint::Length(7), Constraint::Min(1)]
         );
+    }
+
+    /// The unfocused frame keeps its 5 content lines while the focused one
+    /// still gets 10 or more; with less room it collapses to a single line.
+    #[test]
+    fn the_unfocused_frame_collapses_to_a_line_when_the_focused_one_gets_under_ten_lines() {
+        use patok_tui::{collapses_to_line, frame_constraints};
+        use ratatui::layout::Constraint;
+        // 19 rows: shrunk 7 beside a focused 12 (10 content lines) -- still shrunk.
+        assert!(!collapses_to_line(19));
+        // 18 rows: the focused frame would get 9 content lines -- collapse.
+        assert!(collapses_to_line(18));
+        assert_eq!(
+            frame_constraints(FrameFocus::Output, 18),
+            [Constraint::Min(1), Constraint::Length(1)]
+        );
+        assert_eq!(
+            frame_constraints(FrameFocus::Tasks, 18),
+            [Constraint::Length(1), Constraint::Min(1)]
+        );
+        assert_eq!(
+            frame_constraints(FrameFocus::Output, 19),
+            [Constraint::Min(1), Constraint::Length(7)]
+        );
+    }
+
+    /// A 20-row terminal leaves the frames 18 rows: the unfocused one is one
+    /// line, the focused one takes the other 17, in both focus states.
+    #[test]
+    fn a_short_terminal_collapses_the_unfocused_frame() {
+        let mut app = long_app();
+        draw(&app, 80, 20);
+        assert_eq!(app.focus, FrameFocus::Tasks);
+        let output = app.layout.output_area.get();
+        let tasks = app.layout.tasks_area.get();
+        assert_eq!((output.y, output.height), (1, 1));
+        assert_eq!((tasks.y, tasks.height), (2, 17));
+        app.on_key(key(KeyCode::Tab));
+        draw(&app, 80, 20);
+        let output = app.layout.output_area.get();
+        let tasks = app.layout.tasks_area.get();
+        assert_eq!((output.y, output.height), (1, 17));
+        assert_eq!((tasks.y, tasks.height), (18, 1));
+    }
+
+    /// The collapsed output frame is one rule line with the agent title, the
+    /// timer and the `[ ↓ ]` button; the collapsed task list carries the
+    /// current task's id and `[ ↑ ]`.
+    #[test]
+    fn collapsed_frames_are_one_line_with_their_button() {
+        let mut app = long_app();
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        app.apply(EngineEvent::TaskStarted {
+            id: "T9.21".into(),
+            description: "later thing 21".into(),
+        });
+        // Running focuses the output frame: the task list collapses.
+        let screen = draw(&app, 60, 16);
+        let line = screen
+            .lines()
+            .nth(app.layout.tasks_area.get().y as usize)
+            .unwrap();
+        assert!(
+            line.starts_with("─ Tasks | 20/40 - 20 left | T9.21 "),
+            "{line:?}"
+        );
+        assert!(line.ends_with("─ [ ↑ ] ─"), "{line:?}");
+        assert_eq!(line.chars().count(), 60);
+        assert!(!line.contains('┌') && !line.contains('│'), "{line:?}");
+
+        app.on_key(key(KeyCode::Tab));
+        let screen = draw(&app, 60, 16);
+        let line = screen
+            .lines()
+            .nth(app.layout.output_area.get().y as usize)
+            .unwrap();
+        assert!(line.starts_with("─ "), "{line:?}");
+        assert!(line.ends_with("─ [ ↓ ] ─"), "{line:?}");
+        assert_eq!(line.chars().count(), 60);
+        // The expanded task list keeps its border and drops the task id.
+        assert!(screen.contains("┌ Tasks | 20/40 - 20 left"), "{screen}");
+        assert!(!screen.contains("T9.21 ─"), "{screen}");
+    }
+
+    /// Without a current task the collapsed title carries just the counts, and
+    /// a title too long for the line gives up the id first.
+    #[test]
+    fn the_collapsed_task_title_gives_up_the_id_first() {
+        let mut app = long_app();
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        let screen = draw(&app, 60, 16);
+        let line = screen
+            .lines()
+            .nth(app.layout.tasks_area.get().y as usize)
+            .unwrap();
+        assert!(line.starts_with("─ Tasks | 20/40 - 20 left ─"), "{line:?}");
+        app.apply(EngineEvent::TaskStarted {
+            id: "T9.21".into(),
+            description: "later thing 21".into(),
+        });
+        let screen = draw(&app, 36, 16);
+        let line = screen
+            .lines()
+            .nth(app.layout.tasks_area.get().y as usize)
+            .unwrap();
+        assert!(line.starts_with("─ Tasks | 20/40 - 20 left "), "{line:?}");
+        assert!(!line.contains("T9.21"), "{line:?}");
+    }
+
+    /// A click on a collapsed frame gives it the focus, so the layout swaps.
+    #[test]
+    fn clicking_a_collapsed_frame_expands_it() {
+        let mut app = long_app();
+        draw(&app, 80, 20);
+        assert_eq!(app.focus, FrameFocus::Tasks);
+        let output = app.layout.output_area.get();
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            output.x + 3,
+            output.y,
+        ));
+        draw(&app, 80, 20);
+        assert_eq!(app.focus, FrameFocus::Output);
+        assert_eq!(app.layout.output_area.get().height, 17);
+        assert_eq!(app.layout.tasks_area.get().height, 1);
     }
 
     #[test]
@@ -3893,14 +4041,14 @@ mod view {
         app.on_key(key(KeyCode::Tab));
         draw(&app, 80, 24);
         assert_eq!(app.focus, FrameFocus::Output);
-        // The rail's column costs the body no rows (T53.1), so the focused
-        // output frame takes what is left above the fixed task list frame.
+        // The rail line costs the body one row, so the focused output frame
+        // takes what is left above the fixed task list frame.
         assert_eq!(
             (
                 app.layout.output_area.get().height,
                 app.layout.tasks_area.get().height
             ),
-            (16, 7)
+            (15, 7)
         );
         app.on_key(key(KeyCode::Tab));
         draw(&app, 80, 24);
@@ -3910,7 +4058,7 @@ mod view {
                 app.layout.output_area.get().height,
                 app.layout.tasks_area.get().height
             ),
-            (7, 16)
+            (7, 15)
         );
     }
 
@@ -4134,14 +4282,17 @@ mod view {
         }));
         let screen = draw(&app, 80, 24);
         let lines: Vec<&str> = screen.lines().collect();
-        // The merged status line (T86.1): the chips lead the bottom line.
-        assert!(lines[23].starts_with(" RUNNING  sprint"), "{screen}");
-        // The rail's Plan box sits in the fixed column left of the frames
-        // (T50.1, the normal-mode default since T58.1), one row below the
-        // rail's blank top row (T63.1); the output frame starts beside the
-        // blank row on the frame's first row (the header row is gone).
-        assert!(lines[0].trim_start().starts_with("┌ Builder"));
-        assert!(lines[1].contains("[ Research ]"));
+        // The status and the run mode lead the rail line above the frames;
+        // the bottom line holds only the key buttons.
+        assert!(
+            lines[0].starts_with("─ Running ─ sprint ─── [ R ]"),
+            "{screen}"
+        );
+        assert!(
+            lines[23].trim_start().starts_with("[ Esc ] stop"),
+            "{screen}"
+        );
+        assert!(lines[1].starts_with("┌ Builder"), "{screen}");
         let tasks = app.layout.tasks_area.get();
         assert!(lines[usize::from(tasks.y)].contains("┌ Tasks | 1/3 - 2 left"));
         assert!(screen.contains("working on it"));
@@ -4231,9 +4382,8 @@ mod hints {
 
     /// The idle task list strip with every hint that fits the 80-column
     /// frame (T75.1 dropped the idle `q quit` entry; T76.1 added the `i
-    /// inject task` entry, whose width makes the trailing `Tab output` hint
-    /// drop at 80 columns -- the leading hints stay).
-    const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start · ↑↓ scroll";
+    /// inject task` entry). The frame spans the whole width, so all of them fit.
+    const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output";
     /// The focused output frame's strip with every hint that fits the
     /// 80-column frame (T124.1 dropped the leading `v rail view` entry,
     /// which makes the trailing `Tab tasks` hint fit; T125.1 removed the
@@ -4469,10 +4619,10 @@ mod hints {
 
     #[test]
     fn a_narrow_frame_drops_trailing_hints_inside_its_borders() {
-        // 60 columns leave the focused task list 45 inner columns: the first
+        // 50 columns leave the focused task list 48 inner columns: the first
         // three hints fit and everything from `↑↓ scroll` drops.
         let app = app();
-        let mut terminal = Terminal::new(TestBackend::new(60, H)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(50, H)).unwrap();
         terminal.draw(|frame| render(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         let tasks = app.layout.tasks_area.get();
@@ -5747,13 +5897,12 @@ mod theme {
 /// around the fixed column.
 mod pipeline {
     use super::*;
-    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-    use patok_core::config::RailMode;
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use patok_core::pipeline::{Stage, Tile, TileStatus};
     use patok_tui::Theme;
-    use patok_tui::{
-        Action, FrameFocus, RAIL_WIDTH, TileId, rail_connector_rects, rail_tile_rects, rail_width,
-    };
+    use patok_tui::{Action, FrameFocus, RailDetail, TileId, rail_detail, rail_tile_rects};
     use ratatui::layout::Rect;
     use ratatui::style::{Color, Modifier};
 
@@ -5812,7 +5961,6 @@ mod pipeline {
     fn the_research_tile_lights_up_active_then_done() {
         let theme = Theme::DARK;
         let mut app = running_app();
-        app.tui.rail_mode = RailMode::Compact;
 
         app.apply(EngineEvent::PipelineChanged {
             state: full_stage_state(
@@ -5914,7 +6062,7 @@ mod pipeline {
     /// the renderer draws through.
     fn tile_rect(app: &App, id: TileId) -> Rect {
         let area = app.layout.pipeline_area.get();
-        rail_tile_rects(&app.pipeline, area, app.tui.rail_mode)
+        rail_tile_rects(app, area)
             .iter()
             .find(|(tile, _)| *tile == id)
             .map(|(_, rect)| *rect)
@@ -5940,7 +6088,6 @@ mod pipeline {
     fn the_tiles_follow_the_pipeline_state_through_a_plan_then_build_run() {
         let theme = Theme::DARK;
         let mut app = running_app();
-        app.tui.rail_mode = RailMode::Compact;
 
         // The plan stage runs: Plan is accent and bold, the stage after it
         // is muted.
@@ -5950,11 +6097,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.accent), true)
+            ("[ Plan ]".to_string(), Some(theme.accent), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ B ]".to_string(), Some(theme.muted_text), false)
+            ("[ Build ]".to_string(), Some(theme.muted_text), false)
         );
 
         // The build stage runs: Plan went green, Build is accent and bold.
@@ -5964,11 +6111,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.success), false)
+            ("[ Plan ]".to_string(), Some(theme.success), false)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ B ]".to_string(), Some(theme.accent), true)
+            ("[ Build ]".to_string(), Some(theme.accent), true)
         );
     }
 
@@ -5980,7 +6127,6 @@ mod pipeline {
     fn the_review_tile_is_active_while_the_reviewer_runs_then_done() {
         let theme = Theme::DARK;
         let mut app = running_app();
-        app.tui.rail_mode = RailMode::Compact;
 
         // The builder runs: the review tile is still pending.
         app.apply(EngineEvent::PipelineChanged {
@@ -5994,7 +6140,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ RV ]".to_string(), Some(theme.muted_text), false)
+            ("[ R ]".to_string(), Some(theme.muted_text), false)
         );
 
         // The reviewer runs: the review tile is accent and bold.
@@ -6009,7 +6155,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ RV ]".to_string(), Some(theme.accent), true)
+            ("[ R ]".to_string(), Some(theme.accent), true)
         );
 
         // The review is done: green, like a skipped review's tile.
@@ -6024,7 +6170,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ RV ]".to_string(), Some(theme.success), false)
+            ("[ R ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -6036,11 +6182,10 @@ mod pipeline {
 
         // Sprint mode, engine idle: DI renders muted in the rail.
         let mut app = app();
-        app.tui.rail_mode = RailMode::Compact;
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ DI ]".to_string(), Some(theme.muted_text), false)
+            ("[ D ]".to_string(), Some(theme.muted_text), false)
         );
 
         // A discovery round runs: DI is accent and bold in the rail.
@@ -6054,7 +6199,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ DI ]".to_string(), Some(theme.accent), true)
+            ("[ Discover ]".to_string(), Some(theme.accent), true)
         );
 
         // The round ran in this session: DI turns green.
@@ -6068,7 +6213,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ DI ]".to_string(), Some(theme.success), false)
+            ("[ Discover ]".to_string(), Some(theme.success), false)
         );
     }
 
@@ -6078,7 +6223,6 @@ mod pipeline {
     #[test]
     fn a_pointer_move_over_the_rail_changes_nothing() {
         let mut shell = running_app();
-        shell.tui.rail_mode = RailMode::Compact;
         shell.apply(EngineEvent::PipelineChanged {
             state: stage_state(TileStatus::Active, TileStatus::Pending),
         });
@@ -6098,256 +6242,114 @@ mod pipeline {
         assert!(!hints.trim_end().ends_with("Plan"), "{hints}");
         assert!(!hints.trim_end().ends_with("Discover"), "{hints}");
 
-        // The same holds over the normal-mode boxes and while idle.
+        // The same holds while idle.
         let mut idle = app();
-        idle.tui.rail_mode = RailMode::Normal;
         draw_buffer(&idle);
         let rect = tile_rect(&idle, TileId::Build);
         assert_eq!(idle.on_mouse(moved(rect.x + 6, rect.y)), Action::None);
         let status = draw(&idle, 130, 24).lines().last().unwrap().to_string();
-        assert!(status.starts_with(" STOPPED  sprint"), "{status}");
+        assert!(
+            status.trim_start().starts_with("[ Enter ] start"),
+            "{status}"
+        );
         assert!(!status.trim_end().ends_with("Build"), "{status}");
     }
 
+    /// The tile rects are where the tiles are drawn: all on the rail's row,
+    /// left to right, and the detail follows the width.
     #[test]
-    fn detailed_mode_displays_configured_agent_provider_and_model_and_ignores_v() {
-        let mut shell = app();
-        shell.settings.insert(
-            "planner_provider".into(),
-            patok_core::config::SettingValue::Str("claude".into()),
-        );
-        shell.settings.insert(
-            "planner_model".into(),
-            patok_core::config::SettingValue::Str("sonnet-xl".into()),
-        );
-        shell.tui.rail_mode = RailMode::Detailed;
-        let screen = draw(&shell, 100, 30);
-        assert!(screen.contains("claude"), "{screen}");
-        assert!(screen.contains("sonnet-xl"), "{screen}");
-        assert_eq!(rail_width(RailMode::Detailed), rail_width(RailMode::Normal));
-        // T125.1 removed the `v` rail-view binding: a bare `v` is a no-op
-        // in the shell and the rail mode only changes through the settings
-        // overlay.
-        assert_eq!(
-            shell.on_key(crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('v'),
-                KeyModifiers::NONE
-            )),
-            Action::None
-        );
-        assert_eq!(shell.tui.rail_mode, RailMode::Detailed);
-        assert!(
-            rail_tile_rects(
-                &shell.pipeline,
-                Rect::new(0, 0, rail_width(RailMode::Detailed), 8),
-                RailMode::Detailed
+    fn the_tile_rects_follow_the_drawn_rail() {
+        let app = app();
+        for (width, detail, text) in [
+            (60, RailDetail::Mode, ["R", "P", "B", "R", "D"]),
+            (
+                80,
+                RailDetail::Brackets,
+                ["[ R ]", "[ P ]", "[ B ]", "[ R ]", "[ D ]"],
+            ),
+        ] {
+            let buffer = draw_buffer_of(&app, width, 24);
+            let area = app.layout.pipeline_area.get();
+            assert_eq!(area, Rect::new(0, 0, width, 1));
+            assert_eq!(rail_detail(&app, width), detail);
+            let rects = rail_tile_rects(&app, area);
+            assert_eq!(rects.len(), 5);
+            let mut previous = 0;
+            for ((_, rect), text) in rects.iter().zip(text) {
+                assert_eq!(rect.y, 0);
+                assert!(rect.x >= previous, "tiles run left to right");
+                previous = rect.right();
+                assert_eq!(tile_cells(&buffer, *rect).0, text);
+            }
+        }
+        // A terminal narrower than the line clips the tail tile.
+        assert!(rail_tile_rects(&app, Rect::new(0, 0, 30, 1)).len() < 5);
+    }
+
+    /// The status word wears its state's colour on the rail: running green,
+    /// planning and discovering their own, stopped neutral.
+    #[test]
+    fn the_rail_status_word_wears_the_state_colour() {
+        let theme = Theme::DARK;
+        let word = |app: &App| {
+            let buffer = draw_buffer(app);
+            // After the leading "─ ".
+            (
+                buffer[(2, 0)].symbol().to_string(),
+                buffer[(2, 0)].style().fg,
             )
-            .len()
-                < shell.pipeline.stages.len()
-        );
+        };
+        let mut app = app();
+        assert_eq!(word(&app), ("S".into(), Some(theme.chip_neutral)));
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        assert_eq!(word(&app), ("R".into(), Some(theme.success)));
+        app.apply(EngineEvent::PlanningChanged { planning: true });
+        assert_eq!(word(&app), ("P".into(), Some(theme.chip_planning)));
+        app.apply(EngineEvent::PlanningChanged { planning: false });
+        app.apply(EngineEvent::DiscoveryChanged { discovering: true });
+        assert_eq!(word(&app), ("D".into(), Some(theme.chip_discovering)));
     }
 
-    /// The rail is the one rendering in every engine state (T53.1): the idle,
-    /// planning, running and discovery shells all draw the same narrow
-    /// vertical rail column left of the frames -- the same tiles, letters,
-    /// layout and colours -- so nothing about it changes when the engine
-    /// moves between idle and running.
+    /// The smallest window the layout is designed for -- 43 columns by 10
+    /// rows: the rail at its minimal detail, the focused frame at 5 content
+    /// lines and the other one collapsed to its single line with the button
+    /// that brings it back.
     #[test]
-    fn the_rail_is_vertical_and_identical_in_every_engine_state() {
-        let theme = Theme::DARK;
-        let state = PipelineState {
-            discover: TileStatus::Done,
-            ..stage_state(TileStatus::Done, TileStatus::Active)
-        };
-        let mut planning = app();
-        planning.apply(EngineEvent::PlanningChanged { planning: true });
-        let mut discovery = app();
-        discovery.apply(EngineEvent::DiscoveryChanged { discovering: true });
-        let mut shells: Vec<(&str, App)> = vec![
-            ("idle", app()),
-            ("planning", planning),
-            ("running", running_app()),
-            ("discovery", discovery),
-        ];
-        for (_, shell) in &mut shells {
-            shell.pipeline = state.clone();
-            shell.tui.rail_mode = RailMode::Compact;
-        }
-
-        let ids = [TileId::Plan, TileId::Build, TileId::Discover];
-        // The letters, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, DI done.
-        let expected: Vec<(String, Option<Color>, bool)> = vec![
-            ("[ P ]".to_string(), Some(theme.success), false),
-            ("[ B ]".to_string(), Some(theme.accent), true),
-            ("[ DI ]".to_string(), Some(theme.success), false),
-        ];
-
-        // The whole rail area's drawn cells, as the equality reference:
-        // symbol, foreground, background and modifiers.
-        let column = |buffer: &ratatui::buffer::Buffer, area: Rect| {
-            (area.y..area.bottom())
-                .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
-                .map(|(x, y)| {
-                    let cell = &buffer[(x, y)];
-                    (cell.symbol().to_string(), cell.style())
-                })
-                .collect::<Vec<_>>()
-        };
-        let reference = column(
-            &draw_buffer(&shells[0].1),
-            shells[0].1.layout.pipeline_area.get(),
-        );
-
-        for (name, shell) in &shells {
-            let buffer = draw_buffer(shell);
-            // The frames shrink to the width left of the rail's column.
-            assert_eq!(shell.layout.output_area.get().x, RAIL_WIDTH, "{name}");
-            assert_eq!(shell.layout.tasks_area.get().x, RAIL_WIDTH, "{name}");
-            // The rail is vertical: every tile sits inside the fixed
-            // left column, one row per tile, in the pipeline's order.
-            let rects = rail_tile_rects(
-                &shell.pipeline,
-                shell.layout.pipeline_area.get(),
-                RailMode::Compact,
-            );
-            assert_eq!(
-                rects.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-                ids.to_vec(),
-                "{name}"
-            );
-            let rows: Vec<u16> = rects.iter().map(|(_, rect)| rect.y).collect();
-            let mut stacked = rows.clone();
-            stacked.sort_unstable();
-            stacked.dedup();
-            assert_eq!(rows, stacked, "{name} stacks its tiles one per row");
-            for ((_, rect), want) in rects.iter().zip(&expected) {
-                assert!(rect.x < RAIL_WIDTH, "{name}: a tile leaves the column");
-                assert!(
-                    rect.right() <= RAIL_WIDTH,
-                    "{name}: a tile leaves the column"
-                );
-                assert_eq!(rect.height, 1);
-                assert_eq!(&tile_cells(&buffer, *rect), want, "{name}");
-            }
-            // The down-arrow connector lines the tiles up under the
-            // Plan tile's letter.
-            assert_eq!(
-                rail_connector_rects(
-                    &shell.pipeline,
-                    shell.layout.pipeline_area.get(),
-                    RailMode::Compact
-                ),
-                vec![Rect::new(RAIL_WIDTH / 2, rects[0].1.y + 1, 1, 1)],
-                "{name}"
-            );
-            // And the whole rail area draws identically to the idle shell's.
-            assert_eq!(
-                column(&buffer, shell.layout.pipeline_area.get()),
-                reference,
-                "{name} rail differs"
-            );
-        }
-    }
-
-    /// The rail opens with one purely blank row above its first tile (T63.1):
-    /// nothing is drawn in the rail column's top row -- no border,
-    /// connector, tile or colour -- and every tile and connector sits
-    /// exactly one row below the rail area's top, drawing the same text and
-    /// colours as before, in both rail modes and every engine state, while
-    /// the frames keep their layout (the merged view is the one face of both
-    /// the main view and the Explore tab, T53.1).
-    #[test]
-    fn the_row_above_the_first_tile_is_blank_in_both_modes_and_every_state() {
-        let theme = Theme::DARK;
-        let state = PipelineState {
-            discover: TileStatus::Done,
-            ..stage_state(TileStatus::Done, TileStatus::Active)
-        };
-
-        for mode in [RailMode::Compact, RailMode::Normal] {
-            let mut planning = app();
-            planning.apply(EngineEvent::PlanningChanged { planning: true });
-            let mut discovery = app();
-            discovery.apply(EngineEvent::DiscoveryChanged { discovering: true });
-            let mut shells: Vec<(&str, App)> = vec![
-                ("idle", app()),
-                ("planning", planning),
-                ("running", running_app()),
-                ("discovery", discovery),
-            ];
-            for (_, shell) in &mut shells {
-                shell.pipeline = state.clone();
-                shell.tui.rail_mode = mode;
-            }
-            let width = rail_width(mode);
-            // The tiles' text, colours and boldness, the same per status in
-            // both modes: Plan done, Build active, DI done.
-            let expected: Vec<(String, Option<Color>, bool)> = match mode {
-                RailMode::Compact => vec![
-                    ("[ P ]".to_string(), Some(theme.success), false),
-                    ("[ B ]".to_string(), Some(theme.accent), true),
-                    ("[ DI ]".to_string(), Some(theme.success), false),
-                ],
-                RailMode::Normal | RailMode::Detailed => vec![
-                    ("[   Plan   ]".to_string(), Some(theme.success), false),
-                    ("[  Build   ]".to_string(), Some(theme.accent), true),
-                    ("[ Discover ]".to_string(), Some(theme.success), false),
-                ],
-            };
-
-            for (name, shell) in &shells {
-                let buffer = draw_buffer(shell);
-                let area = shell.layout.pipeline_area.get();
-                // The frames keep their layout: right of the rail's fixed
-                // column, starting on the body's first row (T86.1).
-                assert_eq!(area.width, width, "{name}");
-                assert_eq!(shell.layout.output_area.get().x, width, "{name}");
-                assert_eq!(shell.layout.tasks_area.get().x, width, "{name}");
-                assert_eq!(shell.layout.output_area.get().y, 0, "{name}");
-
-                // The rail column's top row is purely empty: blank symbols
-                // carrying nothing but the base style, so no border,
-                // connector, tile or colour was drawn in it.
-                for x in area.x..area.right() {
-                    let cell = &buffer[(x, area.y)];
-                    assert_eq!(cell.symbol(), " ", "{name}: the blank row draws");
-                    assert_eq!(
-                        (cell.style().fg, cell.style().bg),
-                        (Some(Color::Reset), Some(Color::Reset)),
-                        "{name}: the blank row carries a colour"
-                    );
-                }
-
-                // Every tile shifted down by exactly one row: the first tile
-                // sits on the second row of the rail area, and the tiles
-                // below keep their old relative offsets.
-                let rects = rail_tile_rects(&shell.pipeline, area, mode);
-                let rows: Vec<u16> = rects.iter().map(|(_, rect)| rect.y).collect();
-                assert_eq!(rows, vec![area.y + 1, area.y + 3, area.y + 5], "{name}");
-                // The connector moved with the tiles: still exactly one row
-                // below the first stage tile.
-                assert_eq!(
-                    rail_connector_rects(&shell.pipeline, area, mode),
-                    vec![Rect::new(width / 2, area.y + 2, 1, 1)],
-                    "{name}"
-                );
-                // And the tiles below the blank row are unchanged apart from
-                // the shift: the same text, colours and boldness.
-                for ((_, rect), want) in rects.iter().zip(&expected) {
-                    assert_eq!(&tile_cells(&buffer, *rect), want, "{name}");
-                }
-            }
-        }
-    }
-
-    /// The rail column never steals the frame focus or a scroll: the wheel
-    /// over it changes nothing, the wheel over the narrower task list frame
-    /// still scrolls it, and a click inside a frame still focuses it.
-    #[test]
-    fn the_rail_column_keeps_the_frame_focus_and_wheel_behaviour() {
+    fn the_minimal_window_with_the_output_expanded() {
         let mut app = running_app();
-        app.tui.rail_mode = RailMode::Compact;
+        app.apply(EngineEvent::AgentChanged {
+            agent: "reviewer".into(),
+            started_ms: 0,
+        });
+        let screen = draw(&app, 43, 10);
+        assert_eq!(app.layout.output_area.get().height, 7);
+        assert_eq!(app.layout.tasks_area.get().height, 1);
+        insta::assert_snapshot!(screen);
+    }
+
+    #[test]
+    fn the_minimal_window_with_the_tasks_expanded() {
+        let mut app = running_app();
+        app.apply(EngineEvent::AgentChanged {
+            agent: "reviewer".into(),
+            started_ms: 0,
+        });
+        app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.focus, FrameFocus::Tasks);
+        let screen = draw(&app, 43, 10);
+        assert_eq!(app.layout.output_area.get().height, 1);
+        assert_eq!(app.layout.tasks_area.get().height, 7);
+        insta::assert_snapshot!(screen);
+    }
+
+    /// The rail line never steals the frame focus or a scroll: the wheel
+    /// over it changes nothing, the wheel over the task list frame still
+    /// scrolls it, and a click inside a frame still focuses it.
+    #[test]
+    fn the_rail_line_keeps_the_frame_focus_and_wheel_behaviour() {
+        let mut app = running_app();
         app.apply(EngineEvent::TasksChanged {
             tasks: task::parse(&long_queue()),
         });
@@ -6362,12 +6364,12 @@ mod pipeline {
         assert_eq!(app.focus, FrameFocus::Output);
         assert!(app.layout.max_scroll.get() > 0);
         assert!(app.layout.task_max_scroll.get() > 0);
-        // The frames start right of the rail's fixed column.
-        assert_eq!(output.x, 6);
-        assert_eq!(tasks.x, 6);
+        // The frames start right below the rail line and span the width.
+        assert_eq!((output.x, output.y), (0, 1));
+        assert_eq!((tasks.x, output.width, tasks.width), (0, 80, 80));
 
         // A wheel step over the rail scrolls nothing and moves nothing.
-        app.on_mouse(wheel(MouseEventKind::ScrollUp, 1, 2));
+        app.on_mouse(wheel(MouseEventKind::ScrollUp, 10, 0));
         assert_eq!((app.scroll, app.task_scroll), (0, 0));
         assert_eq!(app.focus, FrameFocus::Output);
 
@@ -6380,10 +6382,8 @@ mod pipeline {
         assert_eq!(app.focus, FrameFocus::Tasks);
     }
 
-    /// The pipeline's four states as the unconfigured-default snapshots
-    /// (T58.1): with no `rail_mode` key anywhere, the rail renders the
-    /// normal-mode full-name boxes in the idle, planning, running and
-    /// discovery states.
+    /// The pipeline's four states as snapshots: the idle, planning, running
+    /// and discovery rails.
     #[test]
     fn idle_rail_with_every_tile_muted() {
         let app = app();
@@ -6413,300 +6413,6 @@ mod pipeline {
     #[test]
     fn discovery_rail_with_the_discover_tile_accent() {
         let mut app = app();
-        app.apply(EngineEvent::DiscoveryChanged { discovering: true });
-        app.apply(EngineEvent::PipelineChanged {
-            state: PipelineState {
-                discover: TileStatus::Active,
-                ..stage_state(TileStatus::Muted, TileStatus::Muted)
-            },
-        });
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
-    /// Normal mode (T57.1): the rail renders the full bracketed names instead
-    /// of the letter tiles, in every engine state -- the same one rendering
-    /// the compact rail has -- with every box the width of the longest name
-    /// plus its padding, the names centred, the arrows centred on the box
-    /// column, the same colours and boldness per status, and the frames
-    /// shrunk by the wider column.
-    #[test]
-    fn normal_mode_renders_full_name_boxes_in_every_engine_state() {
-        let theme = Theme::DARK;
-        let state = PipelineState {
-            discover: TileStatus::Done,
-            ..stage_state(TileStatus::Done, TileStatus::Active)
-        };
-        let mut planning = app();
-        planning.apply(EngineEvent::PlanningChanged { planning: true });
-        let mut discovery = app();
-        discovery.apply(EngineEvent::DiscoveryChanged { discovering: true });
-        let mut shells: Vec<(&str, App)> = vec![
-            ("idle", app()),
-            ("planning", planning),
-            ("running", running_app()),
-            ("discovery", discovery),
-        ];
-        for (_, shell) in &mut shells {
-            shell.pipeline = state.clone();
-            shell.tui.rail_mode = RailMode::Normal;
-        }
-
-        // The full names, colours and boldness the state implies, shared by
-        // every shell: Plan done, Build active, DI done.
-        let expected: Vec<(String, Option<Color>, bool)> = vec![
-            ("[   Plan   ]".to_string(), Some(theme.success), false),
-            ("[  Build   ]".to_string(), Some(theme.accent), true),
-            ("[ Discover ]".to_string(), Some(theme.success), false),
-        ];
-        let width = rail_width(RailMode::Normal);
-        assert_eq!(width, 12, "the longest name (Discover) plus its padding");
-
-        // The whole rail area's drawn cells, as the cross-state equality
-        // reference: symbol, foreground, background and modifiers.
-        let column = |buffer: &ratatui::buffer::Buffer, area: Rect| {
-            (area.y..area.bottom())
-                .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
-                .map(|(x, y)| {
-                    let cell = &buffer[(x, y)];
-                    (cell.symbol().to_string(), cell.style())
-                })
-                .collect::<Vec<_>>()
-        };
-        let reference = column(
-            &draw_buffer(&shells[0].1),
-            shells[0].1.layout.pipeline_area.get(),
-        );
-
-        for (name, shell) in &shells {
-            let buffer = draw_buffer(shell);
-            // The frames shrink to what the wider normal-mode column leaves.
-            assert_eq!(shell.layout.output_area.get().x, width, "{name}");
-            assert_eq!(shell.layout.tasks_area.get().x, width, "{name}");
-            let rects = rail_tile_rects(
-                &shell.pipeline,
-                shell.layout.pipeline_area.get(),
-                RailMode::Normal,
-            );
-            assert_eq!(rects.len(), expected.len(), "{name}");
-            for ((_, rect), want) in rects.iter().zip(&expected) {
-                // Every box is equally wide and fills the column.
-                assert_eq!(rect.width, width, "{name}");
-                assert_eq!(rect.x, shell.layout.pipeline_area.get().x, "{name}");
-                assert_eq!(rect.height, 1);
-                assert_eq!(&tile_cells(&buffer, *rect), want, "{name}");
-            }
-            // The connector arrow centres on the box column.
-            assert_eq!(
-                rail_connector_rects(
-                    &shell.pipeline,
-                    shell.layout.pipeline_area.get(),
-                    RailMode::Normal
-                ),
-                vec![Rect::new(width / 2, rects[0].1.y + 1, 1, 1)],
-                "{name}"
-            );
-            // And the whole rail area draws identically to the idle shell's.
-            assert_eq!(
-                column(&buffer, shell.layout.pipeline_area.get()),
-                reference,
-                "{name} rail differs"
-            );
-        }
-    }
-
-    /// Compact mode still draws the letter tiles (T57.1 keeps it unchanged):
-    /// the same shells draw `[ P ]`-style tiles with the frames at the narrow
-    /// column, and flipping the mode relayouts the very next frame with no
-    /// engine round trip.
-    #[test]
-    fn switching_the_mode_relayouts_the_rail_and_frames_immediately() {
-        let mut app = running_app();
-        app.apply(EngineEvent::PipelineChanged {
-            state: stage_state(TileStatus::Active, TileStatus::Pending),
-        });
-        app.tui.rail_mode = RailMode::Compact;
-
-        // Compact: the letter tiles in the narrow column.
-        let buffer = draw_buffer(&app);
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(Theme::DARK.accent), true)
-        );
-        assert_eq!(app.layout.pipeline_area.get().width, RAIL_WIDTH);
-        assert_eq!(app.layout.tasks_area.get().x, RAIL_WIDTH);
-        let compact_width = app.layout.tasks_area.get().width;
-
-        // Normal: the full-name boxes in the wider column, on the next frame.
-        app.tui.rail_mode = RailMode::Normal;
-        let buffer = draw_buffer(&app);
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[   Plan   ]".to_string(), Some(Theme::DARK.accent), true)
-        );
-        let width = rail_width(RailMode::Normal);
-        assert_eq!(app.layout.pipeline_area.get().width, width);
-        assert_eq!(app.layout.tasks_area.get().x, width);
-        assert_eq!(
-            compact_width - app.layout.tasks_area.get().width,
-            width - RAIL_WIDTH,
-            "the frames lose exactly the wider column"
-        );
-
-        // And back to compact, with the layout restored.
-        app.tui.rail_mode = RailMode::Compact;
-        draw_buffer(&app);
-        assert_eq!(app.layout.pipeline_area.get().width, RAIL_WIDTH);
-        assert_eq!(app.layout.tasks_area.get().width, compact_width);
-    }
-
-    /// Switching the rail mode through the settings overlay (T57.1): with the
-    /// key unset the row reads `normal` (the T58.1 default), and cycling the
-    /// rail mode row drafts `compact` -- the save flow -- simulated exactly as
-    /// the driver runs it, the tui-field path with no engine round trip --
-    /// persists to the user-local `config.local.toml`, mirrors the value into
-    /// the app, and relayouts the rail on the next frame: the explicit compact
-    /// keeps showing the letter tiles.
-    #[test]
-    fn saving_a_rail_mode_change_from_the_overlay_persists_and_relouts() {
-        use crossterm::event::{KeyCode, KeyEvent};
-        use patok_core::config::{ConfigFiles, SettingValue};
-        use patok_tui::{Action, Entry, ShellSettings};
-
-        let dir = tempfile::tempdir().unwrap();
-        let files = ConfigFiles {
-            user_global: None,
-            user_local: Some(dir.path().join("config.local.toml")),
-        };
-        let (mut shell_settings, warnings) = ShellSettings::with_files(files, dir.path(), None);
-        assert!(warnings.is_empty());
-        let mut shell = app();
-        shell.tui = shell_settings.settings().clone();
-        assert_eq!(shell.tui.rail_mode, RailMode::Normal);
-
-        // Open the overlay and cycle the rail mode row: normal -> detailed -> compact.
-        assert_eq!(
-            shell.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
-            Action::None
-        );
-        let index = shell
-            .overlay
-            .visible()
-            .iter()
-            .position(|entry| matches!(entry, Entry::Row(row) if row.key == "rail_mode"))
-            .expect("the rail mode row is visible");
-        shell.overlay.focus = index;
-        assert_eq!(
-            shell.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
-            Action::None
-        );
-        assert_eq!(
-            shell.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
-            Action::None
-        );
-        assert_eq!(
-            shell.overlay.drafts.get("rail_mode"),
-            Some(&SettingValue::Str("compact".into()))
-        );
-
-        // Esc opens the three-choice dialog; Enter on Save asks the driver to
-        // apply every drafted change.
-        shell.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(shell.confirm_open());
-        assert_eq!(
-            shell.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            Action::SaveSettings
-        );
-
-        // The driver's tui-field apply path, exactly as run.rs runs it: no
-        // engine command, a write to the user-local layer, the mirrored value.
-        for (schema, field, value) in shell.overlay.pending() {
-            shell_settings.apply(&field, value.clone()).unwrap();
-            shell.tui = shell_settings.settings().clone();
-            shell.on_settings_applied(schema, &field, value);
-        }
-        shell.close_settings();
-
-        let text = std::fs::read_to_string(dir.path().join("config.local.toml")).unwrap();
-        assert!(text.contains("rail_mode = \"compact\""), "{text}");
-        assert_eq!(shell.tui.rail_mode, RailMode::Compact);
-
-        // The rail relayouts immediately: the letter tiles back in the narrow
-        // column, with the frames widened to match.
-        let buffer = draw_buffer(&shell);
-        assert_eq!(shell.layout.pipeline_area.get().width, RAIL_WIDTH);
-        assert_eq!(shell.layout.tasks_area.get().x, RAIL_WIDTH);
-        assert_eq!(
-            tile_cells(&buffer, tile_rect(&shell, TileId::Plan)),
-            ("[ P ]".to_string(), Some(Theme::DARK.muted_text), false)
-        );
-        assert!(draw(&shell, 80, 24).contains("[ P ]"));
-    }
-
-    /// The settings overlay shows `normal` as the rail mode's current value
-    /// when the key is unset (T58.1): the default is visible, not just assumed.
-    #[test]
-    fn the_overlay_shows_normal_as_the_rail_mode_when_the_key_is_unset() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        use patok_tui::{Action, Entry};
-
-        let mut app = app();
-        assert_eq!(app.tui.rail_mode, RailMode::Normal);
-        assert_eq!(
-            app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
-            Action::None
-        );
-        let index = app
-            .overlay
-            .visible()
-            .iter()
-            .position(|entry| matches!(entry, Entry::Row(row) if row.key == "rail_mode"))
-            .expect("the rail mode row is visible");
-        // Walk the focus there with the keys so the offset follows the
-        // selection into view (T136.1).
-        let _ = draw(&app, 100, 30);
-        while app.overlay.focus < index {
-            app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        }
-        let screen = draw(&app, 100, 30);
-        assert!(screen.contains("rail mode  ‹ normal ›"), "{screen}");
-    }
-
-    /// Compact mode's four states as explicit snapshots (T57.1/T58.1): an
-    /// opted-in `compact` value still draws the idle, planning, running and
-    /// discovery letter-tile rails.
-    #[test]
-    fn compact_mode_idle_rail_with_every_tile_muted() {
-        let mut app = app();
-        app.tui.rail_mode = RailMode::Compact;
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
-    #[test]
-    fn compact_mode_planning_rail() {
-        let mut app = app();
-        app.tui.rail_mode = RailMode::Compact;
-        app.apply(EngineEvent::AgentChanged {
-            agent: "planner".into(),
-            started_ms: 0,
-        });
-        app.apply(EngineEvent::PlanningChanged { planning: true });
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
-    #[test]
-    fn compact_mode_running_rail_mid_plan_then_build() {
-        let mut app = running_app();
-        app.tui.rail_mode = RailMode::Compact;
-        app.apply(EngineEvent::PipelineChanged {
-            state: stage_state(TileStatus::Active, TileStatus::Pending),
-        });
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
-    #[test]
-    fn compact_mode_discovery_rail_with_the_discover_tile_accent() {
-        let mut app = app();
-        app.tui.rail_mode = RailMode::Compact;
         app.apply(EngineEvent::DiscoveryChanged { discovering: true });
         app.apply(EngineEvent::PipelineChanged {
             state: PipelineState {

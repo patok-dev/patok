@@ -15,6 +15,5 @@ pub(crate) fn tui(lower: TuiLayer, higher: TuiLayer) -> TuiLayer {
         preview_wrap: higher.preview_wrap.or(lower.preview_wrap),
         agent_pane_split: higher.agent_pane_split.or(lower.agent_pane_split),
         update_channel: higher.update_channel.or(lower.update_channel),
-        rail_mode: higher.rail_mode.or(lower.rail_mode),
     }
 }

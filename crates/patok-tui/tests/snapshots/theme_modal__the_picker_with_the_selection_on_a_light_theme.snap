@@ -2,27 +2,27 @@
 source: crates/patok-tui/tests/theme_modal.rs
 expression: "draw(&app, 80, 24)"
 ---
-            ┌ Builder | Claude ────────────────────────────────────────────────┐
-[ Research ]│no output yet                                                     │
-      ↓     │                                                                  │
-[   Plan   ]│                                                                  │
-      ↓     │┌────────────────────── Theme ──────────────── [ x ] ┐            │
-[  Build   ]││  ▾ Dark                                            │            │
-      ↓     └│      dark                                          │────────────┘
-[  Review  ]┌│      atom_one_dark                                 │────────────┐
-            ││      tokyo_night_dark                              │            │
-[ Discover ]││      catppuccin_mocha                              │            │
-            ││      solarized_dark                                │            │
-            ││      gruvbox_dark                                  │            │
-            ││  ▾ Light                                           │            │
-            ││      atom_one_light                                │            │
-            ││      tokyo_night_day                               │            │
-            ││▶     catppuccin_latte                              │            │
-            ││      solarized_light                               │            │
-            ││      gruvbox_light                                 │            │
-            ││ ↑↓/jk previews      [ Enter ] Save  [ Esc ] Cancel │            │
-            │└────────────────────────────────────────────────────┘            │
-            │                                                                  │
-            │ a add tasks · i inject task · Enter start · ↑↓ scroll            │
-            └──────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                    [ Enter ] start  [ m ] menu
+─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
+┌ Builder | Claude ────────────────────────────────────────────────────────────┐
+│no output yet                                                                 │
+│                                                                              │
+│            ┌────────────────────── Theme ──────────────── [ x ] ┐            │
+│            │  ▾ Dark                                            │            │
+│            │      dark                                          │            │
+└────────────│      atom_one_dark                                 │────────────┘
+┌ Tasks | 0/1│      tokyo_night_dark                              │────────────┐
+│○ T1.1  scaf│      catppuccin_mocha                              │            │
+│            │      solarized_dark                                │            │
+│            │      gruvbox_dark                                  │            │
+│            │  ▾ Light                                           │            │
+│            │      atom_one_light                                │            │
+│            │      tokyo_night_day                               │            │
+│            │▶     catppuccin_latte                              │            │
+│            │      solarized_light                               │            │
+│            │      gruvbox_light                                 │            │
+│            │ ↑↓/jk previews      [ Enter ] Save  [ Esc ] Cancel │            │
+│            └────────────────────────────────────────────────────┘            │
+│                                                                              │
+│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output           │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                                    [ Enter ] start  [ m ] menu

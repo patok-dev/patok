@@ -103,7 +103,6 @@ mod tests {
                     "preview_wrap",
                     "agent_pane_split",
                     "update_channel",
-                    "rail_mode",
                 ]
                 .as_slice(),
             ),

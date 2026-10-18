@@ -1,0 +1,14 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: screen
+---
+─ Running ─── R > P > B > R   D ─── 00:00 ─
+┌ Reviewer ──────────────────────── 00:00 ┐
+│── T1.2: add the parser for task files   │
+│                                         │
+│                                         │
+│                                         │
+│ ↑↓ scroll · PgUp/PgDn page · End follow │
+└─────────────────────────────────────────┘
+─ Tasks | 1/3 - 2 left | T1.2 ───── [ ↑ ] ─
+                  [ Esc ] stop  [ m ] menu

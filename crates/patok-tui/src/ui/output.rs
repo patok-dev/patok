@@ -12,7 +12,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::Duration;
 
-use super::common::{fitted_prefix, render_hints_strip, split_hints_row};
+use super::common::{
+    collapsed_title_width, fitted_prefix, render_collapsed, render_hints_strip, split_hints_row,
+};
 use crate::app::App;
 use crate::geom::wrap_chunks;
 use crate::markdown::markdown_lines;
@@ -193,7 +195,7 @@ pub fn format_elapsed(elapsed: Duration) -> String {
     format!("{:02}:{:02}", total / 60, total % 60)
 }
 
-pub(super) fn render_output(frame: &mut Frame, app: &App, area: Rect) {
+pub(super) fn render_output(frame: &mut Frame, app: &App, area: Rect, collapsed: bool) {
     let theme = app.theme();
     let timer = app.session_elapsed().map(format_elapsed);
     // The agent type name keeps its fixed agent colour in every theme (T11.1,
@@ -201,15 +203,26 @@ pub(super) fn render_output(frame: &mut Frame, app: &App, area: Rect) {
     // fixated name colour (T117.1), and the separator, provider, model and
     // timer render in the theme's low-emphasis detail colour (T37.1).
     let title_colour = Theme::agent_name_color(theme, &app.run.agent);
+    let title_width = if collapsed {
+        collapsed_title_width(area.width)
+    } else {
+        usize::from(area.width.saturating_sub(2))
+    };
     let (left, right) = output_title_spans(
         &agent_display(&app.run.agent),
         provider_display_name(&app.run.provider),
         &app.run.model,
         timer.as_deref(),
-        usize::from(area.width.saturating_sub(2)),
+        title_width,
         title_colour,
         theme.muted_text,
     );
+    if collapsed {
+        // A single line has no pane: nothing to scroll while it is hidden.
+        app.layout.max_scroll.set(0);
+        render_collapsed(frame, area, left, right, "↓", theme);
+        return;
+    }
     let mut block = Block::default()
         .borders(Borders::ALL)
         .title_top(Line::from(left));

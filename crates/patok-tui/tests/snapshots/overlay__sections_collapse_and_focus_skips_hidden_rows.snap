@@ -2,43 +2,43 @@
 source: crates/patok-tui/tests/overlay.rs
 expression: screen
 ---
-            ┌ Builder | Claude ────────────────────────────────────────────────────────────────────┐
-[ Research ]│no output yet                                                                         │
-      ↓     │                                                                                      │
-[   Plan   ]│                                                                                      │
-     ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
-[  Bu│      reviewer model  sonnet                                                           ││    │
-     │      discovery provider  ‹ claude ›                                                   ││────┘
-[  Re│      discovery model  opus                                                            ││────┐
-     │      orchestrator provider  ‹ claude ›                                                ││    │
-[ Dis│      orchestrator model  (not set)                                                    ││    │
-     │  ▾ Pipeline                                                                           █│    │
-     │      run mode  ‹ sprint ›                                                             █│    │
-     │      [ ] plan enabled                                                                 █│    │
-     │      [ ] skip research for simple                                                     █│    │
-     │      [ ] skip review for simple                                                       █│    │
-     │      review confidence threshold  5                                                   █│    │
-     │      review multipass threshold  8                                                    █│    │
-     │      [ ] batch review                                                                 █│    │
-     │      [ ] review in loop                                                               █│    │
-     │      confidence threshold  0.5                                                        █│    │
-     │▶ ▸ Timeouts and pauses                                                                ││    │
-     │  ▾ Git                                                                                ││    │
-     │      [ ] auto-push enabled                                                            ││    │
-     │      auto-push remote  (not set)                                                      ││    │
-     │  ▾ History                                                                            ││    │
-     │┌──────────────────────────────── Timeouts and pauses ─────────────────────────────────┐│    │
-     ││Timing: how long an agent may idle, the pauses between tasks, agents and cycles, and  ││    │
-     ││how long an engine with no shell attached waits before shutting down.                 ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     ││                                                                                      ││    │
-     │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
-     │                                                                                        │    │
-     │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
-     └────────────────────────────────────────────────────────────────────────────────────────┘    │
-            │                                                                                      │
-            │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                   │
-            └──────────────────────────────────────────────────────────────────────────────────────┘
- STOPPED  sprint                                                        [ Enter ] start  [ m ] menu
+─ Stopped ─ sprint ─── [ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ] ─────────────
+┌ Builder | Claude ────────────────────────────────────────────────────────────────────────────────┐
+│no output yet                                                                                     │
+│                                                                                                  │
+│    ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+│    │      reviewer model  sonnet                                                           ││    │
+│    │      discovery provider  ‹ claude ›                                                   ││    │
+└────│      discovery model  opus                                                            ││────┘
+┌ Tas│      orchestrator provider  ‹ claude ›                                                ││────┐
+│○ T1│      orchestrator model  (not set)                                                    ││    │
+│    │  ▾ Pipeline                                                                           █│    │
+│    │      run mode  ‹ sprint ›                                                             █│    │
+│    │      [ ] plan enabled                                                                 █│    │
+│    │      [ ] skip research for simple                                                     █│    │
+│    │      [ ] skip review for simple                                                       █│    │
+│    │      review confidence threshold  5                                                   █│    │
+│    │      review multipass threshold  8                                                    █│    │
+│    │      [ ] batch review                                                                 █│    │
+│    │      [ ] review in loop                                                               █│    │
+│    │      confidence threshold  0.5                                                        █│    │
+│    │▶ ▸ Timeouts and pauses                                                                ││    │
+│    │  ▾ Git                                                                                ││    │
+│    │      [ ] auto-push enabled                                                            ││    │
+│    │      auto-push remote  (not set)                                                      ││    │
+│    │  ▾ History                                                                            ││    │
+│    │┌──────────────────────────────── Timeouts and pauses ─────────────────────────────────┐│    │
+│    ││Timing: how long an agent may idle, the pauses between tasks, agents and cycles, and  ││    │
+│    ││how long an engine with no shell attached waits before shutting down.                 ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+│    │                                                                                        │    │
+│    │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
+│    └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                  │
+│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                        [ Enter ] start  [ m ] menu
