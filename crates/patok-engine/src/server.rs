@@ -46,9 +46,18 @@ impl EngineApi for Service {
         &self,
         request: Request<AttachRequest>,
     ) -> Result<Response<Self::AttachStream>, Status> {
-        let shell_version = request.into_inner().shell_version;
-        let attachment = self.engine.attach().unwrap();
-        tracing::info!("shell attached (version {shell_version})");
+        let AttachRequest {
+            shell_version,
+            observer,
+        } = request.into_inner();
+        let attachment = if observer {
+            self.engine.attach_observer()
+        } else {
+            self.engine.attach()
+        }
+        .unwrap();
+        let kind = if observer { "observer" } else { "shell" };
+        tracing::info!("{kind} attached (version {shell_version})");
 
         let (tx, rx) = mpsc::channel(256);
         let info = EngineInfo {

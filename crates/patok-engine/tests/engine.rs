@@ -1834,6 +1834,30 @@ async fn two_attached_shells_coexist_and_idle_requires_zero() {
 }
 
 #[tokio::test]
+async fn an_observer_attach_gets_the_feed_but_does_not_count_against_idle() {
+    let fixture = Fixture::new("# Tasks\n");
+    let engine = fixture.engine(MockProvider::new(vec![]));
+    let mut observer = engine.attach_observer().unwrap();
+    assert_eq!(
+        observer.snapshot.project_dir,
+        fixture.path().display().to_string()
+    );
+    assert!(matches!(
+        observer.events.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    assert!(engine.is_idle(), "an observer alone leaves the engine idle");
+
+    let shell = engine.attach().unwrap();
+    assert!(!engine.is_idle(), "a normal attach keeps it alive");
+
+    drop(observer);
+    assert!(!engine.is_idle());
+    drop(shell);
+    assert!(engine.is_idle());
+}
+
+#[tokio::test]
 async fn an_edited_task_file_is_picked_up_and_broadcast() {
     let fixture = Fixture::new("- [ ] T1.1: first\n");
     let engine = fixture.engine(MockProvider::new(vec![]));

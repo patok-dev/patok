@@ -56,8 +56,20 @@ impl Engine {
 
     /// Returns the current state plus a live event feed for an attached shell.
     pub fn attach(&self) -> Result<Attachment, AttachError> {
+        self.attach_as(false)
+    }
+
+    /// Like [`Engine::attach`], but the attachment does not count as an attached shell:
+    /// it gets the snapshot and live feed without keeping the engine from idle-shutting-down.
+    pub fn attach_observer(&self) -> Result<Attachment, AttachError> {
+        self.attach_as(true)
+    }
+
+    fn attach_as(&self, observer: bool) -> Result<Attachment, AttachError> {
         let mut state = self.state();
-        state.attach_count += 1;
+        if !observer {
+            state.attach_count += 1;
+        }
         // The display fields and the settings readout come from the central config: a
         // settings swap holds this lock only briefly and never the state lock inside it,
         // so they are consistent.
@@ -90,6 +102,7 @@ impl Engine {
             snapshot,
             events,
             engine: self.clone(),
+            observer,
         })
     }
 

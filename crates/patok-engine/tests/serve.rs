@@ -1,4 +1,5 @@
-//! `serve` publishes `meta.json` next to the socket and removes it on shutdown.
+//! `serve` publishes `meta.json` next to the socket and removes it on shutdown, and
+//! idle-shuts-down when only observers (or no one) are attached.
 
 mod support;
 
@@ -42,4 +43,55 @@ async fn meta_json_exists_while_serving_and_is_gone_after_shutdown() {
     server.await.unwrap().unwrap();
     assert!(!meta.exists());
     assert!(!socket.exists());
+}
+
+/// Serves an empty-queue engine whose idle limit is one second.
+async fn serve_with_short_idle(
+    fixture: &Fixture,
+) -> (Engine, tokio::task::JoinHandle<anyhow::Result<()>>) {
+    let mut config = fixture.config();
+    config.idle_shutdown = Duration::from_secs(1);
+    let socket = fixture.socket();
+    let engine = Engine::new(config, Arc::new(MockProvider::new(vec![])));
+    let server = tokio::spawn(patok_engine::serve(engine.clone()));
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !socket.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the socket appears");
+    (engine, server)
+}
+
+#[tokio::test]
+async fn an_engine_with_only_an_observer_attached_idle_shuts_down() {
+    let fixture = Fixture::new("# Tasks\n");
+    let (engine, server) = serve_with_short_idle(&fixture).await;
+    let _observer = engine.attach_observer().unwrap();
+
+    tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .expect("the engine idle-shuts-down")
+        .unwrap()
+        .unwrap();
+    assert!(!fixture.socket().exists());
+}
+
+#[tokio::test]
+async fn a_normal_attach_keeps_an_idle_engine_alive() {
+    let fixture = Fixture::new("# Tasks\n");
+    let (engine, server) = serve_with_short_idle(&fixture).await;
+    let shell = engine.attach().unwrap();
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!server.is_finished());
+    assert!(!engine.shutdown_token().is_cancelled());
+
+    drop(shell);
+    tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .expect("the engine idle-shuts-down once the shell detaches")
+        .unwrap()
+        .unwrap();
 }
