@@ -125,6 +125,31 @@ async fn reports_a_clean_shutdown_once() {
 }
 
 #[tokio::test]
+async fn reports_a_daemon_restarted_in_the_same_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("patok");
+    let mut mon = monitor(root.clone());
+
+    let (setup, engine) = engine_in(&root, "-a");
+    let socket = setup.config.socket_path();
+    let (token, server) = spawn(engine);
+    assert_eq!(added_socket(next_event(&mut mon).await), socket);
+    token.cancel();
+    assert_eq!(
+        next_event(&mut mon).await,
+        FleetEvent::Removed(socket.clone())
+    );
+    server.await.unwrap().unwrap();
+
+    let (_setup, engine) = engine_in(&root, "-a");
+    let (token, server) = spawn(engine);
+    assert_eq!(added_socket(next_event(&mut mon).await), socket);
+    token.cancel();
+    assert_eq!(next_event(&mut mon).await, FleetEvent::Removed(socket));
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn never_reports_a_stale_socket() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("patok");

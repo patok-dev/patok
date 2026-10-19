@@ -61,7 +61,8 @@ pub fn monitor(root: PathBuf) -> FleetMonitor {
     start(root, true)
 }
 
-/// Like [`monitor`] but polls from the start, without a watcher.
+/// Like [`monitor`] but polls from the start, without a watcher. This runs exactly the code
+/// path `monitor` takes when `notify::recommended_watcher` fails (`watcher == None`).
 #[cfg(any(test, feature = "test-support"))]
 pub fn monitor_polling(root: PathBuf) -> FleetMonitor {
     start(root, false)
@@ -79,11 +80,11 @@ fn start(root: PathBuf, watch: bool) -> FleetMonitor {
 }
 
 /// Identity of a file on disk; a rebound socket gets a new one.
-type FileId = (u64, u64, i64);
+type FileId = (u64, u64, i64, i64);
 
 fn file_id(path: &Path) -> Option<FileId> {
     let meta = std::fs::symlink_metadata(path).ok()?;
-    Some((meta.dev(), meta.ino(), meta.ctime()))
+    Some((meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec()))
 }
 
 enum Msg {
@@ -102,6 +103,8 @@ enum Msg {
 
 struct Tracked {
     status: DaemonStatus,
+    /// Identity of the socket file when adopted; retired if the daemon goes away.
+    id: Option<FileId>,
     generation: u64,
     follower: AbortHandle,
 }
@@ -199,7 +202,7 @@ impl State {
                         if self.tracked.contains_key(&socket) || !socket.exists() {
                             return true;
                         }
-                        self.adopt(socket, stream);
+                        self.adopt(socket, id, stream);
                     }
                     Err(_) => {
                         if let Some(id) = id {
@@ -226,8 +229,7 @@ impl State {
                         self.out.push(FleetEvent::Changed(status));
                     }
                     StatusUpdate::Gone => {
-                        self.tracked.remove(&socket);
-                        if let Some(id) = file_id(&socket) {
+                        if let Some(id) = self.tracked.remove(&socket).and_then(|t| t.id) {
                             self.retired.insert(socket.clone(), id);
                         }
                         self.out.push(FleetEvent::Removed(socket));
@@ -238,7 +240,7 @@ impl State {
         }
     }
 
-    fn adopt(&mut self, socket: PathBuf, mut stream: StatusStream) {
+    fn adopt(&mut self, socket: PathBuf, id: Option<FileId>, mut stream: StatusStream) {
         let generation = self.next_generation;
         self.next_generation += 1;
         let status = stream.status().clone();
@@ -263,6 +265,7 @@ impl State {
             socket,
             Tracked {
                 status,
+                id,
                 generation,
                 follower,
             },
