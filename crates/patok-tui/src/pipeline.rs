@@ -226,16 +226,16 @@ fn pick_detail(state: &PipelineState, text: &RailText, width: usize) -> RailDeta
         .unwrap_or(RailDetail::Minimal)
 }
 
-/// The status word and its colour: a discovery round runs either on an idle
-/// engine or inside a session's empty-queue gap, so it wins over the phase.
+/// The status word and its colour: the engine is running while its loop is
+/// busy — a session phase, a planner or discovery round (either may run on an
+/// idle engine), or a stop still winding down — and stopped otherwise.
 fn rail_status(app: &App) -> (&'static str, Color) {
     let theme = app.theme();
-    match (app.run.stopping, app.run.phase) {
-        (true, _) => ("Stopping", theme.highlighted_text),
-        (false, _) if app.run.planning => ("Planning", theme.chip_planning),
-        (false, _) if app.run.discovering => ("Discovering", theme.chip_discovering),
-        (false, Phase::Running) => ("Running", theme.success),
-        (false, Phase::Startup) => ("Stopped", theme.chip_neutral),
+    let run = &app.run;
+    if matches!(run.phase, Phase::Running) || run.planning || run.discovering || run.stopping {
+        ("Running", theme.success)
+    } else {
+        ("Stopped", theme.chip_neutral)
     }
 }
 

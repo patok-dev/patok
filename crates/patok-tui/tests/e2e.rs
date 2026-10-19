@@ -1010,7 +1010,7 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
         if seen_planning && app.run.planning {
             // The planner streams into the main agent output frame on the Dashboard tab.
             let screen = draw(&app);
-            assert!(screen.contains("─ Planning ─"), "{screen}");
+            assert!(screen.contains("─ Running ─"), "{screen}");
             drew_planner_frame |= app.run.agent == "planner" && screen.contains(" Planner ");
             drew_streaming_output |= screen.contains("Planning the new work.");
         }
@@ -1402,7 +1402,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
         if app.run.discovering && !chip_snapshot_taken {
             chip_snapshot_taken = true;
             let screen = draw(&app);
-            assert!(screen.contains("─ Discovering ─"), "{screen}");
+            assert!(screen.contains("─ Running ─"), "{screen}");
             insta::assert_snapshot!(screen);
         }
         if app.is_new_task("D1.1") {
@@ -1433,7 +1433,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
 
 /// The Enter key while the engine is idle and no uncompleted task remains
 /// (T17.1, reworked by T46.1): it sends the RunDiscovery command and the
-/// round streams, shows the DISCOVERING chip and appends a highlighted
+/// round streams, shows the Running rail status and appends a highlighted
 /// D task.
 #[tokio::test]
 async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
@@ -1514,7 +1514,7 @@ async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
             .join("\n")
     };
 
-    // Watch the round run: the DISCOVERING chip while it is active, the streamed
+    // Watch the round run: the Running rail status while it is active, the streamed
     // output, the notice, then the appended and highlighted D task.
     let mut saw_discovering = false;
     let mut saw_chip = false;
@@ -1558,7 +1558,7 @@ async fn enter_while_idle_runs_a_discovery_round_and_adds_tasks() {
 
     assert!(saw_discovering, "the round reached the typed run state");
     let chip = chip_screen.expect("the chip was on screen");
-    assert!(chip.contains("─ Discovering ─"), "{chip}");
+    assert!(chip.contains("─ Running ─"), "{chip}");
     assert!(saw_output, "the discovery output reached the pane");
     assert!(saw_notice, "the added-task notice arrived");
     assert!(

@@ -2,7 +2,7 @@
 source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 80, 14)"
 ---
-─ Stopping ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ────────── 00:00 ─
+─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
 ┌ Builder ────────────────────────────────────────────────────────────── 00:00 ┐
 │── T1.2: add the parser for task files                                        │
 │                                                                              │

@@ -60,8 +60,6 @@
 //! | `chip_neutral` | `status_widget` | STOPPED, run-mode and the non-interactive key-chip backgrounds |
 //! | `contrast_text` | `status_widget` | foreground on the non-interactive status chips |
 //! | `success` | `status_widget`, `render_tasks`, `pipeline::tile_style` | the RUNNING chip, running task rows, done rail tiles (T50.1) |
-//! | `chip_planning` | `status_widget` | PLANNING status chip background |
-//! | `chip_discovering` | `status_widget` | DISCOVERING status chip background |
 //! | `accent` | `pipeline::tile_style` | the active rail tile and DISCOVER while a round runs |
 //! | `scrollbar_rail` | `render_scrollbar` | the overlay scrollbar's rail |
 //! | `agent_text.thinking` | `style_of`, headless `--color` | agent thinking; also the markdown base style |
@@ -381,12 +379,6 @@ pub struct Theme {
     /// The success special class: the RUNNING chip, running task rows and
     /// done rail tiles. A saturated green no basic class expresses.
     pub success: Color,
-    /// The PLANNING status chip background: a saturated magenta no basic class
-    /// expresses.
-    pub chip_planning: Color,
-    /// The DISCOVERING status chip background: a saturated blue no basic class
-    /// expresses (and distinct from `accent` in every theme).
-    pub chip_discovering: Color,
     /// The accent special class: the active rail tile and DISCOVER while a
     /// round runs. A saturated cyan/blue no basic class expresses.
     pub accent: Color,
@@ -425,8 +417,6 @@ impl Theme {
         chip_neutral: Color::DarkGray,
         contrast_text: Color::Black,
         success: Color::Green,
-        chip_planning: Color::Magenta,
-        chip_discovering: Color::Blue,
         accent: Color::Cyan,
         scrollbar_rail: Color::DarkGray,
     };
@@ -530,10 +520,6 @@ struct Classes {
     /// The success special class: RUNNING chip, running tasks, done rail
     /// tiles.
     success: (u8, u8, u8),
-    /// The PLANNING status chip background.
-    chip_planning: (u8, u8, u8),
-    /// The DISCOVERING status chip background.
-    chip_discovering: (u8, u8, u8),
     /// The accent special class: active rail tile, DISCOVER while a round
     /// runs.
     accent: (u8, u8, u8),
@@ -561,12 +547,12 @@ const ATOM_ONE_DARK: Palette = Palette {
 /// readability bar, so `muted_text` takes a lightened muted literal that
 /// clears [`READABLE_CONTRAST`]. `normal_text` takes a lightened foreground
 /// literal and `accent` a lightened blue literal — brighter than the
-/// DISCOVERING chip — so the theme's classes are its own (T112.1); the
+/// palette's raw blue — so the theme's classes are its own (T112.1); the
 /// decorative scrollbar rail keeps the palette value. `highlighted_text`
 /// takes a magenta literal of the planner-name family (T120.1) — between
 /// the planner anchor `B7 6B D8` and the palette's own magenta, so the
-/// highlight echoes the PLANNING identity without duplicating the PLANNING
-/// chip — and it clears [`READABLE_CONTRAST`] on the background. It stays
+/// highlight echoes the planner identity without duplicating the raw
+/// magenta — and it clears [`READABLE_CONTRAST`] on the background. It stays
 /// unique among the eleven built-in themes' highlights (T119.1): apart
 /// from Atom One Light's darkened magenta and the default dark theme's
 /// value-locked yellow.
@@ -579,8 +565,6 @@ const ATOM_ONE_DARK_CLASSES: Classes = Classes {
     chip_neutral: ATOM_ONE_DARK.foreground,
     contrast_text: ATOM_ONE_DARK.background,
     success: ATOM_ONE_DARK.green,
-    chip_planning: ATOM_ONE_DARK.magenta,
-    chip_discovering: ATOM_ONE_DARK.blue,
     accent: (0x8B, 0xC4, 0xF3),
     scrollbar_rail: ATOM_ONE_DARK.muted,
     agent_text: None,
@@ -600,10 +584,10 @@ const ATOM_ONE_LIGHT: Palette = Palette {
 /// background-role contrast text reads on it, and `muted_text` takes a
 /// darkened muted literal that clears [`READABLE_CONTRAST`] on the
 /// near-white background. `normal_text` takes a darkened foreground literal
-/// and `accent` a darkened blue literal — deeper than the DISCOVERING
-/// chip — so the theme's classes are its own (T112.1). `highlighted_text`
+/// and `accent` a darkened blue literal — deeper than the palette's raw
+/// blue — so the theme's classes are its own (T112.1). `highlighted_text`
 /// takes a darkened literal of the palette's magenta hue, deeper than the
-/// PLANNING chip, so the theme's highlight is its own (T119.1).
+/// raw magenta, so the theme's highlight is its own (T119.1).
 const ATOM_ONE_LIGHT_CLASSES: Classes = Classes {
     background: ATOM_ONE_LIGHT.background,
     foreground: ATOM_ONE_LIGHT.foreground,
@@ -613,8 +597,6 @@ const ATOM_ONE_LIGHT_CLASSES: Classes = Classes {
     chip_neutral: ATOM_ONE_LIGHT.foreground,
     contrast_text: ATOM_ONE_LIGHT.background,
     success: ATOM_ONE_LIGHT.green,
-    chip_planning: ATOM_ONE_LIGHT.magenta,
-    chip_discovering: ATOM_ONE_LIGHT.blue,
     accent: (0x1F, 0x60, 0xF0),
     scrollbar_rail: ATOM_ONE_LIGHT.muted,
     agent_text: None,
@@ -638,7 +620,7 @@ const TOKYO_NIGHT_DARK: Palette = Palette {
 /// `surface` role to the foreground role so the background-role contrast
 /// text reads on the neutral chips; the scrollbar rail takes the freed
 /// `surface` role; and `accent` takes a lightened blue literal, brighter
-/// than the DISCOVERING chip. `highlighted_text` takes Tokyo Night's
+/// than the palette's raw blue. `highlighted_text` takes Tokyo Night's
 /// signature cyan, brighter than the blue chip family, so the theme's
 /// highlight is its own (T119.1).
 const TOKYO_NIGHT_DARK_CLASSES: Classes = Classes {
@@ -650,8 +632,6 @@ const TOKYO_NIGHT_DARK_CLASSES: Classes = Classes {
     chip_neutral: TOKYO_NIGHT_DARK.foreground,
     contrast_text: TOKYO_NIGHT_DARK.background,
     success: TOKYO_NIGHT_DARK.green,
-    chip_planning: TOKYO_NIGHT_DARK.magenta,
-    chip_discovering: TOKYO_NIGHT_DARK.blue,
     accent: (0xA5, 0xC0, 0xFA),
     scrollbar_rail: TOKYO_NIGHT_DARK.surface,
     agent_text: Some(TOKYO_NIGHT_DARK_AGENT_TEXT),
@@ -683,9 +663,9 @@ const TOKYO_NIGHT_DAY: Palette = Palette {
 /// background-role contrast text reads on it, and `muted_text` takes a
 /// darkened muted literal that clears [`READABLE_CONTRAST`].
 /// `normal_text` takes a darkened foreground literal and `accent` a darkened
-/// blue literal — deeper than the DISCOVERING chip — so the theme's classes
+/// blue literal — deeper than the palette's raw blue — so the theme's classes
 /// are its own (T112.1). `highlighted_text` takes a darkened literal of the
-/// palette's magenta hue, deeper than the PLANNING chip, so the theme's
+/// palette's magenta hue, deeper than its raw magenta, so the theme's
 /// highlight is its own (T119.1).
 const TOKYO_NIGHT_DAY_CLASSES: Classes = Classes {
     background: TOKYO_NIGHT_DAY.background,
@@ -696,8 +676,6 @@ const TOKYO_NIGHT_DAY_CLASSES: Classes = Classes {
     chip_neutral: TOKYO_NIGHT_DAY.foreground,
     contrast_text: TOKYO_NIGHT_DAY.background,
     success: TOKYO_NIGHT_DAY.green,
-    chip_planning: TOKYO_NIGHT_DAY.magenta,
-    chip_discovering: TOKYO_NIGHT_DAY.blue,
     accent: (0x18, 0x6D, 0xE1),
     scrollbar_rail: TOKYO_NIGHT_DAY.muted,
     agent_text: None,
@@ -716,7 +694,7 @@ const CATPPUCCIN_MOCHA: Palette = Palette {
 /// Mocha's own muted and accents already clear [`READABLE_CONTRAST`] on its
 /// background, so `chip_neutral` keeps the foreground role and only
 /// `normal_text` takes a lightened foreground literal and `accent` a
-/// lightened blue literal — brighter than the DISCOVERING chip — to make
+/// lightened blue literal — brighter than the palette's raw blue — to make
 /// the theme's classes its own (T112.1). `highlighted_text` takes
 /// Catppuccin's pink, a signature Mocha accent no other class uses, so the
 /// theme's highlight is its own (T119.1).
@@ -729,8 +707,6 @@ const CATPPUCCIN_MOCHA_CLASSES: Classes = Classes {
     chip_neutral: CATPPUCCIN_MOCHA.foreground,
     contrast_text: CATPPUCCIN_MOCHA.background,
     success: CATPPUCCIN_MOCHA.green,
-    chip_planning: CATPPUCCIN_MOCHA.magenta,
-    chip_discovering: CATPPUCCIN_MOCHA.blue,
     accent: (0xB5, 0xD0, 0xFC),
     scrollbar_rail: CATPPUCCIN_MOCHA.muted,
     agent_text: None,
@@ -752,9 +728,9 @@ const CATPPUCCIN_LATTE: Palette = Palette {
 /// background under the contrast text and as text on the background, so
 /// `success` takes a darkened literal of the role's hue;
 /// `highlighted_text` takes a darkened literal of the palette's pink, deeper
-/// than the PLANNING chip, so the theme's highlight is its own (T119.1).
+/// than the palette's raw magenta, so the theme's highlight is its own (T119.1).
 /// `accent` takes a darkened blue literal, deeper than the
-/// DISCOVERING chip's raw blue (T112.1).
+/// palette's raw blue (T112.1).
 const CATPPUCCIN_LATTE_CLASSES: Classes = Classes {
     background: CATPPUCCIN_LATTE.background,
     foreground: CATPPUCCIN_LATTE.foreground,
@@ -764,8 +740,6 @@ const CATPPUCCIN_LATTE_CLASSES: Classes = Classes {
     chip_neutral: CATPPUCCIN_LATTE.foreground,
     contrast_text: CATPPUCCIN_LATTE.background,
     success: (0x3D, 0x98, 0x29),
-    chip_planning: CATPPUCCIN_LATTE.magenta,
-    chip_discovering: CATPPUCCIN_LATTE.blue,
     accent: (0x0A, 0x52, 0xE0),
     scrollbar_rail: CATPPUCCIN_LATTE.muted,
     agent_text: None,
@@ -784,11 +758,10 @@ const SOLARIZED_DARK: Palette = Palette {
 /// Solarized Dark's muted (2.8:1 on the background) is too dim for the
 /// readability bar, so `muted_text` takes a lightened muted literal that
 /// clears [`READABLE_CONTRAST`]. The Solarized twins share their raw
-/// green/yellow/blue/magenta roles, so this table takes brightened literals
-/// of the magenta and blue hues for `chip_planning`, `chip_discovering` and
-/// `accent` — bright chips read well on the near-black background —
-/// diverging from the Light twin while keeping the semantic hue families,
-/// with `accent` lighter than the DISCOVERING chip (T112.1).
+/// green/yellow/blue/magenta roles, so this table takes a brightened literal
+/// of the blue hue for `accent` — bright colours read well on the
+/// near-black background — diverging from the Light twin while keeping the
+/// semantic hue family (T112.1).
 /// `highlighted_text` takes the palette's violet, a canonical Solarized
 /// accent no other class uses, so the theme's highlight is its own (T119.1).
 const SOLARIZED_DARK_CLASSES: Classes = Classes {
@@ -800,8 +773,6 @@ const SOLARIZED_DARK_CLASSES: Classes = Classes {
     chip_neutral: SOLARIZED_DARK.foreground,
     contrast_text: SOLARIZED_DARK.background,
     success: SOLARIZED_DARK.green,
-    chip_planning: (0xDB, 0x5C, 0x99),
-    chip_discovering: (0x4C, 0xA2, 0xDF),
     accent: (0x78, 0xB9, 0xE6),
     scrollbar_rail: SOLARIZED_DARK.muted,
     agent_text: None,
@@ -824,9 +795,8 @@ const SOLARIZED_LIGHT: Palette = Palette {
 /// literal of its hue as `success`; `highlighted_text` takes the palette's
 /// violet darkened — the twins share roles, so the light twin darkens — so
 /// the theme's highlight is its own (T119.1). `accent`
-/// takes a darkened blue literal, deeper than the DISCOVERING chip's raw
-/// blue, while the chip backgrounds keep the raw roles the Dark twin
-/// brightens (T112.1).
+/// takes a darkened blue literal, deeper than the palette's raw
+/// blue (T112.1).
 const SOLARIZED_LIGHT_CLASSES: Classes = Classes {
     background: SOLARIZED_LIGHT.background,
     foreground: SOLARIZED_LIGHT.foreground,
@@ -836,8 +806,6 @@ const SOLARIZED_LIGHT_CLASSES: Classes = Classes {
     chip_neutral: SOLARIZED_LIGHT.foreground,
     contrast_text: SOLARIZED_LIGHT.background,
     success: (0x7C, 0x8F, 0x00),
-    chip_planning: SOLARIZED_LIGHT.magenta,
-    chip_discovering: SOLARIZED_LIGHT.blue,
     accent: (0x21, 0x7A, 0xB8),
     scrollbar_rail: SOLARIZED_LIGHT.muted,
     agent_text: None,
@@ -855,7 +823,7 @@ const GRUVBOX_DARK: Palette = Palette {
 
 /// Gruvbox Dark's own muted and accents already clear [`READABLE_CONTRAST`]
 /// on its background, so `chip_neutral` keeps the foreground role; `accent`
-/// takes a lightened teal literal, brighter than the DISCOVERING chip's raw
+/// takes a lightened teal literal, brighter than the palette's raw
 /// blue, so the theme's classes are its own (T112.1). `highlighted_text`
 /// takes the palette's signature bright orange, so the theme's highlight is
 /// its own (T119.1).
@@ -868,8 +836,6 @@ const GRUVBOX_DARK_CLASSES: Classes = Classes {
     chip_neutral: GRUVBOX_DARK.foreground,
     contrast_text: GRUVBOX_DARK.background,
     success: GRUVBOX_DARK.green,
-    chip_planning: GRUVBOX_DARK.magenta,
-    chip_discovering: GRUVBOX_DARK.blue,
     accent: (0xA1, 0xBA, 0xB1),
     scrollbar_rail: GRUVBOX_DARK.muted,
     agent_text: None,
@@ -887,7 +853,7 @@ const GRUVBOX_LIGHT: Palette = Palette {
 
 /// Gruvbox Light's own muted and accents already clear [`READABLE_CONTRAST`]
 /// on its background, so `chip_neutral` keeps the foreground role; `accent`
-/// takes a darkened teal literal, deeper than the DISCOVERING chip's raw
+/// takes a darkened teal literal, deeper than the palette's raw
 /// blue, so the theme's classes are its own (T112.1). `highlighted_text`
 /// takes the palette's neutral orange, the light variant's counterpart of
 /// the Dark twin's bright orange, so the theme's highlight is its own
@@ -901,8 +867,6 @@ const GRUVBOX_LIGHT_CLASSES: Classes = Classes {
     chip_neutral: GRUVBOX_LIGHT.foreground,
     contrast_text: GRUVBOX_LIGHT.background,
     success: GRUVBOX_LIGHT.green,
-    chip_planning: GRUVBOX_LIGHT.magenta,
-    chip_discovering: GRUVBOX_LIGHT.blue,
     accent: (0x06, 0x52, 0x60),
     scrollbar_rail: GRUVBOX_LIGHT.muted,
     agent_text: None,
@@ -970,8 +934,6 @@ impl Palette {
             chip_neutral: emission(classes.chip_neutral, truecolor),
             contrast_text: emission(classes.contrast_text, truecolor),
             success: emission(classes.success, truecolor),
-            chip_planning: emission(classes.chip_planning, truecolor),
-            chip_discovering: emission(classes.chip_discovering, truecolor),
             accent: emission(classes.accent, truecolor),
             scrollbar_rail: emission(classes.scrollbar_rail, truecolor),
         }
@@ -1087,8 +1049,6 @@ mod tests {
         assert_eq!(dark.chip_neutral, Color::DarkGray);
         assert_eq!(dark.contrast_text, Color::Black);
         assert_eq!(dark.success, Color::Green);
-        assert_eq!(dark.chip_planning, Color::Magenta);
-        assert_eq!(dark.chip_discovering, Color::Blue);
         assert_eq!(dark.accent, Color::Cyan);
         assert_eq!(dark.scrollbar_rail, Color::DarkGray);
     }
@@ -1128,8 +1088,6 @@ mod tests {
             theme.chip_neutral,
             theme.contrast_text,
             theme.success,
-            theme.chip_planning,
-            theme.chip_discovering,
             theme.accent,
             theme.scrollbar_rail,
         ]
@@ -1470,8 +1428,6 @@ mod tests {
                 classes.chip_neutral,
                 classes.contrast_text,
                 classes.success,
-                classes.chip_planning,
-                classes.chip_discovering,
                 classes.accent,
                 classes.scrollbar_rail,
             ];
@@ -1486,16 +1442,14 @@ mod tests {
     }
 
     /// Every class value is genuinely its theme's own (T112.1): for each of
-    /// the twelve class fields no two of the eleven built-in themes resolve
+    /// the ten class fields no two of the eleven built-in themes resolve
     /// to the same colour, so switching themes changes the whole app look
     /// instead of re-hueing one shared mapping. Dark's named ANSI colours
     /// can never equal a palette's `Color::Rgb`, so it takes part in the
-    /// comparison. `accent` additionally stays distinct from
-    /// `chip_discovering` in every theme, so the active rail tile
-    /// never wears the DISCOVERING chip's colour.
+    /// comparison.
     #[test]
     fn class_values_genuinely_differ_across_themes() {
-        const CLASS_NAMES: [&str; 12] = [
+        const CLASS_NAMES: [&str; 10] = [
             "background",
             "foreground",
             "normal_text",
@@ -1504,8 +1458,6 @@ mod tests {
             "chip_neutral",
             "contrast_text",
             "success",
-            "chip_planning",
-            "chip_discovering",
             "accent",
             "scrollbar_rail",
         ];
@@ -1523,12 +1475,6 @@ mod tests {
                     );
                 }
             }
-        }
-        for theme in &themes {
-            assert_ne!(
-                theme.accent, theme.chip_discovering,
-                "accent must stay distinct from the DISCOVERING chip"
-            );
         }
     }
 
@@ -1600,8 +1546,6 @@ mod tests {
             for background in [
                 classes.chip_neutral,
                 classes.success,
-                classes.chip_planning,
-                classes.chip_discovering,
                 classes.highlighted_text,
                 classes.accent,
             ] {
