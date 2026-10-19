@@ -24,6 +24,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+patok-providers = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]
