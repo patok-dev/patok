@@ -242,7 +242,7 @@ fn rail_status(app: &App) -> (&'static str, Color) {
 /// The rail's pieces for `app` at `width`, with the detail picked from it.
 fn app_pieces(app: &App, width: u16) -> (RailDetail, Vec<(Piece, String)>) {
     let (status, _) = rail_status(app);
-    let timer = app.session_elapsed().map(format_elapsed);
+    let timer = app.overall_elapsed().map(format_elapsed);
     let text = RailText {
         status,
         mode: app.run_mode(),
