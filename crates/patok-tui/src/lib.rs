@@ -18,6 +18,7 @@ mod pipeline;
 mod project;
 mod run;
 mod settings;
+mod status;
 mod submit;
 mod theme;
 mod theme_picker;
@@ -25,9 +26,10 @@ mod ui;
 mod view;
 
 // The surface the `patok` binary drives: the two drivers' entries and
-// their shared outcome types.
+// their shared outcome types, plus the per-daemon status client.
 pub use headless::{HeadlessOutcome, run_until};
 pub use run::{Outcome, Spawner, run};
+pub use status::{DaemonStatus, RunState, StatusStream, StatusUpdate, TaskProgress, probe};
 
 // The internals the crate's own integration tests reach: re-exported only
 // under the test-support feature, enabled for those tests through the
