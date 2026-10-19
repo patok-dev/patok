@@ -12,6 +12,7 @@ mod hit;
 mod keys;
 mod markdown;
 mod modal;
+mod monitor;
 mod mouse;
 mod overlay;
 mod pipeline;
@@ -26,8 +27,9 @@ mod ui;
 mod view;
 
 // The surface the `patok` binary drives: the two drivers' entries and
-// their shared outcome types, plus the per-daemon status client.
+// their shared outcome types, plus the per-daemon status client and the fleet monitor.
 pub use headless::{HeadlessOutcome, run_until};
+pub use monitor::{FleetEvent, FleetMonitor, monitor};
 pub use run::{Outcome, Spawner, run};
 pub use status::{DaemonStatus, RunState, StatusStream, StatusUpdate, TaskProgress, probe};
 
@@ -42,6 +44,8 @@ pub use hit::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use modal::Modal;
+#[cfg(any(test, feature = "test-support"))]
+pub use monitor::monitor_polling;
 #[cfg(any(test, feature = "test-support"))]
 pub use overlay::{Entry, FieldKind, SETTINGS_CHOICES, Schema, StatusLevel};
 // The line formatters and the duration helper, re-exported from their home
