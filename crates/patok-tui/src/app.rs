@@ -289,6 +289,11 @@ pub struct SessionClock {
     /// finished line derive from the engine-recorded session timing; flag
     /// flips only fill a missing anchor or clear it (T131.1).
     pub session_start: Option<Instant>,
+    /// The start of the whole run, for the rail's timer: set once by the
+    /// first engine-recorded agent start (or the idle→busy flip) and kept
+    /// across stage changes, so it spans plan, build and discovery. Cleared
+    /// when the engine returns to idle.
+    pub overall_start: Option<Instant>,
     /// One epoch anchor captured at construction, mapping the engine's epoch
     /// milliseconds onto the shell's `Instant` clock (T42.1).
     epoch_anchor: (SystemTime, Instant),
@@ -302,6 +307,7 @@ impl SessionClock {
     fn new() -> Self {
         Self {
             session_start: None,
+            overall_start: None,
             epoch_anchor: (SystemTime::now(), Instant::now()),
             now: Cell::new(Instant::now()),
         }
@@ -329,7 +335,16 @@ impl SessionClock {
     /// anchor. The idle gate stays with the caller, which owns the
     /// classification.
     fn elapsed(&self) -> Option<Duration> {
-        self.session_start.map(|start| {
+        self.since(self.session_start)
+    }
+
+    /// The whole run's elapsed time on the render clock; `None` with no anchor.
+    fn overall_elapsed(&self) -> Option<Duration> {
+        self.since(self.overall_start)
+    }
+
+    fn since(&self, start: Option<Instant>) -> Option<Duration> {
+        start.map(|start| {
             let now = self.now.get();
             if now >= start {
                 now - start
@@ -557,8 +572,11 @@ impl App {
         // finished session left behind, so the next run starts fresh (T131.1).
         if app.is_idle() {
             app.clock.session_start = None;
-        } else if app.clock.session_start.is_none() {
-            app.clock.session_start = Some(app.clock.now.get());
+            app.clock.overall_start = None;
+        } else {
+            let now = app.clock.now.get();
+            app.clock.session_start.get_or_insert(now);
+            app.clock.overall_start.get_or_insert(now);
         }
         app.focus = app.state_focus();
         app
@@ -617,6 +635,17 @@ impl App {
             return None;
         }
         self.clock.elapsed()
+    }
+
+    /// The whole run's elapsed time (plan, build and discovery together),
+    /// recomputed on every render; `None` while the engine is idle. The rail
+    /// shows this, the output frame shows the active agent's
+    /// [`session_elapsed`](Self::session_elapsed).
+    pub fn overall_elapsed(&self) -> Option<Duration> {
+        if self.is_idle() {
+            return None;
+        }
+        self.clock.overall_elapsed()
     }
 
     /// The live startup scenario: the scanned file facts

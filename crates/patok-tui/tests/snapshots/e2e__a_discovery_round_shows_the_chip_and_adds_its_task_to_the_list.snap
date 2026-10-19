@@ -2,7 +2,7 @@
 source: crates/patok-tui/tests/e2e.rs
 expression: screen
 ---
-─ Discovering ─ continuous ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─── 00:00 ─
+─ Running ─ continuous ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────── 00:00 ─
 ┌ Builder | mock ─────────────────────────────────────────────────────── 00:00 ┐
 │── T1.1: add hello                                                            │
 │Builder started (mock)                                                        │

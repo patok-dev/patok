@@ -1904,7 +1904,7 @@ fn planning_chip_and_task_list_update_keep_running_task() {
             .lines()
             .next()
             .unwrap()
-            .starts_with("─ Planning ─ sprint")
+            .starts_with("─ Running ─ sprint")
     );
     app.run.current_task = Some("T1.2".into());
     app.apply(EngineEvent::TasksChanged {
@@ -1931,7 +1931,7 @@ fn discovery_chip_shows_while_a_round_runs() {
             .lines()
             .next()
             .unwrap()
-            .starts_with("─ Discovering ─ sprint")
+            .starts_with("─ Running ─ sprint")
     );
     app.apply(agent(AgentEvent::Text {
         text: "Scanning the project for follow-up work.".into(),
@@ -2561,7 +2561,7 @@ mod dialog {
     fn planner_running_on_the_dashboard() {
         let app = planner_running();
         let screen = draw(&app, 80, 24);
-        assert!(screen.contains("─ Planning ─"), "{screen}");
+        assert!(screen.contains("─ Running ─"), "{screen}");
         assert!(screen.contains(" Planner "), "{screen}");
         assert!(
             screen.contains("Reading TASKS.md to see what exists."),
@@ -5973,7 +5973,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Research)),
-            ("[ R ]".to_string(), Some(theme.accent), true)
+            ("[ R ]".to_string(), Some(theme.highlighted_text), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
@@ -5995,7 +5995,7 @@ mod pipeline {
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.accent), true)
+            ("[ P ]".to_string(), Some(theme.highlighted_text), true)
         );
     }
 
@@ -6097,7 +6097,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ Plan ]".to_string(), Some(theme.accent), true)
+            ("[ Plan ]".to_string(), Some(theme.highlighted_text), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
@@ -6115,7 +6115,7 @@ mod pipeline {
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ Build ]".to_string(), Some(theme.accent), true)
+            ("[ Build ]".to_string(), Some(theme.highlighted_text), true)
         );
     }
 
@@ -6155,7 +6155,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ R ]".to_string(), Some(theme.accent), true)
+            ("[ R ]".to_string(), Some(theme.highlighted_text), true)
         );
 
         // The review is done: green, like a skipped review's tile.
@@ -6199,7 +6199,11 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ Discover ]".to_string(), Some(theme.accent), true)
+            (
+                "[ Discover ]".to_string(),
+                Some(theme.highlighted_text),
+                true
+            )
         );
 
         // The round ran in this session: DI turns green.
@@ -6286,8 +6290,9 @@ mod pipeline {
         assert!(rail_tile_rects(&app, Rect::new(0, 0, 30, 1)).len() < 5);
     }
 
-    /// The status word wears its state's colour on the rail: running green,
-    /// planning and discovering their own, stopped neutral.
+    /// The status word wears its state's colour on the rail: Running in green
+    /// while the engine is busy (session, planner, discovery round or a stop
+    /// winding down), Stopped in neutral otherwise.
     #[test]
     fn the_rail_status_word_wears_the_state_colour() {
         let theme = Theme::DARK;
@@ -6306,10 +6311,20 @@ mod pipeline {
         });
         assert_eq!(word(&app), ("R".into(), Some(theme.success)));
         app.apply(EngineEvent::PlanningChanged { planning: true });
-        assert_eq!(word(&app), ("P".into(), Some(theme.chip_planning)));
+        assert_eq!(word(&app), ("R".into(), Some(theme.success)));
         app.apply(EngineEvent::PlanningChanged { planning: false });
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Startup,
+        });
+        // A discovery round on an idle Startup engine.
         app.apply(EngineEvent::DiscoveryChanged { discovering: true });
-        assert_eq!(word(&app), ("D".into(), Some(theme.chip_discovering)));
+        assert_eq!(word(&app), ("R".into(), Some(theme.success)));
+        app.apply(EngineEvent::DiscoveryChanged { discovering: false });
+        // A stop still winding down keeps the loop running.
+        app.run.stopping = true;
+        assert_eq!(word(&app), ("R".into(), Some(theme.success)));
+        app.run.stopping = false;
+        assert_eq!(word(&app), ("S".into(), Some(theme.chip_neutral)));
     }
 
     /// The smallest window the layout is designed for -- 43 columns by 10
@@ -6383,7 +6398,8 @@ mod pipeline {
     }
 
     /// The pipeline's four states as snapshots: the idle, planning, running
-    /// and discovery rails.
+    /// and discovery rails. The idle rail reads Stopped; the planning,
+    /// running and discovery rails all read Running.
     #[test]
     fn idle_rail_with_every_tile_muted() {
         let app = app();

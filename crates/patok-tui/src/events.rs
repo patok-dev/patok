@@ -53,7 +53,10 @@ impl App {
             EngineEvent::AgentChanged { agent, started_ms } => {
                 self.run.agent = agent;
                 if started_ms > 0 {
-                    self.clock.session_start = Some(self.clock.anchored(started_ms));
+                    let start = self.clock.anchored(started_ms);
+                    self.clock.session_start = Some(start);
+                    // Only the run's first agent anchors the overall timer.
+                    self.clock.overall_start.get_or_insert(start);
                 }
             }
             // The session's provider and model drive the output frame title
@@ -170,8 +173,12 @@ impl App {
                 self.clock
                     .session_start
                     .get_or_insert_with(|| self.clock.now.get());
+                self.clock
+                    .overall_start
+                    .get_or_insert_with(|| self.clock.now.get());
             } else {
                 self.clock.session_start = None;
+                self.clock.overall_start = None;
             }
         }
     }
@@ -329,5 +336,28 @@ mod tests {
         app.apply(EngineEvent::PlanningChanged { planning: true });
         let elapsed = app.session_elapsed().expect("the timer runs");
         assert!(elapsed < Duration::from_secs(1), "elapsed {elapsed:?}");
+    }
+
+    /// The overall timer keeps the run's first agent start across a stage
+    /// change, while the per-agent timer re-anchors on the new agent.
+    #[test]
+    fn the_overall_timer_survives_an_agent_change() {
+        let mut app = app();
+        app.apply(EngineEvent::AgentChanged {
+            agent: "planner".into(),
+            started_ms: started_ms_ago(60_000),
+        });
+        app.apply(EngineEvent::PlanningChanged { planning: true });
+        app.apply(EngineEvent::AgentChanged {
+            agent: "builder".into(),
+            started_ms: started_ms_ago(5_000),
+        });
+        let agent = app.session_elapsed().expect("the timer runs");
+        let overall = app.overall_elapsed().expect("the timer runs");
+        assert!(agent <= Duration::from_secs(6), "agent {agent:?}");
+        assert!(overall >= Duration::from_secs(59), "overall {overall:?}");
+
+        app.apply(EngineEvent::PlanningChanged { planning: false });
+        assert_eq!(app.overall_elapsed(), None);
     }
 }
