@@ -61,9 +61,14 @@ enum Command {
     /// progress, uptime, pid and engine version. Lists all daemons, so the global -d/--dir
     /// option is accepted but has no effect here.
     Ps {
-        /// Print a JSON array instead of the table.
+        /// Print JSON instead of the table (an array, or one object per change with --watch).
         #[arg(long)]
         json: bool,
+        /// Keep running and follow daemons as they start, change and stop: redraws the table
+        /// on a terminal, otherwise prints one line per change (one JSON object per change
+        /// with --json).
+        #[arg(long)]
+        watch: bool,
     },
 }
 
@@ -109,8 +114,12 @@ async fn main() -> ExitCode {
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let command = cli.command.unwrap_or(Command::Run);
     // `ps` lists every daemon on the machine; it never resolves a project directory.
-    if let Command::Ps { json } = command {
-        return ps::run(json).await;
+    if let Command::Ps { json, watch } = command {
+        return if watch {
+            ps::run_watch(json).await
+        } else {
+            ps::run(json).await
+        };
     }
     let project = project_dir(cli.dir)?;
     match command {
