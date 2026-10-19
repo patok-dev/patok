@@ -4,6 +4,7 @@
 //! per-project engine or spawns it (`patok daemon`), then runs the shell.
 
 mod daemon;
+mod ps;
 mod tasks;
 mod update;
 
@@ -56,6 +57,14 @@ enum Command {
         #[command(subcommand)]
         action: TasksAction,
     },
+    /// List every running patok daemon on this machine with its project, run state, task
+    /// progress, uptime, pid and engine version. Lists all daemons, so the global -d/--dir
+    /// option is accepted but has no effect here.
+    Ps {
+        /// Print a JSON array instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -98,8 +107,13 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
+    let command = cli.command.unwrap_or(Command::Run);
+    // `ps` lists every daemon on the machine; it never resolves a project directory.
+    if let Command::Ps { json } = command {
+        return ps::run(json).await;
+    }
     let project = project_dir(cli.dir)?;
-    match cli.command.unwrap_or(Command::Run) {
+    match command {
         Command::Run => daemon::run_shell(&project).await,
         Command::Headless { color } => daemon::run_headless(&project, color).await,
         Command::Update { channel } => update::run(channel, &project),
@@ -127,6 +141,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             TasksAction::Remove { id } => tasks::remove(&project, &id).await,
             TasksAction::List => tasks::list(&project),
         },
+        Command::Ps { .. } => unreachable!("handled above"),
     }
 }
 
