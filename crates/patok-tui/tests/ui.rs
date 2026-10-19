@@ -5973,7 +5973,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Research)),
-            ("[ R ]".to_string(), Some(theme.accent), true)
+            ("[ R ]".to_string(), Some(theme.highlighted_text), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
@@ -5995,7 +5995,7 @@ mod pipeline {
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ P ]".to_string(), Some(theme.accent), true)
+            ("[ P ]".to_string(), Some(theme.highlighted_text), true)
         );
     }
 
@@ -6097,7 +6097,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Plan)),
-            ("[ Plan ]".to_string(), Some(theme.accent), true)
+            ("[ Plan ]".to_string(), Some(theme.highlighted_text), true)
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
@@ -6115,7 +6115,7 @@ mod pipeline {
         );
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Build)),
-            ("[ Build ]".to_string(), Some(theme.accent), true)
+            ("[ Build ]".to_string(), Some(theme.highlighted_text), true)
         );
     }
 
@@ -6155,7 +6155,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Review)),
-            ("[ R ]".to_string(), Some(theme.accent), true)
+            ("[ R ]".to_string(), Some(theme.highlighted_text), true)
         );
 
         // The review is done: green, like a skipped review's tile.
@@ -6199,7 +6199,7 @@ mod pipeline {
         let buffer = draw_buffer(&app);
         assert_eq!(
             tile_cells(&buffer, tile_rect(&app, TileId::Discover)),
-            ("[ Discover ]".to_string(), Some(theme.accent), true)
+            ("[ Discover ]".to_string(), Some(theme.highlighted_text), true)
         );
 
         // The round ran in this session: DI turns green.

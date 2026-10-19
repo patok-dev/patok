@@ -139,12 +139,12 @@ pub fn tile_status(state: &PipelineState, id: TileId) -> TileStatus {
 
 /// One tile's style from its status: muted and
 /// pending tiles render in the theme's muted colour, done tiles in green, and
-/// the active tile is accent-coloured and bold.
+/// the active tile is highlight-coloured and bold.
 pub fn tile_style(_id: TileId, status: TileStatus, theme: Theme) -> Style {
     let colour = match status {
         TileStatus::Muted | TileStatus::Pending => theme.muted_text,
         TileStatus::Done => theme.success,
-        TileStatus::Active => theme.accent,
+        TileStatus::Active => theme.highlighted_text,
     };
     if status == TileStatus::Active {
         Style::new().fg(colour).add_modifier(Modifier::BOLD)
@@ -399,7 +399,7 @@ mod tests {
     }
 
     /// The spec's tile colouring: muted and
-    /// pending muted, done green, the active tile accent and bold.
+    /// pending muted, done green, the active tile highlight and bold.
     #[test]
     fn tile_styles_follow_the_spec_colouring() {
         let theme = Theme::DARK;
@@ -412,12 +412,12 @@ mod tests {
         assert_eq!(done.fg, Some(theme.success));
         assert!(!done.add_modifier.contains(Modifier::BOLD));
         let active = tile_style(TileId::Plan, TileStatus::Active, theme);
-        assert_eq!(active.fg, Some(theme.accent));
+        assert_eq!(active.fg, Some(theme.highlighted_text));
         assert!(active.add_modifier.contains(Modifier::BOLD));
-        // DISCOVER is accent while a round runs.
+        // DISCOVER is highlighted while a round runs.
         assert_eq!(
             tile_style(TileId::Discover, TileStatus::Active, theme).fg,
-            Some(theme.accent)
+            Some(theme.highlighted_text)
         );
     }
 
