@@ -9,6 +9,12 @@ mod events;
 mod geom;
 mod headless;
 mod hit;
+// Hosted by the Terminal modal (T2.3); until then only its tests use it.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired into the Terminal modal later")
+)]
+mod interactive;
 mod keys;
 mod markdown;
 mod modal;

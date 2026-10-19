@@ -27,6 +27,7 @@ futures = "0.3"
 hyper-util = { version = "0.1", features = ["tokio"] }
 insta = "1"
 notify = "8"
+portable-pty = "0.9"
 prost = "0.14"
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
@@ -44,6 +45,7 @@ tonic-prost-build = "0.14"
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+vt100 = "0.16"
 protoc-bin-vendored = "3"
 schemars = { version = "1", features = ["derive"] }
 
