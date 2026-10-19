@@ -1,0 +1,12 @@
+---
+source: crates/patok-tui/src/interactive/widget.rs
+expression: snap(&buf)
+---
+BDIUV
+---
+0,0 "B" fg=- bg=- BOLD
+1,0 "D" fg=- bg=- DIM
+2,0 "I" fg=- bg=- ITALIC
+3,0 "U" fg=- bg=- UNDERLINED
+4,0 "V" fg=- bg=- REVERSED
+5,0 " " fg=- bg=- REVERSED

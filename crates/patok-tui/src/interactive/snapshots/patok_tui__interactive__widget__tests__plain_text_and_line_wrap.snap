@@ -1,0 +1,10 @@
+---
+source: crates/patok-tui/src/interactive/widget.rs
+expression: snap(&buf)
+---
+hello
+world
+
+
+---
+5,1 " " fg=- bg=- REVERSED

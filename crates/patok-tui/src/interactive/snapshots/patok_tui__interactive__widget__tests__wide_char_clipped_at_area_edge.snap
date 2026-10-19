@@ -1,0 +1,6 @@
+---
+source: crates/patok-tui/src/interactive/widget.rs
+expression: snap(&buf)
+---
+ab
+---

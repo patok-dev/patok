@@ -1,0 +1,7 @@
+---
+source: crates/patok-tui/src/interactive/widget.rs
+expression: snap(&buf)
+---
+a中 b
+---
+4,0 " " fg=- bg=- REVERSED

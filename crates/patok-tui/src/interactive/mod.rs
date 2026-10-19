@@ -3,6 +3,10 @@
 
 mod replies;
 mod session;
+mod widget;
 
 #[expect(unused_imports, reason = "first used by the Terminal modal (T2.3)")]
 pub(crate) use session::{PtyEvent, PtySession};
+
+#[expect(unused_imports, reason = "first used by the Terminal modal (T2.3)")]
+pub(crate) use widget::{ScreenView, cursor_position};
