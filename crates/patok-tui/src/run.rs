@@ -129,6 +129,7 @@ pub(crate) async fn attach(
     let mut updates = client
         .attach(AttachRequest {
             shell_version: env!("CARGO_PKG_VERSION").to_string(),
+            observer: false,
         })
         .await
         .map_err(|status| anyhow!("{}", status.message()))?

@@ -3,6 +3,7 @@
 pub mod complexity;
 pub mod config;
 pub mod event;
+pub mod fleet;
 pub mod output;
 pub mod paths;
 pub mod pipeline;

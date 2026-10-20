@@ -12,7 +12,8 @@ service Engine {
   // Attach a shell to this engine. Any number of shells can attach
   // concurrently; each receives the current snapshot and a live feed of
   // all subsequent engine events. The stream closes when the shell
-  // disconnects or the engine shuts down.
+  // disconnects or the engine shuts down. Observer attaches (see
+  // `AttachRequest.observer`) do not keep the engine from idle-shutting-down.
   rpc Attach(AttachRequest) returns (stream EngineUpdate);
 
   // Submit a user-initiated action (start build, start planning, task
@@ -30,9 +31,15 @@ service Engine {
 
 message AttachRequest {
   // The connecting shell's own build version, reported so the engine can
-  // log it; version-mismatch handling itself is a client-side decision
-  //.
+  // log it; version-mismatch handling itself is a client-side decision.
   string shell_version = 1;
+
+  // An observer (a read-only monitor such as flightcontrol) receives the same
+  // snapshot and live feed but does not count as an attached shell, so it
+  // does not hold the engine alive: an engine with only observers attached
+  // still idle-shuts-down after the configured timeout. A normal shell attach
+  // keeps the engine alive for as long as it stays connected.
+  bool observer = 2;
 }
 
 message EngineUpdate {

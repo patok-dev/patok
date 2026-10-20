@@ -46,9 +46,18 @@ impl EngineApi for Service {
         &self,
         request: Request<AttachRequest>,
     ) -> Result<Response<Self::AttachStream>, Status> {
-        let shell_version = request.into_inner().shell_version;
-        let attachment = self.engine.attach().unwrap();
-        tracing::info!("shell attached (version {shell_version})");
+        let AttachRequest {
+            shell_version,
+            observer,
+        } = request.into_inner();
+        let attachment = if observer {
+            self.engine.attach_observer()
+        } else {
+            self.engine.attach()
+        }
+        .unwrap();
+        let kind = if observer { "observer" } else { "shell" };
+        tracing::info!("{kind} attached (version {shell_version})");
 
         let (tx, rx) = mpsc::channel(256);
         let info = EngineInfo {
@@ -447,6 +456,16 @@ pub async fn serve(engine: Engine) -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION"),
         socket.display()
     );
+    let meta = patok_core::paths::meta_path(&config.runtime_dir);
+    let daemon_meta = patok_core::paths::DaemonMeta {
+        project_dir: config.project_dir.clone(),
+        pid: std::process::id(),
+        started_at: patok_core::paths::DaemonMeta::now_unix_secs(),
+        engine_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    if let Err(error) = daemon_meta.write(&meta) {
+        tracing::warn!("cannot write {}: {error}", meta.display());
+    }
 
     // The startup cleanup runs before the watcher's first reconcile and before
     // any build, planner or discovery run can start (T72.1).
@@ -480,6 +499,11 @@ pub async fn serve(engine: Engine) -> anyhow::Result<()> {
         }
     }
     let _ = std::fs::remove_file(&socket);
+    if let Err(error) = std::fs::remove_file(&meta)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("cannot remove {}: {error}", meta.display());
+    }
     tracing::info!("engine stopped");
     Ok(())
 }

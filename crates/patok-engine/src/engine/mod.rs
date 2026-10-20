@@ -36,12 +36,14 @@ pub struct Engine {
     pub(crate) inner: Arc<Inner>,
 }
 
-/// Held by each attached shell; dropping it decrements the attachment counter.
+/// Held by each attached shell; dropping a normal attachment decrements the attachment
+/// counter. An observer attachment never counted, so dropping it leaves the counter alone.
 /// Commands like stop, shutdown, and restart remain global across all attached shells.
 pub struct Attachment {
     pub snapshot: Snapshot,
     pub events: broadcast::Receiver<EngineEvent>,
     pub(crate) engine: Engine,
+    pub(crate) observer: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -49,6 +51,8 @@ pub enum AttachError {}
 
 impl Drop for Attachment {
     fn drop(&mut self) {
-        self.engine.state().attach_count -= 1;
+        if !self.observer {
+            self.engine.state().attach_count -= 1;
+        }
     }
 }

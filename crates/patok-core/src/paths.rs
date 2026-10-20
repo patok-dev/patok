@@ -39,15 +39,24 @@ pub fn base_dir(
 const MAX_SOCKET_PATH: usize = 100;
 const SOCKET_FILE: &str = "engine.sock";
 
-/// Runtime directory of the engine for `project`: `<root>/patok/<escaped-cwd>`, where `<root>`
-/// is `$XDG_RUNTIME_DIR`, else `$TMPDIR`, else `/tmp`.
+const META_FILE: &str = "meta.json";
+
+/// Root holding every project's runtime directory: `<base>/patok`, where `<base>` is
+/// `$XDG_RUNTIME_DIR`, else `$TMPDIR`, else `/tmp` (empty values count as unset).
+pub fn runtime_root(xdg_runtime_dir: Option<&str>, tmpdir: Option<&str>) -> PathBuf {
+    base_dir(xdg_runtime_dir, tmpdir, "")
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("patok")
+}
+
+/// Runtime directory of the engine for `project`: `<runtime root>/<escaped-cwd>` (see
+/// [`runtime_root`]).
 ///
 /// Deep project paths would push the socket path past the OS limit. In that case (only) the
 /// directory name keeps a readable tail of the escaped path and ends in a stable 64-bit hash of
 /// the whole of it, so distinct projects still get distinct names.
 pub fn runtime_dir(xdg_runtime_dir: Option<&str>, tmpdir: Option<&str>, project: &Path) -> PathBuf {
-    let root = base_dir(xdg_runtime_dir, tmpdir, "").unwrap_or_else(|| PathBuf::from("/tmp"));
-    let base = root.join("patok");
+    let base = runtime_root(xdg_runtime_dir, tmpdir);
     let escaped = escape_path(project);
     // "<base>/<name>/<socket file>"
     let overhead = base.as_os_str().len() + 1 + 1 + SOCKET_FILE.len();
@@ -98,6 +107,12 @@ pub fn project_data_dir(
     )
 }
 
+/// [`runtime_root`] from the process environment.
+pub fn runtime_root_from_env() -> PathBuf {
+    let get = |k: &str| std::env::var(k).ok();
+    runtime_root(get("XDG_RUNTIME_DIR").as_deref(), get("TMPDIR").as_deref())
+}
+
 /// [`runtime_dir`] from the process environment.
 pub fn runtime_dir_from_env(project: &Path) -> PathBuf {
     let get = |k: &str| std::env::var(k).ok();
@@ -136,9 +151,132 @@ pub fn socket_path(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join(SOCKET_FILE)
 }
 
+/// The engine's metadata file inside a runtime directory, next to the socket.
+pub fn meta_path(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join(META_FILE)
+}
+
+/// What a running engine publishes about itself in `meta.json` next to its socket,
+/// so other processes can list running engines.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DaemonMeta {
+    pub project_dir: PathBuf,
+    pub pid: u32,
+    /// Unix seconds.
+    pub started_at: u64,
+    pub engine_version: String,
+}
+
+impl DaemonMeta {
+    /// Reads and parses a `meta.json`; malformed content is an `InvalidData` error.
+    pub fn read(path: &Path) -> std::io::Result<Self> {
+        let bytes = std::fs::read(path)?;
+        serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    /// Writes the file atomically (owner-only temp file, then rename). The parent
+    /// directory must exist.
+    pub fn write(&self, path: &Path) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let json = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+        let result = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .and_then(|mut file| {
+                // `mode` only applies on creation; cover a leftover temp file.
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                file.write_all(&json)?;
+                file.sync_all()
+            })
+            .and_then(|()| std::fs::rename(&tmp, path));
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
+    }
+
+    /// The current time as unix seconds (0 if the clock is before the epoch).
+    pub fn now_unix_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_root_falls_back() {
+        assert_eq!(
+            runtime_root(Some("/run/user/1"), Some("/t")),
+            PathBuf::from("/run/user/1/patok")
+        );
+        assert_eq!(runtime_root(None, Some("/t")), PathBuf::from("/t/patok"));
+        assert_eq!(runtime_root(Some(""), None), PathBuf::from("/tmp/patok"));
+        assert_eq!(runtime_root(None, None), PathBuf::from("/tmp/patok"));
+        let dir = runtime_dir(Some("/run/user/1"), Some("/t"), Path::new("/p"));
+        assert_eq!(
+            dir.parent(),
+            Some(runtime_root(Some("/run/user/1"), Some("/t")).as_path())
+        );
+    }
+
+    #[test]
+    fn meta_path_sits_next_to_the_socket() {
+        let dir = Path::new("/run/patok/x");
+        assert_eq!(meta_path(dir).parent(), socket_path(dir).parent());
+        assert_eq!(meta_path(dir).file_name().unwrap(), "meta.json");
+    }
+
+    fn sample_meta(pid: u32) -> DaemonMeta {
+        DaemonMeta {
+            project_dir: PathBuf::from("/home/u/proj"),
+            pid,
+            started_at: 1_700_000_000,
+            engine_version: "1.2.3".into(),
+        }
+    }
+
+    #[test]
+    fn daemon_meta_round_trips_through_json_with_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = meta_path(dir.path());
+        let first = sample_meta(1);
+        first.write(&path).unwrap();
+        assert_eq!(DaemonMeta::read(&path).unwrap(), first);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["meta.json"]);
+
+        let second = sample_meta(2);
+        second.write(&path).unwrap();
+        assert_eq!(DaemonMeta::read(&path).unwrap(), second);
+    }
+
+    #[test]
+    fn daemon_meta_read_rejects_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = meta_path(dir.path());
+        std::fs::write(&path, "not json").unwrap();
+        let error = DaemonMeta::read(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
 
     #[test]
     fn base_dir_is_the_one_xdg_or_fallback_resolution() {

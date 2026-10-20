@@ -48,6 +48,7 @@ async fn attach_build_reattach_and_soft_stop_keeps_the_engine_running() {
     let mut updates = client
         .attach(AttachRequest {
             shell_version: "test".into(),
+            observer: false,
         })
         .await
         .unwrap()
@@ -2212,6 +2213,7 @@ async fn inject_task_over_the_wire_mid_build_appends_and_runs_next() {
     let mut updates = client
         .attach(AttachRequest {
             shell_version: "test".into(),
+            observer: false,
         })
         .await
         .unwrap()
@@ -2312,6 +2314,7 @@ async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
     let mut updates = client
         .attach(AttachRequest {
             shell_version: "test".into(),
+            observer: false,
         })
         .await
         .unwrap()

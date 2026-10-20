@@ -359,7 +359,7 @@ impl Engine {
         }
     }
 
-    /// Whether the engine counts as idle for self-shutdown: no shell
+    /// Whether the engine counts as idle for self-shutdown: no (non-observer) shell
     /// attached, no build running, no planning or discovery run, nothing pending.
     pub fn is_idle(&self) -> bool {
         let pending = self
