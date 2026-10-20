@@ -25,4 +25,4 @@ expression: "draw(&open(), 80, 24)"
 │   │ ↑↓←→ move · Shift-Enter new line ·    [ Enter ] Start  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
-                                 [ Enter ] start  [ m ] menu  [ I ] interactive
+                                                    [ Enter ] start  [ m ] menu

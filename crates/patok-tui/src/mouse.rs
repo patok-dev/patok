@@ -95,11 +95,6 @@ impl App {
                     self.status = None;
                     self.open_stop();
                     Action::None
-                } else if chip_clicked(&mouse, self.layout.interactive_chip.get()) {
-                    // The I chip is the I key's mouse alias (T2.1).
-                    self.status = None;
-                    self.open_interactive();
-                    Action::None
                 } else {
                     if let Some(frame) = frame {
                         self.focus = frame;

@@ -584,17 +584,12 @@ fn picker_key(app: &mut App, key: KeyEvent) -> Action {
     Action::None
 }
 
-/// The interactive picker's mouse handling, in the menu's order: a click on
-/// the status bar's `I` chip closes the picker (the chip's toggle), the title
+/// The interactive picker's mouse handling, in the menu's order: the title
 /// row's close button and the footer's buttons run their keys through the
 /// picker's key path, the pointer moving onto a rendered row moves only the
 /// highlight, and a left click on a row selects it and runs its Enter.
 /// Everything else is swallowed.
 fn picker_mouse(app: &mut App, mouse: MouseEvent) -> Action {
-    if chip_clicked(&mouse, app.layout.interactive_chip.get()) {
-        app.modals.pop(Modal::InteractivePicker);
-        return Action::None;
-    }
     if close_clicked(&mouse, app.interactive.close.get()) {
         return picker_key(app, bare(KeyCode::Esc));
     }

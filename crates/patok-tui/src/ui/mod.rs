@@ -360,14 +360,12 @@ mod tests {
             assert_eq!(app.run.phase, Phase::Startup);
             assert_button(theme, key, &app, "Enter", "start");
             assert_button(theme, key, &app, "m", "menu");
-            assert_button(theme, key, &app, "I", "interactive");
             // Running: the Esc `stop` button joins them.
             app.apply(EngineEvent::PhaseChanged {
                 phase: Phase::Running,
             });
             assert_button(theme, key, &app, "Esc", "stop");
             assert_button(theme, key, &app, "m", "menu");
-            assert_button(theme, key, &app, "I", "interactive");
         }
     }
 

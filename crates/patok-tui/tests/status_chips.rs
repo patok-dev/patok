@@ -67,7 +67,7 @@ fn the_enter_start_chip_click_starts_the_build() {
     let mut app = app();
     draw(&app, 80, 14);
     let chip = app.layout.enter_chip.get();
-    assert_eq!(chip, ratatui::layout::Rect::new(32, 13, 17, 1));
+    assert_eq!(chip, ratatui::layout::Rect::new(51, 13, 17, 1));
 
     let focus = app.focus;
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::StartBuild);
@@ -88,7 +88,7 @@ fn the_run_discovery_chip_click_runs_discovery() {
     let mut app = app_with(COMPLETE_TASKS);
     draw(&app, 80, 14);
     let chip = app.layout.enter_chip.get();
-    assert_eq!(chip, ratatui::layout::Rect::new(24, 13, 25, 1));
+    assert_eq!(chip, ratatui::layout::Rect::new(43, 13, 25, 1));
 
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::RunDiscovery);
     assert!(!app.menu_open());
@@ -108,7 +108,7 @@ fn the_esc_stop_chip_click_opens_the_stop_dialog() {
     let mut app = running_app();
     draw(&app, 80, 14);
     let chip = app.layout.stop_chip.get();
-    assert_eq!(chip, ratatui::layout::Rect::new(35, 13, 14, 1));
+    assert_eq!(chip, ratatui::layout::Rect::new(54, 13, 14, 1));
 
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::None);
     assert!(app.stop_open());
@@ -132,7 +132,7 @@ fn the_menu_chip_click_opens_the_menu() {
     let mut app = app();
     draw(&app, 80, 14);
     let chip = app.layout.menu_chip.get();
-    assert_eq!(chip, ratatui::layout::Rect::new(49, 13, 12, 1));
+    assert_eq!(chip, ratatui::layout::Rect::new(68, 13, 12, 1));
 
     assert_eq!(click(&mut app, chip.x + 1, chip.y), Action::None);
     assert!(app.menu_open());
@@ -154,7 +154,7 @@ fn the_menu_chip_click_opens_the_menu() {
 fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
     // One fresh app per click: each click fires the chip's action, which
     // changes the app's state. The idle Enter `start` button.
-    for column in 32..49u16 {
+    for column in 51..68u16 {
         let mut app = app();
         draw(&app, 80, 14);
         let chip = app.layout.enter_chip.get();
@@ -171,7 +171,7 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
     }
 
     // The complete-queue Enter button is wider (`run discovery` label).
-    for column in 24..49u16 {
+    for column in 43..68u16 {
         let mut app = app_with(COMPLETE_TASKS);
         draw(&app, 80, 14);
         let chip = app.layout.enter_chip.get();
@@ -187,7 +187,7 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
     }
 
     // The running Esc stop button.
-    for column in 35..49u16 {
+    for column in 54..68u16 {
         let mut app = running_app();
         draw(&app, 80, 14);
         let chip = app.layout.stop_chip.get();
@@ -202,7 +202,7 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
 
     // The m menu button, in every state that shows it.
     for make in [app as fn() -> App, running_app as fn() -> App] {
-        for column in 49..61u16 {
+        for column in 68..80u16 {
             let mut app = make();
             draw(&app, 80, 14);
             let chip = app.layout.menu_chip.get();
@@ -219,11 +219,7 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
     // together. The 80x14 shell keeps the status row at row 13.
     let buffer = draw_buffer_of(&app(), 80, 14);
     let row = 13;
-    for (x, width, key, label) in [
-        (32u16, 17u16, "Enter", "start"),
-        (49, 12, "m", "menu"),
-        (61, 19, "I", "interactive"),
-    ] {
+    for (x, width, key, label) in [(51u16, 17u16, "Enter", "start"), (68, 12, "m", "menu")] {
         let symbols: String = (x..x + width)
             .map(|column| buffer[(column, row)].symbol())
             .collect();
@@ -239,20 +235,20 @@ fn the_chip_rects_cover_the_full_button_and_click_anywhere_inside() {
 fn the_chips_are_inert_in_the_wrong_state() {
     // Running: the Enter chip is gone, and a click at a pad column (the
     // strip is " RUNNING  sprint " then pad up to the Esc button at column
-    // 35) starts nothing.
+    // 54) starts nothing.
     let mut running = running_app();
     draw(&running, 80, 14);
     assert_eq!(
         running.layout.enter_chip.get(),
         ratatui::layout::Rect::default()
     );
-    assert_eq!(click(&mut running, 34, 13), Action::None);
+    assert_eq!(click(&mut running, 53, 13), Action::None);
     assert!(!running.menu_open());
     assert!(!running.stop_open());
 
     // Idle: the Esc chip is gone, and clicks at pad columns open no stop
-    // dialog. (The Enter button covers columns 32-48 and the m button
-    // 49-60 in the idle layout, so a click there is theirs.)
+    // dialog. (The Enter button covers columns 51-67 and the m button
+    // 68-79 in the idle layout, so a click there is theirs.)
     let mut idle = app();
     draw(&idle, 80, 14);
     assert_eq!(
@@ -260,7 +256,7 @@ fn the_chips_are_inert_in_the_wrong_state() {
         ratatui::layout::Rect::default()
     );
     assert_eq!(click(&mut idle, 0, 13), Action::None);
-    assert_eq!(click(&mut idle, 31, 13), Action::None);
+    assert_eq!(click(&mut idle, 50, 13), Action::None);
     assert!(!idle.stop_open());
     assert!(!idle.menu_open());
 
@@ -315,17 +311,17 @@ fn the_chips_are_inert_while_a_status_message_shows() {
 #[test]
 fn clicks_outside_the_chip_rects_do_nothing() {
     // Idle: the strip is
-    // " STOPPED  sprint " then pad, then " [ Enter ] start  [ m ] menu  [ I ] interactive " on
-    // the 80-column row -- the Enter button at columns 32-48, the m button
-    // at 49-60, the I button at 61-79.
+    // " STOPPED  sprint " then pad, then " [ Enter ] start  [ m ] menu  " on
+    // the 80-column row -- the Enter button at columns 51-67, the m button
+    // at 68-79.
     let mut idle = app();
     draw(&idle, 80, 14);
     let enter = idle.layout.enter_chip.get();
     let menu = idle.layout.menu_chip.get();
-    assert_eq!(enter, ratatui::layout::Rect::new(32, 13, 17, 1));
-    assert_eq!(menu, ratatui::layout::Rect::new(49, 13, 12, 1));
+    assert_eq!(enter, ratatui::layout::Rect::new(51, 13, 17, 1));
+    assert_eq!(menu, ratatui::layout::Rect::new(68, 13, 12, 1));
     let focus = idle.focus;
-    for (column, row) in [(0, 13), (31, 13), (80, 13)] {
+    for (column, row) in [(0, 13), (50, 13), (80, 13)] {
         assert_eq!(
             click(&mut idle, column, row),
             Action::None,
@@ -337,15 +333,15 @@ fn clicks_outside_the_chip_rects_do_nothing() {
     assert_eq!(idle.focus, focus, "no outside click moves the focus");
 
     // Running: the strip is
-    // " RUNNING  sprint " then pad, then " [ Esc ] stop  [ m ] menu  [ I ] interactive ".
+    // " RUNNING  sprint " then pad, then " [ Esc ] stop  [ m ] menu".
     let mut running = running_app();
     draw(&running, 80, 14);
     let stop = running.layout.stop_chip.get();
     let menu = running.layout.menu_chip.get();
-    assert_eq!(stop, ratatui::layout::Rect::new(35, 13, 14, 1));
-    assert_eq!(menu, ratatui::layout::Rect::new(49, 13, 12, 1));
+    assert_eq!(stop, ratatui::layout::Rect::new(54, 13, 14, 1));
+    assert_eq!(menu, ratatui::layout::Rect::new(68, 13, 12, 1));
     let focus = running.focus;
-    for (column, row) in [(0, 13), (34, 13), (80, 13)] {
+    for (column, row) in [(0, 13), (53, 13), (80, 13)] {
         assert_eq!(
             click(&mut running, column, row),
             Action::None,
@@ -376,15 +372,6 @@ fn the_button_boundary_click_fires_the_neighbour() {
     assert!(idle.menu_open(), "the boundary column opens the menu");
     assert!(!idle.stop_open());
 
-    // The column past the m button's right edge is the I button's first
-    // column (T2.1).
-    let mut idle = app();
-    draw(&idle, 80, 14);
-    let menu = idle.layout.menu_chip.get();
-    click(&mut idle, menu.x + menu.width, menu.y);
-    assert!(!idle.menu_open());
-    assert!(idle.picker_open());
-
     // Running: the column past the Esc button's right edge likewise.
     let mut running = running_app();
     draw(&running, 80, 14);
@@ -406,7 +393,7 @@ fn the_esc_stop_chip_shows_and_clicks_during_planner_and_discovery_runs() {
         assert!(app.run.planning || app.run.discovering);
         draw(&app, 80, 14);
         let chip = app.layout.stop_chip.get();
-        assert_eq!(chip, ratatui::layout::Rect::new(35, 13, 14, 1));
+        assert_eq!(chip, ratatui::layout::Rect::new(54, 13, 14, 1));
         assert_eq!(
             chip.width as usize,
             button_text("Esc", "stop").chars().count()
@@ -516,34 +503,4 @@ fn the_esc_chip_stays_hidden_while_idle_or_while_a_stop_is_pending() {
         assert!(!app.stop_open());
         assert!(app.run.stopping, "the pending stop survives the click");
     }
-}
-
-/// T2.1: the `I` chip's rect covers its full button, a click anywhere inside
-/// it runs the `I` key's action, and the rect is zero while a status message
-/// shows.
-#[test]
-fn the_interactive_chip_click_runs_the_i_key_action() {
-    for make in [app as fn() -> App, running_app as fn() -> App] {
-        let app = make();
-        draw(&app, 80, 14);
-        assert_eq!(
-            app.layout.interactive_chip.get(),
-            ratatui::layout::Rect::new(61, 13, 19, 1)
-        );
-        for column in 61..80u16 {
-            let mut app = make();
-            draw(&app, 80, 14);
-            assert_eq!(click(&mut app, column, 13), Action::None);
-            assert!(!app.menu_open() && !app.stop_open(), "at {column}");
-            assert!(app.picker_open(), "at {column}");
-        }
-    }
-
-    let mut app = app();
-    app.status = Some("The planner is already running.".into());
-    draw(&app, 80, 14);
-    assert_eq!(
-        app.layout.interactive_chip.get(),
-        ratatui::layout::Rect::default()
-    );
 }

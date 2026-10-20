@@ -399,11 +399,6 @@ pub struct LayoutCache {
     /// other engine state -- contains no real position, so a click misses
     /// naturally.
     pub stop_chip: Cell<Rect>,
-    /// The status bar's `I` interactive chip rect at the last render (T2.1);
-    /// a left click on it runs the `I` key's action. The zero rect a
-    /// chip-less render records -- a showing status message, a pair dropped
-    /// for width -- contains no real position, so a click misses naturally.
-    pub interactive_chip: Cell<Rect>,
     /// The rail's rect at the last render.
     pub pipeline_area: Cell<Rect>,
     /// The whole screen's rect at the last render; the terminal modal sizes

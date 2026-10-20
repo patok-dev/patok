@@ -333,8 +333,8 @@ fn the_status_bar_keeps_the_enter_and_menu_hints() {
     let strip = screen.lines().last().unwrap();
     assert!(strip.contains(" [ Enter ] start "), "{strip}");
     assert!(strip.contains(" [ m ] menu"), "{strip}");
-    assert!(strip.contains(" [ I ] interactive"), "{strip}");
-    assert!(strip.trim_end().ends_with(" [ I ] interactive"), "{strip}");
+    assert!(!strip.contains("interactive"), "{strip}");
+    assert!(strip.trim_end().ends_with(" [ m ] menu"), "{strip}");
     for gone in [
         " settings ",
         " theme ",
@@ -355,8 +355,8 @@ fn the_status_bar_keeps_the_enter_and_menu_hints() {
     assert!(!strip.contains(" stop build "), "{strip}");
     assert!(strip.contains(" [ Esc ] stop "), "{strip}");
     assert!(strip.contains(" [ m ] menu"), "{strip}");
-    assert!(strip.contains(" [ I ] interactive"), "{strip}");
-    assert!(strip.trim_end().ends_with(" [ I ] interactive"), "{strip}");
+    assert!(!strip.contains("interactive"), "{strip}");
+    assert!(strip.trim_end().ends_with(" [ m ] menu"), "{strip}");
 
     // The direct bindings still work: `?` opens the overlay, `t` the theme
     // picker, `d` detaches and `q` soft-stops a running build.
@@ -449,7 +449,7 @@ fn the_menu_chip_click_opens_the_menu_and_the_second_click_closes_it() {
     let mut app = app();
     draw(&app, 80, 14);
     let chip = app.layout.menu_chip.get();
-    assert_eq!(chip, ratatui::layout::Rect::new(49, 13, 12, 1));
+    assert_eq!(chip, ratatui::layout::Rect::new(68, 13, 12, 1));
 
     // A click inside the chip opens the menu, the m key's action verbatim.
     assert_eq!(

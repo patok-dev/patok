@@ -140,7 +140,7 @@ fn enter_on_an_available_row_closes_and_esc_closes_silently() {
 }
 
 #[test]
-fn the_menu_entry_and_the_chip_open_the_picker() {
+fn the_menu_entry_opens_the_picker() {
     let mut app = app();
     let _dir = with_programs(&mut app, &["claude"]);
     press(&mut app, KeyCode::Char('m'));
@@ -152,13 +152,23 @@ fn the_menu_entry_and_the_chip_open_the_picker() {
     }
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.open_modals(), vec![Modal::InteractivePicker]);
+}
 
-    let mut app = self::app();
-    let _dir = with_programs(&mut app, &["claude"]);
-    draw(&app, 80, 24);
-    let chip = app.layout.interactive_chip.get();
-    left_down(&mut app, chip.x + 2, chip.y);
-    assert_eq!(app.open_modals(), vec![Modal::InteractivePicker]);
+#[test]
+fn the_status_bar_has_no_interactive_button_but_i_opens_the_picker() {
+    for make in [app as fn() -> App, running_app as fn() -> App] {
+        let mut app = make();
+        let _dir = with_programs(&mut app, &["claude"]);
+        for width in [80, 130] {
+            let frame = draw(&app, width, 24);
+            let bottom = frame.lines().last().unwrap();
+            assert!(!bottom.contains("interactive"), "{bottom}");
+            assert!(!bottom.contains("[ I ]"), "{bottom}");
+            assert!(bottom.contains("[ m ] menu"), "{bottom}");
+        }
+        press(&mut app, KeyCode::Char('I'));
+        assert_eq!(app.open_modals(), vec![Modal::InteractivePicker]);
+    }
 }
 
 #[test]
@@ -235,7 +245,7 @@ fn the_mouse_hovers_clicks_and_closes() {
 }
 
 #[test]
-fn the_close_button_the_footer_buttons_and_the_chip() {
+fn the_close_button_and_the_footer_buttons_close_or_open() {
     let buttons = [("Enter", "Open"), ("Esc", "Close")];
 
     let mut app = app();
@@ -260,11 +270,4 @@ fn the_close_button_the_footer_buttons_and_the_chip() {
     left_down(&mut app, rects[0].x + 2, rects[0].y);
     assert_eq!(app.open_modals(), vec![Modal::Terminal]);
     assert_eq!(app.status, None);
-
-    let mut app = self::app();
-    let _dir = open_with(&mut app, &["claude"]);
-    draw(&app, 80, 24);
-    let chip = app.layout.interactive_chip.get();
-    left_down(&mut app, chip.x + 2, chip.y);
-    assert!(!app.picker_open());
 }
