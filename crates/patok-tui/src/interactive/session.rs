@@ -28,7 +28,7 @@ fn lock(parser: &Mutex<Emulator>) -> MutexGuard<'_, Emulator> {
 
 /// What the session reports to the event loop.
 #[derive(Debug)]
-pub(crate) enum PtyEvent {
+pub enum PtyEvent {
     /// New output was parsed; coalesced, so one event may cover many reads.
     Output,
     /// The child exited (or could no longer be waited on).

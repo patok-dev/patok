@@ -21,7 +21,7 @@ use crate::overlay::{Entry, SETTINGS_CHOICES, header_fold};
 use crate::ui::{dialogs, settings};
 use crate::view::{STOP_CHOICES, StopChoice};
 
-/// Which modal is open (finding 20): one enum over the six modals plus the
+/// Which modal is open (finding 20): one enum over the modals plus the
 /// settings overlay's nested unsaved-changes dialog. The modal stack
 /// ([`ModalStack`]) is the writable state: which of these are open, and in
 /// what stacking order. This enum is only their identity.
@@ -41,6 +41,8 @@ pub enum Modal {
     Theme,
     /// The interactive provider picker.
     InteractivePicker,
+    /// The embedded provider terminal (T2.3).
+    Terminal,
 }
 
 /// The open modals, one stack (finding 20, the rest): the bottom modal first,
@@ -137,6 +139,10 @@ pub(crate) const MENU_BUTTONS: [(&str, &str); 2] = [("Enter", "Confirm"), ("Esc"
 /// mouse hit-test.
 pub(crate) const PICKER_BUTTONS: [(&str, &str); 2] = [("Enter", "Open"), ("Esc", "Close")];
 
+/// The embedded terminal's footer button: the exit chord, shared by the
+/// renderer and the mouse hit-test.
+pub(crate) const TERMINAL_BUTTONS: [(&str, &str); 1] = [("Ctrl+]", "Close")];
+
 /// The theme picker's footer buttons (finding 20): shared by the renderer
 /// and the mouse hit-test.
 pub(crate) const THEME_BUTTONS: [(&str, &str); 2] = [("Enter", "Save"), ("Esc", "Cancel")];
@@ -194,6 +200,7 @@ impl ModalLayer for Modal {
             Modal::InteractivePicker => {
                 dialogs::interactive_picker_area(screen, app.run.phase == Phase::Running)
             }
+            Modal::Terminal => dialogs::terminal_area(screen),
         }
     }
 
@@ -206,6 +213,7 @@ impl ModalLayer for Modal {
             Modal::Confirm => Cow::Borrowed(&CONFIRM_BUTTONS),
             Modal::Theme => Cow::Borrowed(&THEME_BUTTONS),
             Modal::InteractivePicker => Cow::Borrowed(&PICKER_BUTTONS),
+            Modal::Terminal => Cow::Borrowed(&TERMINAL_BUTTONS),
         }
     }
 
@@ -220,6 +228,7 @@ impl ModalLayer for Modal {
             Modal::Confirm => app.overlay.on_confirm_key(&mut app.modals, key.code),
             Modal::Theme => theme_key(app, key, ctrl),
             Modal::InteractivePicker => picker_key(app, key),
+            Modal::Terminal => app.terminal_key(key),
         }
     }
 
@@ -232,6 +241,7 @@ impl ModalLayer for Modal {
             Modal::Confirm => confirm_mouse(app, mouse),
             Modal::Theme => theme_mouse(app, mouse),
             Modal::InteractivePicker => picker_mouse(app, mouse),
+            Modal::Terminal => app.terminal_mouse(mouse),
         }
     }
 
@@ -244,6 +254,7 @@ impl ModalLayer for Modal {
             Modal::Stop => dialogs::render_stop_dialog(frame, app),
             Modal::Theme => dialogs::render_theme_modal(frame, app),
             Modal::InteractivePicker => dialogs::render_interactive_picker(frame, app),
+            Modal::Terminal => dialogs::render_terminal(frame, app),
         }
     }
 }
@@ -550,7 +561,7 @@ fn menu_mouse(app: &mut App, mouse: MouseEvent) -> Action {
 /// The interactive picker's keys: Up/Down -- j/k aliasing them -- move the
 /// selection over every row, disabled ones included, so the user can read why
 /// one is disabled; Enter on an available provider closes the picker and
-/// opens that provider's session, on a disabled one does nothing; Esc closes
+/// opens that provider's terminal, on a disabled one does nothing; Esc closes
 /// with no effect; everything else is swallowed.
 fn picker_key(app: &mut App, key: KeyEvent) -> Action {
     let last = app.interactive.providers.len().saturating_sub(1);
@@ -565,11 +576,7 @@ fn picker_key(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Enter => {
             if let Some(&(kind, true)) = app.interactive.providers.get(app.interactive.selected) {
                 app.modals.pop(Modal::InteractivePicker);
-                // T2.3 replaces this placeholder with opening the terminal.
-                app.status = Some(format!(
-                    "Interactive mode: the {} terminal is not available yet.",
-                    kind.display_name()
-                ));
+                app.open_terminal(kind);
             }
         }
         _ => {}
@@ -771,7 +778,7 @@ mod tests {
     use patok_core::pipeline::PipelineState;
 
     /// Every modal, in no meaningful order; the stack test matrix iterates it.
-    const ALL_MODALS: [Modal; 7] = [
+    const ALL_MODALS: [Modal; 8] = [
         Modal::Overlay,
         Modal::Dialog,
         Modal::Menu,
@@ -779,6 +786,7 @@ mod tests {
         Modal::Confirm,
         Modal::Theme,
         Modal::InteractivePicker,
+        Modal::Terminal,
     ];
 
     /// A minimal idle app, the pattern the other in-crate test modules use.

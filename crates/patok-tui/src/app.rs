@@ -20,6 +20,7 @@ use crate::modal::{Modal, ModalStack};
 use crate::overlay::{
     Entry, Row, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries, truecolor_choice,
 };
+use crate::terminal::TerminalState;
 use crate::theme::{Theme, theme_modal_groups};
 use crate::view::FrameFocus;
 
@@ -405,6 +406,9 @@ pub struct LayoutCache {
     pub interactive_chip: Cell<Rect>,
     /// The rail's rect at the last render.
     pub pipeline_area: Cell<Rect>,
+    /// The whole screen's rect at the last render; the terminal modal sizes
+    /// its first PTY from it.
+    pub screen: Cell<Rect>,
 }
 
 /// The stop dialog's state (Esc pressed while a build runs, T46.1): its
@@ -533,6 +537,8 @@ pub struct App {
     pub menu: MenuState,
     /// The interactive provider picker's state.
     pub interactive: InteractivePickerState,
+    /// The embedded provider terminal, while its modal is open.
+    pub(crate) terminal: Option<TerminalState>,
     /// The add-task / inject-task dialog's state.
     pub dialog: DialogState,
     /// The settings overlay's interaction state.
@@ -589,6 +595,7 @@ impl App {
                 search_path: std::env::var_os("PATH"),
                 ..InteractivePickerState::default()
             },
+            terminal: None,
             dialog: DialogState {
                 editor: DialogEditor::default(),
                 kind: DialogKind::Add,
@@ -783,7 +790,7 @@ impl App {
     /// and the status bar's `I` chip all call it. It opens the provider
     /// picker, reading each provider's availability from the search path
     /// once; a refused push (another modal already open) is a no-op. Choosing
-    /// a provider arrives with the terminal (T2.3).
+    /// a provider opens its terminal.
     pub(crate) fn open_interactive(&mut self) {
         if !self.modals.push(Modal::InteractivePicker) {
             return;

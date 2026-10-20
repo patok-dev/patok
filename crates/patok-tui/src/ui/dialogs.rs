@@ -1,7 +1,7 @@
 //! The add-task / inject-task dialog, the stop dialog and the theme picker.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -11,6 +11,7 @@ use super::common::{
 };
 use super::modal::{ModalTitle, render_modal_frame};
 use crate::app::{App, DialogKind, menu_entries};
+use crate::interactive::{ScreenView, cursor_position};
 use crate::modal::{Modal, ModalLayer};
 use crate::overlay::Entry;
 use crate::theme::theme_modal_groups;
@@ -419,4 +420,66 @@ pub(super) fn theme_row_line(
             line
         }
     }
+}
+
+/// The embedded terminal's rect: the whole screen less a one-cell margin,
+/// or the whole screen when it is too small for one.
+pub fn terminal_area(screen: Rect) -> Rect {
+    if screen.width >= 24 && screen.height >= 8 {
+        screen.inner(Margin::new(1, 1))
+    } else {
+        screen
+    }
+}
+
+/// The PTY's rect inside the terminal modal at `area`: the border's inner
+/// less the footer row. The renderer and the PTY sizing both use it.
+pub(crate) fn terminal_body(area: Rect) -> Rect {
+    let [body, _footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)])
+        .areas(area.inner(Margin::new(1, 1)));
+    body
+}
+
+fn terminal_title(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::Claude => " Claude ",
+        ProviderKind::Codex => " Codex ",
+        ProviderKind::Mistral => " Mistral ",
+    }
+}
+
+/// The embedded terminal: a large modal whose body is the child's screen,
+/// with the real cursor placed while the child runs. The close, body and
+/// footer rects are recorded for the mouse handling.
+pub(crate) fn render_terminal(frame: &mut Frame, app: &App) {
+    let Some(terminal) = app.terminal.as_ref() else {
+        return;
+    };
+    let theme = app.theme();
+    let area = Modal::Terminal.area(app, frame.area());
+    let chrome = render_modal_frame(
+        frame,
+        theme,
+        area,
+        ModalTitle::Centered(terminal_title(terminal.kind)),
+    );
+    terminal.close.set(chrome.close);
+    let body = terminal_body(area);
+    let [_, footer] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(chrome.inner);
+    terminal.body.set(body);
+    terminal.footer.set(footer);
+    terminal.session.with_screen(|screen| {
+        frame.render_widget(ScreenView::new(screen).cursor(false), body);
+        if !terminal.exited
+            && let Some(position) = cursor_position(screen, body)
+        {
+            frame.set_cursor_position(position);
+        }
+    });
+    let exited = terminal
+        .exit_code
+        .map(|code| format!("exited (code {code})"));
+    let hints: Vec<&str> = exited.iter().map(String::as_str).collect();
+    render_modal_footer(frame, footer, &hints, &Modal::Terminal.buttons(app), theme);
 }

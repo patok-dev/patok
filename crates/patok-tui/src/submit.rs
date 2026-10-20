@@ -168,9 +168,12 @@ impl App {
             Some("SPEC.md created -- review it, then press Enter to start.".into());
     }
 
-    /// Pasted text appends to the dialog's input; ignored while the dialog is closed.
+    /// Pasted text goes to the terminal when it is the top modal, else appends
+    /// to the dialog's input; ignored while neither is open.
     pub fn on_paste(&mut self, text: &str) {
-        if self.modals.contains(Modal::Dialog) {
+        if self.modals.top() == Some(Modal::Terminal) {
+            self.terminal_paste(text);
+        } else if self.modals.contains(Modal::Dialog) {
             self.dialog.editor.insert_paste(text);
         }
     }

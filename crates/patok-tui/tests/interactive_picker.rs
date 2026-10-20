@@ -127,8 +127,10 @@ fn enter_on_an_available_row_closes_and_esc_closes_silently() {
     let _dir = open_with(&mut app, &["claude", "codex"]);
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
-    assert!(!app.picker_open());
-    assert!(app.status.as_deref().unwrap().contains("Codex"));
+    // The empty stub runs as an (immediately exiting) shell script, so the
+    // terminal modal opens in the picker's place.
+    assert_eq!(app.open_modals(), vec![Modal::Terminal]);
+    assert_eq!(app.status, None);
 
     let mut app = self::app();
     let _dir = open_with(&mut app, &["claude"]);
@@ -215,10 +217,10 @@ fn the_mouse_hovers_clicks_and_closes() {
     assert!(app.picker_open());
     assert_eq!(app.status, None);
 
-    // A click on an available row closes it with the status set.
+    // A click on an available row opens its terminal in the picker's place.
     left_down(&mut app, body.x + 3, body.y + 1);
-    assert!(!app.picker_open());
-    assert!(app.status.as_deref().unwrap().contains("Codex"));
+    assert_eq!(app.open_modals(), vec![Modal::Terminal]);
+    assert_eq!(app.status, None);
 
     // The warning line and the border are swallowed.
     let mut app = running_app();
@@ -256,8 +258,8 @@ fn the_close_button_the_footer_buttons_and_the_chip() {
     draw(&app, 80, 24);
     let rects = patok_tui::footer_button_rects(app.interactive.footer.get(), &buttons);
     left_down(&mut app, rects[0].x + 2, rects[0].y);
-    assert!(!app.picker_open());
-    assert!(app.status.as_deref().unwrap().contains("Claude"));
+    assert_eq!(app.open_modals(), vec![Modal::Terminal]);
+    assert_eq!(app.status, None);
 
     let mut app = self::app();
     let _dir = open_with(&mut app, &["claude"]);

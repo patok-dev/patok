@@ -20,8 +20,11 @@ use crate::view::FrameFocus;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use common::fitted_hints;
+pub(crate) use dialogs::terminal_body;
 #[cfg(any(test, feature = "test-support"))]
-pub use dialogs::{DIALOG_WATERMARK, dialog_area, interactive_picker_area, stop_area, theme_area};
+pub use dialogs::{
+    DIALOG_WATERMARK, dialog_area, interactive_picker_area, stop_area, terminal_area, theme_area,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use output::{format_elapsed, output_title, output_title_parts, output_title_spans};
 #[cfg(any(test, feature = "test-support"))]
@@ -36,6 +39,7 @@ use status::status_widget;
 use tasks::render_tasks;
 
 pub fn render(frame: &mut Frame, app: &App) {
+    app.layout.screen.set(frame.area());
     // The theme's base style first: it paints the shell's background and
     // foreground over the whole frame, so a light theme recolours everything
     // while unstyled text (plain output lines, task rows, borders, titles)

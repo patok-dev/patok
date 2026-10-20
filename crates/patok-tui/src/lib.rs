@@ -9,11 +9,6 @@ mod events;
 mod geom;
 mod headless;
 mod hit;
-// Hosted by the Terminal modal (T2.3); until then only its tests use it.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the Terminal modal later")
-)]
 mod interactive;
 mod keys;
 mod markdown;
@@ -27,6 +22,7 @@ mod run;
 mod settings;
 mod status;
 mod submit;
+mod terminal;
 mod theme;
 mod theme_picker;
 mod ui;
@@ -48,6 +44,8 @@ pub use app::{Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, menu_entries
 pub use hit::{
     CLOSE_BUTTON_WIDTH, button_text, close_button_rect, footer_button_rects, frame_at, theme_row_at,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use interactive::PtyEvent;
 #[cfg(any(test, feature = "test-support"))]
 pub use modal::Modal;
 #[cfg(any(test, feature = "test-support"))]
@@ -72,7 +70,7 @@ pub use ui::{
     SETTINGS_HELP_PANEL_WIDTH, collapses_to_line, dialog_area, fitted_hints, format_elapsed,
     frame_constraints, interactive_picker_area, output_title, output_title_parts,
     output_title_spans, render, settings_area, settings_body_areas, settings_confirm_area,
-    stop_area, theme_area,
+    stop_area, terminal_area, theme_area,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use view::FrameFocus;
