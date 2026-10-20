@@ -25,4 +25,4 @@ expression: tasks_scrolled
 │○ T9.26  later thing 26                                                       │
 │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output           │
 └──────────────────────────────────────────────────────────────────────────────┘
-                                                    [ Enter ] start  [ m ] menu
+                                 [ Enter ] start  [ m ] menu  [ I ] interactive

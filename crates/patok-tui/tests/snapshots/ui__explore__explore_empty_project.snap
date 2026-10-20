@@ -15,4 +15,4 @@ expression: screen
 │                                                                              │
 │ a add tasks · i inject task · Enter run discovery · ↑↓ scroll · Tab output   │
 └──────────────────────────────────────────────────────────────────────────────┘
-                                            [ Enter ] run discovery  [ m ] menu
+                         [ Enter ] run discovery  [ m ] menu  [ I ] interactive

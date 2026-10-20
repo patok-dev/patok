@@ -4,15 +4,15 @@ expression: screen
 ---
 ─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
 ┌ Builder | Claude ───────────────────────────────────────────────────── 00:00 ┐
-│no output yet                                                                 │
-│            ┌─────────────────────── Menu ──────────────── [ x ] ┐            │
+│no output ye┌─────────────────────── Menu ──────────────── [ x ] ┐            │
 │            │▶ Settings -- open the settings overlay             │            │
 │            │  Theme -- pick the colour theme                    │            │
 │            │  Detach -- leave the engine running                │            │
 │            │  Quit -- stop the app                              │            │
+│            │  Interactive -- open a provider CLI session        │            │
 │            │  Stop -- open the stop dialog                      │            │
 │            │ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │            │
 │ ↑↓ scroll ·└────────────────────────────────────────────────────┘            │
 └──────────────────────────────────────────────────────────────────────────────┘
 ─ Tasks | 0/1 - 1 left ───────────────────────────────────────────────── [ ↑ ] ─
-                                                       [ Esc ] stop  [ m ] menu
+                                    [ Esc ] stop  [ m ] menu  [ I ] interactive

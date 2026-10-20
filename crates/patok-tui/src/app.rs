@@ -116,6 +116,8 @@ pub enum MenuChoice {
     Detach,
     /// Quit -- the `q` binding's action.
     Quit,
+    /// Open the interactive provider picker -- the `I` binding's action.
+    Interactive,
     /// Open the stop dialog -- the Esc binding's action, so it joins only
     /// while a build runs, matching that binding's scope.
     StopBuild,
@@ -128,6 +130,7 @@ impl MenuChoice {
             MenuChoice::Theme => "Theme",
             MenuChoice::Detach => "Detach",
             MenuChoice::Quit => "Quit",
+            MenuChoice::Interactive => "Interactive",
             MenuChoice::StopBuild => "Stop",
         }
     }
@@ -139,6 +142,7 @@ impl MenuChoice {
             MenuChoice::Theme => "pick the colour theme",
             MenuChoice::Detach => "leave the engine running",
             MenuChoice::Quit => "stop the app",
+            MenuChoice::Interactive => "open a provider CLI session",
             MenuChoice::StopBuild => "open the stop dialog",
         }
     }
@@ -155,6 +159,7 @@ pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
         MenuChoice::Theme,
         MenuChoice::Detach,
         MenuChoice::Quit,
+        MenuChoice::Interactive,
     ];
     if running {
         entries.push(MenuChoice::StopBuild);
@@ -390,6 +395,11 @@ pub struct LayoutCache {
     /// other engine state -- contains no real position, so a click misses
     /// naturally.
     pub stop_chip: Cell<Rect>,
+    /// The status bar's `I` interactive chip rect at the last render (T2.1);
+    /// a left click on it runs the `I` key's action. The zero rect a
+    /// chip-less render records -- a showing status message, a pair dropped
+    /// for width -- contains no real position, so a click misses naturally.
+    pub interactive_chip: Cell<Rect>,
     /// The rail's rect at the last render.
     pub pipeline_area: Cell<Rect>,
 }
@@ -726,6 +736,14 @@ impl App {
         if self.modals.push(Modal::Menu) {
             self.menu.selected = 0;
         }
+    }
+
+    /// Opens interactive mode: the `I` key, the m menu's Interactive entry
+    /// and the status bar's `I` chip all call it. Until the provider picker
+    /// lands (T2.2) it only reports that the picker is unavailable; the
+    /// picker replaces this body and no call site changes.
+    pub(crate) fn open_interactive(&mut self) {
+        self.status = Some("Interactive mode: the provider picker is not available yet.".into());
     }
 
     /// Opens the stop dialog (Esc while a run is active): a refused push

@@ -460,6 +460,11 @@ fn menu_key(app: &mut App, key: KeyEvent) -> Action {
                 }
                 MenuChoice::Detach => Action::Detach,
                 MenuChoice::Quit => app.quit_action(),
+                MenuChoice::Interactive => {
+                    app.status = None;
+                    app.open_interactive();
+                    Action::None
+                }
                 MenuChoice::StopBuild => {
                     app.status = None;
                     app.open_stop();

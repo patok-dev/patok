@@ -17,4 +17,4 @@ expression: "draw(&open(), 60, 16)"
 │ ↑↓ scroll · PgUp/PgDn page · End follow · Tab tasks      │
 └──────────────────────────────────────────────────────────┘
 ─ Tasks | 1/3 - 2 left | T1.2 ────────────────────── [ ↑ ] ─
-                                   [ Esc ] stop  [ m ] menu
+                [ Esc ] stop  [ m ] menu  [ I ] interactive

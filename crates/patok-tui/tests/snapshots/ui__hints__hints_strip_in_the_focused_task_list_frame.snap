@@ -15,4 +15,4 @@ expression: "draw(&app, 100, 14)"
 │                                                                                                  │
 │ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                               │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-                                                                        [ Enter ] start  [ m ] menu
+                                                     [ Enter ] start  [ m ] menu  [ I ] interactive

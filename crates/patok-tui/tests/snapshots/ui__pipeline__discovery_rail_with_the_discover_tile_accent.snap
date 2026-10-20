@@ -25,4 +25,4 @@ expression: "draw(&app, 80, 24)"
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-                                                       [ Esc ] stop  [ m ] menu
+                                    [ Esc ] stop  [ m ] menu  [ I ] interactive

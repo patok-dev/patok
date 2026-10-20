@@ -211,11 +211,11 @@ fn the_rail_holds_status_and_run_mode_and_the_status_line_only_the_buttons() {
     // The merged status line (T86.1): the chips on the left, the hint
     // buttons right-aligned behind them. At 80 columns the idle line fits
     // whole; the shorter strip the m menu leaves (T128.1) right-aligns its
-    // two buttons, rendered through the shared modal button formatting
+    // buttons, the interactive one (T2.1) last, rendered through the shared modal button formatting
     // (T141.1).
     assert_eq!(
         idle.lines().last().unwrap().trim_start(),
-        "[ Enter ] start  [ m ] menu"
+        "[ Enter ] start  [ m ] menu  [ I ] interactive"
     );
     assert!(!idle.contains("Waiting..."));
     // The rail is the first row and carries the status and the run mode; the
@@ -471,15 +471,20 @@ fn replayed_events_set_the_active_agent() {
 #[test]
 fn the_status_line_drops_whole_buttons_from_the_tail_when_narrow() {
     // 60 columns keep every hint button: the secondary hints moved behind the
-    // m menu (T128.1), so the two buttons that remain -- the idle Enter
-    // button and the menu button -- fit whole, right-aligned.
+    // m menu (T128.1), so the buttons that remain -- the idle Enter button,
+    // the menu button and the interactive button (T2.1) -- fit whole,
+    // right-aligned.
     let screen = draw(&app(), 60, 12);
     let status = screen.lines().last().unwrap();
-    assert_eq!(status.trim_start(), "[ Enter ] start  [ m ] menu");
+    assert_eq!(
+        status.trim_start(),
+        "[ Enter ] start  [ m ] menu  [ I ] interactive"
+    );
     assert_eq!(status.chars().count(), 59);
     assert!(!status.contains(" detach"), "{status}");
     assert!(!status.contains(" quit"), "{status}");
-    // 29 columns fit both buttons exactly.
+    // 29 columns fit the Enter and m buttons exactly: the I button, last,
+    // drops first.
     let screen = draw(&app(), 29, 12);
     assert_eq!(
         screen.lines().last().unwrap(),
@@ -1547,13 +1552,19 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     };
 
     let idle = app();
-    assert_eq!(strip(&idle), merged("", " [ Enter ] start  [ m ] menu"));
+    assert_eq!(
+        strip(&idle),
+        merged("", " [ Enter ] start  [ m ] menu  [ I ] interactive")
+    );
 
     let mut running = app();
     running.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
     });
-    assert_eq!(strip(&running), merged("", " [ Esc ] stop  [ m ] menu"));
+    assert_eq!(
+        strip(&running),
+        merged("", " [ Esc ] stop  [ m ] menu  [ I ] interactive")
+    );
 
     let mut planning = app();
     planning.apply(EngineEvent::AgentChanged {
@@ -1562,11 +1573,17 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     });
     planning.apply(EngineEvent::PlanningChanged { planning: true });
     assert_eq!(planning.status, None);
-    assert_eq!(strip(&planning), merged("", " [ Esc ] stop  [ m ] menu"));
+    assert_eq!(
+        strip(&planning),
+        merged("", " [ Esc ] stop  [ m ] menu  [ I ] interactive")
+    );
 
     let mut discovering = app();
     discovering.apply(EngineEvent::DiscoveryChanged { discovering: true });
-    assert_eq!(strip(&discovering), merged("", " [ Esc ] stop  [ m ] menu"));
+    assert_eq!(
+        strip(&discovering),
+        merged("", " [ Esc ] stop  [ m ] menu  [ I ] interactive")
+    );
 
     // The add-tasks, Tab and scroll chips are gone from the status line
     // (T73.1), and so are the secondary chips the m menu replaced: their keys
@@ -1583,11 +1600,11 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
         assert!(!strip.contains(" stop build "), "{strip}");
     }
 
-    // The shorter strip now fits an 80-column line whole, through the menu
-    // chip; no `s` chip survives anywhere.
+    // The shorter strip now fits an 80-column line whole, through the
+    // interactive chip; no `s` chip survives anywhere.
     let narrow = draw(&idle, 80, 14).lines().last().unwrap().to_string();
     assert!(narrow.contains(" menu"), "{narrow}");
-    assert!(narrow.ends_with("menu"), "{narrow}");
+    assert!(narrow.ends_with("interactive"), "{narrow}");
     assert!(!narrow.contains(" s "), "{narrow}");
 
     // The interactive chips (T133.1, T134.1, T141.1) render through the
@@ -1667,11 +1684,13 @@ fn only_the_interactive_chips_wear_the_button_accent() {
         };
         let enter = column(&[" ", "[", " ", "E", "n", "t", "e", "r", " ", "]", " "]);
         let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+        let interactive = column(&[" ", "[", " ", "I", " ", "]", " "]);
         // Each button's own width: 11 key-span columns in the accent, the
         // label columns in the regular foreground.
         for (name, x, key_width, width) in [
             ("Enter button", enter as u16, 11u16, 17u16),
             ("m button", menu_key as u16, 7, 12),
+            ("I button", interactive as u16, 7, 19),
         ] {
             for offset in 0..width {
                 let style = buffer[(x + offset, row)].style();
@@ -1691,13 +1710,14 @@ fn only_the_interactive_chips_wear_the_button_accent() {
         for x in 0..130u16 {
             if (enter as u16..enter as u16 + 17).contains(&x)
                 || (menu_key as u16..menu_key as u16 + 12).contains(&x)
+                || (interactive as u16..interactive as u16 + 19).contains(&x)
             {
                 continue;
             }
             assert_ne!(
                 buffer[(x, row)].style().fg,
                 Some(theme.highlighted_text),
-                "no status-bar cell but the Enter and m buttons wears the button accent at x={x}"
+                "no status-bar cell but the Enter, m and I buttons wears the button accent at x={x}"
             );
         }
 
@@ -1719,9 +1739,11 @@ fn only_the_interactive_chips_wear_the_button_accent() {
         };
         let esc = column(&[" ", "[", " ", "E", "s", "c", " ", "]", " "]);
         let menu_key = column(&[" ", "[", " ", "m", " ", "]", " "]);
+        let interactive = column(&[" ", "[", " ", "I", " ", "]", " "]);
         for (name, x, key_width, width) in [
             ("Esc button", esc as u16, 9u16, 14u16),
             ("m button", menu_key as u16, 7, 12),
+            ("I button", interactive as u16, 7, 19),
         ] {
             for offset in 0..width {
                 let style = buffer[(x + offset, row)].style();
@@ -1736,13 +1758,14 @@ fn only_the_interactive_chips_wear_the_button_accent() {
         for x in 0..130u16 {
             if (esc as u16..esc as u16 + 14).contains(&x)
                 || (menu_key as u16..menu_key as u16 + 12).contains(&x)
+                || (interactive as u16..interactive as u16 + 19).contains(&x)
             {
                 continue;
             }
             assert_ne!(
                 buffer[(x, row)].style().fg,
                 Some(theme.highlighted_text),
-                "no running status-bar cell but the Esc and m buttons wears the button accent at x={x}"
+                "no running status-bar cell but the Esc, m and I buttons wears the button accent at x={x}"
             );
         }
     }
@@ -2599,7 +2622,7 @@ mod dialog {
         assert!(bottom.contains(" menu"), "{screen}");
         // The add-tasks chip is gone from the strip (T73.1); the shorter
         // strip fits an 80-column line whole, through the menu chip.
-        assert!(bottom.ends_with("menu"), "{screen}");
+        assert!(bottom.ends_with("interactive"), "{screen}");
         assert!(!bottom.contains("Added 2 tasks"), "{screen}");
         insta::assert_snapshot!(screen);
     }

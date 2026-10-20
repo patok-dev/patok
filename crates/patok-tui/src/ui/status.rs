@@ -16,11 +16,13 @@ use crate::hit::{button_line, button_text};
 /// the tail when they do not fit; a message is never dropped -- it truncates
 /// at the line's right edge like a bare status bar message. The secondary
 /// hints (settings, theme, detach, quit) live behind the m menu, so the zone
-/// carries the idle Enter button, the running Esc stop button (T134.1) and
-/// the m menu button. All three are interactive (T133.1, T134.1): each renders
+/// carries the idle Enter button, the running Esc stop button (T134.1), the
+/// m menu button and the `I` interactive button (T2.1). All four are
+/// interactive (T133.1, T134.1): each renders
 /// through the shared [`button_line`] so it reads as a modal button, and each
 /// records a rect covering its full [`button_text`] width on
-/// [`App::layout`'s `menu_chip`, `enter_chip` or `stop_chip` for the mouse
+/// [`App::layout`'s `menu_chip`, `enter_chip`, `stop_chip` or
+/// `interactive_chip` for the mouse
 /// hit-test -- a left click anywhere on the button runs its key's action.
 pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     let width = usize::from(area.width);
@@ -31,6 +33,7 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     app.layout.menu_chip.set(Rect::default());
     app.layout.enter_chip.set(Rect::default());
     app.layout.stop_chip.set(Rect::default());
+    app.layout.interactive_chip.set(Rect::default());
     let right = match &app.status {
         Some(message) => {
             // Bare text: one separating space, right-aligned padding when it fits -- none when it would
@@ -76,6 +79,9 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
             // live behind the menu modal, so the bar keeps one button for
             // all of them.
             keys.push(("m", "menu"));
+            // The interactive key's hint is last, so it drops first when
+            // the line is narrow.
+            keys.push(("I", "interactive"));
             // A button drops as a whole from the tail when it does not fit
             // the zone left of the chips, so no half-cut button ever shows;
             // the kept prefix is right-aligned. The buttons' own padding
@@ -113,6 +119,7 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
                 match key {
                     "m" => app.layout.menu_chip.set(rect),
                     "Enter" => app.layout.enter_chip.set(rect),
+                    "I" => app.layout.interactive_chip.set(rect),
                     _ => app.layout.stop_chip.set(rect),
                 }
                 right.extend(button_line(key, label, theme).spans);

@@ -25,4 +25,4 @@ expression: screen
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-                                                       [ Esc ] stop  [ m ] menu
+                                    [ Esc ] stop  [ m ] menu  [ I ] interactive

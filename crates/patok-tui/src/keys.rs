@@ -50,6 +50,15 @@ impl App {
                 self.open_menu();
                 Action::None
             }
+            // The interactive picker's key (T2.1): Shift+i, distinct from the
+            // task frame's `i` inject key; like `m` it opens from any engine
+            // state, a pending soft stop included, so it sits above the
+            // stopping guard.
+            KeyCode::Char('I') if !ctrl => {
+                self.status = None;
+                self.open_interactive();
+                Action::None
+            }
             // S-Tab flips the run mode between `sprint` and `continuous`
             // (T60.1): the new value goes through the settings-change flow, so
             // the status line's chip follows as soon as the engine reports it, while
