@@ -1,6 +1,6 @@
-//! T2.3, T2.4: the embedded terminal -- the picker's Enter opens a PTY-backed
-//! modal in the project dir, keys, paste and mouse reach the child, the size
-//! follows the screen, and Ctrl+] closes it. An exited child keeps its screen
+//! T2.3, T2.4, T4.1: the embedded terminal -- the picker's Enter opens a PTY-backed
+//! modal in the project dir, keys, paste and mouse reach the child, the modal
+//! spans the full width, the size follows the screen, and Ctrl+] closes it. An exited child keeps its screen
 //! with a close hint, the running footer hints that Esc reaches the child, and closing or dropping the app kills the child's whole
 //! process group. The children are `sh` stubs
 //! on a tempdir search path, so no result depends on the host.
@@ -169,6 +169,24 @@ async fn size_follows_the_area() {
 
     f.app.fit_terminal(Rect::new(0, 0, 80, 24));
     assert_eq!(f.app.terminal_size(), Some(body(80, 24)));
+}
+
+#[tokio::test]
+async fn the_modal_spans_the_full_width() {
+    // Full width, one row off the top and bottom; tiny screens get it all.
+    assert_eq!(
+        terminal_area(Rect::new(0, 0, 80, 24)),
+        Rect::new(0, 1, 80, 22)
+    );
+    assert_eq!(
+        terminal_area(Rect::new(0, 0, 20, 6)),
+        Rect::new(0, 0, 20, 6)
+    );
+
+    let mut f = open("exec cat");
+    f.app.fit_terminal(Rect::new(0, 0, 80, 24));
+    // The border's inner less the footer row: 22 - 3 rows, 80 - 2 columns.
+    assert_eq!(f.app.terminal_size(), Some((19, 78)));
 }
 
 #[tokio::test]

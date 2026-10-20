@@ -422,11 +422,11 @@ pub(super) fn theme_row_line(
     }
 }
 
-/// The embedded terminal's rect: the whole screen less a one-cell margin,
-/// or the whole screen when it is too small for one.
+/// The embedded terminal's rect: the full screen width less a one-row margin
+/// at the top and bottom, or the whole screen when it is too small for one.
 pub fn terminal_area(screen: Rect) -> Rect {
     if screen.width >= 24 && screen.height >= 8 {
-        screen.inner(Margin::new(1, 1))
+        screen.inner(Margin::new(0, 1))
     } else {
         screen
     }
