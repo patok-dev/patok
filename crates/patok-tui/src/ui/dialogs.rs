@@ -477,9 +477,11 @@ pub(crate) fn render_terminal(frame: &mut Frame, app: &App) {
             frame.set_cursor_position(position);
         }
     });
+    // After the child exits the final screen stays up until the user closes
+    // it; the hint names the chord.
     let exited = terminal
         .exit_code
-        .map(|code| format!("exited (code {code})"));
+        .map(|code| format!("[process exited (code {code})] — Ctrl+] to close"));
     let hints: Vec<&str> = exited.iter().map(String::as_str).collect();
     render_modal_footer(frame, footer, &hints, &Modal::Terminal.buttons(app), theme);
 }

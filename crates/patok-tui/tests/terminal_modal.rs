@@ -1,6 +1,8 @@
-//! T2.3: the embedded terminal -- the picker's Enter opens a PTY-backed
+//! T2.3, T2.4: the embedded terminal -- the picker's Enter opens a PTY-backed
 //! modal in the project dir, keys, paste and mouse reach the child, the size
-//! follows the screen, and Ctrl+] closes it. The children are `sh` stubs
+//! follows the screen, and Ctrl+] closes it. An exited child keeps its screen
+//! with a close hint, and closing or dropping the app kills the child's whole
+//! process group. The children are `sh` stubs
 //! on a tempdir search path, so no result depends on the host.
 
 mod support;
@@ -226,5 +228,112 @@ async fn the_exited_child_is_flagged_in_the_footer() {
     wait_exited(&mut f.app, &mut f.rx).await;
     let screen = draw(&f.app, 100, 30);
     assert!(screen.contains("done"), "{screen}");
-    assert!(screen.contains("exited (code 0)"), "{screen}");
+    assert!(
+        screen.contains("[process exited (code 0)] — Ctrl+] to close"),
+        "{screen}"
+    );
+}
+
+fn ctrl_bracket() -> KeyEvent {
+    key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+}
+
+/// The digits following `tag` in `contents`.
+fn value(contents: &str, tag: &str) -> String {
+    let rest = &contents[contents.find(tag).expect("tag on screen") + tag.len()..];
+    rest.chars().take_while(char::is_ascii_digit).collect()
+}
+
+fn alive(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+async fn gone(pid: &str) -> bool {
+    for _ in 0..200 {
+        if !alive(pid) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
+/// A stub whose background `sleep` ignores HUP, so it outlives the first
+/// signal and only the SIGKILL escalation reaches it.
+const GROUP_STUB: &str = r#"trap '' HUP; sleep 30 & echo "leader=$$ bg=$!"; exec cat"#;
+
+/// Waits for the stub's pid line and returns (leader, bg).
+async fn group_pids(f: &mut Fixture) -> (String, String) {
+    wait_for(&f.app, &mut f.rx, |c| {
+        c.lines().any(|l| {
+            l.starts_with("leader=")
+                && l.contains(" bg=")
+                && l.ends_with(|c: char| c.is_ascii_digit())
+        })
+    })
+    .await;
+    let contents = f.app.terminal_contents().unwrap();
+    let line = contents.lines().find(|l| l.starts_with("leader=")).unwrap();
+    (value(line, "leader="), value(line, "bg="))
+}
+
+#[tokio::test]
+async fn closing_kills_the_whole_process_group() {
+    let mut f = open(GROUP_STUB);
+    let (leader, bg) = group_pids(&mut f).await;
+    assert!(alive(&bg));
+    assert_eq!(f.app.on_key(ctrl_bracket()), Action::None);
+    assert!(!f.app.terminal_open());
+    assert!(f.app.open_modals().is_empty());
+    assert!(gone(&leader).await, "leader {leader} survived");
+    assert!(gone(&bg).await, "background {bg} survived");
+}
+
+#[tokio::test]
+async fn an_exited_child_keeps_its_screen_and_closing_reaps_survivors() {
+    let mut f = open(r#"trap '' HUP; sleep 30 & echo "bg=$!"; echo done; exit 3"#);
+    wait_for(&f.app, &mut f.rx, |c| {
+        c.contains("bg=") && c.contains("done")
+    })
+    .await;
+    let bg = value(&f.app.terminal_contents().unwrap(), "bg=");
+    wait_exited(&mut f.app, &mut f.rx).await;
+    assert!(f.app.terminal_exited());
+    assert_eq!(f.app.open_modals(), vec![Modal::Terminal]);
+    assert!(alive(&bg), "the survivor outlives the leader");
+    let screen = draw(&f.app, 100, 30);
+    assert!(screen.contains("done"), "{screen}");
+    assert!(
+        screen.contains("[process exited (code 3)] — Ctrl+] to close"),
+        "{screen}"
+    );
+
+    type_str(&mut f.app, "x");
+    press(&mut f.app, KeyCode::Enter);
+    assert_eq!(f.app.open_modals(), vec![Modal::Terminal]);
+    assert!(draw(&f.app, 100, 30).contains("done"));
+
+    f.app.on_key(ctrl_bracket());
+    assert!(!f.app.terminal_open());
+    assert!(f.app.open_modals().is_empty());
+    assert!(gone(&bg).await, "background {bg} survived");
+}
+
+#[tokio::test]
+async fn dropping_the_app_kills_the_process_group() {
+    // The quit, detach and engine-stop path: `run()` closes the terminal
+    // explicitly before restoring the host terminal, and dropping the app is
+    // the backstop. `event_loop` needs a real tty and engine, so the drop is
+    // what a test can drive.
+    let mut f = open(GROUP_STUB);
+    let (leader, bg) = group_pids(&mut f).await;
+    assert!(alive(&bg));
+    let Fixture { app, rx: _rx, .. } = f;
+    drop(app);
+    assert!(gone(&leader).await, "leader {leader} survived");
+    assert!(gone(&bg).await, "background {bg} survived");
 }

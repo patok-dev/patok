@@ -112,6 +112,10 @@ pub async fn run(
         &project_dir,
     )
     .await;
+    // Every way out of the loop (detach, quit's engine stop, a lost
+    // connection, an error) ends the embedded session here, killing the
+    // child's process group before the host terminal is restored.
+    app.close_terminal();
     let _ = crossterm::execute!(
         std::io::stdout(),
         ModifyOtherKeys(0),

@@ -1,6 +1,7 @@
-//! The embedded provider terminal (T2.3): the state behind `Modal::Terminal`
-//! and the `App` methods that open it, feed it keys, mouse and paste, keep
-//! its size in step with the screen and close it. The PTY runtime itself
+//! The embedded provider terminal (T2.3, T2.4): the state behind
+//! `Modal::Terminal` and the `App` methods that open it, feed it keys, mouse
+//! and paste, keep its size in step with the screen and close it. An exited
+//! child keeps its final screen until the user closes. The PTY runtime itself
 //! lives in `interactive`.
 
 use std::cell::Cell;
@@ -153,9 +154,13 @@ impl App {
     }
 
     fn terminal_write(&self, bytes: &[u8]) {
-        if let Some(terminal) = &self.terminal {
-            // A full queue or a closed writer (after exit) drops the input;
-            // the UI never blocks on the child.
+        // Once the leader has exited the session is over: input would only
+        // reach a surviving grandchild the user cannot see. A full queue or
+        // a closed writer also drops the input; the UI never blocks on the
+        // child.
+        if let Some(terminal) = &self.terminal
+            && !terminal.exited
+        {
             let _ = terminal.session.write(bytes);
         }
     }
