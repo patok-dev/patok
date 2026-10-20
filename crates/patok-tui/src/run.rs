@@ -18,6 +18,7 @@ use patok_proto::{
     shutdown_request, shutdown_update,
 };
 use ratatui::backend::Backend;
+use ratatui::layout::Rect;
 use ratatui::{DefaultTerminal, Terminal};
 use tonic::Streaming;
 use tonic::transport::Channel;
@@ -25,6 +26,7 @@ use tonic::transport::Channel;
 use crate::app::{Action, App, QueueRun};
 use crate::driver::CommandCall;
 use crate::driver::Update;
+use crate::interactive::PtyEvent;
 use crate::overlay::Schema;
 use crate::project;
 use crate::settings::{ShellSettings, to_proto};
@@ -110,6 +112,10 @@ pub async fn run(
         &project_dir,
     )
     .await;
+    // Every way out of the loop (detach, quit's engine stop, a lost
+    // connection, an error) ends the embedded session here, killing the
+    // child's process group before the host terminal is restored.
+    app.close_terminal();
     let _ = crossterm::execute!(
         std::io::stdout(),
         ModifyOtherKeys(0),
@@ -447,12 +453,25 @@ async fn event_loop(
     // (its pinned future still borrows `shutdown`), so `next_shutdown` pends
     // again and the shell keeps serving keys.
     let mut shutdown_done;
+    // The open terminal's PTY events: handed over from the app each pass,
+    // because `select!` cannot borrow the receiver from it.
+    let mut pty: Option<tokio::sync::mpsc::Receiver<PtyEvent>> = None;
+    let mut pty_done;
 
     loop {
+        if let Some(rx) = app.take_terminal_events() {
+            pty = Some(rx);
+        }
+        // Refit the PTY to the screen before drawing; a crossterm `Resize`
+        // wakes the loop through the `Some(Ok(_))` arm, so the next pass
+        // lands here.
+        let size = terminal.size()?;
+        app.fit_terminal(Rect::new(0, 0, size.width, size.height));
         // The timer recomputes on every render: refresh the clock first.
         app.clock.now.set(Instant::now());
         terminal.draw(|frame| ui::render(frame, app))?;
         shutdown_done = false;
+        pty_done = false;
         tokio::select! {
             _ = tick.tick() => {
                 ticks = ticks.wrapping_add(1);
@@ -640,9 +659,20 @@ async fn event_loop(
                 // Stream ended or failed: the engine is gone either way.
                 _ => return Ok(Outcome::EngineStopped { reason: "stopped".into(), completed: app.run.completed }),
             },
+            event = next_pty(&mut pty) => match event {
+                // The loop redraws on its next pass.
+                Some(PtyEvent::Output) => {}
+                Some(PtyEvent::Exited(status)) => app.on_terminal_exited(status.exit_code()),
+                // Both senders are gone: stop polling until the next
+                // terminal opens.
+                None => pty_done = true,
+            },
         }
         if shutdown_done {
             shutdown = None;
+        }
+        if pty_done {
+            pty = None;
         }
     }
 }
@@ -684,6 +714,14 @@ async fn next_shutdown(
 ) -> Option<Result<patok_proto::ShutdownUpdate, tonic::Status>> {
     match shutdown {
         Some((_, stream)) => stream.message().await.transpose(),
+        None => std::future::pending().await,
+    }
+}
+
+/// Pending forever when no terminal is open.
+async fn next_pty(pty: &mut Option<tokio::sync::mpsc::Receiver<PtyEvent>>) -> Option<PtyEvent> {
+    match pty {
+        Some(rx) => rx.recv().await,
         None => std::future::pending().await,
     }
 }
@@ -853,6 +891,27 @@ async fn save_settings<S: SettingsSubmit>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use crate::interactive::PtyEvent;
+
+    #[tokio::test]
+    async fn next_pty_pends_without_a_terminal_and_yields_events_with_one() {
+        let mut none = None;
+        let pending = tokio::time::timeout(Duration::from_millis(50), super::next_pty(&mut none));
+        assert!(pending.await.is_err(), "no terminal pends forever");
+
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut pty = Some(rx);
+        tx.send(PtyEvent::Output).await.unwrap();
+        assert!(matches!(
+            super::next_pty(&mut pty).await,
+            Some(PtyEvent::Output)
+        ));
+        drop(tx);
+        assert!(super::next_pty(&mut pty).await.is_none());
+    }
+
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 

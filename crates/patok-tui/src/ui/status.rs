@@ -16,12 +16,15 @@ use crate::hit::{button_line, button_text};
 /// the tail when they do not fit; a message is never dropped -- it truncates
 /// at the line's right edge like a bare status bar message. The secondary
 /// hints (settings, theme, detach, quit) live behind the m menu, so the zone
-/// carries the idle Enter button, the running Esc stop button (T134.1) and
-/// the m menu button. All three are interactive (T133.1, T134.1): each renders
+/// carries the idle Enter button, the running Esc stop button (T134.1) and the
+/// m menu button. All three are
+/// interactive (T133.1, T134.1): each renders
 /// through the shared [`button_line`] so it reads as a modal button, and each
 /// records a rect covering its full [`button_text`] width on
 /// [`App::layout`'s `menu_chip`, `enter_chip` or `stop_chip` for the mouse
 /// hit-test -- a left click anywhere on the button runs its key's action.
+/// Interactive mode (T2.1) has no status-bar button; it opens from the m menu
+/// or the `I` key (T5.1).
 pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
     let width = usize::from(area.width);
     let theme = app.theme();

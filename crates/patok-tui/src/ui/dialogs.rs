@@ -1,7 +1,7 @@
 //! The add-task / inject-task dialog, the stop dialog and the theme picker.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -11,10 +11,12 @@ use super::common::{
 };
 use super::modal::{ModalTitle, render_modal_frame};
 use crate::app::{App, DialogKind, menu_entries};
+use crate::interactive::{ScreenView, cursor_position};
 use crate::modal::{Modal, ModalLayer};
 use crate::overlay::Entry;
 use crate::theme::theme_modal_groups;
 use crate::view::STOP_CHOICES;
+use patok_core::config::{EnumSpelling, ProviderKind};
 use patok_core::event::Phase;
 
 /// The placeholder hint rendered in the empty input area of the add-task dialog
@@ -227,6 +229,85 @@ pub(crate) fn render_menu(frame: &mut Frame, app: &App) {
     );
 }
 
+/// The interactive picker's rect: as wide as the menu, and tall enough for
+/// one row per provider -- the border (2), the rows and the footer (1) --
+/// plus a blank row and the warning line while a build runs, clamped to the
+/// screen.
+pub fn interactive_picker_area(screen: Rect, running: bool) -> Rect {
+    let width = (screen.width * 3 / 5).max(54).min(screen.width);
+    let rows = ProviderKind::VARIANTS.len() + 3 + if running { 2 } else { 0 };
+    let height = rows.min(usize::from(screen.height)) as u16;
+    crate::geom::centered(screen, width, height)
+}
+
+/// The interactive picker (the `I` key): a centered " Interactive " modal
+/// listing each provider of the capability table with its program, or a
+/// muted `not found on PATH` note when it is unavailable, the focused row in
+/// the shared selected-row style. While a build runs a warning line follows
+/// the rows. The close, body and footer rects are recorded for the app's
+/// mouse hit-testing. Rendered on top of everything else.
+pub(crate) fn render_interactive_picker(frame: &mut Frame, app: &App) {
+    let theme = app.theme();
+    let running = app.run.phase == Phase::Running;
+    let area = Modal::InteractivePicker.area(app, frame.area());
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(" Interactive "));
+    app.interactive.close.set(chrome.close);
+    let inner = chrome.inner;
+    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.interactive.body.set(body);
+    let mut lines: Vec<Line> = app
+        .interactive
+        .providers
+        .iter()
+        .enumerate()
+        .map(|(index, &(kind, available))| {
+            let focused = index == app.interactive.selected;
+            let marker = if focused { "▶ " } else { "  " };
+            let program = kind.interactive_launch().program;
+            let (label_style, detail) = if available {
+                (Style::new(), program.to_string())
+            } else {
+                (
+                    Style::new().fg(theme.muted_text),
+                    format!("`{program}` not found on PATH"),
+                )
+            };
+            let mut line = Line::from(vec![
+                Span::raw(marker),
+                Span::styled(kind.display_name(), label_style),
+                Span::styled(
+                    format!(" -- {detail}"),
+                    Style::new().fg(if focused && available {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
+                ),
+            ]);
+            if focused {
+                line = line.style(selected_row_style(theme));
+            }
+            line
+        })
+        .collect();
+    if running {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            "⚠ A build is running; the session shares its files.",
+            Style::new().fg(theme.highlighted_text),
+        ));
+    }
+    frame.render_widget(Paragraph::new(lines), body);
+    app.interactive.footer.set(footer);
+    render_modal_footer(
+        frame,
+        footer,
+        &["↑↓ move"],
+        &Modal::InteractivePicker.buttons(app),
+        theme,
+    );
+}
+
 /// The theme picker's rect (T43.1, T116.1): a centered modal, at least 54
 /// columns wide and tall enough for its full grouped list -- the border (2),
 /// the two group headers, the eleven one-line entries (13 body rows) and the
@@ -339,4 +420,73 @@ pub(super) fn theme_row_line(
             line
         }
     }
+}
+
+/// The embedded terminal's rect: the full screen width less a one-row margin
+/// at the top and bottom, or the whole screen when it is too small for one.
+pub fn terminal_area(screen: Rect) -> Rect {
+    if screen.width >= 24 && screen.height >= 8 {
+        screen.inner(Margin::new(0, 1))
+    } else {
+        screen
+    }
+}
+
+/// The PTY's rect inside the terminal modal at `area`: the border's inner
+/// less the footer row. The renderer and the PTY sizing both use it.
+pub(crate) fn terminal_body(area: Rect) -> Rect {
+    let [body, _footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)])
+        .areas(area.inner(Margin::new(1, 1)));
+    body
+}
+
+fn terminal_title(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::Claude => " Claude ",
+        ProviderKind::Codex => " Codex ",
+        ProviderKind::Mistral => " Mistral ",
+    }
+}
+
+/// The embedded terminal: a large modal whose body is the child's screen,
+/// with the real cursor placed while the child runs. The close, body and
+/// footer rects are recorded for the mouse handling. The footer hints that Esc
+/// goes to the child while it runs and names the close chord after it exits.
+pub(crate) fn render_terminal(frame: &mut Frame, app: &App) {
+    let Some(terminal) = app.terminal.as_ref() else {
+        return;
+    };
+    let theme = app.theme();
+    let area = Modal::Terminal.area(app, frame.area());
+    let chrome = render_modal_frame(
+        frame,
+        theme,
+        area,
+        ModalTitle::Centered(terminal_title(terminal.kind)),
+    );
+    terminal.close.set(chrome.close);
+    let body = terminal_body(area);
+    let [_, footer] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(chrome.inner);
+    terminal.body.set(body);
+    terminal.footer.set(footer);
+    terminal.session.with_screen(|screen| {
+        frame.render_widget(ScreenView::new(screen).cursor(false), body);
+        if !terminal.exited
+            && let Some(position) = cursor_position(screen, body)
+        {
+            frame.set_cursor_position(position);
+        }
+    });
+    // While the child runs every key but the chord reaches it, Esc included,
+    // unlike every other modal, so the footer says so; after it exits the
+    // final screen stays up and the hint names the chord.
+    let exited = terminal
+        .exit_code
+        .map(|code| format!("[process exited (code {code})] — Ctrl+] to close"));
+    let hints: Vec<&str> = match &exited {
+        Some(line) => vec![line.as_str()],
+        None => vec!["Esc goes to the session"],
+    };
+    render_modal_footer(frame, footer, &hints, &Modal::Terminal.buttons(app), theme);
 }

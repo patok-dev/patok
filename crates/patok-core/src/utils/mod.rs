@@ -2,3 +2,4 @@
 
 pub mod atomic_write;
 pub(crate) mod digits;
+pub mod executable;

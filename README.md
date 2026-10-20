@@ -2,6 +2,32 @@
 
 Autonomous build loop driving agent CLIs.
 
+## Interactive mode
+
+Run a provider's own CLI in an embedded terminal, in the project directory.
+Press `I` (Shift+i) or choose **Interactive** in the `m` menu (its first row, so `m` then
+Enter opens the picker); the status bar has no interactive button. The picker lists the providers: ↑↓ and Enter
+open one, Esc closes the picker.
+
+| Provider | Program |
+| -------- | ------- |
+| Claude   | `claude` |
+| Codex    | `codex` |
+| Mistral (config alias `vibe`) | `vibe` |
+
+A provider whose program is not on `PATH` is shown disabled ("not found on
+PATH"). If a build is running, the picker warns that the session shares its
+files, but does not block.
+
+Inside the session every key goes to the CLI, Esc included. `Ctrl+]` closes
+the modal and ends the session (the whole process group is killed); quitting
+or detaching patok does the same. When the CLI exits by itself, its final
+screen stays up with a `[process exited (code N)] — Ctrl+] to close` line.
+
+patok does not answer or pre-seed a provider's trust or first-run prompts and
+never edits its config (for example `~/.claude.json`): answer them yourself in
+the terminal. Session resume is not supported.
+
 ## Install
 
 Supported platforms: macOS (arm64, x86_64) and Linux (x86_64).

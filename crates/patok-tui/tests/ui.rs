@@ -211,7 +211,7 @@ fn the_rail_holds_status_and_run_mode_and_the_status_line_only_the_buttons() {
     // The merged status line (T86.1): the chips on the left, the hint
     // buttons right-aligned behind them. At 80 columns the idle line fits
     // whole; the shorter strip the m menu leaves (T128.1) right-aligns its
-    // two buttons, rendered through the shared modal button formatting
+    // buttons, rendered through the shared modal button formatting
     // (T141.1).
     assert_eq!(
         idle.lines().last().unwrap().trim_start(),
@@ -471,15 +471,16 @@ fn replayed_events_set_the_active_agent() {
 #[test]
 fn the_status_line_drops_whole_buttons_from_the_tail_when_narrow() {
     // 60 columns keep every hint button: the secondary hints moved behind the
-    // m menu (T128.1), so the two buttons that remain -- the idle Enter
-    // button and the menu button -- fit whole, right-aligned.
+    // m menu (T128.1), so the buttons that remain -- the idle Enter button,
+    // and the menu button -- fit whole,
+    // right-aligned.
     let screen = draw(&app(), 60, 12);
     let status = screen.lines().last().unwrap();
     assert_eq!(status.trim_start(), "[ Enter ] start  [ m ] menu");
     assert_eq!(status.chars().count(), 59);
     assert!(!status.contains(" detach"), "{status}");
     assert!(!status.contains(" quit"), "{status}");
-    // 29 columns fit both buttons exactly.
+    // 29 columns fit the Enter and m buttons exactly.
     let screen = draw(&app(), 29, 12);
     assert_eq!(
         screen.lines().last().unwrap(),
@@ -1583,11 +1584,11 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
         assert!(!strip.contains(" stop build "), "{strip}");
     }
 
-    // The shorter strip now fits an 80-column line whole, through the menu
-    // chip; no `s` chip survives anywhere.
+    // The shorter strip now fits an 80-column line whole, through the
+    // menu chip; no `s` chip survives anywhere.
     let narrow = draw(&idle, 80, 14).lines().last().unwrap().to_string();
     assert!(narrow.contains(" menu"), "{narrow}");
-    assert!(narrow.ends_with("menu"), "{narrow}");
+    assert!(narrow.ends_with("[ m ] menu"), "{narrow}");
     assert!(!narrow.contains(" s "), "{narrow}");
 
     // The interactive chips (T133.1, T134.1, T141.1) render through the
@@ -2599,7 +2600,7 @@ mod dialog {
         assert!(bottom.contains(" menu"), "{screen}");
         // The add-tasks chip is gone from the strip (T73.1); the shorter
         // strip fits an 80-column line whole, through the menu chip.
-        assert!(bottom.ends_with("menu"), "{screen}");
+        assert!(bottom.ends_with("[ m ] menu"), "{screen}");
         assert!(!bottom.contains("Added 2 tasks"), "{screen}");
         insta::assert_snapshot!(screen);
     }

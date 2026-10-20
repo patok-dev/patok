@@ -4,9 +4,9 @@ expression: screen
 ---
 ─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
 ┌ Builder | Claude ───────────────────────────────────────────────────── 00:00 ┐
-│no output yet                                                                 │
-│            ┌─────────────────────── Menu ──────────────── [ x ] ┐            │
-│            │▶ Settings -- open the settings overlay             │            │
+│no output ye┌─────────────────────── Menu ──────────────── [ x ] ┐            │
+│            │▶ Interactive -- open a provider CLI session        │            │
+│            │  Settings -- open the settings overlay             │            │
 │            │  Theme -- pick the colour theme                    │            │
 │            │  Detach -- leave the engine running                │            │
 │            │  Quit -- stop the app                              │            │

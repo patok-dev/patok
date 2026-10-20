@@ -14,10 +14,12 @@ notify.workspace = true
 patok-core.workspace = true
 patok-proto.workspace = true
 patok-wire.workspace = true
+portable-pty.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tonic.workspace = true
+vt100.workspace = true
 
 [features]
 # The internals the crate's own integration tests reach through

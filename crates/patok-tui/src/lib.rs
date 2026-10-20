@@ -9,6 +9,7 @@ mod events;
 mod geom;
 mod headless;
 mod hit;
+mod interactive;
 mod keys;
 mod markdown;
 mod modal;
@@ -21,6 +22,7 @@ mod run;
 mod settings;
 mod status;
 mod submit;
+mod terminal;
 mod theme;
 mod theme_picker;
 mod ui;
@@ -37,11 +39,13 @@ pub use status::{DaemonStatus, RunState, StatusStream, StatusUpdate, TaskProgres
 // under the test-support feature, enabled for those tests through the
 // self dev-dependency in Cargo.toml.
 #[cfg(any(test, feature = "test-support"))]
-pub use app::{Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, menu_entries};
+pub use app::{Action, App, DialogKind, MenuChoice, QueueRun, SOFT_STOP_PENDING, menu_entries};
 #[cfg(any(test, feature = "test-support"))]
 pub use hit::{
     CLOSE_BUTTON_WIDTH, button_text, close_button_rect, footer_button_rects, frame_at, theme_row_at,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use interactive::PtyEvent;
 #[cfg(any(test, feature = "test-support"))]
 pub use modal::Modal;
 #[cfg(any(test, feature = "test-support"))]
@@ -64,8 +68,9 @@ pub use theme::{Theme, theme_modal_groups};
 pub use ui::{
     DIALOG_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
     SETTINGS_HELP_PANEL_WIDTH, collapses_to_line, dialog_area, fitted_hints, format_elapsed,
-    frame_constraints, output_title, output_title_parts, output_title_spans, render, settings_area,
-    settings_body_areas, settings_confirm_area, stop_area, theme_area,
+    frame_constraints, interactive_picker_area, output_title, output_title_parts,
+    output_title_spans, render, settings_area, settings_body_areas, settings_confirm_area,
+    stop_area, terminal_area, theme_area,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use view::FrameFocus;

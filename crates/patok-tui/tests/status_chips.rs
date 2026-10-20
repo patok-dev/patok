@@ -311,7 +311,7 @@ fn the_chips_are_inert_while_a_status_message_shows() {
 #[test]
 fn clicks_outside_the_chip_rects_do_nothing() {
     // Idle: the strip is
-    // " STOPPED  sprint " then pad, then " [ Enter ] start  [ m ] menu " on
+    // " STOPPED  sprint " then pad, then " [ Enter ] start  [ m ] menu  " on
     // the 80-column row -- the Enter button at columns 51-67, the m button
     // at 68-79.
     let mut idle = app();
@@ -333,7 +333,7 @@ fn clicks_outside_the_chip_rects_do_nothing() {
     assert_eq!(idle.focus, focus, "no outside click moves the focus");
 
     // Running: the strip is
-    // " RUNNING  sprint " then pad, then " [ Esc ] stop  [ m ] menu ".
+    // " RUNNING  sprint " then pad, then " [ Esc ] stop  [ m ] menu".
     let mut running = running_app();
     draw(&running, 80, 14);
     let stop = running.layout.stop_chip.get();

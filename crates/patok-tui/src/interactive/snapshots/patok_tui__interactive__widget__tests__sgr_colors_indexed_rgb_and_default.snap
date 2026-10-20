@@ -1,0 +1,11 @@
+---
+source: crates/patok-tui/src/interactive/widget.rs
+expression: snap(&buf)
+---
+RGITN
+---
+0,0 "R" fg=i1 bg=- NONE
+1,0 "G" fg=i1 bg=i2 NONE
+2,0 "I" fg=i200 bg=i2 NONE
+3,0 "T" fg=1,2,3 bg=i2 NONE
+5,0 " " fg=- bg=- REVERSED

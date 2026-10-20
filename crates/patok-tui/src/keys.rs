@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use patok_core::event::Phase;
 
 use crate::app::{Action, App, SOFT_STOP_PENDING};
-use crate::modal::ModalLayer;
+use crate::modal::{Modal, ModalLayer};
 use crate::view::FrameFocus;
 
 impl App {
@@ -18,7 +18,12 @@ impl App {
         }
         self.run.new_tasks.clear();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // Ctrl+C detaches from anywhere, overlay and dialog included.
+        // The embedded terminal takes every key first: Ctrl+C belongs to its
+        // child, and Ctrl+] closes it.
+        if self.modals.top() == Some(Modal::Terminal) {
+            return self.terminal_key(key);
+        }
+        // Ctrl+C detaches from anywhere else, overlay and dialog included.
         if key.code == KeyCode::Char('c') && ctrl {
             return Action::Detach;
         }
@@ -48,6 +53,15 @@ impl App {
             KeyCode::Char('m') if !ctrl => {
                 self.status = None;
                 self.open_menu();
+                Action::None
+            }
+            // The interactive picker's key (T2.1): Shift+i, distinct from the
+            // task frame's `i` inject key; like `m` it opens from any engine
+            // state, a pending soft stop included, so it sits above the
+            // stopping guard.
+            KeyCode::Char('I') if !ctrl => {
+                self.status = None;
+                self.open_interactive();
                 Action::None
             }
             // S-Tab flips the run mode between `sprint` and `continuous`

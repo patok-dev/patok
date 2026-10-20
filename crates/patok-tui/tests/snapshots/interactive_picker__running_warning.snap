@@ -1,0 +1,28 @@
+---
+source: crates/patok-tui/tests/interactive_picker.rs
+expression: screen
+---
+─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
+┌ Builder | Claude ───────────────────────────────────────────────────── 00:00 ┐
+│no output yet                                                                 │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│            ┌─────────────────── Interactive ───────────── [ x ] ┐            │
+│            │▶ Claude -- claude                                  │            │
+│            │  Codex -- codex                                    │            │
+│            │  Mistral -- vibe                                   │            │
+│            │                                                    │            │
+│            │⚠ A build is running; the session shares its files. │            │
+│ ↑↓ scroll ·│ ↑↓ move              [ Enter ] Open  [ Esc ] Close │            │
+└────────────└────────────────────────────────────────────────────┘────────────┘
+┌ Tasks | 0/1 - 1 left ────────────────────────────────────────────────────────┐
+│○ T1.1  scaffold the workspace                                                │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                                       [ Esc ] stop  [ m ] menu

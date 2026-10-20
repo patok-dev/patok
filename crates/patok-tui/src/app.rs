@@ -2,9 +2,12 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::time::{Duration, Instant, SystemTime};
 
-use patok_core::config::{SettingValue, Theme as ThemeKey, TuiSettings};
+use patok_core::config::{
+    EnumSpelling, ProviderKind, SettingValue, Theme as ThemeKey, TuiSettings,
+};
 use patok_core::event::{AgentRole, Phase, Snapshot, Usage};
 use patok_core::output::{LineKind, LineOrigin, Pane};
 use patok_core::pipeline::PipelineState;
@@ -17,6 +20,7 @@ use crate::modal::{Modal, ModalStack};
 use crate::overlay::{
     Entry, Row, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries, truecolor_choice,
 };
+use crate::terminal::TerminalState;
 use crate::theme::{Theme, theme_modal_groups};
 use crate::view::FrameFocus;
 
@@ -105,9 +109,13 @@ pub enum Action {
 }
 
 /// The m menu's choices (the `m` key, which replaced the status bar's
-/// secondary key-hint chips): what the rows do, in the order they render.
+/// secondary key-hint chips): what the rows do, in the order they render --
+/// Interactive, Settings, Theme, Detach, Quit, then Stop only while a build
+/// runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuChoice {
+    /// Open the interactive provider picker -- the `I` binding's action.
+    Interactive,
     /// Open the settings overlay -- the `?` binding's action.
     Settings,
     /// Open the theme picker -- the `t` binding's action.
@@ -124,6 +132,7 @@ pub enum MenuChoice {
 impl MenuChoice {
     pub fn label(self) -> &'static str {
         match self {
+            MenuChoice::Interactive => "Interactive",
             MenuChoice::Settings => "Settings",
             MenuChoice::Theme => "Theme",
             MenuChoice::Detach => "Detach",
@@ -135,6 +144,7 @@ impl MenuChoice {
     /// The one-line explanation rendered after the label.
     pub fn detail(self) -> &'static str {
         match self {
+            MenuChoice::Interactive => "open a provider CLI session",
             MenuChoice::Settings => "open the settings overlay",
             MenuChoice::Theme => "pick the colour theme",
             MenuChoice::Detach => "leave the engine running",
@@ -144,13 +154,15 @@ impl MenuChoice {
     }
 }
 
-/// The m menu's rows while a build runs (`running`), top to bottom;
-/// the menu's selected row (`MenuState::selected`) indexes this list. The stop entry joins only while a
-/// build runs -- it keeps its build-only scope even though the Esc binding
+/// The m menu's rows, top to bottom (Interactive first, so the default
+/// selection, `MenuState::selected = 0`, lands on it); the menu's selected row
+/// indexes this list. The stop entry is appended last and joins only while a
+/// build runs (`running`) -- it keeps its build-only scope even though the Esc binding
 /// covers planner and discovery runs too (T142.1) -- so the key handler's
 /// clamp and the renderer read one list.
 pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
     let mut entries = vec![
+        MenuChoice::Interactive,
         MenuChoice::Settings,
         MenuChoice::Theme,
         MenuChoice::Detach,
@@ -392,6 +404,9 @@ pub struct LayoutCache {
     pub stop_chip: Cell<Rect>,
     /// The rail's rect at the last render.
     pub pipeline_area: Cell<Rect>,
+    /// The whole screen's rect at the last render; the terminal modal sizes
+    /// its first PTY from it.
+    pub screen: Cell<Rect>,
 }
 
 /// The stop dialog's state (Esc pressed while a build runs, T46.1): its
@@ -431,6 +446,32 @@ pub struct MenuState {
     /// The m menu's body rect at the last render (T137.1); its rows' mouse
     /// hit-testing reads it -- a left click on a rendered row selects and
     /// runs that entry.
+    pub body: Cell<Rect>,
+}
+
+/// The interactive provider picker's state (the `I` key): the providers it
+/// lists with their availability, its selected row and the rects its mouse
+/// hit-testing reads. Grouped (finding 19) like the other modals' state;
+/// whether it is open lives on the modal stack.
+#[derive(Default)]
+pub struct InteractivePickerState {
+    /// The picker's selected row; indexes [`Self::providers`].
+    pub selected: usize,
+    /// Every provider of the capability table, in table order, with whether
+    /// its program was on the search path when the picker opened.
+    pub providers: Vec<(ProviderKind, bool)>,
+    /// The `PATH` the availability lookup searches when the picker opens:
+    /// seeded from the environment, overridable so tests need no `set_var`.
+    pub search_path: Option<OsString>,
+    /// The picker's bottom line rect at the last render; its buttons' mouse
+    /// hit-testing reads it.
+    pub footer: Cell<Rect>,
+    /// The picker's close button rect at the last render; a click on it runs
+    /// the picker's Esc key.
+    pub close: Cell<Rect>,
+    /// The picker's body rect at the last render; its rows' mouse
+    /// hit-testing reads it -- a pointer move over a row moves the selection
+    /// there, and a left click selects and runs that row's Enter.
     pub body: Cell<Rect>,
 }
 
@@ -492,6 +533,10 @@ pub struct App {
     pub stop: StopState,
     /// The m menu's state.
     pub menu: MenuState,
+    /// The interactive provider picker's state.
+    pub interactive: InteractivePickerState,
+    /// The embedded provider terminal, while its modal is open.
+    pub(crate) terminal: Option<TerminalState>,
     /// The add-task / inject-task dialog's state.
     pub dialog: DialogState,
     /// The settings overlay's interaction state.
@@ -544,6 +589,11 @@ impl App {
             layout: LayoutCache::default(),
             stop: StopState::default(),
             menu: MenuState::default(),
+            interactive: InteractivePickerState {
+                search_path: std::env::var_os("PATH"),
+                ..InteractivePickerState::default()
+            },
+            terminal: None,
             dialog: DialogState {
                 editor: DialogEditor::default(),
                 kind: DialogKind::Add,
@@ -695,6 +745,12 @@ impl App {
         self.modals.contains(Modal::Menu)
     }
 
+    /// Whether the interactive provider picker is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn picker_open(&self) -> bool {
+        self.modals.contains(Modal::InteractivePicker)
+    }
+
     /// Whether the add-task / inject-task dialog is open.
     #[cfg(any(test, feature = "test-support"))]
     pub fn dialog_open(&self) -> bool {
@@ -726,6 +782,28 @@ impl App {
         if self.modals.push(Modal::Menu) {
             self.menu.selected = 0;
         }
+    }
+
+    /// Opens interactive mode: the `I` key, the m menu's Interactive entry
+    /// and the status bar's `I` chip all call it. It opens the provider
+    /// picker, reading each provider's availability from the search path
+    /// once; a refused push (another modal already open) is a no-op. Choosing
+    /// a provider opens its terminal.
+    pub(crate) fn open_interactive(&mut self) {
+        if !self.modals.push(Modal::InteractivePicker) {
+            return;
+        }
+        let path = self.interactive.search_path.as_deref();
+        self.interactive.providers = ProviderKind::VARIANTS
+            .iter()
+            .map(|&(kind, _)| (kind, kind.interactive_available_in(path)))
+            .collect();
+        self.interactive.selected = self
+            .interactive
+            .providers
+            .iter()
+            .position(|&(_, available)| available)
+            .unwrap_or(0);
     }
 
     /// Opens the stop dialog (Esc while a run is active): a refused push
