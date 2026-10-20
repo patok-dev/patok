@@ -323,12 +323,19 @@ async fn closing_kills_the_whole_process_group() {
 #[tokio::test]
 async fn an_exited_child_keeps_its_screen_and_closing_reaps_survivors() {
     let mut f = open(r#"trap '' HUP; sleep 30 & echo "bg=$!"; echo done; exit 3"#);
-    wait_for(&f.app, &mut f.rx, |c| {
-        c.contains("bg=") && c.contains("done")
-    })
-    .await;
-    let bg = value(&f.app.terminal_contents().unwrap(), "bg=");
+    // `Exited` can arrive before the reader thread has parsed the last output,
+    // so wait for the exit first (`wait_for` would swallow it) and then poll
+    // the screen.
     wait_exited(&mut f.app, &mut f.rx).await;
+    let mut contents = f.app.terminal_contents().unwrap_or_default();
+    for _ in 0..100 {
+        if contents.contains("bg=") && contents.contains("done") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        contents = f.app.terminal_contents().unwrap_or_default();
+    }
+    let bg = value(&contents, "bg=");
     assert!(f.app.terminal_exited());
     assert_eq!(f.app.open_modals(), vec![Modal::Terminal]);
     assert!(alive(&bg), "the survivor outlives the leader");
