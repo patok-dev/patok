@@ -2,9 +2,12 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::time::{Duration, Instant, SystemTime};
 
-use patok_core::config::{SettingValue, Theme as ThemeKey, TuiSettings};
+use patok_core::config::{
+    EnumSpelling, ProviderKind, SettingValue, Theme as ThemeKey, TuiSettings,
+};
 use patok_core::event::{AgentRole, Phase, Snapshot, Usage};
 use patok_core::output::{LineKind, LineOrigin, Pane};
 use patok_core::pipeline::PipelineState;
@@ -444,6 +447,32 @@ pub struct MenuState {
     pub body: Cell<Rect>,
 }
 
+/// The interactive provider picker's state (the `I` key): the providers it
+/// lists with their availability, its selected row and the rects its mouse
+/// hit-testing reads. Grouped (finding 19) like the other modals' state;
+/// whether it is open lives on the modal stack.
+#[derive(Default)]
+pub struct InteractivePickerState {
+    /// The picker's selected row; indexes [`Self::providers`].
+    pub selected: usize,
+    /// Every provider of the capability table, in table order, with whether
+    /// its program was on the search path when the picker opened.
+    pub providers: Vec<(ProviderKind, bool)>,
+    /// The `PATH` the availability lookup searches when the picker opens:
+    /// seeded from the environment, overridable so tests need no `set_var`.
+    pub search_path: Option<OsString>,
+    /// The picker's bottom line rect at the last render; its buttons' mouse
+    /// hit-testing reads it.
+    pub footer: Cell<Rect>,
+    /// The picker's close button rect at the last render; a click on it runs
+    /// the picker's Esc key.
+    pub close: Cell<Rect>,
+    /// The picker's body rect at the last render; its rows' mouse
+    /// hit-testing reads it -- a pointer move over a row moves the selection
+    /// there, and a left click selects and runs that row's Enter.
+    pub body: Cell<Rect>,
+}
+
 /// The add-task / inject-task dialog's state (T74.1, T76.1): the shared
 /// multi-line editor, which modal the open dialog is, the dialog's status
 /// line and the rects its mouse hit-testing reads. Grouped (finding 19) like
@@ -502,6 +531,8 @@ pub struct App {
     pub stop: StopState,
     /// The m menu's state.
     pub menu: MenuState,
+    /// The interactive provider picker's state.
+    pub interactive: InteractivePickerState,
     /// The add-task / inject-task dialog's state.
     pub dialog: DialogState,
     /// The settings overlay's interaction state.
@@ -554,6 +585,10 @@ impl App {
             layout: LayoutCache::default(),
             stop: StopState::default(),
             menu: MenuState::default(),
+            interactive: InteractivePickerState {
+                search_path: std::env::var_os("PATH"),
+                ..InteractivePickerState::default()
+            },
             dialog: DialogState {
                 editor: DialogEditor::default(),
                 kind: DialogKind::Add,
@@ -705,6 +740,12 @@ impl App {
         self.modals.contains(Modal::Menu)
     }
 
+    /// Whether the interactive provider picker is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn picker_open(&self) -> bool {
+        self.modals.contains(Modal::InteractivePicker)
+    }
+
     /// Whether the add-task / inject-task dialog is open.
     #[cfg(any(test, feature = "test-support"))]
     pub fn dialog_open(&self) -> bool {
@@ -739,11 +780,25 @@ impl App {
     }
 
     /// Opens interactive mode: the `I` key, the m menu's Interactive entry
-    /// and the status bar's `I` chip all call it. Until the provider picker
-    /// lands (T2.2) it only reports that the picker is unavailable; the
-    /// picker replaces this body and no call site changes.
+    /// and the status bar's `I` chip all call it. It opens the provider
+    /// picker, reading each provider's availability from the search path
+    /// once; a refused push (another modal already open) is a no-op. Choosing
+    /// a provider arrives with the terminal (T2.3).
     pub(crate) fn open_interactive(&mut self) {
-        self.status = Some("Interactive mode: the provider picker is not available yet.".into());
+        if !self.modals.push(Modal::InteractivePicker) {
+            return;
+        }
+        let path = self.interactive.search_path.as_deref();
+        self.interactive.providers = ProviderKind::VARIANTS
+            .iter()
+            .map(|&(kind, _)| (kind, kind.interactive_available_in(path)))
+            .collect();
+        self.interactive.selected = self
+            .interactive
+            .providers
+            .iter()
+            .position(|&(_, available)| available)
+            .unwrap_or(0);
     }
 
     /// Opens the stop dialog (Esc while a run is active): a refused push

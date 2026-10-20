@@ -1,9 +1,9 @@
 //! The modal stack and the one interface every modal implements (finding 20,
 //! the rest, in docs/private/structure-review-followup.md): which modal is
-//! open is one stack on [`crate::app::App`] instead of six independent open
+//! open is one stack on [`crate::app::App`] instead of seven independent open
 //! flags, and the area, the footer buttons, the key handling, the mouse
 //! handling and the render of each modal live behind the [`ModalLayer`]
-//! trait once, instead of five `on_*_key` / `on_*_mouse` pairs on `App`.
+//! trait once, instead of seven `on_*_key` / `on_*_mouse` pairs on `App`.
 
 use std::borrow::Cow;
 
@@ -21,7 +21,7 @@ use crate::overlay::{Entry, SETTINGS_CHOICES, header_fold};
 use crate::ui::{dialogs, settings};
 use crate::view::{STOP_CHOICES, StopChoice};
 
-/// Which modal is open (finding 20): one enum over the five modals plus the
+/// Which modal is open (finding 20): one enum over the six modals plus the
 /// settings overlay's nested unsaved-changes dialog. The modal stack
 /// ([`ModalStack`]) is the writable state: which of these are open, and in
 /// what stacking order. This enum is only their identity.
@@ -39,6 +39,8 @@ pub enum Modal {
     Confirm,
     /// The theme picker.
     Theme,
+    /// The interactive provider picker.
+    InteractivePicker,
 }
 
 /// The open modals, one stack (finding 20, the rest): the bottom modal first,
@@ -131,6 +133,10 @@ impl ModalStack {
 /// and their hit-test rectangles agree by construction.
 pub(crate) const MENU_BUTTONS: [(&str, &str); 2] = [("Enter", "Confirm"), ("Esc", "Close")];
 
+/// The interactive picker's footer buttons: shared by the renderer and the
+/// mouse hit-test.
+pub(crate) const PICKER_BUTTONS: [(&str, &str); 2] = [("Enter", "Open"), ("Esc", "Close")];
+
 /// The theme picker's footer buttons (finding 20): shared by the renderer
 /// and the mouse hit-test.
 pub(crate) const THEME_BUTTONS: [(&str, &str); 2] = [("Enter", "Save"), ("Esc", "Cancel")];
@@ -185,6 +191,9 @@ impl ModalLayer for Modal {
             Modal::Dialog => dialogs::dialog_area(screen),
             Modal::Menu => dialogs::menu_area(screen, app.run.phase == Phase::Running),
             Modal::Theme => dialogs::theme_area(screen),
+            Modal::InteractivePicker => {
+                dialogs::interactive_picker_area(screen, app.run.phase == Phase::Running)
+            }
         }
     }
 
@@ -196,6 +205,7 @@ impl ModalLayer for Modal {
             Modal::Stop => Cow::Borrowed(&STOP_BUTTONS),
             Modal::Confirm => Cow::Borrowed(&CONFIRM_BUTTONS),
             Modal::Theme => Cow::Borrowed(&THEME_BUTTONS),
+            Modal::InteractivePicker => Cow::Borrowed(&PICKER_BUTTONS),
         }
     }
 
@@ -209,6 +219,7 @@ impl ModalLayer for Modal {
             // dialog's, not the overlay's own rows'.
             Modal::Confirm => app.overlay.on_confirm_key(&mut app.modals, key.code),
             Modal::Theme => theme_key(app, key, ctrl),
+            Modal::InteractivePicker => picker_key(app, key),
         }
     }
 
@@ -220,6 +231,7 @@ impl ModalLayer for Modal {
             Modal::Stop => stop_mouse(app, mouse),
             Modal::Confirm => confirm_mouse(app, mouse),
             Modal::Theme => theme_mouse(app, mouse),
+            Modal::InteractivePicker => picker_mouse(app, mouse),
         }
     }
 
@@ -231,6 +243,7 @@ impl ModalLayer for Modal {
             Modal::Menu => dialogs::render_menu(frame, app),
             Modal::Stop => dialogs::render_stop_dialog(frame, app),
             Modal::Theme => dialogs::render_theme_modal(frame, app),
+            Modal::InteractivePicker => dialogs::render_interactive_picker(frame, app),
         }
     }
 }
@@ -534,6 +547,79 @@ fn menu_mouse(app: &mut App, mouse: MouseEvent) -> Action {
     Action::None
 }
 
+/// The interactive picker's keys: Up/Down -- j/k aliasing them -- move the
+/// selection over every row, disabled ones included, so the user can read why
+/// one is disabled; Enter on an available provider closes the picker and
+/// opens that provider's session, on a disabled one does nothing; Esc closes
+/// with no effect; everything else is swallowed.
+fn picker_key(app: &mut App, key: KeyEvent) -> Action {
+    let last = app.interactive.providers.len().saturating_sub(1);
+    match key.code {
+        KeyCode::Esc => app.modals.pop(Modal::InteractivePicker),
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.interactive.selected = app.interactive.selected.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.interactive.selected = (app.interactive.selected + 1).min(last);
+        }
+        KeyCode::Enter => {
+            if let Some(&(kind, true)) = app.interactive.providers.get(app.interactive.selected) {
+                app.modals.pop(Modal::InteractivePicker);
+                // T2.3 replaces this placeholder with opening the terminal.
+                app.status = Some(format!(
+                    "Interactive mode: the {} terminal is not available yet.",
+                    kind.display_name()
+                ));
+            }
+        }
+        _ => {}
+    }
+    Action::None
+}
+
+/// The interactive picker's mouse handling, in the menu's order: a click on
+/// the status bar's `I` chip closes the picker (the chip's toggle), the title
+/// row's close button and the footer's buttons run their keys through the
+/// picker's key path, the pointer moving onto a rendered row moves only the
+/// highlight, and a left click on a row selects it and runs its Enter.
+/// Everything else is swallowed.
+fn picker_mouse(app: &mut App, mouse: MouseEvent) -> Action {
+    if chip_clicked(&mouse, app.layout.interactive_chip.get()) {
+        app.modals.pop(Modal::InteractivePicker);
+        return Action::None;
+    }
+    if close_clicked(&mouse, app.interactive.close.get()) {
+        return picker_key(app, bare(KeyCode::Esc));
+    }
+    let buttons = Modal::InteractivePicker.buttons(app);
+    if let Some(code) = footer_button_code(&mouse, app.interactive.footer.get(), &buttons) {
+        return picker_key(app, bare(code));
+    }
+    let position = ratatui::layout::Position::new(mouse.column, mouse.row);
+    let body = app.interactive.body.get();
+    let visible = app
+        .interactive
+        .providers
+        .len()
+        .min(usize::from(body.height));
+    let row = menu_row_at(position, body, visible);
+    match mouse.kind {
+        MouseEventKind::Moved => {
+            if let Some(index) = row {
+                app.interactive.selected = index;
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(index) = row {
+                app.interactive.selected = index;
+                return picker_key(app, bare(KeyCode::Enter));
+            }
+        }
+        _ => {}
+    }
+    Action::None
+}
+
 /// The dialog's key path (T154.2): App owns the modal chrome -- Esc
 /// closes keeping the text, Ctrl+C detaches, the status line clears and
 /// the goal column is forgotten on every key but Up/Down -- and the
@@ -685,13 +771,14 @@ mod tests {
     use patok_core::pipeline::PipelineState;
 
     /// Every modal, in no meaningful order; the stack test matrix iterates it.
-    const ALL_MODALS: [Modal; 6] = [
+    const ALL_MODALS: [Modal; 7] = [
         Modal::Overlay,
         Modal::Dialog,
         Modal::Menu,
         Modal::Stop,
         Modal::Confirm,
         Modal::Theme,
+        Modal::InteractivePicker,
     ];
 
     /// A minimal idle app, the pattern the other in-crate test modules use.
@@ -817,6 +904,17 @@ mod tests {
         assert_eq!(app.open_modals(), vec![Modal::Theme]);
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(app.menu.selected, 0);
+    }
+
+    /// The interactive picker obeys the same rule: opened over another modal
+    /// it is refused and computes nothing.
+    #[test]
+    fn a_refused_interactive_open_leaves_the_picker_empty() {
+        let mut app = app();
+        app.open_theme();
+        app.open_interactive();
+        assert_eq!(app.open_modals(), vec![Modal::Theme]);
+        assert!(app.interactive.providers.is_empty());
     }
 
     /// Popping the overlay also removes the confirm above it, the stack's

@@ -21,7 +21,7 @@ use crate::view::FrameFocus;
 #[cfg(any(test, feature = "test-support"))]
 pub use common::fitted_hints;
 #[cfg(any(test, feature = "test-support"))]
-pub use dialogs::{DIALOG_WATERMARK, dialog_area, stop_area, theme_area};
+pub use dialogs::{DIALOG_WATERMARK, dialog_area, interactive_picker_area, stop_area, theme_area};
 #[cfg(any(test, feature = "test-support"))]
 pub use output::{format_elapsed, output_title, output_title_parts, output_title_spans};
 #[cfg(any(test, feature = "test-support"))]

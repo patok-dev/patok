@@ -15,6 +15,7 @@ use crate::modal::{Modal, ModalLayer};
 use crate::overlay::Entry;
 use crate::theme::theme_modal_groups;
 use crate::view::STOP_CHOICES;
+use patok_core::config::{EnumSpelling, ProviderKind};
 use patok_core::event::Phase;
 
 /// The placeholder hint rendered in the empty input area of the add-task dialog
@@ -223,6 +224,85 @@ pub(crate) fn render_menu(frame: &mut Frame, app: &App) {
         footer,
         &["↑↓ move"],
         &Modal::Menu.buttons(app),
+        theme,
+    );
+}
+
+/// The interactive picker's rect: as wide as the menu, and tall enough for
+/// one row per provider -- the border (2), the rows and the footer (1) --
+/// plus a blank row and the warning line while a build runs, clamped to the
+/// screen.
+pub fn interactive_picker_area(screen: Rect, running: bool) -> Rect {
+    let width = (screen.width * 3 / 5).max(54).min(screen.width);
+    let rows = ProviderKind::VARIANTS.len() + 3 + if running { 2 } else { 0 };
+    let height = rows.min(usize::from(screen.height)) as u16;
+    crate::geom::centered(screen, width, height)
+}
+
+/// The interactive picker (the `I` key): a centered " Interactive " modal
+/// listing each provider of the capability table with its program, or a
+/// muted `not found on PATH` note when it is unavailable, the focused row in
+/// the shared selected-row style. While a build runs a warning line follows
+/// the rows. The close, body and footer rects are recorded for the app's
+/// mouse hit-testing. Rendered on top of everything else.
+pub(crate) fn render_interactive_picker(frame: &mut Frame, app: &App) {
+    let theme = app.theme();
+    let running = app.run.phase == Phase::Running;
+    let area = Modal::InteractivePicker.area(app, frame.area());
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(" Interactive "));
+    app.interactive.close.set(chrome.close);
+    let inner = chrome.inner;
+    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    app.interactive.body.set(body);
+    let mut lines: Vec<Line> = app
+        .interactive
+        .providers
+        .iter()
+        .enumerate()
+        .map(|(index, &(kind, available))| {
+            let focused = index == app.interactive.selected;
+            let marker = if focused { "▶ " } else { "  " };
+            let program = kind.interactive_launch().program;
+            let (label_style, detail) = if available {
+                (Style::new(), program.to_string())
+            } else {
+                (
+                    Style::new().fg(theme.muted_text),
+                    format!("`{program}` not found on PATH"),
+                )
+            };
+            let mut line = Line::from(vec![
+                Span::raw(marker),
+                Span::styled(kind.display_name(), label_style),
+                Span::styled(
+                    format!(" -- {detail}"),
+                    Style::new().fg(if focused && available {
+                        theme.highlighted_text
+                    } else {
+                        theme.muted_text
+                    }),
+                ),
+            ]);
+            if focused {
+                line = line.style(selected_row_style(theme));
+            }
+            line
+        })
+        .collect();
+    if running {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            "⚠ A build is running; the session shares its files.",
+            Style::new().fg(theme.highlighted_text),
+        ));
+    }
+    frame.render_widget(Paragraph::new(lines), body);
+    app.interactive.footer.set(footer);
+    render_modal_footer(
+        frame,
+        footer,
+        &["↑↓ move"],
+        &Modal::InteractivePicker.buttons(app),
         theme,
     );
 }

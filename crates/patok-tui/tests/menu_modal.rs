@@ -981,50 +981,36 @@ fn pointer_moves_while_the_menu_is_closed_change_nothing() {
     assert_eq!(app.menu.selected, 0);
 }
 
-/// T2.1: the Interactive entry runs the `I` key's action -- the menu closes,
-/// no other modal opens and the opener's status shows.
+/// T2.1, T2.2: the Interactive entry runs the `I` key's action -- the menu
+/// closes and the interactive provider picker opens.
 #[test]
 fn the_interactive_entry_runs_the_i_key_action() {
     let mut app = open();
     assert_eq!(confirm_entry(&mut app, 4), Action::None);
     assert!(!app.menu_open());
-    assert!(app.open_modals().is_empty());
-    assert!(
-        app.status
-            .as_deref()
-            .is_some_and(|s| s.contains("Interactive mode")),
-        "{:?}",
-        app.status
-    );
+    assert_eq!(app.open_modals(), vec![Modal::InteractivePicker]);
 }
 
-/// T2.1: Shift+i opens interactive mode with or without the SHIFT modifier,
-/// also during a pending soft stop; the lowercase `i` inject key does not.
+/// T2.1, T2.2: Shift+i opens the interactive picker with or without the
+/// SHIFT modifier, also during a pending soft stop; the lowercase `i` inject
+/// key does not.
 #[test]
 fn the_shift_i_key_runs_the_interactive_action() {
     let mut app = app();
     assert_eq!(press(&mut app, KeyCode::Char('I')), Action::None);
-    assert!(app.status.as_deref().unwrap().contains("Interactive mode"));
-    assert!(app.open_modals().is_empty());
+    assert_eq!(app.open_modals(), vec![Modal::InteractivePicker]);
 
     let mut app = self::app();
     let key = KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT);
     assert_eq!(app.on_key(key), Action::None);
-    assert!(app.status.as_deref().unwrap().contains("Interactive mode"));
-    assert!(app.open_modals().is_empty());
+    assert_eq!(app.open_modals(), vec![Modal::InteractivePicker]);
 
     let mut app = self::app();
     app.run.stopping = true;
     assert_eq!(press(&mut app, KeyCode::Char('I')), Action::None);
-    assert!(app.status.as_deref().unwrap().contains("Interactive mode"));
+    assert!(app.picker_open());
 
     let mut app = self::app();
     assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-    assert!(
-        !app.status
-            .as_deref()
-            .is_some_and(|s| s.contains("Interactive mode")),
-        "{:?}",
-        app.status
-    );
+    assert!(!app.picker_open());
 }

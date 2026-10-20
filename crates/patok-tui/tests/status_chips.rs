@@ -383,13 +383,7 @@ fn the_button_boundary_click_fires_the_neighbour() {
     let menu = idle.layout.menu_chip.get();
     click(&mut idle, menu.x + menu.width, menu.y);
     assert!(!idle.menu_open());
-    assert!(
-        idle.status
-            .as_deref()
-            .is_some_and(|s| s.contains("Interactive mode")),
-        "{:?}",
-        idle.status
-    );
+    assert!(idle.picker_open());
 
     // Running: the column past the Esc button's right edge likewise.
     let mut running = running_app();
@@ -541,13 +535,7 @@ fn the_interactive_chip_click_runs_the_i_key_action() {
             draw(&app, 80, 14);
             assert_eq!(click(&mut app, column, 13), Action::None);
             assert!(!app.menu_open() && !app.stop_open(), "at {column}");
-            assert!(
-                app.status
-                    .as_deref()
-                    .is_some_and(|s| s.contains("Interactive mode")),
-                "at {column}: {:?}",
-                app.status
-            );
+            assert!(app.picker_open(), "at {column}");
         }
     }
 
