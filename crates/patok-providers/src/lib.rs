@@ -169,16 +169,7 @@ pub const RESEARCH_TOOLS: &[Tool] = &[
     Tool::WebSearch,
 ];
 
-/// Whether an executable called `name` is in one of the directories of `path`.
-pub fn cli_in(name: &str, path: Option<&std::ffi::OsStr>) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    path.is_some_and(|path| {
-        std::env::split_paths(path).any(|dir| {
-            std::fs::metadata(dir.join(name))
-                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        })
-    })
-}
+pub use patok_core::utils::executable::cli_in;
 
 #[cfg(test)]
 mod tests {
