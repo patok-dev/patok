@@ -109,9 +109,13 @@ pub enum Action {
 }
 
 /// The m menu's choices (the `m` key, which replaced the status bar's
-/// secondary key-hint chips): what the rows do, in the order they render.
+/// secondary key-hint chips): what the rows do, in the order they render --
+/// Interactive, Settings, Theme, Detach, Quit, then Stop only while a build
+/// runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuChoice {
+    /// Open the interactive provider picker -- the `I` binding's action.
+    Interactive,
     /// Open the settings overlay -- the `?` binding's action.
     Settings,
     /// Open the theme picker -- the `t` binding's action.
@@ -120,8 +124,6 @@ pub enum MenuChoice {
     Detach,
     /// Quit -- the `q` binding's action.
     Quit,
-    /// Open the interactive provider picker -- the `I` binding's action.
-    Interactive,
     /// Open the stop dialog -- the Esc binding's action, so it joins only
     /// while a build runs, matching that binding's scope.
     StopBuild,
@@ -130,11 +132,11 @@ pub enum MenuChoice {
 impl MenuChoice {
     pub fn label(self) -> &'static str {
         match self {
+            MenuChoice::Interactive => "Interactive",
             MenuChoice::Settings => "Settings",
             MenuChoice::Theme => "Theme",
             MenuChoice::Detach => "Detach",
             MenuChoice::Quit => "Quit",
-            MenuChoice::Interactive => "Interactive",
             MenuChoice::StopBuild => "Stop",
         }
     }
@@ -142,28 +144,29 @@ impl MenuChoice {
     /// The one-line explanation rendered after the label.
     pub fn detail(self) -> &'static str {
         match self {
+            MenuChoice::Interactive => "open a provider CLI session",
             MenuChoice::Settings => "open the settings overlay",
             MenuChoice::Theme => "pick the colour theme",
             MenuChoice::Detach => "leave the engine running",
             MenuChoice::Quit => "stop the app",
-            MenuChoice::Interactive => "open a provider CLI session",
             MenuChoice::StopBuild => "open the stop dialog",
         }
     }
 }
 
-/// The m menu's rows while a build runs (`running`), top to bottom;
-/// the menu's selected row (`MenuState::selected`) indexes this list. The stop entry joins only while a
-/// build runs -- it keeps its build-only scope even though the Esc binding
+/// The m menu's rows, top to bottom (Interactive first, so the default
+/// selection, `MenuState::selected = 0`, lands on it); the menu's selected row
+/// indexes this list. The stop entry is appended last and joins only while a
+/// build runs (`running`) -- it keeps its build-only scope even though the Esc binding
 /// covers planner and discovery runs too (T142.1) -- so the key handler's
 /// clamp and the renderer read one list.
 pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
     let mut entries = vec![
+        MenuChoice::Interactive,
         MenuChoice::Settings,
         MenuChoice::Theme,
         MenuChoice::Detach,
         MenuChoice::Quit,
-        MenuChoice::Interactive,
     ];
     if running {
         entries.push(MenuChoice::StopBuild);

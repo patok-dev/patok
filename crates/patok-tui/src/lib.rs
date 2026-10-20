@@ -39,7 +39,7 @@ pub use status::{DaemonStatus, RunState, StatusStream, StatusUpdate, TaskProgres
 // under the test-support feature, enabled for those tests through the
 // self dev-dependency in Cargo.toml.
 #[cfg(any(test, feature = "test-support"))]
-pub use app::{Action, App, DialogKind, QueueRun, SOFT_STOP_PENDING, menu_entries};
+pub use app::{Action, App, DialogKind, MenuChoice, QueueRun, SOFT_STOP_PENDING, menu_entries};
 #[cfg(any(test, feature = "test-support"))]
 pub use hit::{
     CLOSE_BUTTON_WIDTH, button_text, close_button_rect, footer_button_rects, frame_at, theme_row_at,

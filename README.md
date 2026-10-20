@@ -5,8 +5,8 @@ Autonomous build loop driving agent CLIs.
 ## Interactive mode
 
 Run a provider's own CLI in an embedded terminal, in the project directory.
-Press `I` (Shift+i) or choose **Interactive** in the `m` menu; the status bar
-has no interactive button. The picker lists the providers: ↑↓ and Enter
+Press `I` (Shift+i) or choose **Interactive** in the `m` menu (its first row, so `m` then
+Enter opens the picker); the status bar has no interactive button. The picker lists the providers: ↑↓ and Enter
 open one, Esc closes the picker.
 
 | Provider | Program |

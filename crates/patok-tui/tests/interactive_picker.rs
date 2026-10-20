@@ -147,9 +147,7 @@ fn the_menu_entry_opens_the_picker() {
     // `I` while the menu is open is swallowed by the menu.
     press(&mut app, KeyCode::Char('I'));
     assert_eq!(app.open_modals(), vec![Modal::Menu]);
-    for _ in 0..4 {
-        press(&mut app, KeyCode::Down);
-    }
+    // Interactive is the first row, the default selection (T6.1).
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.open_modals(), vec![Modal::InteractivePicker]);
 }
