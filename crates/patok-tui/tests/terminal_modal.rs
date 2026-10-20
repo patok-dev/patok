@@ -1,7 +1,7 @@
 //! T2.3, T2.4: the embedded terminal -- the picker's Enter opens a PTY-backed
 //! modal in the project dir, keys, paste and mouse reach the child, the size
 //! follows the screen, and Ctrl+] closes it. An exited child keeps its screen
-//! with a close hint, and closing or dropping the app kills the child's whole
+//! with a close hint, the running footer hints that Esc reaches the child, and closing or dropping the app kills the child's whole
 //! process group. The children are `sh` stubs
 //! on a tempdir search path, so no result depends on the host.
 
@@ -223,10 +223,19 @@ async fn a_failed_spawn_sets_the_status() {
 }
 
 #[tokio::test]
+async fn a_running_child_hints_that_esc_reaches_it() {
+    let f = open("exec cat");
+    let screen = draw(&f.app, 100, 30);
+    assert!(screen.contains("Esc goes to the session"), "{screen}");
+    assert!(screen.contains("Ctrl+]"), "{screen}");
+}
+
+#[tokio::test]
 async fn the_exited_child_is_flagged_in_the_footer() {
     let mut f = open("echo done");
     wait_exited(&mut f.app, &mut f.rx).await;
     let screen = draw(&f.app, 100, 30);
+    assert!(!screen.contains("Esc goes to the session"), "{screen}");
     assert!(screen.contains("done"), "{screen}");
     assert!(
         screen.contains("[process exited (code 0)] — Ctrl+] to close"),

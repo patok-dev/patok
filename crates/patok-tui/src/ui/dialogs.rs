@@ -450,7 +450,8 @@ fn terminal_title(kind: ProviderKind) -> &'static str {
 
 /// The embedded terminal: a large modal whose body is the child's screen,
 /// with the real cursor placed while the child runs. The close, body and
-/// footer rects are recorded for the mouse handling.
+/// footer rects are recorded for the mouse handling. The footer hints that Esc
+/// goes to the child while it runs and names the close chord after it exits.
 pub(crate) fn render_terminal(frame: &mut Frame, app: &App) {
     let Some(terminal) = app.terminal.as_ref() else {
         return;
@@ -477,11 +478,15 @@ pub(crate) fn render_terminal(frame: &mut Frame, app: &App) {
             frame.set_cursor_position(position);
         }
     });
-    // After the child exits the final screen stays up until the user closes
-    // it; the hint names the chord.
+    // While the child runs every key but the chord reaches it, Esc included,
+    // unlike every other modal, so the footer says so; after it exits the
+    // final screen stays up and the hint names the chord.
     let exited = terminal
         .exit_code
         .map(|code| format!("[process exited (code {code})] — Ctrl+] to close"));
-    let hints: Vec<&str> = exited.iter().map(String::as_str).collect();
+    let hints: Vec<&str> = match &exited {
+        Some(line) => vec![line.as_str()],
+        None => vec!["Esc goes to the session"],
+    };
     render_modal_footer(frame, footer, &hints, &Modal::Terminal.buttons(app), theme);
 }
