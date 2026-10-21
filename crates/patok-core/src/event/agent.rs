@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::config_enum;
+use crate::settings::config_enum;
 
 config_enum! {
     /// The engine's agent roles: the agents the engine announces as its active

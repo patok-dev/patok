@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::config_enum;
+use crate::settings::config_enum;
 
 config_enum! {
     /// One pipeline stage with a rail tile: the four

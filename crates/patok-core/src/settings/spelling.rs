@@ -1,7 +1,9 @@
-//! The one shared spelling source of the config enums (finding 11 of the
-//! structure review): the parse, `as_str` and `Display` behaviour the config
-//! parsers, the persistence validator and the settings overlays all agree on,
-//! generated from a single list of variant-and-spelling pairs per enum.
+//! The one shared spelling source of every spelled enum (finding 11 of the
+//! structure review) -- the config enums and the core enums outside the config
+//! tree (the agent role, the pipeline stage, the update channel): the parse,
+//! `as_str` and `Display` behaviour the config parsers, the persistence
+//! validator and the settings overlays all agree on, generated from a single
+//! list of variant-and-spelling pairs per enum.
 
 /// One enum whose variants each carry exactly one config spelling.
 pub trait EnumSpelling: Copy + PartialEq + Sized + 'static {
@@ -62,16 +64,16 @@ macro_rules! config_enum {
             /// Parses a config spelling (trimmed, case-insensitive); `None` for
             /// anything unrecognized.
             pub fn parse(value: &str) -> Option<Self> {
-                $crate::config::EnumSpelling::parse(value)
+                $crate::settings::EnumSpelling::parse(value)
             }
 
             /// The variant's config spelling.
             pub fn as_str(self) -> &'static str {
-                $crate::config::EnumSpelling::as_str(self)
+                $crate::settings::EnumSpelling::as_str(self)
             }
         }
 
-        impl $crate::config::EnumSpelling for $name {
+        impl $crate::settings::EnumSpelling for $name {
             const VARIANTS: &'static [(Self, &'static str)] =
                 &[ $( (Self::$variant, $spelling) ),+ ];
             const SPELLINGS: &'static [&'static str] = &[ $( $spelling ),+ ];
@@ -131,7 +133,7 @@ macro_rules! config_enum_aliased {
             /// aliases; trimmed, case-insensitive; `None` for anything
             /// unrecognized.
             pub fn parse(value: &str) -> Option<Self> {
-                $crate::config::EnumSpelling::parse(value).or_else(|| {
+                $crate::settings::EnumSpelling::parse(value).or_else(|| {
                     let normalized = value.trim().to_lowercase();
                     Self::ALIASES
                         .iter()
@@ -142,7 +144,7 @@ macro_rules! config_enum_aliased {
 
             /// The variant's config spelling.
             pub fn as_str(self) -> &'static str {
-                $crate::config::EnumSpelling::as_str(self)
+                $crate::settings::EnumSpelling::as_str(self)
             }
 
             /// The config aliases, keyed by spelling: they parse like the
@@ -184,7 +186,7 @@ macro_rules! config_enum_aliased {
             }
         }
 
-        impl $crate::config::EnumSpelling for $name {
+        impl $crate::settings::EnumSpelling for $name {
             const VARIANTS: &'static [(Self, &'static str)] = &[
                 (Self::$first_variant, $first_spelling)
                 $(, (Self::$variant, $spelling))+

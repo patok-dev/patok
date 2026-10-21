@@ -9,8 +9,8 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use crate::config::ApplyTiming;
 use crate::event::{AgentEvent, EngineEvent, NoticeLevel, SessionOutcome, TaskOutcome};
+use crate::settings::ApplyTiming;
 
 /// Output lines kept; older ones scroll off for good.
 pub const OUTPUT_LIMIT: usize = 5000;
@@ -328,9 +328,9 @@ fn append_open(open: bool, chunk: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::SettingValue;
     use crate::event::{ErrorKind, Phase, Usage};
     use crate::pipeline::PipelineState;
+    use crate::settings::SettingValue;
 
     /// The expected output of an event that pushes exactly one line.
     fn one(kind: LineKind, origin: LineOrigin, text: &str) -> EventLines {

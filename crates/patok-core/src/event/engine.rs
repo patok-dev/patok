@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
 
-use crate::config::{ApplyTiming, SettingValue};
 use crate::pipeline::PipelineState;
+use crate::settings::{ApplyTiming, SettingValue};
 use crate::task::Task;
 
 use super::agent::AgentEvent;

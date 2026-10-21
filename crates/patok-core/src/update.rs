@@ -11,7 +11,7 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::config::config_enum;
+use crate::settings::config_enum;
 
 config_enum! {
     /// Which releases self-update considers.
