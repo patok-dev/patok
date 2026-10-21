@@ -15,7 +15,6 @@ mod merge;
 mod persist;
 mod review;
 mod schema;
-mod spelling;
 mod tui;
 
 pub use daemon::{
@@ -25,15 +24,13 @@ pub use daemon::{
     strip_from_interactive_env,
 };
 pub use persist::{
-    ApplyTiming, PersistError, SettingValue, daemon_apply_timing, daemon_changed_fields,
-    daemon_readout, set_daemon_field, set_tui_field,
+    PersistError, daemon_apply_timing, daemon_changed_fields, daemon_readout, set_daemon_field,
+    set_tui_field,
 };
 pub use review::Severity;
 pub use schema::{daemon_json_schema, tui_json_schema};
-pub use spelling::EnumSpelling;
-// Reachable crate-wide, so the enums outside the config tree (the agent role
-// and the pipeline stage) share the same spelling macro.
-pub(crate) use spelling::config_enum;
+// The primitives patok-core itself uses live in `crate::settings`; re-exported for the config consumers.
+pub use crate::settings::{ApplyTiming, EnumSpelling, SettingValue};
 pub use tui::{THEME_KEYS, Theme, TuiSettings, load_tui, tui_help};
 // The update channel is an updater concept the config schema also exposes; the single
 // definition lives with the updater and is re-exported here for the config consumers.

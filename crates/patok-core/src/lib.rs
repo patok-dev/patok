@@ -8,6 +8,7 @@ pub mod output;
 pub mod paths;
 pub mod pipeline;
 pub mod scenario;
+pub mod settings;
 pub mod task;
 pub mod update;
 pub mod utils;

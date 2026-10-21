@@ -6,8 +6,8 @@ use std::path::Path;
 
 use schemars::JsonSchema;
 
-use super::spelling::config_enum;
 use super::{ConfigFiles, EnumSpelling, Fields, load_layers, migrate_project_file, project_file};
+use crate::settings::config_enum;
 
 use crate::update::UpdateChannel;
 

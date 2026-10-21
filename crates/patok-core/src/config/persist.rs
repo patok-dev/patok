@@ -9,79 +9,17 @@
 //! `IMMEDIATE_DAEMON_FIELDS`, `daemon_field_value`) is generated from the field table
 //! in `daemon.rs`; this module keeps the write path and the readout built on top of it.
 
-use std::fmt;
 use std::path::Path;
-
-use serde::{Deserialize, Serialize};
 
 use super::daemon::{
     DAEMON_FIELDS, DaemonSettings, FieldKind, IMMEDIATE_DAEMON_FIELDS, ProviderName, daemon_field,
     daemon_field_value,
 };
 use super::tui::Theme;
-use super::{ConfigFiles, EnumSpelling, project_file};
+use super::{ConfigFiles, project_file};
+use crate::settings::{ApplyTiming, EnumSpelling, SettingValue};
 use crate::update::UpdateChannel;
 use crate::utils::atomic_write::write_atomic;
-
-/// A settings value as submitted by a settings change, mapped onto the field's expected
-/// type by the per-schema field registry.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum SettingValue {
-    Bool(bool),
-    Uint(u64),
-    Float(f64),
-    Str(String),
-    /// Remove the key from its resolved layer file, so the lower layers (and finally
-    /// the default) apply again. The only field that needs it is `tui.truecolor`, whose
-    /// "auto" state is the absence of the key; the engine never reports it.
-    Unset,
-}
-
-impl SettingValue {
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            Self::Bool(b) => Some(*b),
-            _ => None,
-        }
-    }
-
-    pub fn as_uint(&self) -> Option<u64> {
-        match self {
-            Self::Uint(u) => Some(*u),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> Option<&str> {
-        match self {
-            Self::Str(s) => Some(s),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for SettingValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Bool(b) => write!(f, "{b}"),
-            Self::Uint(u) => write!(f, "{u}"),
-            Self::Float(v) => write!(f, "{v}"),
-            Self::Str(s) => write!(f, "{s}"),
-            Self::Unset => write!(f, "(not set)"),
-        }
-    }
-}
-
-/// When a settings change takes effect: a field
-/// that parameterizes a unit of work (a build-loop start, a task, an agent session) keeps
-/// the value that unit started with and takes effect at the next such start; a field read
-/// at the point of use applies immediately.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplyTiming {
-    Immediate,
-    NextUnitOfWork,
-}
 
 /// A persistence failure; `message` is user-facing.
 #[derive(Debug, thiserror::Error)]

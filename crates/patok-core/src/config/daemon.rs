@@ -15,9 +15,8 @@ use std::path::Path;
 
 use schemars::JsonSchema;
 
-use super::persist::SettingValue;
-use super::spelling::{config_enum, config_enum_aliased};
-use super::{ConfigFiles, EnumSpelling, Fields, load_layers, migrate_project_file, project_file};
+use super::{ConfigFiles, Fields, load_layers, migrate_project_file, project_file};
+use crate::settings::{EnumSpelling, SettingValue, config_enum, config_enum_aliased};
 
 use crate::pipeline::Stage;
 use crate::utils::executable::cli_in;
@@ -1005,7 +1004,7 @@ macro_rules! daemon_table {
         }
 
         /// The field's effective (post-merge, post-normalization) value, as reported
-        /// back with a [`crate::config::ApplyTiming`] broadcast; `None` for a name
+        /// back with a [`crate::settings::ApplyTiming`] broadcast; `None` for a name
         /// outside the registry or a composite key.
         pub fn daemon_field_value(
             settings: &DaemonSettings,
