@@ -71,7 +71,7 @@
 //! | `agent_names.*` | `render_output` | the output frame title's agent type name only (T110.1, T117.1) |
 //! | `agent_text.pane_status` | `style_of`, headless `--color` | the agent lifecycle status lines in the output pane (T78.1, T42.1), the agent name included (T117.1) |
 
-use patok_core::config::Theme as ThemeKey;
+use patok_config::Theme as ThemeKey;
 use patok_core::event::AgentRole;
 use patok_core::output::LineKind;
 use ratatui::style::Color;
@@ -1008,7 +1008,7 @@ fn truecolor_detected() -> bool {
 /// each group's `THEME_KEYS` relative order. `THEME_KEYS` itself stays the
 /// settings overlay's cycle order.
 pub fn theme_modal_groups() -> [(&'static str, Vec<&'static str>); 2] {
-    let (dark, light): (Vec<_>, Vec<_>) = patok_core::config::THEME_KEYS
+    let (dark, light): (Vec<_>, Vec<_>) = patok_config::THEME_KEYS
         .iter()
         .copied()
         .partition(|name| ThemeKey::parse(name).is_some_and(ThemeKey::is_dark));
@@ -1018,7 +1018,7 @@ pub fn theme_modal_groups() -> [(&'static str, Vec<&'static str>); 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patok_core::config::THEME_KEYS;
+    use patok_config::THEME_KEYS;
 
     /// DARK is value-locked to the pre-class-system look (T111.1): every
     /// class keeps the colour the collapsed fields held before the refactor,

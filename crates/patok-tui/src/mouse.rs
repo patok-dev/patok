@@ -126,7 +126,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use patok_core::config::SettingValue;
+    use patok_config::SettingValue;
     use patok_core::event::Snapshot;
     use patok_core::pipeline::PipelineState;
     use ratatui::layout::Rect;

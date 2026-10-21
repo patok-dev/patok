@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+patok-config.workspace = true
 patok-core.workspace = true
 patok-engine.workspace = true
 patok-proto.workspace = true

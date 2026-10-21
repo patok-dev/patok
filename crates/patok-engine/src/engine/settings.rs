@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use patok_core::config::{
+use patok_config::{
     ApplyTiming, DaemonSettings, SettingValue, daemon_apply_timing, daemon_changed_fields,
     daemon_field_value, load_daemon, set_daemon_field,
 };
@@ -142,9 +142,7 @@ impl Engine {
             let paths: Vec<PathBuf> = [
                 engine.inner.config.config_files.user_global.clone(),
                 engine.inner.config.config_files.user_local.clone(),
-                Some(patok_core::config::project_file(
-                    &engine.inner.config.data_dir,
-                )),
+                Some(patok_config::project_file(&engine.inner.config.data_dir)),
             ]
             .into_iter()
             .flatten()

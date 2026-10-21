@@ -6,9 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use patok_core::config::{
-    ConfigFiles, SettingValue, TuiSettings, load_tui, project_file, set_tui_field,
-};
+use patok_config::{ConfigFiles, SettingValue, TuiSettings, load_tui, project_file, set_tui_field};
 
 /// The shell's own central in-memory configuration: the merged,
 /// normalized tui settings plus the state needed to detect a hand-edited config file.
@@ -133,13 +131,13 @@ pub use patok_wire::to_proto;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patok_core::config::{EnumSpelling, ProviderName, Theme};
+    use patok_config::{EnumSpelling, ProviderName, Theme};
     use patok_proto::settings_change::Change;
 
     /// A value valid for the core registry kind, the sample the drift test sends
     /// through the wire and reads back.
-    fn sample_value(kind: &patok_core::config::FieldKind) -> SettingValue {
-        use patok_core::config::FieldKind as CoreFieldKind;
+    fn sample_value(kind: &patok_config::FieldKind) -> SettingValue {
+        use patok_config::FieldKind as CoreFieldKind;
         match kind {
             CoreFieldKind::Bool => SettingValue::Bool(true),
             CoreFieldKind::Uint | CoreFieldKind::PositiveUint | CoreFieldKind::Range(..) => {
@@ -163,7 +161,7 @@ mod tests {
     /// three fails here instead of drifting silently.
     #[test]
     fn every_daemon_field_has_an_overlay_row_and_round_trips_the_wire() {
-        use patok_core::config::{DAEMON_FIELDS, daemon_field};
+        use patok_config::{DAEMON_FIELDS, daemon_field};
         use patok_engine::from_proto;
 
         let rows: std::collections::BTreeMap<&str, &crate::overlay::Row> = crate::overlay::SECTIONS
@@ -201,7 +199,7 @@ mod tests {
     /// resolves to.
     #[test]
     fn every_provider_variant_resolves_and_round_trips_the_wire() {
-        use patok_core::config::ProviderKind;
+        use patok_config::ProviderKind;
         use patok_engine::from_proto;
         use patok_providers::{ProviderError, resolve};
 

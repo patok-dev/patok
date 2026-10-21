@@ -1,12 +1,13 @@
 //! The config primitives patok-core itself uses: the enum-spelling trait and
-//! macros, and the settings-change value with its apply timing. `crate::config`
-//! re-exports them for its existing consumers.
+//! macros, and the settings-change value with its apply timing. The
+//! `patok-config` crate re-exports them for its consumers.
 
 mod spelling;
 mod value;
 
 pub use spelling::EnumSpelling;
-// Reachable crate-wide, so the config enums and the enums outside the config
-// tree (the agent role, the pipeline stage, the update channel) share one macro.
-pub(crate) use spelling::{config_enum, config_enum_aliased};
+// Public, so `patok-config` defines its enums with the same macro as the enums
+// patok-core owns (the agent role, the pipeline stage, the update channel).
+// `#[macro_export]` also places them at the crate root.
+pub use crate::{config_enum, config_enum_aliased};
 pub use value::{ApplyTiming, SettingValue};

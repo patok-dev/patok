@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use patok_core::config::DaemonSettings;
+use patok_config::DaemonSettings;
 use patok_core::event::{AgentRole, EngineEvent, NoticeLevel, SessionOutcome, TaskOutcome};
 use patok_core::pipeline::Stage;
 use patok_core::task::Task;

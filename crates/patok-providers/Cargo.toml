@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 async-trait.workspace = true
+patok-config.workspace = true
 patok-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

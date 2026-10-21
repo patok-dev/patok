@@ -3,7 +3,7 @@
 //! previewing and committing the picker's selection, split out of `app`;
 //! the picker's state lives on `App` and its rendering in `ui::dialogs`.
 
-use patok_core::config::Theme as ThemeKey;
+use patok_config::Theme as ThemeKey;
 
 use crate::app::{Action, App};
 use crate::modal::Modal;

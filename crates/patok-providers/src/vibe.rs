@@ -2,7 +2,7 @@
 //! newline-delimited JSON stream (`--output streaming`).
 
 use async_trait::async_trait;
-use patok_core::config::ProviderKind;
+use patok_config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 

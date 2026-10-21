@@ -7,7 +7,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use patok_core::config::{ApplyTiming, DaemonEnv, ProviderKind, RunMode, SettingValue};
+use patok_config::{ApplyTiming, DaemonEnv, ProviderKind, RunMode, SettingValue};
 use patok_core::event::{AgentEvent, EngineEvent, TaskOutcome};
 use patok_engine::{Engine, EngineConfig};
 use patok_providers::mock::{MockProvider, Step};

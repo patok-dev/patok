@@ -9,7 +9,7 @@ mod support;
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
-use patok_core::config::{ConfigFiles, Theme as ThemeKey};
+use patok_config::{ConfigFiles, Theme as ThemeKey};
 use patok_core::event::{EngineEvent, Phase};
 use patok_tui::{Action, App, FrameFocus, ShellSettings, Theme, theme_modal_groups, theme_row_at};
 

@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 
 use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
-use patok_core::config::ProviderKind;
+use patok_config::ProviderKind;
 use patok_core::event::{EngineEvent, Phase};
 use patok_tui::{Action, App, Modal, interactive_picker_area};
 use tempfile::TempDir;

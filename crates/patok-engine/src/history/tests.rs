@@ -209,7 +209,7 @@ fn test_prune_removes_old_taskless_sessions() {
 
 #[test]
 fn test_resolve_root_with_settings() {
-    use patok_core::config::DaemonSettings;
+    use patok_config::DaemonSettings;
 
     let data_dir = Path::new("/tmp/project/.patok");
 

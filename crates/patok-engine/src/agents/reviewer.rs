@@ -6,8 +6,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use patok_config::{EnumSpelling, Severity};
 use patok_core::complexity::Complexity;
-use patok_core::config::{EnumSpelling, Severity};
 use patok_core::event::{AgentEvent, AgentRole};
 use patok_core::task::Task;
 use patok_providers::{REVIEWER_TOOLS, Tool};

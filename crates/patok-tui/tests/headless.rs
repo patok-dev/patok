@@ -6,7 +6,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use patok_core::config::ProviderKind;
+use patok_config::ProviderKind;
 use patok_core::event::AgentEvent;
 use patok_engine::Engine;
 use patok_providers::mock::{MockProvider, Step};
@@ -216,7 +216,7 @@ async fn forces_sprint_and_restores_the_previous_mode() {
     let recorded = provider.clone();
     let engine = Engine::configured_with_env(
         setup.config.clone(),
-        &patok_core::config::DaemonEnv::default(),
+        &patok_config::DaemonEnv::default(),
         move |_kind| Ok(Arc::new(provider.clone())),
     );
     let server = tokio::spawn(patok_engine::serve(engine.clone()));
@@ -328,7 +328,7 @@ async fn unavailable_provider_is_an_engine_error() {
     let provider = MockProvider::new(vec![]);
     let engine = Engine::configured_with_env(
         setup.config.clone(),
-        &patok_core::config::DaemonEnv::default(),
+        &patok_config::DaemonEnv::default(),
         move |kind| -> Result<Arc<dyn Provider>, ProviderError> {
             match kind {
                 ProviderKind::Codex => Err(ProviderError::CliNotFound {

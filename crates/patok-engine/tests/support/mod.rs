@@ -7,7 +7,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use patok_core::config::RunMode;
+use patok_config::RunMode;
 use patok_core::event::EngineEvent;
 use patok_engine::{Engine, EngineConfig};
 use patok_providers::Provider;
@@ -123,7 +123,7 @@ impl Fixture {
             review_in_loop: false,
             review_confidence: self.data.path().join("review-history.json"),
             open_group: self.data.path().join("open-group.json"),
-            config_files: patok_core::config::ConfigFiles::default(),
+            config_files: patok_config::ConfigFiles::default(),
         }
     }
 
@@ -170,11 +170,9 @@ impl Fixture {
         .unwrap();
         let config = self.config_review();
         let provider = Arc::new(provider);
-        Engine::configured_with_env(
-            config,
-            &patok_core::config::DaemonEnv::default(),
-            move |_kind| Ok(provider.clone()),
-        )
+        Engine::configured_with_env(config, &patok_config::DaemonEnv::default(), move |_kind| {
+            Ok(provider.clone())
+        })
     }
 
     /// The project-local config file, in the project's slot of the projects dir.

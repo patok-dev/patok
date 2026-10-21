@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use patok_core::config::SettingValue;
+use patok_config::SettingValue;
 use patok_core::event::{EngineEvent, Phase, Snapshot};
 use patok_core::pipeline::PipelineState;
 use patok_core::task;
@@ -183,12 +183,12 @@ pub fn setup() -> Setup {
         pause_between_agents: Duration::ZERO,
         pause_between_cycles: Duration::ZERO,
         plan_enabled: false,
-        run_mode: patok_core::config::RunMode::Sprint,
+        run_mode: patok_config::RunMode::Sprint,
         skip_research_for_simple: true,
         review_in_loop: false,
         review_confidence: data.path().join("review-history.json"),
         open_group: data.path().join("open-group.json"),
-        config_files: patok_core::config::ConfigFiles::default(),
+        config_files: patok_config::ConfigFiles::default(),
     };
     Setup {
         _dirs: vec![project, runtime, data],

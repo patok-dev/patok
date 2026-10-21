@@ -16,10 +16,10 @@ use std::path::Path;
 use schemars::JsonSchema;
 
 use super::{ConfigFiles, Fields, load_layers, migrate_project_file, project_file};
-use crate::settings::{EnumSpelling, SettingValue, config_enum, config_enum_aliased};
+use patok_core::settings::{EnumSpelling, SettingValue, config_enum, config_enum_aliased};
 
-use crate::pipeline::Stage;
-use crate::utils::executable::cli_in;
+use patok_core::pipeline::Stage;
+use patok_core::utils::executable::cli_in;
 
 config_enum! {
     /// The providers the engine can run today.
@@ -1004,7 +1004,7 @@ macro_rules! daemon_table {
         }
 
         /// The field's effective (post-merge, post-normalization) value, as reported
-        /// back with a [`crate::settings::ApplyTiming`] broadcast; `None` for a name
+        /// back with a [`crate::ApplyTiming`] broadcast; `None` for a name
         /// outside the registry or a composite key.
         pub fn daemon_field_value(
             settings: &DaemonSettings,
@@ -1341,7 +1341,7 @@ pub(crate) fn apply_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{SettingValue, set_daemon_field};
+    use crate::{SettingValue, set_daemon_field};
 
     #[test]
     fn interactive_programs_are_the_provider_binaries() {

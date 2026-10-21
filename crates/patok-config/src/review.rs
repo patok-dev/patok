@@ -1,7 +1,7 @@
 //! The review finding severities: the one shared spelling of the reviewer
 //! report's JSON buckets, the verdict computation and the multipass merge.
 
-use crate::settings::config_enum;
+use patok_core::settings::config_enum;
 
 config_enum! {
     /// One review finding's severity: the buckets of the reviewer report's

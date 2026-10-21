@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use patok_core::config::RunMode;
+use patok_config::RunMode;
 use patok_core::event::TaskOutcome;
 use patok_core::task::Task;
 

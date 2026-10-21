@@ -17,9 +17,9 @@ use super::daemon::{
 };
 use super::tui::Theme;
 use super::{ConfigFiles, project_file};
-use crate::settings::{ApplyTiming, EnumSpelling, SettingValue};
-use crate::update::UpdateChannel;
-use crate::utils::atomic_write::write_atomic;
+use patok_core::settings::{ApplyTiming, EnumSpelling, SettingValue};
+use patok_core::update::UpdateChannel;
+use patok_core::utils::atomic_write::write_atomic;
 
 /// A persistence failure; `message` is user-facing.
 #[derive(Debug, thiserror::Error)]
@@ -95,7 +95,7 @@ fn validate(
     kind: &FieldKind,
     value: SettingValue,
 ) -> Result<Option<toml::Value>, PersistError> {
-    let got = value.type_name();
+    let got = type_name(&value);
     let reject = |expect: &str| {
         Err(PersistError::new(format!(
             "{schema}.{name} must be {expect}, got {got}"
@@ -178,15 +178,15 @@ fn validate(
     }
 }
 
-impl SettingValue {
-    fn type_name(&self) -> String {
-        match self {
-            Self::Bool(_) => "a boolean".into(),
-            Self::Uint(_) => "a whole number".into(),
-            Self::Float(_) => "a number".into(),
-            Self::Str(_) => "a string".into(),
-            Self::Unset => "unset".into(),
-        }
+/// The submitted value's type, as named in a rejection message. A free function, since
+/// `SettingValue` is defined in patok-core and cannot take an inherent impl here.
+fn type_name(value: &SettingValue) -> String {
+    match value {
+        SettingValue::Bool(_) => "a boolean".into(),
+        SettingValue::Uint(_) => "a whole number".into(),
+        SettingValue::Float(_) => "a number".into(),
+        SettingValue::Str(_) => "a string".into(),
+        SettingValue::Unset => "unset".into(),
     }
 }
 
@@ -294,7 +294,7 @@ fn write_field(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ProviderName;
+    use crate::ProviderName;
 
     #[test]
     fn apply_timing_follows_the_registry() {
@@ -348,11 +348,11 @@ mod tests {
         assert!(changed.iter().any(|f| f == "builder_provider"));
         // A reload re-materializes role-specific settings.
         let materialized = {
-            let raw = crate::config::daemon::DaemonLayer {
+            let raw = crate::daemon::DaemonLayer {
                 builder_model: Some("mistral-small".into()),
                 ..Default::default()
             };
-            crate::config::daemon::materialize(raw)
+            crate::daemon::materialize(raw)
         };
         assert_eq!(
             daemon_changed_fields(&DaemonSettings::default(), &materialized),
@@ -505,7 +505,7 @@ mod tests {
         );
 
         // The tui schema behaves the same: unset restores the "auto" state of truecolor.
-        let files = crate::config::ConfigFiles {
+        let files = crate::ConfigFiles {
             user_global: None,
             user_local: Some(dir.path().join("config.local.toml")),
         };
@@ -537,17 +537,15 @@ mod tests {
         );
         assert_eq!(
             readout.get("discovery_cooldown_secs"),
-            Some(&SettingValue::Uint(
-                crate::config::DEFAULT_DISCOVERY_COOLDOWN_SECS
-            ))
+            Some(&SettingValue::Uint(crate::DEFAULT_DISCOVERY_COOLDOWN_SECS))
         );
         // Role-specific model is independent.
         let materialized = {
-            let raw = crate::config::daemon::DaemonLayer {
+            let raw = crate::daemon::DaemonLayer {
                 builder_model: Some("mistral-small".into()),
                 ..Default::default()
             };
-            crate::config::daemon::materialize(raw)
+            crate::daemon::materialize(raw)
         };
         let readout = daemon_readout(&materialized);
         assert_eq!(

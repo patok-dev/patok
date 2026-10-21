@@ -136,7 +136,7 @@ mod tests {
     use crate::hit::{button_text, confirm_row_at, stop_row_at};
     use crate::overlay::{Editor, Entry, FieldKind, SECTIONS};
     use crate::theme::Theme;
-    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+    use patok_config::{THEME_KEYS, Theme as ThemeKey};
     use patok_core::event::SessionOutcome;
     use patok_core::event::{EngineEvent, Phase, Snapshot};
     use patok_core::output::{
