@@ -9,7 +9,7 @@ use anyhow::{Context, anyhow};
 use crossterm::event::{Event as TermEvent, EventStream};
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use patok_core::config::{SettingValue, Theme as ThemeKey};
+use patok_config::{SettingValue, Theme as ThemeKey};
 use patok_core::event::Snapshot;
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{
@@ -816,7 +816,7 @@ async fn change_setting<S: SettingsSubmit>(
     shell_settings: &mut ShellSettings,
     schema: Schema,
     field: &str,
-    value: patok_core::config::SettingValue,
+    value: patok_config::SettingValue,
     submitter: &mut S,
 ) -> bool {
     match schema {
@@ -918,7 +918,7 @@ mod tests {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use patok_core::config::{ConfigFiles, SettingValue, Theme as ThemeKey};
+    use patok_config::{ConfigFiles, SettingValue, Theme as ThemeKey};
     use patok_core::event::{EngineEvent, Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
     use patok_core::scenario::{SPEC_FILE, SpecState};

@@ -9,12 +9,16 @@
 //! overrides. Merge is deep, key by key; an unreadable or unparseable file is skipped with
 //! a warning, and a field with a wrong type falls back to its default with a warning
 //! naming the field and the source file while every other field is kept.
+//!
+//! This crate sits above patok-core and below the providers, engine, TUI and wire crates.
 
 mod daemon;
 mod merge;
 mod persist;
 mod review;
 mod schema;
+#[cfg(test)]
+mod spelling_tests;
 mod tui;
 
 pub use daemon::{
@@ -29,12 +33,14 @@ pub use persist::{
 };
 pub use review::Severity;
 pub use schema::{daemon_json_schema, tui_json_schema};
-// The primitives patok-core itself uses live in `crate::settings`; re-exported for the config consumers.
-pub use crate::settings::{ApplyTiming, EnumSpelling, SettingValue};
+// The primitives patok-core itself uses are defined in `patok_core::settings`; re-exported so
+// the config consumers need one import path.
+pub use patok_core::settings::{ApplyTiming, EnumSpelling, SettingValue};
 pub use tui::{THEME_KEYS, Theme, TuiSettings, load_tui, tui_help};
 // The update channel is an updater concept the config schema also exposes; the single
-// definition lives with the updater and is re-exported here for the config consumers.
-pub use crate::update::UpdateChannel;
+// definition lives with the updater in patok-core and is re-exported here so the config
+// consumers need one import path.
+pub use patok_core::update::UpdateChannel;
 
 use std::path::{Path, PathBuf};
 
@@ -62,7 +68,7 @@ pub struct ConfigFiles {
 impl ConfigFiles {
     /// The user layers from the process environment.
     pub fn from_env() -> Self {
-        let dir = crate::paths::config_dir_from_env();
+        let dir = patok_core::paths::config_dir_from_env();
         Self {
             user_global: dir.as_deref().map(|d| d.join(USER_FILE)),
             user_local: dir.as_deref().map(|d| d.join(USER_LOCAL_FILE)),
@@ -85,7 +91,7 @@ fn user_layer_file(
     xdg_config_home: Option<&str>,
     home: Option<&str>,
 ) -> Option<PathBuf> {
-    crate::paths::config_dir(xdg_config_home, home).map(|dir| dir.join(file))
+    patok_core::paths::config_dir(xdg_config_home, home).map(|dir| dir.join(file))
 }
 
 /// The project-local config file: `patok.config.toml` in the project's slot of the
@@ -367,7 +373,7 @@ mod tests {
             &ConfigFiles::default(),
             project.path(),
             data.path(),
-            &crate::config::DaemonEnv::default(),
+            &crate::DaemonEnv::default(),
         );
         assert!(!loaded.settings.plan_enabled);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
@@ -398,7 +404,7 @@ mod tests {
             &ConfigFiles::default(),
             project.path(),
             data.path(),
-            &crate::config::DaemonEnv::default(),
+            &crate::DaemonEnv::default(),
         );
         assert!(loaded.settings.plan_enabled);
         assert_eq!(

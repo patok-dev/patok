@@ -7,9 +7,9 @@ use std::path::Path;
 use schemars::JsonSchema;
 
 use super::{ConfigFiles, EnumSpelling, Fields, load_layers, migrate_project_file, project_file};
-use crate::settings::config_enum;
+use patok_core::settings::config_enum;
 
-use crate::update::UpdateChannel;
+use patok_core::update::UpdateChannel;
 
 config_enum! {
     /// The shell theme.

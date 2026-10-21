@@ -6,7 +6,7 @@ use std::io::Write;
 use std::time::Duration;
 
 use crossterm::style::Stylize;
-use patok_core::config::{RunMode, SettingValue};
+use patok_config::{RunMode, SettingValue};
 use patok_core::event::{EngineEvent, Phase, TaskOutcome};
 use patok_core::output::{LineKind, OutLine};
 use patok_proto::engine_client::EngineClient;
@@ -600,7 +600,7 @@ mod tests {
     /// printer writes the raw text unchanged.
     #[test]
     fn agent_name_lines_wear_the_kind_colour() {
-        use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+        use patok_config::{THEME_KEYS, Theme as ThemeKey};
 
         let mut app = app_with_one_task();
         app.apply(EngineEvent::AgentStarted {

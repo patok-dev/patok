@@ -43,12 +43,12 @@ fn engine_in(root: &Path, name: &str) -> (Fixture, Engine) {
         pause_between_agents: Duration::ZERO,
         pause_between_cycles: Duration::ZERO,
         plan_enabled: false,
-        run_mode: patok_core::config::RunMode::Sprint,
+        run_mode: patok_config::RunMode::Sprint,
         skip_research_for_simple: true,
         review_in_loop: false,
         review_confidence: data.path().join("review-history.json"),
         open_group: data.path().join("open-group.json"),
-        config_files: patok_core::config::ConfigFiles::default(),
+        config_files: patok_config::ConfigFiles::default(),
     };
     let engine = Engine::new(config.clone(), Arc::new(MockProvider::new(vec![])));
     let fixture = Fixture {

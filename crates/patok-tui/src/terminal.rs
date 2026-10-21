@@ -8,7 +8,7 @@ use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 
 use crossterm::event::{KeyEvent, MouseEvent};
-use patok_core::config::{INTERACTIVE_TERMINAL_ENV, ProviderKind, strip_from_interactive_env};
+use patok_config::{INTERACTIVE_TERMINAL_ENV, ProviderKind, strip_from_interactive_env};
 use portable_pty::CommandBuilder;
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::Receiver;

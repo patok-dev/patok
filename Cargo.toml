@@ -49,6 +49,7 @@ vt100 = "0.16"
 protoc-bin-vendored = "3"
 schemars = { version = "1", features = ["derive"] }
 
+patok-config = { path = "crates/patok-config" }
 patok-core = { path = "crates/patok-core" }
 patok-engine = { path = "crates/patok-engine" }
 patok-proto = { path = "crates/patok-proto" }

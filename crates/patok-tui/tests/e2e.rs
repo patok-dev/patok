@@ -1307,7 +1307,7 @@ async fn a_discovery_round_shows_the_chip_and_adds_its_task_to_the_list() {
     // The scheduled discovery round is continuous-mode behaviour (T103.1), so
     // this test's engine runs continuous.
     let mut config = setup.config.clone();
-    config.run_mode = patok_core::config::RunMode::Continuous;
+    config.run_mode = patok_config::RunMode::Continuous;
     // The completed task's line carries the five-position progress indicator
     // the engine writes at finalization (T70.1).
     let built = "- [x] T1.1: [--.B-] add hello\n";
@@ -1764,7 +1764,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
             &event,
             EngineEvent::ConfigChanged {
                 field,
-                value: patok_core::config::SettingValue::Uint(120),
+                value: patok_config::SettingValue::Uint(120),
                 ..
             } if field == "agent_timeout_secs"
         );
@@ -1836,7 +1836,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
 #[tokio::test]
 async fn the_settings_overlay_drafts_saves_and_discards_changes() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use patok_core::config::SettingValue;
+    use patok_config::SettingValue;
     use patok_proto::SettingsChange;
     use patok_proto::command_request;
     use patok_tui::{Action, App, Entry, to_proto};
@@ -2063,7 +2063,7 @@ async fn the_settings_overlay_drafts_saves_and_discards_changes() {
 #[tokio::test]
 async fn shift_tab_flips_the_run_mode_over_grpc() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use patok_core::config::{RunMode, SettingValue};
+    use patok_config::{RunMode, SettingValue};
     use patok_tui::{Action, App, Schema, to_proto};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

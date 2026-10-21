@@ -8,14 +8,14 @@
 //! dialog, and the driver (`run.rs`) then runs every drafted change through the
 //! settings-change flow (daemon-schema fields via the engine, tui-schema fields
 //! directly by the shell). The help box (T85.1) carries no text of its own: it
-//! routes the focused entry through the owning schema's registry in `patok-core`.
+//! routes the focused entry through the owning schema's registry in `patok-config`.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use patok_core::config::{
+use patok_config::{
     EnumSpelling, FieldKind as CoreFieldKind, ProviderName, SettingValue, Theme, UpdateChannel,
     daemon_field, daemon_help, daemon_label, tui_help,
 };
@@ -82,7 +82,7 @@ pub struct Section {
     pub rows: &'static LazyLock<Vec<Row>>,
 }
 
-// The row model mirrors the core field table (`DAEMON_FIELDS` in `patok-core`, the
+// The row model mirrors the core field table (`DAEMON_FIELDS` in `patok-config`, the
 // single source of truth for the daemon settings): every daemon row below is built
 // by `daemon_row` from the registry entry its key names -- the label and the editor
 // kind come from the table, the help text routes through the registry in
@@ -914,7 +914,7 @@ impl SettingsOverlay {
 /// The description of one entry of the row model (T85.1), routed to the registry
 /// of the schema that owns the key: the daemon fields' and groups' text lives
 /// with the daemon schema, the tui fields' with the tui schema -- both in
-/// `patok-core`, where the settings live. The shell never hardcodes a
+/// `patok-config`, where the settings live. The shell never hardcodes a
 /// description itself.
 fn help_for(schema: Schema, key: &str) -> Option<&'static str> {
     match schema {

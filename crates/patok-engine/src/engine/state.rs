@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use patok_core::config::{DaemonEnv, DaemonSettings, EnumSpelling, ProviderKind, ProviderName};
+use patok_config::{DaemonEnv, DaemonSettings, EnumSpelling, ProviderKind, ProviderName};
 use patok_core::event::{EngineEvent, Phase};
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
 use patok_providers::{Provider, ProviderError};

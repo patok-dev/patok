@@ -23,7 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
-use patok_core::config::DaemonSettings;
+use patok_config::DaemonSettings;
 
 #[allow(unused_imports)]
 pub use layout::HistoryRoot;

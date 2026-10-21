@@ -1,4 +1,4 @@
-use patok_core::config::RunMode;
+use patok_config::RunMode;
 use patok_core::event::EngineEvent;
 use patok_core::pipeline::{PipelineState, Tile, TileStatus};
 

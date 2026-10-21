@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use patok_core::config::ProviderKind;
+use patok_config::ProviderKind;
 use patok_core::event::AgentEvent;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;

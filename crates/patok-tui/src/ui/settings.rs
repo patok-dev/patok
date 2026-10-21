@@ -1,6 +1,6 @@
 //! The settings overlay, its help box and the unsaved-changes dialog.
 
-use patok_core::config::SettingValue;
+use patok_config::SettingValue;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};

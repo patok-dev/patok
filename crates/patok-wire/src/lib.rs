@@ -14,10 +14,10 @@
 //! bridges (provider, run mode, accept policy) live here too, in one place instead
 //! of mirrored across the engine and the shell.
 //!
-//! Adding a daemon setting is the `daemon_table!` entry in `patok-core`, the proto
+//! Adding a daemon setting is the `daemon_table!` entry in `patok-config`, the proto
 //! oneof field, and one line in the list below -- nothing else on the wire.
 
-use patok_core::config::{
+use patok_config::{
     AcceptPolicy as CoreAcceptPolicy, EnumSpelling, ProviderName, RunMode as CoreRunMode,
     SettingValue,
 };

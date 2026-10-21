@@ -1,7 +1,6 @@
 //! Domain types and pure logic shared by the engine and the shell.
 
 pub mod complexity;
-pub mod config;
 pub mod event;
 pub mod fleet;
 pub mod output;

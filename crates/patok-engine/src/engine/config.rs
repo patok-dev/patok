@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use patok_core::config::{DaemonEnv, DaemonSettings, ProviderKind, RunMode, load_daemon};
+use patok_config::{DaemonEnv, DaemonSettings, ProviderKind, RunMode, load_daemon};
 use patok_core::event::Phase;
 use patok_core::pipeline::PipelineState;
 use patok_providers::{Provider, ProviderError};
@@ -46,7 +46,7 @@ pub struct EngineConfig {
     /// Seeds the central settings on `Engine::new` exactly like `plan_enabled`;
     /// a configured engine reads the mode from the config files instead.
     /// The scheduled discovery round runs only in continuous mode (T103.1).
-    pub run_mode: patok_core::config::RunMode,
+    pub run_mode: patok_config::RunMode,
     /// Whether a task the complexity classifier marks Simple skips the research
     /// stage (`skip_research_for_simple`, T68.1; default on).
     pub skip_research_for_simple: bool,
@@ -59,7 +59,7 @@ pub struct EngineConfig {
     pub open_group: PathBuf,
     /// The user-layer config files (user-global and user-local); the project-local
     /// `patok.config.toml` is always derived from `data_dir`.
-    pub config_files: patok_core::config::ConfigFiles,
+    pub config_files: patok_config::ConfigFiles,
 }
 
 impl EngineConfig {
@@ -68,10 +68,10 @@ impl EngineConfig {
     pub const DEFAULT_IDLE_SHUTDOWN: Duration = Duration::from_secs(30 * 60);
 
     pub const DEFAULT_DISCOVERY_COOLDOWN: Duration =
-        Duration::from_secs(patok_core::config::DEFAULT_DISCOVERY_COOLDOWN_SECS);
+        Duration::from_secs(patok_config::DEFAULT_DISCOVERY_COOLDOWN_SECS);
 
     pub const DEFAULT_DISCOVERY_COOLDOWN_CAP: Duration =
-        Duration::from_secs(patok_core::config::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS);
+        Duration::from_secs(patok_config::DEFAULT_DISCOVERY_COOLDOWN_CAP_SECS);
 
     /// The daemon default of `pause_between_tasks_secs`.
     pub const DEFAULT_PAUSE_BETWEEN_TASKS: Duration = Duration::from_secs(10);
@@ -109,7 +109,7 @@ impl EngineConfig {
             review_in_loop: true,
             review_confidence,
             open_group,
-            config_files: patok_core::config::ConfigFiles::from_env(),
+            config_files: patok_config::ConfigFiles::from_env(),
         })
     }
 

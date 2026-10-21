@@ -51,7 +51,7 @@ fn idle_dashboard_with_a_complete_queue() {
 /// live task state and the split holds in every theme.
 #[test]
 fn tasks_frame_title_counts_and_colours() {
-    use patok_core::config::Theme as ThemeKey;
+    use patok_config::Theme as ThemeKey;
     use patok_tui::Theme;
     use ratatui::buffer::Buffer;
     use ratatui::style::Color;
@@ -1175,7 +1175,7 @@ fn a_discovery_run_leaves_its_own_finished_line() {
 
 #[test]
 fn the_lifecycle_status_lines_carry_the_status_colour_in_full() {
-    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+    use patok_config::{THEME_KEYS, Theme as ThemeKey};
     use patok_tui::Theme;
     use ratatui::style::Color;
 
@@ -1645,7 +1645,7 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
 /// background, no bold. No other status-bar cell does.
 #[test]
 fn only_the_interactive_chips_wear_the_button_accent() {
-    use patok_core::config::Theme as ThemeKey;
+    use patok_config::Theme as ThemeKey;
     use ratatui::style::Modifier;
 
     for theme_key in [ThemeKey::Dark, ThemeKey::TokyoNightDark] {
@@ -3156,7 +3156,7 @@ mod explore {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use patok_core::config::SettingValue;
+    use patok_config::SettingValue;
     use patok_core::scenario::{ProjectScan, Scenario, SpecState, TaskFileState};
     use patok_tui::{Action, FrameFocus, QueueRun, footer_button_rects};
 
@@ -4316,7 +4316,7 @@ mod view {
 mod hints {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use patok_core::config::Theme as ThemeKey;
+    use patok_config::Theme as ThemeKey;
     use patok_tui::{Action, FrameFocus, Theme, fitted_hints};
     use ratatui::layout::Rect;
 
@@ -5111,7 +5111,7 @@ mod stop_dialog {
 mod modal_footer {
     use super::*;
     use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-    use patok_core::config::Theme as ThemeKey;
+    use patok_config::Theme as ThemeKey;
     use patok_tui::{Action, Theme, button_text, footer_button_rects};
     use ratatui::style::Color;
     use ratatui::style::Modifier;
@@ -5541,7 +5541,7 @@ mod modal_footer {
 mod close_button {
     use super::*;
     use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-    use patok_core::config::Theme as ThemeKey;
+    use patok_config::Theme as ThemeKey;
     use patok_tui::{
         Action, CLOSE_BUTTON_WIDTH, Theme, button_text, close_button_rect, dialog_area, stop_area,
     };
@@ -5818,7 +5818,7 @@ mod close_button {
 /// just the layout.
 mod theme {
     use super::{App, Terminal, draw};
-    use patok_core::config::Theme as ThemeKey;
+    use patok_config::Theme as ThemeKey;
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
 

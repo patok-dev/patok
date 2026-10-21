@@ -48,6 +48,7 @@ pub trait EnumSpelling: Copy + PartialEq + Sized + 'static {
 /// forwarders and the `Display` behaviour (through the trait's blanket impl) all come
 /// from the same place, so a variant cannot be added without a spelling and every
 /// consumer reads the spellings through the trait instead of retyping literals.
+#[macro_export]
 macro_rules! config_enum {
     (
         $(#[$enum_meta:meta])*
@@ -92,8 +93,6 @@ macro_rules! config_enum {
         }
     };
 }
-pub(crate) use config_enum;
-
 /// Defines one config enum together with its [`EnumSpelling`] implementation
 /// and its alias table from a single token list: the variants, their spellings,
 /// their aliases, the inherent `parse`/`as_str` forwarders, the
@@ -103,6 +102,7 @@ pub(crate) use config_enum;
 /// most one alias list -- `[alias "x"]` for a single alias, `[aliases "x", "y"]`
 /// for several; the chosen form decides "(alias ...)" versus "(aliases ...)" in
 /// the prose.
+#[macro_export]
 macro_rules! config_enum_aliased {
     (
         $(#[$enum_meta:meta])*
@@ -211,16 +211,12 @@ macro_rules! config_enum_aliased {
         }
     };
 }
-pub(crate) use config_enum_aliased;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        AcceptPolicy, ProviderKind, ProviderName, RunMode, Severity, Theme, UpdateChannel,
-    };
     use crate::event::AgentRole;
     use crate::pipeline::Stage;
+    use crate::update::UpdateChannel;
     use std::collections::HashSet;
     use std::fmt;
 
@@ -259,46 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_kind_round_trips_every_variant() {
-        check::<ProviderKind>();
-        assert_eq!(
-            ProviderKind::accepted_spellings(),
-            "`claude`, `codex`, `mistral`"
-        );
-    }
-
-    #[test]
-    fn provider_name_round_trips_every_variant() {
-        check::<ProviderName>();
-    }
-
-    #[test]
-    fn run_mode_round_trips_every_variant() {
-        check::<RunMode>();
-        assert_eq!(RunMode::accepted_spellings(), "`sprint`, `continuous`");
-    }
-
-    #[test]
-    fn accept_policy_round_trips_every_variant() {
-        check::<AcceptPolicy>();
-        assert_eq!(
-            AcceptPolicy::accepted_spellings(),
-            "`no-high`, `no-high-medium`, `no-findings`"
-        );
-    }
-
-    #[test]
-    fn theme_round_trips_every_variant() {
-        check::<Theme>();
-        assert_eq!(
-            Theme::accepted_spellings(),
-            "`dark`, `atom_one_dark`, `atom_one_light`, `tokyo_night_dark`, `tokyo_night_day`, \
-             `catppuccin_mocha`, `catppuccin_latte`, `solarized_dark`, `solarized_light`, \
-             `gruvbox_dark`, `gruvbox_light`"
-        );
-    }
-
-    #[test]
     fn update_channel_round_trips_every_variant() {
         check::<UpdateChannel>();
         assert_eq!(UpdateChannel::accepted_spellings(), "`stable`, `dev`");
@@ -311,11 +267,6 @@ mod tests {
         // never parse as engine agent roles.
         assert!(AgentRole::parse("learning_extraction").is_none());
         assert!(AgentRole::parse("orchestrator_proposer").is_none());
-    }
-
-    #[test]
-    fn severity_round_trips_every_variant() {
-        check::<Severity>();
     }
 
     #[test]

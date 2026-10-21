@@ -7,7 +7,7 @@ mod support;
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
-use patok_core::config::{ApplyTiming, SettingValue};
+use patok_config::{ApplyTiming, SettingValue};
 use patok_core::event::EngineEvent;
 use patok_core::update::UpdateChannel;
 use patok_tui::{
@@ -362,7 +362,7 @@ fn enums_cycle_with_left_right_and_enter() {
         app.overlay.drafts.get("theme"),
         Some(&SettingValue::Str("atom_one_dark".into()))
     );
-    assert_eq!(app.tui.theme, patok_core::config::Theme::Dark);
+    assert_eq!(app.tui.theme, patok_config::Theme::Dark);
     assert!(draw(&app, W, H).contains("‹ atom_one_dark ›"));
     assert!(!draw(&app, W, H).contains("Saved."));
 
@@ -398,7 +398,7 @@ fn the_theme_row_cycles_through_every_builtin_name() {
     focus_field(&mut app, "theme");
     // Forward from the current `dark`: atom_one_dark .. gruvbox_light, then the
     // wrap back to dark.
-    let keys = patok_core::config::THEME_KEYS;
+    let keys = patok_config::THEME_KEYS;
     let forward: Vec<&str> = keys[1..]
         .iter()
         .copied()
@@ -414,7 +414,7 @@ fn the_theme_row_cycles_through_every_builtin_name() {
     }
     // The last Right wrapped back to `dark`, and the shell's own mirror is
     // untouched throughout.
-    assert_eq!(app.tui.theme, patok_core::config::Theme::Dark);
+    assert_eq!(app.tui.theme, patok_config::Theme::Dark);
 
     // Left cycles backwards through the same list, wrapping the other way:
     // gruvbox_light .. atom_one_dark, then back to dark.
@@ -1352,7 +1352,7 @@ fn h_and_l_cycle_enums_like_left_and_right() {
         app.overlay.drafts.get("theme"),
         Some(&SettingValue::Str("atom_one_dark".into()))
     );
-    assert_eq!(app.tui.theme, patok_core::config::Theme::Dark);
+    assert_eq!(app.tui.theme, patok_config::Theme::Dark);
     assert_eq!(press(&mut app, KeyCode::Char('h')), Action::None);
     assert_eq!(
         app.overlay.drafts.get("theme"),
@@ -1550,7 +1550,7 @@ fn the_last_row_still_edits_and_drafts() {
 mod modal_footer {
     use super::*;
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    use patok_core::config::Theme as ThemeKey;
+    use patok_config::Theme as ThemeKey;
     use patok_tui::{Theme, button_text, footer_button_rects};
     use ratatui::style::Modifier;
 
@@ -1858,7 +1858,7 @@ mod modal_footer {
 /// status-free overlay leaves the row blank.
 mod status_line {
     use super::*;
-    use patok_core::config::{THEME_KEYS, Theme as ThemeKey};
+    use patok_config::{THEME_KEYS, Theme as ThemeKey};
     use patok_tui::{StatusLevel, Theme};
     use ratatui::layout::{Constraint, Layout, Rect};
 

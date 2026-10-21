@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::from_proto;
 use anyhow::Context;
-use patok_core::config::ApplyTiming;
+use patok_config::ApplyTiming;
 use patok_core::event::EngineEvent;
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
 use patok_proto::engine_server::{Engine as EngineApi, EngineServer};

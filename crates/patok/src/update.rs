@@ -6,7 +6,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use patok_core::config::{ConfigFiles, load_tui};
+use patok_config::{ConfigFiles, load_tui};
 use patok_core::update::{
     Asset, HttpClient, HttpError, Release, SourceInstallDetail, UpdateChannel, UpdateOutcome,
     check_update, expected_checksum,

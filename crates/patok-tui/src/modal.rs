@@ -768,7 +768,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use patok_core::config::SettingValue;
+    use patok_config::SettingValue;
     use patok_core::event::{Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
 

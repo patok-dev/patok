@@ -1281,7 +1281,7 @@ async fn each_role_runs_on_its_own_model_not_the_builders() {
     let provider = std::sync::Arc::new(provider);
     let engine = patok_engine::Engine::configured_with_env(
         fixture.config_review(),
-        &patok_core::config::DaemonEnv::default(),
+        &patok_config::DaemonEnv::default(),
         move |_kind| Ok(provider.clone()),
     );
     let mut attachment = engine.attach().unwrap();
@@ -3063,7 +3063,7 @@ async fn a_discovery_round_flips_discover_from_active_to_done() {
     engine
         .apply_settings_change(
             "run_mode",
-            patok_core::config::SettingValue::Str("continuous".into()),
+            patok_config::SettingValue::Str("continuous".into()),
         )
         .unwrap();
 
@@ -3183,7 +3183,7 @@ async fn an_attaching_shell_receives_the_current_pipeline_state() {
 mod provider_config {
     use std::sync::{Arc, Mutex};
 
-    use patok_core::config::ProviderKind;
+    use patok_config::ProviderKind;
     use patok_providers::{Provider, ProviderError};
 
     use super::*;
@@ -3608,7 +3608,7 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
 
 #[tokio::test]
 async fn reviewer_provider_codex_runs_the_reviewer_on_codex() {
-    use patok_core::config::ProviderKind;
+    use patok_config::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
@@ -3625,7 +3625,7 @@ async fn reviewer_provider_codex_runs_the_reviewer_on_codex() {
     let resolver_picked = picked.clone();
     let engine = patok_engine::Engine::configured_with_env(
         fixture.config_review(),
-        &patok_core::config::DaemonEnv::default(),
+        &patok_config::DaemonEnv::default(),
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(provider.clone()))
@@ -3655,7 +3655,7 @@ async fn reviewer_provider_codex_runs_the_reviewer_on_codex() {
 #[tokio::test]
 async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_the_reviewer_model()
 {
-    use patok_core::config::ProviderKind;
+    use patok_config::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
@@ -3672,7 +3672,7 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
     let resolver_picked = picked.clone();
     let engine = patok_engine::Engine::configured_with_env(
         fixture.config_review(),
-        &patok_core::config::DaemonEnv::default(),
+        &patok_config::DaemonEnv::default(),
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(
@@ -3729,7 +3729,7 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
 /// its default).
 #[tokio::test]
 async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
-    use patok_core::config::ProviderKind;
+    use patok_config::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
@@ -3746,7 +3746,7 @@ async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
     let resolver_picked = picked.clone();
     let engine = patok_engine::Engine::configured_with_env(
         fixture.config_review(),
-        &patok_core::config::DaemonEnv::default(),
+        &patok_config::DaemonEnv::default(),
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(
@@ -3782,7 +3782,7 @@ async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
 /// loads, and the review runs on the default reviewer provider.
 #[tokio::test]
 async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
-    use patok_core::config::ProviderKind;
+    use patok_config::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
@@ -3799,7 +3799,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
     let resolver_picked = picked.clone();
     let engine = patok_engine::Engine::configured_with_env(
         fixture.config_review(),
-        &patok_core::config::DaemonEnv::default(),
+        &patok_config::DaemonEnv::default(),
         move |kind| {
             resolver_picked.lock().unwrap().push(kind);
             Ok(std::sync::Arc::new(

@@ -1,4 +1,4 @@
-use patok_core::config::daemon_readout;
+use patok_config::daemon_readout;
 use patok_core::event::{AgentRole, EngineEvent, Snapshot};
 use tokio_util::sync::CancellationToken;
 
