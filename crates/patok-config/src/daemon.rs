@@ -10,153 +10,16 @@
 //! persistence registry (field kind, key list, apply timing, effective values) and the
 //! settings-overlay label and help. Adding a setting is one entry.
 
-use std::ffi::OsStr;
 use std::path::Path;
 
 use schemars::JsonSchema;
 
+use patok_providers::ProviderName;
+
 use super::{ConfigFiles, Fields, load_layers, migrate_project_file, project_file};
-use patok_core::settings::{EnumSpelling, SettingValue, config_enum, config_enum_aliased};
+use patok_core::settings::{EnumSpelling, SettingValue, config_enum};
 
 use patok_core::pipeline::Stage;
-use patok_core::utils::executable::cli_in;
-
-config_enum! {
-    /// The providers the engine can run today.
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    pub enum ProviderKind {
-        #[default]
-        Claude => "claude",
-        Codex => "codex",
-        Mistral => "mistral",
-    }
-}
-
-impl ProviderKind {
-    /// The capitalized spelling, as the output frame title shows it.
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Self::Claude => "Claude",
-            Self::Codex => "Codex",
-            Self::Mistral => "Mistral",
-        }
-    }
-
-    /// How to start this provider's own interactive CLI in an embedded terminal.
-    pub fn interactive_launch(self) -> InteractiveLaunch {
-        match self {
-            Self::Claude => InteractiveLaunch {
-                program: "claude",
-                args: &[],
-                // Marks a nested Claude session; patok may itself run inside Claude Code,
-                // which would otherwise make the child refuse to start.
-                env: &[("CLAUDECODE", "")],
-            },
-            Self::Codex => InteractiveLaunch {
-                program: "codex",
-                args: &[],
-                env: &[],
-            },
-            // The binary is `vibe`, not the `mistral` slug.
-            Self::Mistral => InteractiveLaunch {
-                program: "vibe",
-                args: &[],
-                env: &[],
-            },
-        }
-    }
-
-    /// Whether this kind's interactive program is an executable in `path`. The picker
-    /// passes `std::env::var_os("PATH")` and shows the kind disabled when this is false.
-    pub fn interactive_available_in(self, path: Option<&OsStr>) -> bool {
-        cli_in(self.interactive_launch().program, path)
-    }
-}
-
-/// How to launch a provider's own interactive CLI in an embedded terminal: no prompt,
-/// the user drives the session. The TUI builds the PTY command from this, so the table
-/// lives in core and the TUI never needs `patok-providers` at runtime.
-///
-/// Build the child env in this order: remove every host variable for which
-/// [`strip_from_interactive_env`] is true, set [`INTERACTIVE_TERMINAL_ENV`], then set `env`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InteractiveLaunch {
-    /// The executable looked up on `PATH`.
-    pub program: &'static str,
-    /// Arguments; empty for a plain prompt-less start.
-    pub args: &'static [&'static str],
-    /// Provider-specific variables, set after [`INTERACTIVE_TERMINAL_ENV`].
-    pub env: &'static [(&'static str, &'static str)],
-}
-
-/// Terminal variables set on every interactive child: the vt100 emulator understands
-/// `xterm-256color` and truecolor.
-pub const INTERACTIVE_TERMINAL_ENV: [(&str, &str); 2] =
-    [("TERM", "xterm-256color"), ("COLORTERM", "truecolor")];
-
-/// Host variables dropped by exact name.
-const STRIPPED_ENV_NAMES: &[&str] = &[
-    "NO_COLOR",
-    "TMUX",
-    "TMUX_PANE",
-    "STY",
-    "TERM_PROGRAM",
-    "TERM_PROGRAM_VERSION",
-    "TERMINFO",
-    "TERM_SESSION_ID",
-    "ITERM_SESSION_ID",
-    "LC_TERMINAL",
-    "LC_TERMINAL_VERSION",
-    "VTE_VERSION",
-    "WT_SESSION",
-    "COLORFGBG",
-];
-
-/// Host variables dropped by name prefix.
-const STRIPPED_ENV_PREFIXES: &[&str] = &[
-    "ZELLIJ",
-    "KITTY_",
-    "WEZTERM_",
-    "GHOSTTY_",
-    "ALACRITTY_",
-    "KONSOLE_",
-    "ITERM_",
-];
-
-/// Whether a host variable is dropped from an interactive child's env: `NO_COLOR` would
-/// suppress the color the emulator renders, and host-terminal/multiplexer variables would
-/// make the child talk to the outer terminal (kitty/wezterm/tmux protocols) instead of
-/// the embedded vt100 one.
-pub fn strip_from_interactive_env(name: &OsStr) -> bool {
-    name.to_str().is_some_and(|name| {
-        STRIPPED_ENV_NAMES.contains(&name)
-            || STRIPPED_ENV_PREFIXES.iter().any(|p| name.starts_with(p))
-    })
-}
-
-config_enum_aliased! {
-    /// A provider name as written in config files:
-    /// trimmed, case-insensitive, aliases accepted.
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-    #[schemars(rename_all = "lowercase")]
-    pub enum ProviderName {
-        #[default]
-        Claude => "claude",
-        Codex => "codex",
-        Mistral => "mistral", [alias "vibe"],
-    }
-}
-
-impl ProviderName {
-    /// The engine-implemented kind of this provider name.
-    pub fn kind(self) -> Option<ProviderKind> {
-        match self {
-            Self::Claude => Some(ProviderKind::Claude),
-            Self::Codex => Some(ProviderKind::Codex),
-            Self::Mistral => Some(ProviderKind::Mistral),
-        }
-    }
-}
 
 config_enum! {
     /// The run mode.
@@ -1342,83 +1205,7 @@ pub(crate) fn apply_env(
 mod tests {
     use super::*;
     use crate::{SettingValue, set_daemon_field};
-
-    #[test]
-    fn interactive_programs_are_the_provider_binaries() {
-        assert_eq!(ProviderKind::Claude.interactive_launch().program, "claude");
-        assert_eq!(ProviderKind::Codex.interactive_launch().program, "codex");
-        assert_eq!(ProviderKind::Mistral.interactive_launch().program, "vibe");
-    }
-
-    #[test]
-    fn interactive_launches_are_prompt_less() {
-        for (kind, _) in <ProviderKind as EnumSpelling>::VARIANTS {
-            assert!(kind.interactive_launch().args.is_empty());
-        }
-    }
-
-    #[test]
-    fn only_claude_clears_the_nested_session_marker() {
-        assert_eq!(
-            ProviderKind::Claude.interactive_launch().env,
-            &[("CLAUDECODE", "")]
-        );
-        assert!(ProviderKind::Codex.interactive_launch().env.is_empty());
-        assert!(ProviderKind::Mistral.interactive_launch().env.is_empty());
-    }
-
-    #[test]
-    fn interactive_terminal_env_is_xterm_256color_truecolor() {
-        assert_eq!(
-            INTERACTIVE_TERMINAL_ENV,
-            [("TERM", "xterm-256color"), ("COLORTERM", "truecolor")]
-        );
-    }
-
-    #[test]
-    fn strip_from_interactive_env_drops_no_color_and_host_terminal_vars() {
-        for name in [
-            "NO_COLOR",
-            "TMUX",
-            "KITTY_WINDOW_ID",
-            "WEZTERM_PANE",
-            "ZELLIJ",
-            "ZELLIJ_SESSION_NAME",
-            "TERM_PROGRAM",
-        ] {
-            assert!(strip_from_interactive_env(OsStr::new(name)), "{name}");
-        }
-        for name in [
-            "PATH",
-            "HOME",
-            "TERM",
-            "COLORTERM",
-            "LANG",
-            "no_color",
-            "MY_TMUX",
-        ] {
-            assert!(!strip_from_interactive_env(OsStr::new(name)), "{name}");
-        }
-    }
-
-    #[test]
-    fn interactive_availability_is_a_path_lookup() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        for (name, mode) in [("vibe", 0o755), ("codex", 0o644)] {
-            let file = dir.path().join(name);
-            std::fs::write(&file, "").unwrap();
-            std::fs::set_permissions(&file, PermissionsExt::from_mode(mode)).unwrap();
-        }
-        let path = std::env::join_paths([dir.path()]).unwrap();
-        let path = Some(path.as_os_str());
-        assert!(ProviderKind::Mistral.interactive_available_in(path));
-        assert!(!ProviderKind::Claude.interactive_available_in(path));
-        assert!(!ProviderKind::Codex.interactive_available_in(path));
-        for (kind, _) in <ProviderKind as EnumSpelling>::VARIANTS {
-            assert!(!kind.interactive_available_in(None));
-        }
-    }
+    use patok_providers::ProviderKind;
 
     /// The daemon schema loaded from a project-local config file holding `text`,
     /// written into the project's slot of the projects dir.
@@ -1783,19 +1570,6 @@ enabled = false
                 prompt: None,
             }]
         );
-    }
-
-    /// The display names the output frame title shows, one per implemented kind.
-    #[test]
-    fn display_names_capitalize_the_spellings() {
-        for &(kind, spelling) in ProviderKind::VARIANTS {
-            let display = kind.display_name();
-            assert!(
-                display.starts_with(|c: char| c.is_uppercase()),
-                "`{spelling}` has no capitalized display name"
-            );
-            assert_eq!(display.to_lowercase(), spelling);
-        }
     }
 
     /// The help registry (T85.1) answers every overlay key it owns with

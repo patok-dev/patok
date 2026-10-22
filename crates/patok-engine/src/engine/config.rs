@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use patok_config::{DaemonEnv, DaemonSettings, ProviderKind, RunMode, load_daemon};
+use patok_config::{DaemonEnv, DaemonSettings, RunMode, load_daemon};
 use patok_core::event::Phase;
 use patok_core::pipeline::PipelineState;
-use patok_providers::{Provider, ProviderError};
+use patok_providers::{Provider, ProviderError, ProviderKind};
 use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 

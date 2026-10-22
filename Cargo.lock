@@ -1383,6 +1383,7 @@ name = "patok-config"
 version = "0.0.0"
 dependencies = [
  "patok-core",
+ "patok-providers",
  "schemars",
  "serde",
  "serde_json",
@@ -1447,8 +1448,8 @@ name = "patok-providers"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "patok-config",
  "patok-core",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -1489,6 +1490,7 @@ version = "0.0.0"
 dependencies = [
  "patok-config",
  "patok-proto",
+ "patok-providers",
 ]
 
 [[package]]

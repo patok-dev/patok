@@ -2,10 +2,10 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use patok_config::{DaemonEnv, DaemonSettings, EnumSpelling, ProviderKind, ProviderName};
+use patok_config::{DaemonEnv, DaemonSettings, EnumSpelling};
 use patok_core::event::{EngineEvent, Phase};
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
-use patok_providers::{Provider, ProviderError};
+use patok_providers::{Provider, ProviderError, ProviderKind, ProviderName};
 use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 

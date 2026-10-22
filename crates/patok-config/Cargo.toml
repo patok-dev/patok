@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 patok-core.workspace = true
+patok-providers.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

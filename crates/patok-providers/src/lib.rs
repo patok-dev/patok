@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use patok_config::ProviderKind;
 use patok_core::event::AgentEvent;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
@@ -12,12 +11,18 @@ use tokio_util::sync::CancellationToken;
 pub mod claude;
 mod cli;
 pub mod codex;
+mod kind;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 mod process;
 #[cfg(test)]
 pub(crate) mod test_util;
 pub mod vibe;
+
+pub use kind::{
+    INTERACTIVE_TERMINAL_ENV, InteractiveLaunch, ProviderKind, ProviderName,
+    strip_from_interactive_env,
+};
 
 /// Everything a provider needs to run one agent session.
 pub struct SessionRequest {

@@ -6,9 +6,9 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use patok_config::ProviderKind;
 use patok_core::event::AgentEvent;
 use patok_engine::Engine;
+use patok_providers::ProviderKind;
 use patok_providers::mock::{MockProvider, Step};
 use patok_providers::{ExitKind, Provider, ProviderError};
 use tokio_util::sync::CancellationToken;

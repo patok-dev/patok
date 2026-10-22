@@ -1,7 +1,8 @@
-//! Spelling proofs for the config enums defined in this crate.
+//! Spelling proofs for the config enums this crate defines or uses.
 
-use crate::{AcceptPolicy, ProviderKind, ProviderName, RunMode, Severity, Theme};
+use crate::{AcceptPolicy, RunMode, Severity, Theme};
 use patok_core::settings::EnumSpelling;
+use patok_providers::{ProviderKind, ProviderName};
 use std::collections::HashSet;
 use std::fmt;
 

@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 patok-config.workspace = true
 patok-proto.workspace = true
+patok-providers.workspace = true
 
 [lints]
 workspace = true
