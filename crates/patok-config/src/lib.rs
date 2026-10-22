@@ -10,7 +10,8 @@
 //! a warning, and a field with a wrong type falls back to its default with a warning
 //! naming the field and the source file while every other field is kept.
 //!
-//! This crate sits above patok-core and below the providers, engine, TUI and wire crates.
+//! This crate sits above patok-core and patok-providers (whose provider names its daemon schema uses)
+//! and below the engine, TUI and wire crates.
 
 mod daemon;
 mod merge;
@@ -22,11 +23,10 @@ mod spelling_tests;
 mod tui;
 
 pub use daemon::{
-    AcceptPolicy, DAEMON_FIELDS, DaemonConfig, DaemonEnv, DaemonSettings, FieldKind,
-    INTERACTIVE_TERMINAL_ENV, InteractiveLaunch, ProviderKind, ProviderName, RunMode, StageConfig,
-    daemon_field, daemon_field_value, daemon_help, daemon_label, load_daemon,
-    strip_from_interactive_env,
+    AcceptPolicy, DAEMON_FIELDS, DaemonConfig, DaemonEnv, DaemonSettings, FieldKind, RunMode,
+    StageConfig, daemon_field, daemon_field_value, daemon_help, daemon_label, load_daemon,
 };
+use patok_providers::ProviderName;
 pub use persist::{
     PersistError, daemon_apply_timing, daemon_changed_fields, daemon_readout, set_daemon_field,
     set_tui_field,

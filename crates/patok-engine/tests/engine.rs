@@ -3183,7 +3183,7 @@ async fn an_attaching_shell_receives_the_current_pipeline_state() {
 mod provider_config {
     use std::sync::{Arc, Mutex};
 
-    use patok_config::ProviderKind;
+    use patok_providers::ProviderKind;
     use patok_providers::{Provider, ProviderError};
 
     use super::*;
@@ -3608,7 +3608,7 @@ async fn a_passing_review_validates_the_task_and_commits_feat() {
 
 #[tokio::test]
 async fn reviewer_provider_codex_runs_the_reviewer_on_codex() {
-    use patok_config::ProviderKind;
+    use patok_providers::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
@@ -3655,7 +3655,7 @@ async fn reviewer_provider_codex_runs_the_reviewer_on_codex() {
 #[tokio::test]
 async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_the_reviewer_model()
 {
-    use patok_config::ProviderKind;
+    use patok_providers::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
@@ -3729,7 +3729,7 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
 /// its default).
 #[tokio::test]
 async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
-    use patok_config::ProviderKind;
+    use patok_providers::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![
@@ -3782,7 +3782,7 @@ async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
 /// loads, and the review runs on the default reviewer provider.
 #[tokio::test]
 async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
-    use patok_config::ProviderKind;
+    use patok_providers::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
     let provider = MockProvider::per_session(vec![

@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::time::{Duration, Instant, SystemTime};
 
-use patok_config::{EnumSpelling, ProviderKind, SettingValue, Theme as ThemeKey, TuiSettings};
+use patok_config::{EnumSpelling, SettingValue, Theme as ThemeKey, TuiSettings};
 use patok_core::event::{AgentRole, Phase, Snapshot, Usage};
 use patok_core::output::{LineKind, LineOrigin, Pane};
 use patok_core::pipeline::PipelineState;
 use patok_core::scenario::{ProjectScan, Scenario};
 use patok_core::task::Task;
+use patok_providers::ProviderKind;
 use ratatui::layout::Rect;
 
 use crate::dialog_editor::DialogEditor;

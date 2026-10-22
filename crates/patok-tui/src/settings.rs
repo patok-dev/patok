@@ -131,8 +131,9 @@ pub use patok_wire::to_proto;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patok_config::{EnumSpelling, ProviderName, Theme};
+    use patok_config::{EnumSpelling, Theme};
     use patok_proto::settings_change::Change;
+    use patok_providers::ProviderName;
 
     /// A value valid for the core registry kind, the sample the drift test sends
     /// through the wire and reads back.
@@ -199,8 +200,8 @@ mod tests {
     /// resolves to.
     #[test]
     fn every_provider_variant_resolves_and_round_trips_the_wire() {
-        use patok_config::ProviderKind;
         use patok_engine::from_proto;
+        use patok_providers::ProviderKind;
         use patok_providers::{ProviderError, resolve};
 
         for &(kind, spelling) in ProviderKind::VARIANTS {

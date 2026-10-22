@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use super::daemon::{
-    DAEMON_FIELDS, DaemonSettings, FieldKind, IMMEDIATE_DAEMON_FIELDS, ProviderName, daemon_field,
+    DAEMON_FIELDS, DaemonSettings, FieldKind, IMMEDIATE_DAEMON_FIELDS, daemon_field,
     daemon_field_value,
 };
 use super::tui::Theme;
@@ -20,6 +20,7 @@ use super::{ConfigFiles, project_file};
 use patok_core::settings::{ApplyTiming, EnumSpelling, SettingValue};
 use patok_core::update::UpdateChannel;
 use patok_core::utils::atomic_write::write_atomic;
+use patok_providers::ProviderName;
 
 /// A persistence failure; `message` is user-facing.
 #[derive(Debug, thiserror::Error)]
@@ -294,7 +295,7 @@ fn write_field(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ProviderName;
+    use patok_providers::ProviderName;
 
     #[test]
     fn apply_timing_follows_the_registry() {

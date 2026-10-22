@@ -18,11 +18,11 @@
 //! oneof field, and one line in the list below -- nothing else on the wire.
 
 use patok_config::{
-    AcceptPolicy as CoreAcceptPolicy, EnumSpelling, ProviderName, RunMode as CoreRunMode,
-    SettingValue,
+    AcceptPolicy as CoreAcceptPolicy, EnumSpelling, RunMode as CoreRunMode, SettingValue,
 };
 use patok_proto::settings_change::Change;
 use patok_proto::{AcceptPolicy, Provider, Role, RoleModel, RoleProvider, RunMode};
+use patok_providers::ProviderName;
 
 /// The agent-role table, generated from one list: the config spelling of every proto
 /// role (`role_name`, the `<role>_model` / `<role>_provider` key prefix direction)

@@ -16,9 +16,10 @@ use std::sync::LazyLock;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use patok_config::{
-    EnumSpelling, FieldKind as CoreFieldKind, ProviderName, SettingValue, Theme, UpdateChannel,
-    daemon_field, daemon_help, daemon_label, tui_help,
+    EnumSpelling, FieldKind as CoreFieldKind, SettingValue, Theme, UpdateChannel, daemon_field,
+    daemon_help, daemon_label, tui_help,
 };
+use patok_providers::ProviderName;
 use ratatui::layout::Rect;
 
 use crate::app::Action;

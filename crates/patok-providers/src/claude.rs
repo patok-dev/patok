@@ -1,8 +1,8 @@
 //! The Claude provider: drives the `claude` CLI in print mode and normalises its
 //! stream-json output.
 
+use crate::ProviderKind;
 use async_trait::async_trait;
-use patok_config::ProviderKind;
 use patok_core::event::{AgentEvent, Usage, preview};
 use serde_json::Value;
 

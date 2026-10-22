@@ -1,8 +1,8 @@
 //! The Mistral provider: drives the `vibe` CLI in programmatic mode and normalises its
 //! newline-delimited JSON stream (`--output streaming`).
 
+use crate::ProviderKind;
 use async_trait::async_trait;
-use patok_config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 

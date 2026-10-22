@@ -3,8 +3,8 @@
 //! and human-duration formatters) live in the shared output module
 //! ([`patok_core::output`]); the frame keeps the timer's `mm:ss` formatting.
 
-use patok_config::ProviderKind;
 use patok_core::output::{LineKind, OutLine, Pane, agent_display};
+use patok_providers::ProviderKind;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};

@@ -7,8 +7,8 @@
 //! has, built-in web search, follows the role allowlist through the `tools.web_search`
 //! config override.
 
+use crate::ProviderKind;
 use async_trait::async_trait;
-use patok_config::ProviderKind;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
