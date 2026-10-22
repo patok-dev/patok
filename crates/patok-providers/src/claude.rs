@@ -20,8 +20,8 @@ impl Provider for Claude {
         CLAUDE.slug
     }
 
-    fn supports_reviewer_model(&self) -> bool {
-        CLAUDE.supports_reviewer_model
+    fn supports_model_selection(&self) -> bool {
+        CLAUDE.supports_model_selection
     }
 
     fn check_available(&self) -> Result<(), ProviderError> {

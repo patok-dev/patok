@@ -1250,7 +1250,7 @@ async fn agent_runs_push_their_starting_event_before_any_output() {
 #[tokio::test]
 async fn a_configured_model_names_the_model_in_the_starting_event() {
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
-    let provider = MockProvider::new(builder_steps()).with_reviewer_model(true);
+    let provider = MockProvider::new(builder_steps()).with_model_selection(true);
     let engine = fixture.engine_configured(provider, "builder_model = \"mistral-small\"\n");
     let mut attachment = engine.attach().unwrap();
 
@@ -1271,7 +1271,7 @@ async fn each_role_runs_on_its_own_model_not_the_builders() {
         })],
         builder_steps(),
     ])
-    .with_reviewer_model(true);
+    .with_model_selection(true);
     let recorded = provider.clone();
     std::fs::write(
         fixture.project_config(),
@@ -3682,7 +3682,7 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
                 provider
                     .clone()
                     .with_slug(kind.as_str())
-                    .with_reviewer_model(kind == ProviderKind::Claude),
+                    .with_model_selection(kind == ProviderKind::Claude),
             ))
         },
     );
@@ -3723,6 +3723,106 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
         .find(|s| s.label == "T1.1")
         .expect("the builder session ran");
     assert!(build.model.is_none());
+}
+
+/// A role on a provider without model selection never receives its model, even
+/// when the resolved mock claims to accept one: the catalog gate drops it.
+#[tokio::test]
+async fn a_vibe_role_never_receives_its_model_even_when_the_mock_accepts_one() {
+    let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("greeting.txt", "hello\n", "none"),
+        review_pass(),
+    ]);
+    let recorded = provider.clone();
+    std::fs::write(
+        fixture.project_config(),
+        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nbuilder_provider = \"vibe\"\nbuilder_model = \"mistral-small\"\nreviewer_provider = \"claude\"\nreviewer_model = \"opus\"\n",
+    )
+    .unwrap();
+    let engine = patok_engine::Engine::configured_with_env(
+        fixture.config_review(),
+        &patok_config::DaemonEnv::default(),
+        move |kind| {
+            Ok(std::sync::Arc::new(
+                provider
+                    .clone()
+                    .with_slug(kind.as_str())
+                    .with_model_selection(true),
+            ))
+        },
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(
+        started(&events).contains(&("builder".into(), "vibe".into(), None)),
+        "{:#?}",
+        started(&events)
+    );
+    let sessions = recorded.sessions();
+    let build = sessions
+        .iter()
+        .find(|s| s.label == "T1.1")
+        .expect("the builder session ran");
+    assert!(build.model.is_none());
+    let review = sessions
+        .iter()
+        .find(|s| s.label == "review")
+        .expect("the review session ran");
+    assert_eq!(review.model.as_deref(), Some("opus"));
+}
+
+/// Codex accepts a model choice, so the reviewer's configured model reaches it.
+#[tokio::test]
+async fn a_codex_role_receives_its_model() {
+    use patok_providers::ProviderKind;
+
+    let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
+    let provider = MockProvider::per_session(vec![
+        builder_with_claims("greeting.txt", "hello\n", "none"),
+        review_pass(),
+    ]);
+    let recorded = provider.clone();
+    std::fs::write(
+        fixture.project_config(),
+        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nreviewer_provider = \"codex\"\nreviewer_model = \"gpt-5-codex\"\n",
+    )
+    .unwrap();
+    let engine = patok_engine::Engine::configured_with_env(
+        fixture.config_review(),
+        &patok_config::DaemonEnv::default(),
+        move |kind| {
+            Ok(std::sync::Arc::new(
+                provider
+                    .clone()
+                    .with_slug(kind.as_str())
+                    .with_model_selection(kind != ProviderKind::Vibe),
+            ))
+        },
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    let events = collect_until(&mut attachment.events, is_phase_startup).await;
+
+    assert!(
+        started(&events).contains(&(
+            "reviewer".into(),
+            "codex".into(),
+            Some("gpt-5-codex".into())
+        )),
+        "{:#?}",
+        started(&events)
+    );
+    let sessions = recorded.sessions();
+    let review = sessions
+        .iter()
+        .find(|s| s.label == "review")
+        .expect("the review session ran");
+    assert_eq!(review.model.as_deref(), Some("gpt-5-codex"));
 }
 
 /// The vibe reviewer provider (including its `mistral` alias spelling) routes
@@ -3809,7 +3909,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
                 provider
                     .clone()
                     .with_slug(kind.as_str())
-                    .with_reviewer_model(kind == ProviderKind::Claude),
+                    .with_model_selection(kind == ProviderKind::Claude),
             ))
         },
     );

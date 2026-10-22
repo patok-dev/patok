@@ -27,9 +27,9 @@ pub struct ProviderInfo {
     pub slug: &'static str,
     /// Name of the CLI binary looked up on `PATH`.
     pub binary: &'static str,
-    /// Whether the engine routes the configured reviewer model to this provider
-    /// (see `Provider::supports_reviewer_model`).
-    pub supports_reviewer_model: bool,
+    /// Whether the harness accepts a model choice. The engine passes a role's
+    /// `<role>_model` only to providers that do (see `Provider::supports_model_selection`).
+    pub supports_model_selection: bool,
 }
 
 /// Anthropic's Claude Code CLI.
@@ -39,7 +39,7 @@ pub(crate) const CLAUDE: ProviderInfo = ProviderInfo {
     harness_name: "Claude Code",
     slug: "claude",
     binary: "claude",
-    supports_reviewer_model: true,
+    supports_model_selection: true,
 };
 
 /// OpenAI's Codex CLI.
@@ -49,7 +49,7 @@ pub(crate) const CODEX: ProviderInfo = ProviderInfo {
     harness_name: "Codex",
     slug: "codex",
     binary: "codex",
-    supports_reviewer_model: false,
+    supports_model_selection: true,
 };
 
 /// Mistral's Vibe CLI (config alias `mistral`, see `ProviderName`).
@@ -59,7 +59,7 @@ pub(crate) const VIBE: ProviderInfo = ProviderInfo {
     harness_name: "Vibe",
     slug: "vibe",
     binary: "vibe",
-    supports_reviewer_model: false,
+    supports_model_selection: false,
 };
 
 /// Every provider, one entry per `ProviderKind`, in `ProviderKind` declaration order.
@@ -107,16 +107,16 @@ mod tests {
         assert_eq!(VIBE.harness_name, "Vibe");
         assert_eq!(vibe::Vibe.slug(), VIBE.slug);
         assert_eq!(
-            claude::Claude.supports_reviewer_model(),
-            CLAUDE.supports_reviewer_model
+            claude::Claude.supports_model_selection(),
+            CLAUDE.supports_model_selection
         );
         assert_eq!(
-            codex::Codex.supports_reviewer_model(),
-            CODEX.supports_reviewer_model
+            codex::Codex.supports_model_selection(),
+            CODEX.supports_model_selection
         );
         assert_eq!(
-            vibe::Vibe.supports_reviewer_model(),
-            VIBE.supports_reviewer_model
+            vibe::Vibe.supports_model_selection(),
+            VIBE.supports_model_selection
         );
         assert_eq!(<codex::Codex as CliSpec>::INFO, &CODEX);
         assert_eq!(<vibe::Vibe as CliSpec>::INFO, &VIBE);
@@ -126,8 +126,8 @@ mod tests {
     fn binaries_are_the_provider_clis() {
         let facts: Vec<_> = CATALOG
             .iter()
-            .map(|i| (i.binary, i.supports_reviewer_model))
+            .map(|i| (i.binary, i.supports_model_selection))
             .collect();
-        assert_eq!(facts, [("claude", true), ("codex", false), ("vibe", false)]);
+        assert_eq!(facts, [("claude", true), ("codex", true), ("vibe", false)]);
     }
 }

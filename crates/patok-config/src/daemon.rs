@@ -14,7 +14,7 @@ use std::path::Path;
 
 use schemars::JsonSchema;
 
-use patok_providers::ProviderName;
+use patok_providers::{ProviderKind, ProviderName};
 
 use super::{ConfigFiles, Fields, load_layers, migrate_project_file, project_file};
 use patok_core::settings::{EnumSpelling, SettingValue, config_enum};
@@ -1134,11 +1134,59 @@ pub fn load_daemon(
             ));
         }
     }
+    model_selection_warnings(&settings, &mut warnings);
     apply_env(&mut settings, env, &mut warnings);
     DaemonConfig {
         settings,
         warnings,
         errors,
+    }
+}
+
+/// A model for a harness without model selection is never passed on (the
+/// engine's role routing drops it); say so instead of ignoring it silently.
+fn model_selection_warnings(settings: &DaemonSettings, warnings: &mut Vec<String>) {
+    for (field, provider, model) in [
+        (
+            "research_model",
+            settings.research_provider,
+            &settings.research_model,
+        ),
+        (
+            "planner_model",
+            settings.planner_provider,
+            &settings.planner_model,
+        ),
+        (
+            "builder_model",
+            settings.builder_provider,
+            &settings.builder_model,
+        ),
+        (
+            "reviewer_model",
+            settings.reviewer_provider,
+            &settings.reviewer_model,
+        ),
+        (
+            "discovery_model",
+            settings.discovery_provider,
+            &settings.discovery_model,
+        ),
+        (
+            "orchestrator_model",
+            settings.orchestrator_provider,
+            &settings.orchestrator_model,
+        ),
+    ] {
+        let Some(info) = provider.kind().map(ProviderKind::info) else {
+            continue;
+        };
+        if !model.is_empty() && !info.supports_model_selection {
+            warnings.push(format!(
+                "`{field} = {model:?}` ignored: {} does not support model selection",
+                info.harness_name
+            ));
+        }
     }
 }
 
@@ -1205,7 +1253,6 @@ pub(crate) fn apply_env(
 mod tests {
     use super::*;
     use crate::{SettingValue, set_daemon_field};
-    use patok_providers::ProviderKind;
 
     /// The daemon schema loaded from a project-local config file holding `text`,
     /// written into the project's slot of the projects dir.
@@ -1222,6 +1269,41 @@ mod tests {
             data.path(),
             &DaemonEnv::default(),
         )
+    }
+
+    #[test]
+    fn a_vibe_role_model_warns_that_it_is_ignored() {
+        let loaded = load_project(
+            "[daemon]\nbuilder_provider = \"vibe\"\nbuilder_model = \"mistral-small\"\n",
+        );
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+        let w = &loaded.warnings[0];
+        assert!(w.contains("builder_model"), "{w}");
+        assert!(w.contains("mistral-small"), "{w}");
+        assert!(w.contains("Vibe does not support model selection"), "{w}");
+    }
+
+    #[test]
+    fn the_mistral_alias_warns_with_the_vibe_harness_name() {
+        let loaded =
+            load_project("[daemon]\nreviewer_provider = \"mistral\"\nreviewer_model = \"x\"\n");
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|w| w.contains("reviewer_model") && w.contains("Vibe")),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn model_capable_and_empty_models_do_not_warn() {
+        let loaded = load_project(
+            "[daemon]\nbuilder_provider = \"codex\"\nbuilder_model = \"gpt-5\"\n\
+             planner_model = \"opus\"\nresearch_provider = \"vibe\"\n",
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
     #[test]

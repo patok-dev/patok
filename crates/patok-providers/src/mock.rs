@@ -42,9 +42,9 @@ pub struct MockProvider {
     /// Overrides the provider slug, so tests can tell mock instances routed
     /// for different provider kinds apart (`None`: "mock").
     slug: Option<&'static str>,
-    /// Whether `supports_reviewer_model()` reports true, so tests can script
-    /// either answer; defaults to false like the non-claude providers.
-    supports_reviewer_model: bool,
+    /// Whether `supports_model_selection()` reports true, so tests can script
+    /// either answer; defaults to false, like Vibe.
+    supports_model_selection: bool,
     /// Whether every session reports a rate limit.
     rate_limited: bool,
     sessions: Arc<Mutex<Vec<RecordedSession>>>,
@@ -57,7 +57,7 @@ impl MockProvider {
             scripts: vec![steps],
             exit: ExitKind::Completed,
             slug: None,
-            supports_reviewer_model: false,
+            supports_model_selection: false,
             rate_limited: false,
             sessions: Arc::default(),
         }
@@ -72,7 +72,7 @@ impl MockProvider {
             scripts,
             exit: ExitKind::Completed,
             slug: None,
-            supports_reviewer_model: false,
+            supports_model_selection: false,
             rate_limited: false,
             sessions: Arc::default(),
         }
@@ -91,11 +91,10 @@ impl MockProvider {
         self
     }
 
-    /// Reports `on` from `supports_reviewer_model()`, so tests can script a
-    /// provider that runs the reviewer with the configured model (like the
-    /// claude provider) or without it.
-    pub fn with_reviewer_model(mut self, on: bool) -> Self {
-        self.supports_reviewer_model = on;
+    /// Reports `on` from `supports_model_selection()`, so tests can script a
+    /// provider that accepts a model choice (like the claude provider) or not.
+    pub fn with_model_selection(mut self, on: bool) -> Self {
+        self.supports_model_selection = on;
         self
     }
 
@@ -116,8 +115,8 @@ impl Provider for MockProvider {
         self.slug.unwrap_or("mock")
     }
 
-    fn supports_reviewer_model(&self) -> bool {
-        self.supports_reviewer_model
+    fn supports_model_selection(&self) -> bool {
+        self.supports_model_selection
     }
 
     /// A scripted provider drives no CLI, so it is always available.
@@ -234,18 +233,18 @@ impl MockProvider {
 mod tests {
     use super::*;
 
-    /// The scripted provider defaults to the non-claude answers -- no reviewer
-    /// model, no CLI to check -- and `with_reviewer_model` flips the capability.
+    /// The scripted provider defaults to the non-claude answers -- no model
+    /// selection, no CLI to check -- and `with_model_selection` flips the capability.
     #[test]
     fn the_capability_defaults_off_and_flips_with_the_builder() {
         let mock = MockProvider::new(vec![]);
-        assert!(!mock.supports_reviewer_model());
+        assert!(!mock.supports_model_selection());
         assert!(mock.check_available().is_ok());
         assert_eq!(mock.slug(), "mock");
-        let claude_like = mock.clone().with_slug("claude").with_reviewer_model(true);
-        assert!(claude_like.supports_reviewer_model());
+        let claude_like = mock.clone().with_slug("claude").with_model_selection(true);
+        assert!(claude_like.supports_model_selection());
         assert_eq!(claude_like.slug(), "claude");
         // The flag is per instance: the default mock keeps its answer.
-        assert!(!mock.supports_reviewer_model());
+        assert!(!mock.supports_model_selection());
     }
 }

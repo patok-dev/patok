@@ -39,8 +39,8 @@ impl Provider for Codex {
         CODEX.slug
     }
 
-    fn supports_reviewer_model(&self) -> bool {
-        CODEX.supports_reviewer_model
+    fn supports_model_selection(&self) -> bool {
+        CODEX.supports_model_selection
     }
 
     fn check_available(&self) -> Result<(), ProviderError> {
