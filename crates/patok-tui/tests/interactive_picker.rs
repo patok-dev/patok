@@ -185,10 +185,10 @@ fn idle_rendering_shows_the_rows_without_a_warning() {
     let mut app = app();
     let _dir = open_with(&mut app, &["claude", "codex"]);
     let screen = draw(&app, 80, 24);
-    assert!(screen.contains("▶ Claude -- claude"), "{screen}");
+    assert!(screen.contains("▶ Claude Code -- claude"), "{screen}");
     assert!(screen.contains("Codex -- codex"), "{screen}");
     assert!(
-        screen.contains("Mistral -- `vibe` not found on PATH"),
+        screen.contains("Vibe -- `vibe` not found on PATH"),
         "{screen}"
     );
     assert!(!screen.contains(WARNING), "{screen}");

@@ -283,7 +283,7 @@ fn header_and_frame_title_show_the_active_agent_of_the_plan_stage() {
             .unwrap()
             .starts_with("─ Running ─ sprint")
     );
-    assert!(planner_screen.contains(" Planner | Claude - claude-sonnet-5.5 "));
+    assert!(planner_screen.contains(" Planner | Claude Code - claude-sonnet-5.5 "));
     // The plan output keeps its markdown rendering.
     assert!(planner_screen.contains("Plan"));
     assert!(planner_screen.contains("Read task.rs first."));
@@ -301,7 +301,7 @@ fn header_and_frame_title_show_the_active_agent_of_the_plan_stage() {
             .unwrap()
             .starts_with("─ Running ─ sprint")
     );
-    assert!(builder_screen.contains(" Builder | Claude - claude-sonnet-5.5 "));
+    assert!(builder_screen.contains(" Builder | Claude Code - claude-sonnet-5.5 "));
     insta::assert_snapshot!(builder_screen);
 }
 
@@ -335,7 +335,7 @@ fn header_and_frame_title_show_the_research_agent_of_the_research_stage() {
             .unwrap()
             .starts_with("─ Running ─ sprint")
     );
-    assert!(screen.contains(" Research | Claude - claude-sonnet-5.5 "));
+    assert!(screen.contains(" Research | Claude Code - claude-sonnet-5.5 "));
     assert!(screen.contains("What does the parser do today?"));
     insta::assert_snapshot!(screen);
 }
@@ -374,7 +374,7 @@ fn header_and_frame_title_show_the_reviewer_agent_of_the_review_stage() {
             .unwrap()
             .starts_with("─ Running ─ sprint")
     );
-    assert!(screen.contains(" Reviewer | Claude - claude-sonnet-5.5 "));
+    assert!(screen.contains(" Reviewer | Claude Code - claude-sonnet-5.5 "));
     assert!(screen.contains("Verifying the builder's claims."));
     insta::assert_snapshot!(screen);
 }
@@ -409,8 +409,11 @@ fn a_reviewer_session_started_switches_the_frame_title_to_its_provider_and_model
         text: "## Review\nVerifying the builder's claims.".into(),
     }));
     let screen = draw(&app, 80, 14);
-    assert!(screen.contains(" Reviewer | Claude - opus "), "{screen}");
-    assert!(!screen.contains("Mistral"), "{screen}");
+    assert!(
+        screen.contains(" Reviewer | Claude Code - opus "),
+        "{screen}"
+    );
+    assert!(!screen.contains("Vibe"), "{screen}");
     insta::assert_snapshot!(screen);
 
     // The session ends: the title returns to the configured provider, never
@@ -421,8 +424,8 @@ fn a_reviewer_session_started_switches_the_frame_title_to_its_provider_and_model
         duration_ms: 45_000,
     });
     let screen = draw(&app, 80, 14);
-    assert!(!screen.contains("Claude - opus"), "{screen}");
-    assert!(screen.contains(" Reviewer | Mistral "), "{screen}");
+    assert!(!screen.contains("Claude Code - opus"), "{screen}");
+    assert!(screen.contains(" Reviewer | Vibe "), "{screen}");
 
     // A builder session still shows its own provider and model.
     app.apply(EngineEvent::AgentStarted {
@@ -436,7 +439,7 @@ fn a_reviewer_session_started_switches_the_frame_title_to_its_provider_and_model
     });
     let screen = draw(&app, 80, 14);
     assert!(
-        screen.contains(" Builder | Mistral - mistral-small "),
+        screen.contains(" Builder | Vibe - mistral-small "),
         "{screen}"
     );
 }
@@ -753,8 +756,8 @@ fn output_frame_title_colours_only_the_agent_type() {
         Theme::agent_name_color(Theme::DARK, "builder"),
         true,
     );
-    assert_segment(&buffer, x + 8, " | Claude", detail, false);
-    assert_segment(&buffer, x + 17, " - claude-sonnet-5.5 ", detail, false);
+    assert_segment(&buffer, x + 8, " | Claude Code", detail, false);
+    assert_segment(&buffer, x + 22, " - claude-sonnet-5.5 ", detail, false);
     // The timer stays anchored to the frame's right edge, which the rail does
     // not move.
     let timer = app.layout.output_area.get().right() - 8;
@@ -774,8 +777,8 @@ fn output_frame_title_colours_only_the_agent_type() {
         Theme::agent_name_color(Theme::DARK, "planner"),
         true,
     );
-    assert_segment(&buffer, x + 8, " | Claude", detail, false);
-    assert_segment(&buffer, x + 17, " - claude-sonnet-5.5 ", detail, false);
+    assert_segment(&buffer, x + 8, " | Claude Code", detail, false);
+    assert_segment(&buffer, x + 22, " - claude-sonnet-5.5 ", detail, false);
     // The timer stays anchored to the frame's right edge, which the rail does
     // not move.
     let timer = app.layout.output_area.get().right() - 8;
@@ -867,7 +870,7 @@ fn the_timer_renders_right_aligned_on_the_title_line_while_a_session_runs() {
     app.run.provider = "claude".into();
     app.run.model = "claude-sonnet-5.5".into();
     let title = draw(&app, 40, 12).lines().nth(1).unwrap().to_string();
-    assert!(title.contains(" Builder | Claude "), "{title}");
+    assert!(title.contains(" Builder | Claude Code "), "{title}");
     assert!(title.ends_with(" 01:05 ┐"), "{title}");
     let title = draw(&app, 26, 10).lines().nth(1).unwrap().to_string();
     assert!(title.contains("┌ Builder "), "{title}");
@@ -938,7 +941,7 @@ fn output_frame_title_truncates_when_the_pane_is_narrow() {
     // 40 columns leave the output frame too narrow for the model.
     insta::assert_snapshot!(draw(&app, 40, 12));
     // Narrower still: the provider goes too, leaving the agent type.
-    app.run.provider = "vibe".into();
+    app.run.provider = "claude".into();
     app.run.model = String::new();
     insta::assert_snapshot!(draw(&app, 26, 10));
 }

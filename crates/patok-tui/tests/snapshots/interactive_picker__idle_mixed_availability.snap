@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/interactive_picker.rs
 expression: screen
 ---
 ─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
-┌ Builder | Claude ────────────────────────────────────────────────────────────┐
+┌ Builder | Claude Code ───────────────────────────────────────────────────────┐
 │no output yet                                                                 │
 │                                                                              │
 │                                                                              │
@@ -12,9 +12,9 @@ expression: screen
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ Tasks | 0/1 - 1 left ────────────────────────────────────────────────────────┐
 │○ T1.1  scaf┌─────────────────── Interactive ───────────── [ x ] ┐            │
-│            │▶ Claude -- claude                                  │            │
+│            │▶ Claude Code -- claude                             │            │
 │            │  Codex -- codex                                    │            │
-│            │  Mistral -- `vibe` not found on PATH               │            │
+│            │  Vibe -- `vibe` not found on PATH                  │            │
 │            │ ↑↓ move              [ Enter ] Open  [ Esc ] Close │            │
 │            └────────────────────────────────────────────────────┘            │
 │                                                                              │

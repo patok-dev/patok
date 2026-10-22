@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/ui.rs
 expression: "draw(&app, 40, 12)"
 ---
 ─ Stopped ─── R > P > B > R   D ────────
-─ Builder | Claude ───────────── [ ↓ ] ─
+─ Builder | Claude Code ──────── [ ↓ ] ─
 ┌ Tasks | 1/3 - 2 left ────────────────┐
 │✔ T1.1  scaffold the workspace        │
 │○ T1.2  add the parser for task files │

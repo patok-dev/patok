@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
 ─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
-┌ Research | Claude - claude-sonnet-5.5 ──────────────────────────────── 00:00 ┐
+┌ Research | Claude Code - claude-sonnet-5.5 ─────────────────────────── 00:00 ┐
 │── T1.2: add the parser for task files                                        │
 │Investigation                                                                 │
 │What does the parser do today?                                                │

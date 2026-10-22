@@ -30,17 +30,17 @@ pub(super) fn output_hints() -> Vec<&'static str> {
     vec!["↑↓ scroll", "PgUp/PgDn page", "End follow", "Tab tasks"]
 }
 
-/// The provider's display name for the output frame title ("claude" -> "Claude");
+/// The provider's harness name for the output frame title ("claude" -> "Claude Code");
 /// a slug no engine provider spells (the unimplemented names, the mock) passes
 /// through unchanged.
 pub(super) fn provider_display_name(provider: &str) -> &str {
     match ProviderKind::parse(provider) {
-        Some(kind) => kind.display_name(),
+        Some(kind) => kind.info().harness_name,
         None => provider,
     }
 }
 
-/// The output frame title: " Builder | Claude - claude-sonnet-5.5 ", dropping the
+/// The output frame title: " Builder | Claude Code - claude-sonnet-5.5 ", dropping the
 /// model first and then the provider when `width` is too narrow; the agent type
 /// always stays, so the title is never empty.
 #[cfg(any(test, feature = "test-support"))]

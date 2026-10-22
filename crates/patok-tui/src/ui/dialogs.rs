@@ -275,7 +275,7 @@ pub(crate) fn render_interactive_picker(frame: &mut Frame, app: &App) {
             };
             let mut line = Line::from(vec![
                 Span::raw(marker),
-                Span::styled(kind.display_name(), label_style),
+                Span::styled(kind.info().harness_name, label_style),
                 Span::styled(
                     format!(" -- {detail}"),
                     Style::new().fg(if focused && available {
@@ -441,14 +441,6 @@ pub(crate) fn terminal_body(area: Rect) -> Rect {
     body
 }
 
-fn terminal_title(kind: ProviderKind) -> &'static str {
-    match kind {
-        ProviderKind::Claude => " Claude ",
-        ProviderKind::Codex => " Codex ",
-        ProviderKind::Vibe => " Mistral ",
-    }
-}
-
 /// The embedded terminal: a large modal whose body is the child's screen,
 /// with the real cursor placed while the child runs. The close, body and
 /// footer rects are recorded for the mouse handling. The footer hints that Esc
@@ -459,12 +451,8 @@ pub(crate) fn render_terminal(frame: &mut Frame, app: &App) {
     };
     let theme = app.theme();
     let area = Modal::Terminal.area(app, frame.area());
-    let chrome = render_modal_frame(
-        frame,
-        theme,
-        area,
-        ModalTitle::Centered(terminal_title(terminal.kind)),
-    );
+    let title = format!(" {} ", terminal.kind.info().harness_name);
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Centered(&title));
     terminal.close.set(chrome.close);
     let body = terminal_body(area);
     let [_, footer] =
