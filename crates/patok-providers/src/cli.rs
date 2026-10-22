@@ -7,7 +7,7 @@ use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
 use crate::process::{self, LineParser, Parsed, ProcessSpec};
-use crate::{ProviderError, SessionRequest, SessionResult, Tool, cli_in};
+use crate::{ProviderError, ProviderInfo, SessionRequest, SessionResult, Tool, cli_in};
 
 /// Tool-call inputs are truncated to this many characters.
 pub(crate) const TOOL_PREVIEW: usize = 120;
@@ -103,12 +103,10 @@ pub(crate) use forward_line_parser;
 
 /// What differs between the JSONL CLI providers; everything else they do is shared here.
 pub(crate) trait CliSpec {
-    /// Name of the CLI binary this provider needs.
-    const CLI: &'static str;
+    /// This provider's catalog entry: its slug and CLI binary.
+    const INFO: &'static ProviderInfo;
     /// The provider's line parser.
     type Parser: LineParser + Default;
-    /// Short provider identifier, e.g. `codex`.
-    fn slug() -> &'static str;
     /// The full CLI argument list for one session.
     fn build_args(request: &SessionRequest) -> Vec<String>;
 }
@@ -135,7 +133,7 @@ pub(crate) fn check_available_in(
 /// Fails with a clear error naming the CLI when it is not on `PATH`. Run before a
 /// session starts.
 pub(crate) fn check_available<S: CliSpec>() -> Result<(), ProviderError> {
-    check_cli_on_path(S::CLI)
+    check_cli_on_path(S::INFO.binary)
 }
 
 /// Runs one session: check availability, spawn the CLI, stream its JSONL output through
@@ -146,11 +144,11 @@ pub(crate) async fn run_session<S: CliSpec>(
 ) -> Result<SessionResult, ProviderError> {
     check_available::<S>()?;
     let spec = ProcessSpec {
-        program: S::CLI.into(),
+        program: S::INFO.binary.into(),
         args: S::build_args(&request),
         env: vec![],
         stdin: String::new(),
     };
     let model = request.model.clone().unwrap_or_default();
-    process::run(spec, &request, S::Parser::default(), S::slug(), &model).await
+    process::run(spec, &request, S::Parser::default(), S::INFO.slug, &model).await
 }

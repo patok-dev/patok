@@ -33,20 +33,19 @@ impl ProviderKind {
     pub fn interactive_launch(self) -> InteractiveLaunch {
         match self {
             Self::Claude => InteractiveLaunch {
-                program: "claude",
+                program: Self::Claude.info().binary,
                 args: &[],
                 // Marks a nested Claude session; patok may itself run inside Claude Code,
                 // which would otherwise make the child refuse to start.
                 env: &[("CLAUDECODE", "")],
             },
             Self::Codex => InteractiveLaunch {
-                program: "codex",
+                program: Self::Codex.info().binary,
                 args: &[],
                 env: &[],
             },
-            // The binary is `vibe`, not the `mistral` slug.
             Self::Mistral => InteractiveLaunch {
-                program: "vibe",
+                program: Self::Mistral.info().binary,
                 args: &[],
                 env: &[],
             },

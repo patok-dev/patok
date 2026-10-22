@@ -8,6 +8,7 @@ use patok_core::event::AgentEvent;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
+mod catalog;
 pub mod claude;
 mod cli;
 pub mod codex;
@@ -19,6 +20,7 @@ mod process;
 pub(crate) mod test_util;
 pub mod vibe;
 
+pub use catalog::{CATALOG, ProviderInfo};
 pub use kind::{
     INTERACTIVE_TERMINAL_ENV, InteractiveLaunch, ProviderKind, ProviderName,
     strip_from_interactive_env,
