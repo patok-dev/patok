@@ -820,6 +820,7 @@ impl App {
     pub(crate) fn open_settings(&mut self) {
         if self.modals.push(Modal::Overlay) {
             self.overlay.reset();
+            self.overlay.sync_readout(&self.settings);
         }
     }
 
@@ -866,7 +867,7 @@ impl App {
             self.settings.insert(field.to_string(), value);
         }
         if self.modals.contains(Modal::Overlay) {
-            self.overlay.drafts.remove(field);
+            self.overlay.settle_draft(field, &self.settings);
         }
     }
 
