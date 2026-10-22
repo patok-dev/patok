@@ -8,7 +8,9 @@ use async_trait::async_trait;
 use patok_core::event::AgentEvent;
 use serde_json;
 
-use crate::{ExitKind, Provider, ProviderError, SessionRequest, SessionResult, Tool};
+use crate::{
+    DiscoveredModel, ExitKind, Provider, ProviderError, SessionRequest, SessionResult, Tool,
+};
 
 /// One step of a scripted session.
 #[derive(Clone, Debug)]
@@ -47,6 +49,8 @@ pub struct MockProvider {
     supports_model_selection: bool,
     /// Whether every session reports a rate limit.
     rate_limited: bool,
+    /// What `discover_models()` returns (`None`: the default unsupported error).
+    discovered_models: Option<Vec<DiscoveredModel>>,
     sessions: Arc<Mutex<Vec<RecordedSession>>>,
 }
 
@@ -59,6 +63,7 @@ impl MockProvider {
             slug: None,
             supports_model_selection: false,
             rate_limited: false,
+            discovered_models: None,
             sessions: Arc::default(),
         }
     }
@@ -74,6 +79,7 @@ impl MockProvider {
             slug: None,
             supports_model_selection: false,
             rate_limited: false,
+            discovered_models: None,
             sessions: Arc::default(),
         }
     }
@@ -104,6 +110,13 @@ impl MockProvider {
         self
     }
 
+    /// Reports `models` from `discover_models()`, so tests can script a provider
+    /// whose harness lists models.
+    pub fn with_discovered_models(mut self, models: Vec<DiscoveredModel>) -> Self {
+        self.discovered_models = Some(models);
+        self
+    }
+
     pub fn sessions(&self) -> Vec<RecordedSession> {
         self.sessions.lock().expect("mock lock").clone()
     }
@@ -122,6 +135,15 @@ impl Provider for MockProvider {
     /// A scripted provider drives no CLI, so it is always available.
     fn check_available(&self) -> Result<(), ProviderError> {
         Ok(())
+    }
+
+    async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        match &self.discovered_models {
+            Some(models) => Ok(models.clone()),
+            None => Err(ProviderError::DiscoveryUnsupported {
+                provider: self.slug().into(),
+            }),
+        }
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
@@ -246,5 +268,23 @@ mod tests {
         assert_eq!(claude_like.slug(), "claude");
         // The flag is per instance: the default mock keeps its answer.
         assert!(!mock.supports_model_selection());
+    }
+
+    #[tokio::test]
+    async fn discovery_defaults_to_unsupported_and_is_scriptable() {
+        let mock = MockProvider::new(vec![]);
+        match mock.discover_models().await {
+            Err(ProviderError::DiscoveryUnsupported { provider }) => assert_eq!(provider, "mock"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+        let models = vec![DiscoveredModel {
+            id: "m1".into(),
+            display_name: None,
+            listed: true,
+        }];
+        let scripted = mock
+            .with_slug("claude")
+            .with_discovered_models(models.clone());
+        assert_eq!(scripted.discover_models().await.unwrap(), models);
     }
 }

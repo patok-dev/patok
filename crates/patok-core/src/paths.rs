@@ -14,7 +14,8 @@ pub fn escape_path(path: &Path) -> String {
 }
 
 /// The env-injectable base-directory resolution shared by the runtime dir, the
-/// project data dir, the user config layers and the default review history:
+/// project data dir, the user config layers, the user cache dir and the default
+/// review history:
 /// `primary` when set and non-empty, else `fallback` (set and non-empty) joined
 /// with `fallback_subdir` (used as-is when the subdir is empty). Empty values
 /// count as unset; `None` when neither resolves.
@@ -144,6 +145,19 @@ pub fn config_dir(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<P
 pub fn config_dir_from_env() -> Option<PathBuf> {
     let get = |k: &str| std::env::var(k).ok();
     config_dir(get("XDG_CONFIG_HOME").as_deref(), get("HOME").as_deref())
+}
+
+/// The patok directory under the user's XDG cache dir: `$XDG_CACHE_HOME`,
+/// else `$HOME/.cache`, each joined with `patok`. Empty values count as
+/// unset; `None` when neither resolves.
+pub fn cache_dir(xdg_cache_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    Some(base_dir(xdg_cache_home, home, ".cache")?.join("patok"))
+}
+
+/// [`cache_dir`] from the process environment.
+pub fn cache_dir_from_env() -> Option<PathBuf> {
+    let get = |k: &str| std::env::var(k).ok();
+    cache_dir(get("XDG_CACHE_HOME").as_deref(), get("HOME").as_deref())
 }
 
 /// The engine socket inside a runtime directory.
@@ -393,5 +407,23 @@ mod tests {
         assert_eq!(config_dir(None, None), None);
         assert_eq!(config_dir(Some(""), None), None);
         assert_eq!(config_dir(Some(""), Some("")), None);
+    }
+
+    #[test]
+    fn cache_dir_falls_back_to_home() {
+        assert_eq!(
+            cache_dir(Some("/xdg"), Some("/home/u")),
+            Some(PathBuf::from("/xdg/patok"))
+        );
+        assert_eq!(
+            cache_dir(None, Some("/home/u")),
+            Some(PathBuf::from("/home/u/.cache/patok"))
+        );
+        assert_eq!(
+            cache_dir(Some(""), Some("/home/u")),
+            Some(PathBuf::from("/home/u/.cache/patok"))
+        );
+        assert_eq!(cache_dir(None, None), None);
+        assert_eq!(cache_dir(Some(""), Some("")), None);
     }
 }
