@@ -2354,3 +2354,61 @@ mod selected_row_colours {
         assert_confirm_colours(&buffer(&app), &app);
     }
 }
+
+/// An app whose engine readout reports `provider` for `field`, with the overlay open.
+fn open_with_provider(field: &str, provider: &str) -> App {
+    let mut settings = readout();
+    settings.insert(field.into(), SettingValue::Str(provider.into()));
+    let mut app = support::app(TASKS, "claude", settings, None);
+    assert_eq!(press(&mut app, KeyCode::Char('?')), Action::None);
+    app
+}
+
+fn model_row_visible(app: &App, field: &str) -> bool {
+    app.overlay
+        .visible()
+        .iter()
+        .any(|entry| matches!(entry, Entry::Row(row) if row.key == field))
+}
+
+#[test]
+fn a_vibe_role_hides_its_model_row() {
+    let app = open_with_provider("builder_provider", "vibe");
+    let screen = draw(&app, W, 105);
+    assert!(!screen.contains("builder model"), "{screen}");
+    assert!(screen.contains("builder provider  ‹ vibe ›"), "{screen}");
+    assert!(screen.contains("research model"), "{screen}");
+    assert!(screen.contains("reviewer model"), "{screen}");
+    insta::assert_snapshot!(screen);
+}
+
+#[test]
+fn cycling_the_builder_provider_to_vibe_hides_and_restores_its_model_row() {
+    let mut app = open();
+    focus_field(&mut app, "builder_provider");
+    assert!(model_row_visible(&app, "builder_model"));
+    // claude -> codex -> vibe
+    press(&mut app, KeyCode::Right);
+    assert!(model_row_visible(&app, "builder_model"));
+    press(&mut app, KeyCode::Right);
+    assert!(!model_row_visible(&app, "builder_model"));
+    assert_eq!(app.overlay.focused_row().unwrap().key, "builder_provider");
+    insta::assert_snapshot!(draw(&app, W, H));
+    // vibe -> claude
+    press(&mut app, KeyCode::Right);
+    assert!(model_row_visible(&app, "builder_model"));
+    assert_eq!(app.overlay.focused_row().unwrap().key, "builder_provider");
+}
+
+#[test]
+fn a_config_changed_provider_hides_the_model_row_in_the_open_overlay() {
+    let mut app = open();
+    assert!(draw(&app, W, 105).contains("builder model"));
+    app.apply(EngineEvent::ConfigChanged {
+        field: "builder_provider".into(),
+        value: SettingValue::Str("vibe".into()),
+        timing: ApplyTiming::NextUnitOfWork,
+    });
+    assert!(!model_row_visible(&app, "builder_model"));
+    assert!(!draw(&app, W, 105).contains("builder model"));
+}

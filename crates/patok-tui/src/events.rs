@@ -11,6 +11,7 @@ use patok_core::event::{AgentEvent, EngineEvent, Phase, TaskOutcome};
 use patok_core::output::{LineKind, LineOrigin, OutLine, event_lines};
 
 use crate::app::App;
+use crate::modal::Modal;
 use crate::view::FrameFocus;
 
 impl App {
@@ -114,6 +115,10 @@ impl App {
             // from the shared mapping.
             EngineEvent::ConfigChanged { field, value, .. } => {
                 self.settings.insert(field.clone(), value.clone());
+                // a provider change may hide or reveal its role's model row (T3.2)
+                if self.modals.contains(Modal::Overlay) {
+                    self.overlay.sync_readout(&self.settings);
+                }
                 match field.as_str() {
                     "builder_provider" => {
                         self.run.config_provider = value.to_string();

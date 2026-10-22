@@ -67,6 +67,18 @@ pub struct Row {
     pub label: &'static str,
     pub schema: Schema,
     pub kind: FieldKind,
+    /// When the row drops out of the visible list (T3.2); `None` keeps it always.
+    pub hide: Option<HideWhen>,
+}
+
+/// When a row drops out of the visible list (T3.2): evaluated against the
+/// overlay's draft, falling back to the engine readout, on every `visible()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HideWhen {
+    /// Hidden while the named provider row holds a provider whose catalog entry
+    /// lacks `supports_model_selection` (a `<role>_model` row under its
+    /// `<role>_provider`).
+    ProviderLacksModelSelection(&'static str),
 }
 
 /// One collapsible section and its rows. The `group` id is the key the help
@@ -95,7 +107,9 @@ pub struct Section {
 // editor) and `agent_pane_split` (the TUI has a fixed split and no dragging). The two
 // read-only report rows (`engine_version`, `shell_version`) report engine and shell
 // state instead of a setting; the display section is the shell's own tui schema, so
-// its rows stay literal.
+// its rows stay literal. A `<role>_model` row carries a hide rule (T3.2): it stays in
+// the section (so the drift test is unaffected) but drops out of the visible list while
+// its role's provider cannot select a model.
 
 /// The overlay editor kind the core registry kind calls for: the one mapping from
 /// the field table's kind to the row model's editor, shared by [`daemon_row`] below
@@ -126,6 +140,15 @@ fn daemon_row(key: &'static str) -> Row {
         label,
         schema: Schema::Daemon,
         kind: overlay_kind(&kind),
+        hide: None,
+    }
+}
+
+/// A `<role>_model` row, hidden while its role's provider cannot select a model (T3.2).
+fn model_row(key: &'static str, provider: &'static str) -> Row {
+    Row {
+        hide: Some(HideWhen::ProviderLacksModelSelection(provider)),
+        ..daemon_row(key)
     }
 }
 
@@ -136,25 +159,27 @@ static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
             label: "engine version",
             schema: Schema::Daemon,
             kind: FieldKind::ReadOnly,
+            hide: None,
         },
         Row {
             key: "shell_version",
             label: "shell version",
             schema: Schema::Daemon,
             kind: FieldKind::ReadOnly,
+            hide: None,
         },
         daemon_row("research_provider"),
-        daemon_row("research_model"),
+        model_row("research_model", "research_provider"),
         daemon_row("planner_provider"),
-        daemon_row("planner_model"),
+        model_row("planner_model", "planner_provider"),
         daemon_row("builder_provider"),
-        daemon_row("builder_model"),
+        model_row("builder_model", "builder_provider"),
         daemon_row("reviewer_provider"),
-        daemon_row("reviewer_model"),
+        model_row("reviewer_model", "reviewer_provider"),
         daemon_row("discovery_provider"),
-        daemon_row("discovery_model"),
+        model_row("discovery_model", "discovery_provider"),
         daemon_row("orchestrator_provider"),
-        daemon_row("orchestrator_model"),
+        model_row("orchestrator_model", "orchestrator_provider"),
     ]
 });
 
@@ -207,24 +232,28 @@ static DISPLAY_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
             label: "theme",
             schema: Schema::Tui,
             kind: FieldKind::Enum(Theme::SPELLINGS),
+            hide: None,
         },
         Row {
             key: "truecolor",
             label: "truecolor",
             schema: Schema::Tui,
             kind: FieldKind::Enum(&["auto", "on", "off"]),
+            hide: None,
         },
         Row {
             key: "preview_wrap",
             label: "preview wrap",
             schema: Schema::Tui,
             kind: FieldKind::Bool,
+            hide: None,
         },
         Row {
             key: "update_channel",
             label: "update channel",
             schema: Schema::Tui,
             kind: FieldKind::Enum(UpdateChannel::SPELLINGS),
+            hide: None,
         },
     ]
 });
@@ -438,7 +467,14 @@ pub struct SettingsOverlay {
     /// The drafted, not yet applied changes, keyed by field: editing a value only
     /// updates this map; the save choice in the close dialog applies and persists
     /// every entry through the settings-change flow.
+    ///
+    /// A draft on a row a hide rule hides stays here and is still saved
+    /// ([`Self::pending`]): the engine ignores the model for such a provider, and
+    /// cycling the provider back reveals the row with its draft (T3.2).
     pub drafts: BTreeMap<String, SettingValue>,
+    /// The engine readout of the provider rows the hide rules read (T3.2), mirrored
+    /// by the app at open, on `ConfigChanged` and on each applied save.
+    readout: BTreeMap<String, SettingValue>,
     /// The dialog's selected row; indexes [`SETTINGS_CHOICES`].
     pub confirm_selected: usize,
     pub status: Option<(String, StatusLevel)>,
@@ -512,16 +548,79 @@ impl SettingsOverlay {
     }
 
     /// The focusable entries in display order: each section header and its rows when
-    /// the section is expanded.
+    /// the section is expanded and the row's hide rule does not hide it.
     pub fn visible(&self) -> Vec<Entry<&'static Row>> {
         let mut entries = Vec::new();
         for (index, rows) in SECTION_ROWS.iter().enumerate() {
             entries.push(Entry::Header(index));
             if self.expanded.get(index).copied().unwrap_or(false) {
-                entries.extend(rows.iter().map(Entry::Row));
+                entries.extend(rows.iter().filter(|row| !self.hidden(row)).map(Entry::Row));
             }
         }
         entries
+    }
+
+    /// Whether the row's hide rule hides it now: the draft of the provider row it
+    /// reads, else the readout. A missing or unknown provider keeps the row shown.
+    fn hidden(&self, row: &Row) -> bool {
+        match row.hide {
+            None => false,
+            Some(HideWhen::ProviderLacksModelSelection(provider)) => self
+                .drafts
+                .get(provider)
+                .or_else(|| self.readout.get(provider))
+                .and_then(SettingValue::as_str)
+                .and_then(ProviderName::parse)
+                .and_then(ProviderName::kind)
+                .is_some_and(|kind| !kind.info().supports_model_selection),
+        }
+    }
+
+    /// Runs a change that may hide or reveal rows (T3.2) and keeps the focus on the
+    /// same entry, or on the nearest earlier one still visible (headers always are);
+    /// an open editor whose row disappeared closes; the offset follows like a fold.
+    fn keep_focus_across(&mut self, change: impl FnOnce(&mut Self)) {
+        let before = self.visible();
+        let focus = self.focus.min(before.len() - 1);
+        change(self);
+        let after = self.visible();
+        self.focus = before[..=focus]
+            .iter()
+            .rev()
+            .find_map(|entry| after.iter().position(|e| e == entry))
+            .unwrap_or(0);
+        if self.editor.as_ref().is_some_and(|editor| {
+            !after
+                .iter()
+                .any(|e| matches!(e, Entry::Row(row) if row.key == editor.field))
+        }) {
+            self.editor = None;
+            self.status = None;
+        }
+        self.follow_focus(after.len());
+    }
+
+    /// Mirrors the engine's provider readout for the hide rules (the app calls this
+    /// at open and on `ConfigChanged`).
+    pub(crate) fn sync_readout(&mut self, settings: &BTreeMap<String, SettingValue>) {
+        self.keep_focus_across(|overlay| overlay.copy_readout(settings));
+    }
+
+    /// Spends the draft of an applied field while the readout follows, in one step so
+    /// a provider's draft and readout never show a flicker in between.
+    pub(crate) fn settle_draft(&mut self, field: &str, settings: &BTreeMap<String, SettingValue>) {
+        self.keep_focus_across(|overlay| {
+            overlay.drafts.remove(field);
+            overlay.copy_readout(settings);
+        });
+    }
+
+    fn copy_readout(&mut self, settings: &BTreeMap<String, SettingValue>) {
+        self.readout = settings
+            .iter()
+            .filter(|(key, _)| key.ends_with("_provider"))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
     }
 
     pub(crate) fn expanded(&self, index: usize) -> bool {
@@ -829,8 +928,11 @@ impl SettingsOverlay {
         };
         let index = values.iter().position(|value| *value == now).unwrap_or(0);
         let next = values[((index as isize + step).rem_euclid(values.len() as isize)) as usize];
-        self.drafts
-            .insert(row.key.to_string(), enum_submit_value(row.key, next));
+        self.keep_focus_across(|overlay| {
+            overlay
+                .drafts
+                .insert(row.key.to_string(), enum_submit_value(row.key, next));
+        });
         Action::None
     }
 
@@ -1694,5 +1796,152 @@ mod tests {
         subject.on_key(&mut modals, key(KeyCode::Up), None);
         assert_eq!(subject.focus, 0);
         assert_eq!(subject.scroll.get(), 0);
+    }
+
+    /// A readout of every role's provider, `overrides` replacing the claude default.
+    fn providers(overrides: &[(&str, &str)]) -> BTreeMap<String, SettingValue> {
+        let mut readout: BTreeMap<String, SettingValue> = ROLES
+            .iter()
+            .map(|role| {
+                (
+                    format!("{role}_provider"),
+                    SettingValue::Str("claude".into()),
+                )
+            })
+            .collect();
+        for (key, value) in overrides {
+            readout.insert((*key).into(), SettingValue::Str((*value).into()));
+        }
+        readout
+    }
+
+    const ROLES: [&str; 6] = [
+        "research",
+        "planner",
+        "builder",
+        "reviewer",
+        "discovery",
+        "orchestrator",
+    ];
+
+    fn shown(overlay: &SettingsOverlay, field: &str) -> bool {
+        overlay
+            .visible()
+            .iter()
+            .any(|entry| matches!(entry, Entry::Row(row) if row.key == field))
+    }
+
+    #[test]
+    fn model_rows_hide_when_their_provider_lacks_model_selection() {
+        let mut subject = overlay();
+        let full = subject.visible().len();
+        subject.sync_readout(&providers(&[("builder_provider", "vibe")]));
+        assert!(!shown(&subject, "builder_model"));
+        for role in ROLES {
+            assert!(shown(&subject, &format!("{role}_provider")));
+            if role != "builder" {
+                assert!(shown(&subject, &format!("{role}_model")));
+            }
+        }
+        assert_eq!(subject.visible().len(), full - 1);
+
+        subject.sync_readout(&providers(&[("builder_provider", "codex")]));
+        assert!(shown(&subject, "builder_model"));
+        subject.sync_readout(&providers(&[("builder_provider", "mistral")]));
+        assert!(!shown(&subject, "builder_model"));
+        subject.sync_readout(&providers(&[("builder_provider", "garbage")]));
+        assert!(shown(&subject, "builder_model"));
+        subject.sync_readout(&BTreeMap::new());
+        assert!(shown(&subject, "builder_model"));
+    }
+
+    #[test]
+    fn a_draft_provider_overrides_the_readout_for_visibility() {
+        let mut subject = overlay();
+        subject.sync_readout(&providers(&[("builder_provider", "vibe")]));
+        subject.drafts.insert(
+            "builder_provider".into(),
+            SettingValue::Str("claude".into()),
+        );
+        assert!(shown(&subject, "builder_model"));
+
+        subject.drafts.clear();
+        subject.sync_readout(&providers(&[]));
+        subject
+            .drafts
+            .insert("builder_provider".into(), SettingValue::Str("vibe".into()));
+        assert!(!shown(&subject, "builder_model"));
+    }
+
+    #[test]
+    fn cycling_a_provider_keeps_focus_on_it_and_shifts_later_rows() {
+        let mut subject = overlay();
+        let mut modals = stack();
+        subject.sync_readout(&providers(&[]));
+        focus_field(&mut subject, "builder_provider");
+        // claude -> codex -> vibe
+        subject.on_key(&mut modals, key(KeyCode::Right), str("claude"));
+        let draft = subject.drafts.get("builder_provider").cloned();
+        subject.on_key(&mut modals, key(KeyCode::Right), draft);
+        assert_eq!(
+            subject.drafts.get("builder_provider"),
+            Some(&SettingValue::Str("vibe".into()))
+        );
+        assert!(!shown(&subject, "builder_model"));
+        assert_eq!(subject.focused_row().unwrap().key, "builder_provider");
+
+        // Cycling back from a later row keeps that row focused.
+        focus_field(&mut subject, "run_mode");
+        subject.settle_draft("builder_provider", &providers(&[]));
+        assert!(shown(&subject, "builder_model"));
+        assert_eq!(subject.focused_row().unwrap().key, "run_mode");
+    }
+
+    #[test]
+    fn hiding_the_focused_model_row_moves_focus_to_the_previous_entry_and_closes_its_editor() {
+        let mut subject = overlay();
+        let mut modals = stack();
+        subject.sync_readout(&providers(&[]));
+        focus_field(&mut subject, "builder_model");
+        subject.on_key(&mut modals, key(KeyCode::Enter), None);
+        assert!(subject.editor.is_some());
+        subject.sync_readout(&providers(&[("builder_provider", "vibe")]));
+        assert_eq!(subject.focused_row().unwrap().key, "builder_provider");
+        assert!(subject.editor.is_none());
+        assert!(subject.status.is_none());
+    }
+
+    #[test]
+    fn a_hidden_rows_draft_is_still_pending() {
+        let mut subject = overlay();
+        subject
+            .drafts
+            .insert("builder_model".into(), SettingValue::Str("opus".into()));
+        subject.sync_readout(&providers(&[("builder_provider", "vibe")]));
+        assert!(!shown(&subject, "builder_model"));
+        assert!(
+            subject
+                .pending()
+                .iter()
+                .any(|(_, key, _)| key == "builder_model")
+        );
+    }
+
+    #[test]
+    fn follow_focus_clamps_after_rows_hide() {
+        let mut subject = overlay();
+        subject.list.set(Rect::new(0, 0, 40, 10));
+        subject.focus = subject.visible().len() - 1;
+        subject.follow_focus(subject.visible().len());
+        let all_vibe: Vec<(String, &str)> = ROLES
+            .iter()
+            .map(|role| (format!("{role}_provider"), "vibe"))
+            .collect();
+        let overrides: Vec<(&str, &str)> = all_vibe.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        subject.sync_readout(&providers(&overrides));
+        let len = subject.visible().len();
+        assert!(subject.focus < len);
+        assert_eq!(subject.focused(), *subject.visible().last().unwrap());
+        assert!(subject.scroll.get() <= len - 10);
     }
 }

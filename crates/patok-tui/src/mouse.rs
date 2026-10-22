@@ -342,6 +342,26 @@ mod tests {
         assert_eq!(app.overlay.scroll.get(), 0, "the editor swallows the wheel");
     }
 
+    /// A hidden model row (T3.2) leaves the hit-test: the row after the provider
+    /// row is the next row that is shown.
+    #[test]
+    fn hovering_rows_skips_a_hidden_model_row() {
+        let mut app = app();
+        app.settings
+            .insert("builder_provider".into(), SettingValue::Str("vibe".into()));
+        app.open_settings();
+        let list = Rect::new(10, 5, 60, 10);
+        app.overlay.list.set(list);
+        let provider = visible_index(&app, "builder_provider");
+        assert_eq!(visible_index(&app, "reviewer_provider"), provider + 1);
+        app.on_mouse(mouse(
+            MouseEventKind::Moved,
+            list.x + 2,
+            list.y + provider as u16 + 1,
+        ));
+        assert_eq!(app.overlay.focused_row().unwrap().key, "reviewer_provider");
+    }
+
     /// A pointer move inside a visible list row moves the selection highlight
     /// to that row without running it -- no editor, no drafts, no folds --
     /// and Enter on a hovered row opens the same inline editor the click and
