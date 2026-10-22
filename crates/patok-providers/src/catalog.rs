@@ -1,5 +1,16 @@
 //! The static provider catalog: one entry per `ProviderKind` with its display names,
 //! slug, CLI binary and capabilities.
+//!
+//! It lives in `patok-providers`, next to `ProviderKind`, so each provider fact is
+//! written once here. Everything above this crate reads the catalog instead of keeping
+//! its own copy. That includes `patok-config`, which depends on this crate for
+//! `ProviderName`/`ProviderKind`, as well as the TUI, engine and wire. Config cannot sit
+//! below providers: the layering is `patok-core` <- `patok-providers` <- `patok-config`,
+//! so provider types can't be named in config while config lives in core.
+//!
+//! Models are deliberately not listed. A later phase discovers them by asking each
+//! harness, so a hard-coded model list (or placeholder fields for one) would only go
+//! stale. Add model data when discovery lands, not before.
 
 use crate::ProviderKind;
 
@@ -21,6 +32,7 @@ pub struct ProviderInfo {
     pub supports_reviewer_model: bool,
 }
 
+/// Anthropic's Claude Code CLI.
 pub(crate) const CLAUDE: ProviderInfo = ProviderInfo {
     kind: ProviderKind::Claude,
     provider_name: "Anthropic",
@@ -30,6 +42,7 @@ pub(crate) const CLAUDE: ProviderInfo = ProviderInfo {
     supports_reviewer_model: true,
 };
 
+/// OpenAI's Codex CLI.
 pub(crate) const CODEX: ProviderInfo = ProviderInfo {
     kind: ProviderKind::Codex,
     provider_name: "OpenAI",
@@ -39,6 +52,7 @@ pub(crate) const CODEX: ProviderInfo = ProviderInfo {
     supports_reviewer_model: false,
 };
 
+/// Mistral's Vibe CLI (config alias `mistral`, see `ProviderName`).
 pub(crate) const VIBE: ProviderInfo = ProviderInfo {
     kind: ProviderKind::Vibe,
     provider_name: "Mistral",

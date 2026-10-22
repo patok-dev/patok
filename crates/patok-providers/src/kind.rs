@@ -118,6 +118,8 @@ config_enum_aliased! {
         #[default]
         Claude => "claude",
         Codex => "codex",
+        // `vibe` is the canonical spelling (harness = CLI slug); `mistral` was the
+        // original provider spelling and stays accepted so existing TOML keeps loading.
         Vibe => "vibe", [alias "mistral"],
     }
 }
