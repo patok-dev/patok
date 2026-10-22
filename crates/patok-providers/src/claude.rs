@@ -1,39 +1,36 @@
 //! The Claude provider: drives the `claude` CLI in print mode and normalises its
 //! stream-json output.
 
-use crate::ProviderKind;
 use async_trait::async_trait;
 use patok_core::event::{AgentEvent, Usage, preview};
 use serde_json::Value;
 
+use crate::catalog::CLAUDE;
 use crate::cli;
 use crate::process::{self, Parsed, ProcessSpec};
 use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 
-/// Name of the CLI binary this provider needs.
-pub(crate) const CLI: &str = "claude";
-
 pub struct Claude;
 
 #[async_trait]
 impl Provider for Claude {
     fn slug(&self) -> &'static str {
-        ProviderKind::Claude.as_str()
+        CLAUDE.slug
     }
 
     fn supports_reviewer_model(&self) -> bool {
-        true
+        CLAUDE.supports_reviewer_model
     }
 
     fn check_available(&self) -> Result<(), ProviderError> {
-        cli::check_cli_on_path(CLI)
+        cli::check_cli_on_path(CLAUDE.binary)
     }
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
         let spec = ProcessSpec {
-            program: CLI.into(),
+            program: CLAUDE.binary.into(),
             args: build_args(&request),
             // Marks a nested Claude session; emptied so the child does not refuse to start.
             env: vec![("CLAUDECODE", "")],

@@ -1,33 +1,27 @@
 //! The Mistral provider: drives the `vibe` CLI in programmatic mode and normalises its
 //! newline-delimited JSON stream (`--output streaming`).
 
-use crate::ProviderKind;
 use async_trait::async_trait;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
+use crate::catalog::MISTRAL;
 use crate::cli::{self, CliSpec};
 use crate::process::Parsed;
-use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
-
-/// Name of the CLI binary this provider needs.
-pub(crate) const CLI: &str = "vibe";
+use crate::{Provider, ProviderError, ProviderInfo, SessionRequest, SessionResult, Tool};
 
 pub struct Vibe;
 
 impl Vibe {
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        cli::check_available_in(CLI, path)
+        cli::check_available_in(MISTRAL.binary, path)
     }
 }
 
 impl CliSpec for Vibe {
-    const CLI: &'static str = CLI;
+    const INFO: &'static ProviderInfo = &MISTRAL;
     type Parser = StreamParser;
-    fn slug() -> &'static str {
-        ProviderKind::Mistral.as_str()
-    }
     fn build_args(request: &SessionRequest) -> Vec<String> {
         build_args(request)
     }
@@ -36,11 +30,11 @@ impl CliSpec for Vibe {
 #[async_trait]
 impl Provider for Vibe {
     fn slug(&self) -> &'static str {
-        ProviderKind::Mistral.as_str()
+        MISTRAL.slug
     }
 
     fn supports_reviewer_model(&self) -> bool {
-        false
+        MISTRAL.supports_reviewer_model
     }
 
     fn check_available(&self) -> Result<(), ProviderError> {

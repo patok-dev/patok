@@ -7,33 +7,27 @@
 //! has, built-in web search, follows the role allowlist through the `tools.web_search`
 //! config override.
 
-use crate::ProviderKind;
 use async_trait::async_trait;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
+use crate::catalog::CODEX;
 use crate::cli::{self, CliSpec};
 use crate::process::Parsed;
-use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
-
-/// Name of the CLI binary this provider needs.
-pub(crate) const CLI: &str = "codex";
+use crate::{Provider, ProviderError, ProviderInfo, SessionRequest, SessionResult, Tool};
 
 pub struct Codex;
 
 impl Codex {
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        cli::check_available_in(CLI, path)
+        cli::check_available_in(CODEX.binary, path)
     }
 }
 
 impl CliSpec for Codex {
-    const CLI: &'static str = CLI;
+    const INFO: &'static ProviderInfo = &CODEX;
     type Parser = StreamParser;
-    fn slug() -> &'static str {
-        ProviderKind::Codex.as_str()
-    }
     fn build_args(request: &SessionRequest) -> Vec<String> {
         build_args(request)
     }
@@ -42,11 +36,11 @@ impl CliSpec for Codex {
 #[async_trait]
 impl Provider for Codex {
     fn slug(&self) -> &'static str {
-        ProviderKind::Codex.as_str()
+        CODEX.slug
     }
 
     fn supports_reviewer_model(&self) -> bool {
-        false
+        CODEX.supports_reviewer_model
     }
 
     fn check_available(&self) -> Result<(), ProviderError> {
