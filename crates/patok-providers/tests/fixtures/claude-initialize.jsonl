@@ -1,0 +1,3 @@
+{"type":"system","subtype":"status"}
+{"type":"control_response","response":{"subtype":"success","request_id":"r0","response":{"models":["wrong"]}}}
+{"type":"control_response","response":{"subtype":"success","request_id":"r1","response":{"commands":[],"models":["default","opus","sonnet[1m]","haiku"],"account":{"email":"user@example.com","organization":"Example"}}}}
