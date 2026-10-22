@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/overlay.rs
 expression: "draw(&app, W, H)"
 ---
 ─ Stopped ─ sprint ─── [ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ] ─────────────
-┌ Builder | Claude ────────────────────────────────────────────────────────────────────────────────┐
+┌ Builder | Claude Code ───────────────────────────────────────────────────────────────────────────┐
 │no output yet                                                                                     │
 │                                                                                                  │
 │    ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │

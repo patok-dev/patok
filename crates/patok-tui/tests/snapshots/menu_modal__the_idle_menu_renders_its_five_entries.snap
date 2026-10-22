@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/menu_modal.rs
 expression: screen
 ---
 ─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
-─ Builder | Claude ───────────────────────────────────────────────────── [ ↓ ] ─
+─ Builder | Claude Code ──────────────────────────────────────────────── [ ↓ ] ─
 ┌ Tasks | 0/1 - 1 left ────────────────────────────────────────────────────────┐
 │○ T1.1  scaf┌─────────────────────── Menu ──────────────── [ x ] ┐            │
 │            │▶ Interactive -- open a provider CLI session        │            │

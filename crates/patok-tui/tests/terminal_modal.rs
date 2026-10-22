@@ -112,7 +112,7 @@ async fn enter_opens_the_terminal_in_the_project_dir() {
     wait_for(&f.app, &mut f.rx, |c| c.contains(&line)).await;
     let screen = draw(&f.app, 100, 30);
     assert!(screen.contains(&line), "{screen}");
-    assert!(screen.contains(" Claude "), "{screen}");
+    assert!(screen.contains(" Claude Code "), "{screen}");
 }
 
 #[tokio::test]
@@ -234,7 +234,7 @@ async fn a_failed_spawn_sets_the_status() {
         app.status
             .as_deref()
             .unwrap()
-            .contains("could not start Claude"),
+            .contains("could not start Claude Code"),
         "{:?}",
         app.status
     );

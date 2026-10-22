@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/ui.rs
 expression: screen
 ---
 ─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
-┌ Reviewer | Claude - opus ───────────────────────────────────────────── 00:00 ┐
+┌ Reviewer | Claude Code - opus ──────────────────────────────────────── 00:00 ┐
 │── T1.2: add the parser for task files                                        │
 │Reviewer started (claude, opus)                                               │
 │Review                                                                        │

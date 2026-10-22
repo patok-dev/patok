@@ -20,16 +20,6 @@ config_enum! {
 }
 
 impl ProviderKind {
-    /// The capitalized spelling, as the output frame title shows it.
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Self::Claude => "Claude",
-            Self::Codex => "Codex",
-            // T2.4 switches the TUI to the catalog harness name.
-            Self::Vibe => "Mistral",
-        }
-    }
-
     /// How to start this provider's own interactive CLI in an embedded terminal.
     pub fn interactive_launch(self) -> InteractiveLaunch {
         match self {
@@ -236,21 +226,6 @@ mod tests {
         assert!(!ProviderKind::Codex.interactive_available_in(path));
         for (kind, _) in <ProviderKind as EnumSpelling>::VARIANTS {
             assert!(!kind.interactive_available_in(None));
-        }
-    }
-
-    /// The display names the output frame title shows, one per implemented kind.
-    #[test]
-    fn display_names_capitalize_the_spellings() {
-        // T2.4 removes `display_name`; until then Vibe still shows the provider name.
-        for (kind, expected) in [
-            (ProviderKind::Claude, "Claude"),
-            (ProviderKind::Codex, "Codex"),
-            (ProviderKind::Vibe, "Mistral"),
-        ] {
-            let display = kind.display_name();
-            assert!(display.starts_with(|c: char| c.is_uppercase()));
-            assert_eq!(display, expected);
         }
     }
 }

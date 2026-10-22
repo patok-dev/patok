@@ -3,7 +3,7 @@ source: crates/patok-tui/tests/theme_modal.rs
 expression: "draw(&app, 80, 24)"
 ---
 ─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
-┌ Builder | Claude ────────────────────────────────────────────────────────────┐
+┌ Builder | Claude Code ───────────────────────────────────────────────────────┐
 │no output yet                                                                 │
 │                                                                              │
 │            ┌────────────────────── Theme ──────────────── [ x ] ┐            │

@@ -95,7 +95,7 @@ impl App {
             Err(e) => {
                 self.status = Some(format!(
                     "Interactive mode: could not start {}: {e:#}",
-                    kind.display_name()
+                    kind.info().harness_name
                 ));
             }
             Ok((session, events)) => {
