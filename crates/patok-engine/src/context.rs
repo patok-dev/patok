@@ -522,8 +522,10 @@ impl SessionContext {
     /// The provider and model a role's session runs on: the role's provider
     /// (`<role>_provider`), resolved like any other unit of work, with the role's model
     /// (`<role>_model`, empty meaning the provider's default). A role model
-    /// only reaches a provider that supports one
-    /// ([`Provider::supports_reviewer_model`]).
+    /// reaches a session only when the role's configured provider supports model
+    /// selection (per the catalog) and the provider the session actually runs on
+    /// does too ([`Provider::supports_model_selection`]); a model configured for
+    /// a provider without it is never passed on, not even on fallback.
     /// A name this build does not implement keeps the session's (builder) provider
     /// silently; an unavailable provider warns and falls back to the
     /// session's provider, as does a role provider on a fixed-provider engine
@@ -550,11 +552,14 @@ impl SessionContext {
                 &self.settings.orchestrator_model,
             ),
         };
-        let role_model = Some(role_model.clone()).filter(|m| !m.is_empty());
+        let selectable = name
+            .kind()
+            .is_some_and(|kind| kind.info().supports_model_selection);
+        let role_model = Some(role_model.clone()).filter(|m| selectable && !m.is_empty());
         let fallback = || {
             let model = role_model
                 .clone()
-                .filter(|_| self.provider.supports_reviewer_model());
+                .filter(|_| self.provider.supports_model_selection());
             (self.provider.clone(), model)
         };
         let Some(resolver) = self.inner.resolver.as_ref() else {
@@ -568,7 +573,7 @@ impl SessionContext {
         };
         match resolve_provider(resolver, &name) {
             Ok(Some(provider)) => {
-                let model = role_model.filter(|_| provider.supports_reviewer_model());
+                let model = role_model.filter(|_| provider.supports_model_selection());
                 (provider, model)
             }
             Ok(None) => fallback(),

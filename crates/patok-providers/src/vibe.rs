@@ -33,8 +33,8 @@ impl Provider for Vibe {
         VIBE.slug
     }
 
-    fn supports_reviewer_model(&self) -> bool {
-        VIBE.supports_reviewer_model
+    fn supports_model_selection(&self) -> bool {
+        VIBE.supports_model_selection
     }
 
     fn check_available(&self) -> Result<(), ProviderError> {

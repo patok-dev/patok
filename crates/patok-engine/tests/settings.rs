@@ -245,19 +245,19 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     let claude_recorded = claude.clone();
     let claude = Arc::new(claude);
     // The mock stands in for a provider that runs the role's model.
-    let vibe = MockProvider::new(vec![Step::WriteFile {
+    let codex = MockProvider::new(vec![Step::WriteFile {
         path: "two.txt".into(),
         contents: "two\n".into(),
     }])
-    .with_reviewer_model(true);
-    let vibe_recorded = vibe.clone();
-    let vibe = Arc::new(vibe);
+    .with_model_selection(true);
+    let codex_recorded = codex.clone();
+    let codex = Arc::new(codex);
     let engine = Engine::configured_with_env(
         fixture.config(),
         &DaemonEnv::default(),
         move |kind| match kind {
             ProviderKind::Claude => Ok(claude.clone()),
-            ProviderKind::Codex | ProviderKind::Vibe => Ok(vibe.clone()),
+            ProviderKind::Codex | ProviderKind::Vibe => Ok(codex.clone()),
         },
     );
     let mut attachment = engine.attach().unwrap();
@@ -276,7 +276,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         .apply_settings_change("builder_model", SettingValue::Str("sonnet".into()))
         .unwrap();
     engine
-        .apply_settings_change("builder_provider", SettingValue::Str("vibe".into()))
+        .apply_settings_change("builder_provider", SettingValue::Str("codex".into()))
         .unwrap();
     let events = collect_until(
         &mut attachment.events,
@@ -286,7 +286,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
     assert_eq!(
         config_change(&events, "builder_provider"),
         Some((
-            SettingValue::Str("vibe".into()),
+            SettingValue::Str("codex".into()),
             ApplyTiming::NextUnitOfWork
         )),
         "{events:#?}"
@@ -306,7 +306,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         );
     }
     assert!(
-        vibe_recorded.sessions().is_empty(),
+        codex_recorded.sessions().is_empty(),
         "the running unit was untouched"
     );
     assert_eq!(engine.settings().builder_model, "sonnet");
@@ -322,7 +322,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         matches!(event, EngineEvent::TaskFinished { id, outcome: TaskOutcome::Done, .. } if id == "T1.2")
     })
     .await;
-    let sessions = vibe_recorded.sessions();
+    let sessions = codex_recorded.sessions();
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].model.as_deref(), Some("sonnet"));
     assert_eq!(

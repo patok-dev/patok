@@ -100,17 +100,16 @@ pub enum ProviderError {
 
 /// One back-end. Every provider exposes exactly one operation -- run a session --
 /// plus the surface the engine needs to route and start it: whether its CLI is
-/// installed, and whether it runs the configured reviewer model.
+/// installed, and whether it accepts a model choice.
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Short provider identifier, e.g. `claude`.
     fn slug(&self) -> &'static str;
 
-    /// Whether the engine routes the configured reviewer model to sessions on
-    /// this provider. Claude runs its reviewer with `reviewer_model`; the other
-    /// providers run their CLI's default model (Codex accepts a `-m` flag, but
-    /// reviewer model names are Claude model names that do not map to it).
-    fn supports_reviewer_model(&self) -> bool;
+    /// Whether the harness accepts a model choice, i.e. whether the engine passes
+    /// a role's configured model to sessions on this provider. Claude (`--model`)
+    /// and Codex (`-m`) do; Vibe has no model flag.
+    fn supports_model_selection(&self) -> bool;
 
     /// The availability check: `Err(CliNotFound)` when the CLI is not on PATH.
     fn check_available(&self) -> Result<(), ProviderError>;
@@ -197,18 +196,17 @@ mod tests {
         );
     }
 
-    /// Only the claude provider runs its reviewer with the configured reviewer
-    /// model; the other providers and the default mock keep their CLI's default.
+    /// Claude and Codex accept a model choice; Vibe and the default mock do not.
     #[test]
-    fn only_claude_supports_the_reviewer_model() {
-        assert!(claude::Claude.supports_reviewer_model());
-        assert!(!codex::Codex.supports_reviewer_model());
-        assert!(!vibe::Vibe.supports_reviewer_model());
-        assert!(!mock::MockProvider::new(vec![]).supports_reviewer_model());
+    fn claude_and_codex_support_model_selection() {
+        assert!(claude::Claude.supports_model_selection());
+        assert!(codex::Codex.supports_model_selection());
+        assert!(!vibe::Vibe.supports_model_selection());
+        assert!(!mock::MockProvider::new(vec![]).supports_model_selection());
         assert!(
             mock::MockProvider::new(vec![])
-                .with_reviewer_model(true)
-                .supports_reviewer_model()
+                .with_model_selection(true)
+                .supports_model_selection()
         );
     }
 
