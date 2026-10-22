@@ -3235,7 +3235,8 @@ mod provider_config {
         assert_eq!(*picked.lock().unwrap(), [ProviderKind::Claude]);
         let mut attachment = engine.attach().unwrap();
         assert_eq!(attachment.snapshot.provider, "claude");
-        assert_eq!(attachment.snapshot.model, "opus");
+        // No builder model is configured, so the provider picks its own default.
+        assert_eq!(attachment.snapshot.model, "");
         engine.start_build().unwrap();
         collect_until(&mut attachment.events, is_phase_startup).await;
     }
@@ -3818,7 +3819,8 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
     let events = collect_until(&mut attachment.events, is_phase_startup).await;
 
     // The unrecognized key changes nothing: the reviewer runs on the default
-    // claude provider with the default reviewer model, not on codex.
+    // claude provider with the provider's default model (no model set), not on
+    // codex.
     assert!(
         picked.lock().unwrap().contains(&ProviderKind::Claude),
         "{:?}",
@@ -3830,7 +3832,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         picked.lock().unwrap()
     );
     assert!(
-        started(&events).contains(&("reviewer".into(), "claude".into(), Some("sonnet".into()))),
+        started(&events).contains(&("reviewer".into(), "claude".into(), None)),
         "{:#?}",
         started(&events)
     );
@@ -3839,7 +3841,7 @@ async fn a_config_with_an_unknown_daemon_key_still_runs_the_review() {
         .iter()
         .find(|s| s.label == "review")
         .expect("the review session ran");
-    assert_eq!(review.model.as_deref(), Some("sonnet"));
+    assert_eq!(review.model, None);
 }
 
 #[tokio::test]

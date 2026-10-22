@@ -907,16 +907,16 @@ daemon_table! {
     /// or shell; add a field only together with its consumer.
     entries {
         // Routing (section 4).
-        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default." default "sonnet".into()],
-        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default." default "opus".into()],
-        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default." default "opus".into()],
-        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default." default "sonnet".into()],
-        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default." default "opus".into()],
+        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default." default String::new()],
+        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default." default String::new()],
+        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default." default String::new()],
+        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default." default String::new()],
+        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default." default String::new()],
         [str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default." default String::new()],
         [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start."],
         [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start."],
         [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start."],
-        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex or vibe (mistral is accepted as an alias for vibe). Applies at the next reviewer session start."],
+        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on. Applies at the next reviewer session start."],
         [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
         [provider orchestrator_provider "orchestrator_provider" label "orchestrator provider" help "The provider the orchestrator role runs on. Applies at the next orchestrator session start."],
         // Pipeline flow (section 5).
