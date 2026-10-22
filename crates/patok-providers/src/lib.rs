@@ -15,6 +15,7 @@ pub mod codex;
 mod kind;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
+pub mod models;
 mod process;
 #[cfg(test)]
 pub(crate) mod test_util;
@@ -25,6 +26,7 @@ pub use kind::{
     INTERACTIVE_TERMINAL_ENV, InteractiveLaunch, ProviderKind, ProviderName,
     strip_from_interactive_env,
 };
+pub use models::{DiscoveredModel, MODEL_CACHE_TTL, ModelCache};
 
 /// Everything a provider needs to run one agent session.
 pub struct SessionRequest {
@@ -96,11 +98,13 @@ pub enum ProviderError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("`{provider}` does not support model discovery")]
+    DiscoveryUnsupported { provider: String },
 }
 
-/// One back-end. Every provider exposes exactly one operation -- run a session --
-/// plus the surface the engine needs to route and start it: whether its CLI is
-/// installed, and whether it accepts a model choice.
+/// One back-end. A provider runs agent sessions, exposes the surface the engine
+/// needs to route and start them (whether its CLI is installed, whether it
+/// accepts a model choice) and can optionally discover its available models.
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Short provider identifier, e.g. `claude`.
@@ -115,6 +119,14 @@ pub trait Provider: Send + Sync {
     fn check_available(&self) -> Result<(), ProviderError>;
 
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError>;
+
+    /// The models the harness reports as available. The default reports
+    /// `Err(DiscoveryUnsupported)`; providers that can ask their harness override it.
+    async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        Err(ProviderError::DiscoveryUnsupported {
+            provider: self.slug().into(),
+        })
+    }
 }
 
 /// The provider for `kind`, after checking that its CLI is on `PATH`.
@@ -208,6 +220,15 @@ mod tests {
                 .with_model_selection(true)
                 .supports_model_selection()
         );
+    }
+
+    /// Vibe never implements discovery, so it keeps the trait default.
+    #[tokio::test]
+    async fn discovery_is_unsupported_by_default() {
+        match vibe::Vibe.discover_models().await {
+            Err(ProviderError::DiscoveryUnsupported { provider }) => assert_eq!(provider, "vibe"),
+            other => panic!("unexpected result: {other:?}"),
+        }
     }
 
     /// Whichever side of the availability check this machine lands on, the error or the
