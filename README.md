@@ -9,11 +9,14 @@ Press `I` (Shift+i) or choose **Interactive** in the `m` menu (its first row, so
 Enter opens the picker); the status bar has no interactive button. The picker lists the providers: ↑↓ and Enter
 open one, Esc closes the picker.
 
-| Provider | Program |
-| -------- | ------- |
-| Claude   | `claude` |
-| Codex    | `codex` |
-| Mistral / Vibe (config `vibe`, alias `mistral`) | `vibe` |
+| Provider  | Harness     | CLI slug |
+| --------- | ----------- | -------- |
+| Anthropic | Claude Code | `claude` |
+| OpenAI    | Codex       | `codex`  |
+| Mistral   | Vibe        | `vibe`   |
+
+The slug is both the provider's config spelling (e.g. `builder_provider = "vibe"`) and the
+program looked up on `PATH`. `mistral` is still accepted in config as an alias for `vibe`.
 
 A provider whose program is not on `PATH` is shown disabled ("not found on
 PATH"). If a build is running, the picker warns that the session shares its
