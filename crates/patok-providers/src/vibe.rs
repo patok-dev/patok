@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use patok_core::event::{AgentEvent, preview};
 use serde_json::Value;
 
-use crate::catalog::MISTRAL;
+use crate::catalog::VIBE;
 use crate::cli::{self, CliSpec};
 use crate::process::Parsed;
 use crate::{Provider, ProviderError, ProviderInfo, SessionRequest, SessionResult, Tool};
@@ -15,12 +15,12 @@ pub struct Vibe;
 impl Vibe {
     /// The availability check against an explicit `PATH` value.
     pub fn check_available_in(path: Option<&std::ffi::OsStr>) -> Result<(), ProviderError> {
-        cli::check_available_in(MISTRAL.binary, path)
+        cli::check_available_in(VIBE.binary, path)
     }
 }
 
 impl CliSpec for Vibe {
-    const INFO: &'static ProviderInfo = &MISTRAL;
+    const INFO: &'static ProviderInfo = &VIBE;
     type Parser = StreamParser;
     fn build_args(request: &SessionRequest) -> Vec<String> {
         build_args(request)
@@ -30,11 +30,11 @@ impl CliSpec for Vibe {
 #[async_trait]
 impl Provider for Vibe {
     fn slug(&self) -> &'static str {
-        MISTRAL.slug
+        VIBE.slug
     }
 
     fn supports_reviewer_model(&self) -> bool {
-        MISTRAL.supports_reviewer_model
+        VIBE.supports_reviewer_model
     }
 
     fn check_available(&self) -> Result<(), ProviderError> {

@@ -1498,7 +1498,7 @@ mod tests {
     #[tokio::test]
     async fn a_rejection_keeps_the_overlay_open_and_a_retry_saves_the_rest() {
         let (_temp, mut shell) = shell();
-        let mut app = save_app(&[("builder_provider", "mistral"), ("builder_model", "opus")]);
+        let mut app = save_app(&[("builder_provider", "vibe"), ("builder_model", "opus")]);
         // `provider` precedes `model` in the pending rows, so the provider
         // draft applies and the model draft takes the rejection.
         let commands = Arc::new(Mutex::new(Vec::new()));
@@ -1548,7 +1548,7 @@ mod tests {
         );
         assert_eq!(
             app.settings.get("builder_provider"),
-            Some(&SettingValue::Str("mistral".into()))
+            Some(&SettingValue::Str("vibe".into()))
         );
         assert_eq!(commands.lock().unwrap().len(), 2);
         // The retry accepts what is left: one command, the overlay closes.

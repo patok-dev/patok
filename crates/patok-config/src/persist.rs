@@ -335,7 +335,7 @@ mod tests {
         let mut new = DaemonSettings::default();
         assert!(daemon_changed_fields(&DaemonSettings::default(), &new).is_empty());
         new.agent_timeout_secs = 120;
-        new.builder_provider = ProviderName::Mistral;
+        new.builder_provider = ProviderName::Vibe;
         let changed = daemon_changed_fields(&DaemonSettings::default(), &new);
         assert_eq!(changed.len(), 2);
         assert!(changed.iter().any(|f| f == "agent_timeout_secs"));
@@ -401,7 +401,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error.message,
-            "daemon.builder_provider must be one of `claude`, `codex`, `mistral`, `vibe`, \
+            "daemon.builder_provider must be one of `claude`, `codex`, `vibe`, `mistral`, \
              got \"bogus\""
         );
         let error = set_daemon_field(
@@ -413,7 +413,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error.message,
-            "daemon.research_provider must be one of `claude`, `codex`, `mistral`, `vibe`, \
+            "daemon.research_provider must be one of `claude`, `codex`, `vibe`, `mistral`, \
              got \"copilot\""
         );
         assert!(!dir.path().join("patok.config.toml").exists());

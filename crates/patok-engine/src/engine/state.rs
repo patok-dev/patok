@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn the_rejection_list_names_every_implemented_kind() {
-        assert_eq!(implemented_providers(), "claude, codex or mistral");
+        assert_eq!(implemented_providers(), "claude, codex or vibe");
     }
 
     #[test]

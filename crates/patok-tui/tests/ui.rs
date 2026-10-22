@@ -380,14 +380,14 @@ fn header_and_frame_title_show_the_reviewer_agent_of_the_review_stage() {
 }
 
 /// A reviewer session that runs on another provider than the configured one
-/// (a claude reviewer provider under a mistral provider, T81.1) titles the output
+/// (a claude reviewer provider under a vibe provider, T81.1) titles the output
 /// frame with that provider and the reviewer model from its starting event on:
 /// the configured provider never silently stands in. The configured pair comes
 /// back when the session ends, and a builder session keeps its own pair.
 #[test]
 fn a_reviewer_session_started_switches_the_frame_title_to_its_provider_and_model() {
     let mut app = app();
-    app.run.provider = "mistral".into();
+    app.run.provider = "vibe".into();
     app.run.config_provider = app.run.provider.clone();
     app.apply(EngineEvent::PhaseChanged {
         phase: Phase::Running,
@@ -427,7 +427,7 @@ fn a_reviewer_session_started_switches_the_frame_title_to_its_provider_and_model
     // A builder session still shows its own provider and model.
     app.apply(EngineEvent::AgentStarted {
         agent: "builder".into(),
-        provider: "mistral".into(),
+        provider: "vibe".into(),
         model: Some("mistral-small".into()),
     });
     app.apply(EngineEvent::AgentChanged {
@@ -938,7 +938,7 @@ fn output_frame_title_truncates_when_the_pane_is_narrow() {
     // 40 columns leave the output frame too narrow for the model.
     insta::assert_snapshot!(draw(&app, 40, 12));
     // Narrower still: the provider goes too, leaving the agent type.
-    app.run.provider = "mistral".into();
+    app.run.provider = "vibe".into();
     app.run.model = String::new();
     insta::assert_snapshot!(draw(&app, 26, 10));
 }

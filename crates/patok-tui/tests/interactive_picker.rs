@@ -74,7 +74,7 @@ fn i_opens_the_picker_listing_every_provider() {
         vec![
             (ProviderKind::Claude, true),
             (ProviderKind::Codex, true),
-            (ProviderKind::Mistral, true),
+            (ProviderKind::Vibe, true),
         ]
     );
     assert_eq!(app.interactive.selected, 0);
@@ -89,7 +89,7 @@ fn the_selection_starts_on_the_first_available_provider() {
         vec![
             (ProviderKind::Claude, false),
             (ProviderKind::Codex, true),
-            (ProviderKind::Mistral, false),
+            (ProviderKind::Vibe, false),
         ]
     );
     assert_eq!(app.interactive.selected, 1);

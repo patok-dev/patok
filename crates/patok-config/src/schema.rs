@@ -81,6 +81,21 @@ mod tests {
         );
     }
 
+    /// The provider name enumerates the canonical spelling and the alias, from the
+    /// list the parser reads.
+    #[test]
+    fn the_provider_name_schema_lists_both_vibe_spellings() {
+        let json: serde_json::Value = serde_json::from_str(&daemon_json_schema()).unwrap();
+        assert_eq!(
+            json["$defs"]["ProviderName"],
+            serde_json::json!({
+                "description": "A provider name as written in config files:\ntrimmed, case-insensitive, aliases accepted.",
+                "type": "string",
+                "enum": ["claude", "codex", "vibe", "mistral"]
+            })
+        );
+    }
+
     #[test]
     fn schemas_parse_and_list_representative_properties() {
         for (schema, properties) in [

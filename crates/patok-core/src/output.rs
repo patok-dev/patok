@@ -368,8 +368,8 @@ mod tests {
             "Builder started (mock)"
         );
         assert_eq!(
-            started_line("planner", "mistral", Some("mistral-large")),
-            "Planner started (mistral, mistral-large)"
+            started_line("planner", "vibe", Some("mistral-large")),
+            "Planner started (vibe, mistral-large)"
         );
         assert_eq!(
             started_line("discovery", "claude", None),

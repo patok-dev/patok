@@ -3241,16 +3241,16 @@ mod provider_config {
     }
 
     #[tokio::test]
-    async fn mistral_is_selected_from_config() {
+    async fn vibe_is_selected_from_config() {
         let picked = Arc::default();
         let (_fixture, engine) = engine_with(
             None,
-            Some("[daemon]\nbuilder_provider = \"mistral\"\nbuilder_model = \"mistral-small\"\n"),
+            Some("[daemon]\nbuilder_provider = \"vibe\"\nbuilder_model = \"mistral-small\"\n"),
             picking(&picked),
         );
-        assert_eq!(*picked.lock().unwrap(), [ProviderKind::Mistral]);
+        assert_eq!(*picked.lock().unwrap(), [ProviderKind::Vibe]);
         let snapshot = engine.attach().unwrap().snapshot.clone();
-        assert_eq!(snapshot.provider, "mistral");
+        assert_eq!(snapshot.provider, "vibe");
         assert_eq!(snapshot.model, "mistral-small");
     }
 
@@ -3258,7 +3258,7 @@ mod provider_config {
     async fn project_layer_overrides_user_layer() {
         let picked = Arc::default();
         let (_f, engine) = engine_with(
-            Some("[daemon]\nbuilder_provider = \"mistral\"\n"),
+            Some("[daemon]\nbuilder_provider = \"vibe\"\n"),
             Some("[daemon]\nbuilder_provider = \"claude\"\n"),
             picking(&picked),
         );
@@ -3268,11 +3268,11 @@ mod provider_config {
         // The user layer applies where the project sets nothing.
         let picked = Arc::default();
         let (_f, _engine) = engine_with(
-            Some("[daemon]\nbuilder_provider = \"mistral\"\n"),
+            Some("[daemon]\nbuilder_provider = \"vibe\"\n"),
             Some("[daemon]\nbuilder_model = \"m\"\n"),
             picking(&picked),
         );
-        assert_eq!(*picked.lock().unwrap(), [ProviderKind::Mistral]);
+        assert_eq!(*picked.lock().unwrap(), [ProviderKind::Vibe]);
     }
 
     #[tokio::test]
@@ -3665,7 +3665,7 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
     let recorded = provider.clone();
     std::fs::write(
         fixture.project_config(),
-        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nbuilder_provider = \"mistral\"\nreviewer_provider = \"claude\"\nreviewer_model = \"opus\"\n",
+        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nbuilder_provider = \"vibe\"\nreviewer_provider = \"claude\"\nreviewer_model = \"opus\"\n",
     )
     .unwrap();
     let picked: std::sync::Arc<std::sync::Mutex<Vec<ProviderKind>>> = std::sync::Arc::default();
@@ -3698,14 +3698,14 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
     );
     // The starting events name each session's actual provider and model:
     // the reviewer runs on claude with the reviewer model, the builder on
-    // the configured mistral with no model.
+    // the configured vibe with no model.
     assert!(
         started(&events).contains(&("reviewer".into(), "claude".into(), Some("opus".into()))),
         "{:#?}",
         started(&events)
     );
     assert!(
-        started(&events).contains(&("builder".into(), "mistral".into(), None)),
+        started(&events).contains(&("builder".into(), "vibe".into(), None)),
         "{:#?}",
         started(&events)
     );
@@ -3724,11 +3724,11 @@ async fn reviewer_provider_claude_runs_the_reviewer_on_the_claude_provider_with_
     assert!(build.model.is_none());
 }
 
-/// The mistral reviewer provider (including its `vibe` alias spelling) routes
-/// the reviewer onto the mistral provider with no model (the provider picks
+/// The vibe reviewer provider (including its `mistral` alias spelling) routes
+/// the reviewer onto the vibe provider with no model (the provider picks
 /// its default).
 #[tokio::test]
-async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
+async fn reviewer_provider_vibe_runs_the_reviewer_on_the_vibe_provider() {
     use patok_providers::ProviderKind;
 
     let fixture = Fixture::new("- [ ] T1.1: add the greeting file\n");
@@ -3739,7 +3739,7 @@ async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
     let recorded = provider.clone();
     std::fs::write(
         fixture.project_config(),
-        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nprovider = \"mistral\"\nreviewer_provider = \"mistral\"\nreviewer_model = \"opus\"\n",
+        "[daemon]\nplan_enabled = false\nrun_mode = \"sprint\"\nreview_in_loop = true\nskip_review_for_simple = false\nprovider = \"vibe\"\nreviewer_provider = \"mistral\"\nreviewer_model = \"opus\"\n",
     )
     .unwrap();
     let picked: std::sync::Arc<std::sync::Mutex<Vec<ProviderKind>>> = std::sync::Arc::default();
@@ -3760,12 +3760,12 @@ async fn reviewer_provider_mistral_runs_the_reviewer_on_the_mistral_provider() {
     let events = collect_until(&mut attachment.events, is_phase_startup).await;
 
     assert!(
-        picked.lock().unwrap().contains(&ProviderKind::Mistral),
+        picked.lock().unwrap().contains(&ProviderKind::Vibe),
         "{:?}",
         picked.lock().unwrap()
     );
     assert!(
-        started(&events).contains(&("reviewer".into(), "mistral".into(), None)),
+        started(&events).contains(&("reviewer".into(), "vibe".into(), None)),
         "{:#?}",
         started(&events)
     );
