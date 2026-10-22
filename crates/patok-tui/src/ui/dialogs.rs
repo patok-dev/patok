@@ -445,7 +445,7 @@ fn terminal_title(kind: ProviderKind) -> &'static str {
     match kind {
         ProviderKind::Claude => " Claude ",
         ProviderKind::Codex => " Codex ",
-        ProviderKind::Mistral => " Mistral ",
+        ProviderKind::Vibe => " Mistral ",
     }
 }
 

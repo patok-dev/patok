@@ -90,7 +90,7 @@ fn core_provider(provider: Provider) -> ProviderName {
     match provider {
         Provider::Claude => ProviderName::Claude,
         Provider::Codex => ProviderName::Codex,
-        Provider::Mistral => ProviderName::Mistral,
+        Provider::Vibe => ProviderName::Vibe,
     }
 }
 
@@ -148,7 +148,7 @@ fn proto_provider(name: ProviderName) -> Provider {
     match name {
         ProviderName::Claude => Provider::Claude,
         ProviderName::Codex => Provider::Codex,
-        ProviderName::Mistral => Provider::Mistral,
+        ProviderName::Vibe => Provider::Vibe,
     }
 }
 
@@ -528,10 +528,10 @@ mod tests {
         maps_to(
             Change::RoleProvider(RoleProvider {
                 role: Role::Orchestrator as i32,
-                provider: Provider::Mistral as i32,
+                provider: Provider::Vibe as i32,
             }),
             "orchestrator_provider",
-            string("mistral"),
+            string("vibe"),
         );
         // The orchestrator seats map to their names; the registry rejects them uniformly.
         maps_to(
@@ -547,10 +547,11 @@ mod tests {
             "model",
             string("opus"),
         );
+        assert_eq!(Provider::Vibe as i32, 4);
         maps_to(
-            Change::Provider(Provider::Mistral as i32),
+            Change::Provider(Provider::Vibe as i32),
             "provider",
-            string("mistral"),
+            string("vibe"),
         );
         maps_to(
             Change::RunMode(RunMode::Continuous as i32),
@@ -664,7 +665,7 @@ mod tests {
         let str = |v: &str| SettingValue::Str(v.into());
         let uint = |v: u64| SettingValue::Uint(v);
         // The removed global keys have no overlay field, so the shell cannot submit them.
-        assert!(to_proto("provider", str("mistral")).is_err());
+        assert!(to_proto("provider", str("vibe")).is_err());
         assert!(to_proto("model", str("opus")).is_err());
         // The per-role provider and model rows (T90.1) map onto their wire cases.
         for (role, model) in [
@@ -683,10 +684,10 @@ mod tests {
                 "{role}_model"
             );
             assert_eq!(
-                to_proto(&format!("{role}_provider"), str("mistral")).unwrap(),
+                to_proto(&format!("{role}_provider"), str("vibe")).unwrap(),
                 Change::RoleProvider(RoleProvider {
                     role: role_of(role).unwrap() as i32,
-                    provider: Provider::Mistral as i32,
+                    provider: Provider::Vibe as i32,
                 }),
                 "{role}_provider"
             );
@@ -802,7 +803,7 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("provider name"), "{error}");
         // The alias is a TOML-only concern: only canonical spellings travel the wire.
-        let error = to_proto("builder_provider", SettingValue::Str("vibe".into())).unwrap_err();
+        let error = to_proto("builder_provider", SettingValue::Str("mistral".into())).unwrap_err();
         assert!(error.contains("provider name"), "{error}");
         let error = to_proto("research_model", SettingValue::Bool(true)).unwrap_err();
         assert!(error.contains("must be a string"), "{error}");

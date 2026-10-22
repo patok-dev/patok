@@ -184,6 +184,7 @@
       "enum": [
         "claude",
         "codex",
+        "vibe",
         "mistral"
       ]
     },

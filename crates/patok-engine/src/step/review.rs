@@ -376,7 +376,7 @@ async fn one_review<A: Agent>(
     agent: &A,
 ) -> Result<(A::Session, ResultRecord), ReviewExit> {
     // The starting line names the provider the review actually runs on
-    // (mistral when the reviewer provider is mistral), so the reviewer
+    // (vibe when the reviewer provider is vibe), so the reviewer
     // pair resolves first (T78.1).
     let (provider, model) = ctx.reviewer();
     let (exit, record) = run_stage(

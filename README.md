@@ -13,7 +13,7 @@ open one, Esc closes the picker.
 | -------- | ------- |
 | Claude   | `claude` |
 | Codex    | `codex` |
-| Mistral (config alias `vibe`) | `vibe` |
+| Mistral / Vibe (config `vibe`, alias `mistral`) | `vibe` |
 
 A provider whose program is not on `PATH` is shown disabled ("not found on
 PATH"). If a build is running, the picker warns that the session shares its

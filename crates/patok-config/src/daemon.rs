@@ -916,7 +916,7 @@ daemon_table! {
         [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start."],
         [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start."],
         [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start."],
-        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex or mistral (vibe is accepted as an alias for mistral). Applies at the next reviewer session start."],
+        [provider reviewer_provider "reviewer_provider" label "reviewer provider" help "The provider the reviewer role runs on: claude (default), codex or vibe (mistral is accepted as an alias for vibe). Applies at the next reviewer session start."],
         [provider discovery_provider "discovery_provider" label "discovery provider" help "The provider the discovery role runs on. Applies at the next discovery session start."],
         [provider orchestrator_provider "orchestrator_provider" label "orchestrator provider" help "The provider the orchestrator role runs on. Applies at the next orchestrator session start."],
         // Pipeline flow (section 5).
@@ -1303,12 +1303,25 @@ mod tests {
         assert_eq!(ProviderKind::Codex.as_str(), "codex");
     }
 
+    /// The pre-rename `mistral` spelling still loads, as the `Vibe` harness.
+    #[test]
+    fn mistral_spelling_still_loads_as_vibe() {
+        let loaded = load_project("[daemon]\nbuilder_provider = \"mistral\"\n");
+        assert_eq!(loaded.settings.builder_provider, ProviderName::Vibe);
+        assert_eq!(
+            loaded.settings.builder_provider.kind(),
+            Some(ProviderKind::Vibe)
+        );
+        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+    }
+
     /// The aliases parse to their variants exactly like the canonical spellings:
     /// trimmed and case-insensitive; anything else is rejected.
     #[test]
     fn provider_aliases_parse_to_their_variants() {
-        assert_eq!(ProviderName::parse("vibe"), Some(ProviderName::Mistral));
-        assert_eq!(ProviderName::parse(" Vibe "), Some(ProviderName::Mistral));
+        assert_eq!(ProviderName::parse("vibe"), Some(ProviderName::Vibe));
+        assert_eq!(ProviderName::parse("mistral"), Some(ProviderName::Vibe));
+        assert_eq!(ProviderName::parse(" Mistral "), Some(ProviderName::Vibe));
         assert_eq!(ProviderName::parse("CLAUDE"), Some(ProviderName::Claude));
         for removed in [
             "opencode",
@@ -1329,7 +1342,7 @@ mod tests {
     fn accepted_spellings_list_every_alias_after_its_variant() {
         assert_eq!(
             ProviderName::accepted().collect::<Vec<_>>(),
-            ["claude", "codex", "mistral", "vibe"]
+            ["claude", "codex", "vibe", "mistral"]
         );
     }
 
@@ -1348,7 +1361,7 @@ mod tests {
             assert_eq!(loaded.settings.builder_provider, ProviderName::Claude);
             assert_eq!(loaded.errors.len(), 1, "{:?}", loaded.errors);
             let expected = format!(
-                "must be a provider name (claude, codex, mistral (alias vibe)), got \"{s}\""
+                "must be a provider name (claude, codex, vibe (alias mistral)), got \"{s}\""
             );
             assert!(loaded.errors[0].contains(&expected), "{:?}", loaded.errors);
         }
@@ -1360,7 +1373,7 @@ mod tests {
     fn accepted_spellings_prose_names_every_spelling_and_alias() {
         assert_eq!(
             ProviderName::ACCEPTED_SPELLINGS,
-            "claude, codex, mistral (alias vibe)"
+            "claude, codex, vibe (alias mistral)"
         );
     }
 

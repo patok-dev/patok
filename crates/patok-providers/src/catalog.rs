@@ -39,18 +39,17 @@ pub(crate) const CODEX: ProviderInfo = ProviderInfo {
     supports_reviewer_model: false,
 };
 
-// The binary is `vibe`; the slug stays `mistral` until the kind is renamed.
-pub(crate) const MISTRAL: ProviderInfo = ProviderInfo {
-    kind: ProviderKind::Mistral,
+pub(crate) const VIBE: ProviderInfo = ProviderInfo {
+    kind: ProviderKind::Vibe,
     provider_name: "Mistral",
     harness_name: "Vibe",
-    slug: "mistral",
+    slug: "vibe",
     binary: "vibe",
     supports_reviewer_model: false,
 };
 
 /// Every provider, one entry per `ProviderKind`, in `ProviderKind` declaration order.
-pub const CATALOG: &[ProviderInfo] = &[CLAUDE, CODEX, MISTRAL];
+pub const CATALOG: &[ProviderInfo] = &[CLAUDE, CODEX, VIBE];
 
 impl ProviderKind {
     /// This kind's catalog entry.
@@ -90,7 +89,9 @@ mod tests {
     fn providers_read_the_catalog() {
         assert_eq!(claude::Claude.slug(), CLAUDE.slug);
         assert_eq!(codex::Codex.slug(), CODEX.slug);
-        assert_eq!(vibe::Vibe.slug(), MISTRAL.slug);
+        assert_eq!(VIBE.provider_name, "Mistral");
+        assert_eq!(VIBE.harness_name, "Vibe");
+        assert_eq!(vibe::Vibe.slug(), VIBE.slug);
         assert_eq!(
             claude::Claude.supports_reviewer_model(),
             CLAUDE.supports_reviewer_model
@@ -101,10 +102,10 @@ mod tests {
         );
         assert_eq!(
             vibe::Vibe.supports_reviewer_model(),
-            MISTRAL.supports_reviewer_model
+            VIBE.supports_reviewer_model
         );
         assert_eq!(<codex::Codex as CliSpec>::INFO, &CODEX);
-        assert_eq!(<vibe::Vibe as CliSpec>::INFO, &MISTRAL);
+        assert_eq!(<vibe::Vibe as CliSpec>::INFO, &VIBE);
     }
 
     #[test]

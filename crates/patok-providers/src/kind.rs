@@ -15,7 +15,7 @@ config_enum! {
         #[default]
         Claude => "claude",
         Codex => "codex",
-        Mistral => "mistral",
+        Vibe => "vibe",
     }
 }
 
@@ -25,7 +25,8 @@ impl ProviderKind {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
-            Self::Mistral => "Mistral",
+            // T2.4 switches the TUI to the catalog harness name.
+            Self::Vibe => "Mistral",
         }
     }
 
@@ -44,8 +45,8 @@ impl ProviderKind {
                 args: &[],
                 env: &[],
             },
-            Self::Mistral => InteractiveLaunch {
-                program: Self::Mistral.info().binary,
+            Self::Vibe => InteractiveLaunch {
+                program: Self::Vibe.info().binary,
                 args: &[],
                 env: &[],
             },
@@ -122,13 +123,27 @@ pub fn strip_from_interactive_env(name: &OsStr) -> bool {
 config_enum_aliased! {
     /// A provider name as written in config files:
     /// trimmed, case-insensitive, aliases accepted.
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
-    #[schemars(rename_all = "lowercase")]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub enum ProviderName {
         #[default]
         Claude => "claude",
         Codex => "codex",
-        Mistral => "mistral", [alias "vibe"],
+        Vibe => "vibe", [alias "mistral"],
+    }
+}
+
+impl JsonSchema for ProviderName {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ProviderName".into()
+    }
+
+    /// Every accepted spelling, aliases included, from the list the parser reads.
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "A provider name as written in config files:\ntrimmed, case-insensitive, aliases accepted.",
+            "type": "string",
+            "enum": Self::accepted().collect::<Vec<_>>(),
+        })
     }
 }
 
@@ -138,7 +153,7 @@ impl ProviderName {
         match self {
             Self::Claude => Some(ProviderKind::Claude),
             Self::Codex => Some(ProviderKind::Codex),
-            Self::Mistral => Some(ProviderKind::Mistral),
+            Self::Vibe => Some(ProviderKind::Vibe),
         }
     }
 }
@@ -151,7 +166,7 @@ mod tests {
     fn interactive_programs_are_the_provider_binaries() {
         assert_eq!(ProviderKind::Claude.interactive_launch().program, "claude");
         assert_eq!(ProviderKind::Codex.interactive_launch().program, "codex");
-        assert_eq!(ProviderKind::Mistral.interactive_launch().program, "vibe");
+        assert_eq!(ProviderKind::Vibe.interactive_launch().program, "vibe");
     }
 
     #[test]
@@ -168,7 +183,7 @@ mod tests {
             &[("CLAUDECODE", "")]
         );
         assert!(ProviderKind::Codex.interactive_launch().env.is_empty());
-        assert!(ProviderKind::Mistral.interactive_launch().env.is_empty());
+        assert!(ProviderKind::Vibe.interactive_launch().env.is_empty());
     }
 
     #[test]
@@ -216,7 +231,7 @@ mod tests {
         }
         let path = std::env::join_paths([dir.path()]).unwrap();
         let path = Some(path.as_os_str());
-        assert!(ProviderKind::Mistral.interactive_available_in(path));
+        assert!(ProviderKind::Vibe.interactive_available_in(path));
         assert!(!ProviderKind::Claude.interactive_available_in(path));
         assert!(!ProviderKind::Codex.interactive_available_in(path));
         for (kind, _) in <ProviderKind as EnumSpelling>::VARIANTS {
@@ -227,13 +242,15 @@ mod tests {
     /// The display names the output frame title shows, one per implemented kind.
     #[test]
     fn display_names_capitalize_the_spellings() {
-        for &(kind, spelling) in ProviderKind::VARIANTS {
+        // T2.4 removes `display_name`; until then Vibe still shows the provider name.
+        for (kind, expected) in [
+            (ProviderKind::Claude, "Claude"),
+            (ProviderKind::Codex, "Codex"),
+            (ProviderKind::Vibe, "Mistral"),
+        ] {
             let display = kind.display_name();
-            assert!(
-                display.starts_with(|c: char| c.is_uppercase()),
-                "`{spelling}` has no capitalized display name"
-            );
-            assert_eq!(display.to_lowercase(), spelling);
+            assert!(display.starts_with(|c: char| c.is_uppercase()));
+            assert_eq!(display, expected);
         }
     }
 }

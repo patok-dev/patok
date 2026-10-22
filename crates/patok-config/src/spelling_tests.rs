@@ -47,7 +47,7 @@ fn provider_kind_round_trips_every_variant() {
     check::<ProviderKind>();
     assert_eq!(
         ProviderKind::accepted_spellings(),
-        "`claude`, `codex`, `mistral`"
+        "`claude`, `codex`, `vibe`"
     );
 }
 

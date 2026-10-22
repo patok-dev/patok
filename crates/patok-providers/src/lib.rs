@@ -122,7 +122,7 @@ pub trait Provider: Send + Sync {
 pub fn resolve(kind: ProviderKind) -> Result<std::sync::Arc<dyn Provider>, ProviderError> {
     let provider: std::sync::Arc<dyn Provider> = match kind {
         ProviderKind::Claude => std::sync::Arc::new(claude::Claude),
-        ProviderKind::Mistral => std::sync::Arc::new(vibe::Vibe),
+        ProviderKind::Vibe => std::sync::Arc::new(vibe::Vibe),
         ProviderKind::Codex => std::sync::Arc::new(codex::Codex),
     };
     provider.check_available()?;

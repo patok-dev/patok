@@ -291,7 +291,7 @@ enum Role {
 }
 
 // Canonical provider identifiers. The parser-level alias documented there
-// (vibe -> PROVIDER_MISTRAL) is a TOML text-parsing concern and is not
+// (mistral -> PROVIDER_VIBE) is a TOML text-parsing concern and is not
 // carried over the wire: the settings overlay always sends one of these three.
 enum Provider {
   // Values 2 and 3 were opencode and ghcopilot, providers that parsed but
@@ -301,7 +301,8 @@ enum Provider {
   reserved "PROVIDER_OPENCODE", "PROVIDER_GHCOPILOT";
   PROVIDER_CLAUDE = 0;
   PROVIDER_CODEX = 1;
-  PROVIDER_MISTRAL = 4;
+  // Number 4 was named PROVIDER_MISTRAL before T2.3.
+  PROVIDER_VIBE = 4;
 }
 
 enum RunMode {
