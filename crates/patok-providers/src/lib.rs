@@ -100,6 +100,10 @@ pub enum ProviderError {
     },
     #[error("`{provider}` does not support model discovery")]
     DiscoveryUnsupported { provider: String },
+    /// Discovery ran but produced no usable model list. `reason` never quotes harness output
+    /// beyond an error message the harness itself reports.
+    #[error("model discovery for `{provider}` failed: {reason}")]
+    Discovery { provider: String, reason: String },
 }
 
 /// One back-end. A provider runs agent sessions, exposes the surface the engine

@@ -34,7 +34,8 @@ pub struct ProcessSpec {
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(&'static str, &'static str)>,
-    /// Written to the child's stdin, which is then closed.
+    /// Written to the child's stdin. `run` then closes it; `exchange` keeps it open until the
+    /// answer arrives.
     pub stdin: String,
 }
 
@@ -193,6 +194,45 @@ fn spawn(spec: &ProcessSpec, cwd: &Path) -> Result<Child, ProviderError> {
             ProviderError::Spawn { cli, source }
         }
     })
+}
+
+/// A one-shot request/answer exchange with a CLI, used for model discovery. Spawns `spec` in
+/// `cwd` and writes `spec.stdin`, keeping stdin open. Each stdout line goes to `answer` until it
+/// returns `Some`; then the process group is killed and the answer is returned. `Ok(None)`
+/// when stdout ends first. Output is never logged (it may carry account data). Stderr is
+/// drained and discarded so the child cannot block on a full pipe. Dropping the future (a
+/// caller's timeout or cancellation) kills the child through `kill_on_drop`.
+pub(crate) async fn exchange<T>(
+    spec: &ProcessSpec,
+    cwd: &Path,
+    mut answer: impl FnMut(&str) -> Option<T>,
+) -> Result<Option<T>, ProviderError> {
+    let mut child = spawn(spec, cwd)?;
+    let pid = child.id();
+    // Held until the end: dropping it would close the pipe the CLI is waiting on.
+    let mut stdin = child.stdin.take().expect("piped");
+    // A child that exits before reading shows up as no answer below.
+    let _ = stdin.write_all(spec.stdin.as_bytes()).await;
+
+    let stderr = child.stderr.take().expect("piped");
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(_)) = lines.next_line().await {}
+    });
+
+    // Read in this future (not a spawned task) so dropping it also stops the reads.
+    let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
+    let mut found = None;
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Some(t) = answer(&line) {
+            found = Some(t);
+            break;
+        }
+    }
+    kill(&mut child, pid).await;
+    let _ = child.wait().await;
+    drop(stdin);
+    Ok(found)
 }
 
 fn spawn_reader<R>(reader: R, tx: mpsc::UnboundedSender<Line>, wrap: fn(String) -> Line)
@@ -354,6 +394,42 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit, ExitKind::Cancelled);
         assert_eq!(result.failure.as_deref(), Some("cancelled by shutdown"));
+    }
+
+    #[tokio::test]
+    async fn exchange_returns_the_answer_and_kills_the_process() {
+        let spec = ProcessSpec {
+            stdin: "ping\n".into(),
+            ..sh(r#"read -r l; echo "got $l"; sleep 30"#)
+        };
+        let answer = tokio::time::timeout(
+            Duration::from_secs(5),
+            exchange(&spec, &std::env::temp_dir(), |line| {
+                line.starts_with("got ").then(|| line.to_owned())
+            }),
+        )
+        .await
+        .expect("the process was killed, not waited on")
+        .unwrap();
+        assert_eq!(answer.as_deref(), Some("got ping"));
+    }
+
+    #[tokio::test]
+    async fn exchange_is_none_when_output_ends_first() {
+        let answer = exchange(&sh("echo a; echo b"), &std::env::temp_dir(), |_| None::<()>).await;
+        assert!(matches!(answer, Ok(None)));
+    }
+
+    #[tokio::test]
+    async fn exchange_reports_a_missing_cli() {
+        let spec = ProcessSpec {
+            program: "patok-no-such-cli".into(),
+            ..sh("")
+        };
+        let err = exchange(&spec, &std::env::temp_dir(), |_| None::<()>)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::CliNotFound { .. }), "{err}");
     }
 
     #[tokio::test]

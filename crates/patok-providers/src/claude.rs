@@ -8,9 +8,24 @@ use serde_json::Value;
 use crate::catalog::CLAUDE;
 use crate::cli;
 use crate::process::{self, Parsed, ProcessSpec};
-use crate::{Provider, ProviderError, SessionRequest, SessionResult, Tool};
+use crate::{DiscoveredModel, Provider, ProviderError, SessionRequest, SessionResult, Tool};
 
 const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
+
+/// Print mode with stream-json on both ends, so the CLI answers control requests on stdout.
+const DISCOVERY_ARGS: &[&str] = &[
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+];
+/// The control request whose response lists the models.
+const INITIALIZE_REQUEST: &str =
+    r#"{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}"#;
+const INITIALIZE_REQUEST_ID: &str = "r1";
 
 pub struct Claude;
 
@@ -39,6 +54,91 @@ impl Provider for Claude {
         let model = request.model.clone().unwrap_or_default();
         process::run(spec, &request, StreamParser::default(), self.slug(), &model).await
     }
+
+    async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        discover_with(discovery_spec()).await
+    }
+}
+
+fn discovery_spec() -> ProcessSpec {
+    ProcessSpec {
+        program: CLAUDE.binary.into(),
+        args: DISCOVERY_ARGS.iter().map(|a| (*a).to_string()).collect(),
+        // Marks a nested Claude session; emptied so the child does not refuse to start.
+        env: vec![("CLAUDECODE", "")],
+        stdin: format!("{INITIALIZE_REQUEST}\n"),
+    }
+}
+
+/// Runs `spec` as the discovery process; tests substitute the spec to mock the spawn.
+async fn discover_with(spec: ProcessSpec) -> Result<Vec<DiscoveredModel>, ProviderError> {
+    // Discovery is not about a project; a neutral directory keeps project settings and hooks
+    // out of the harness.
+    let cwd = std::env::temp_dir();
+    let discovery_error = |reason: String| ProviderError::Discovery {
+        provider: CLAUDE.slug.into(),
+        reason,
+    };
+    match process::exchange(&spec, &cwd, parse_initialize_line).await? {
+        Some(Ok(models)) => Ok(models),
+        Some(Err(reason)) => Err(discovery_error(reason)),
+        None => Err(discovery_error(
+            "the harness exited without answering the initialize request".into(),
+        )),
+    }
+}
+
+/// What one stdout line of the discovery process says about the `initialize` request:
+/// `None` for any other line, otherwise the listed models or why there are none. Reads only
+/// `models`; the rest of the response (account data) is never inspected, kept or logged.
+pub fn parse_initialize_line(line: &str) -> Option<Result<Vec<DiscoveredModel>, String>> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    if value["type"] != "control_response" {
+        return None;
+    }
+    let outer = &value["response"];
+    if outer["request_id"]
+        .as_str()
+        .is_some_and(|id| id != INITIALIZE_REQUEST_ID)
+    {
+        return None;
+    }
+    if outer["subtype"] == "error" {
+        return Some(Err(format!(
+            "the harness rejected the initialize request: {}",
+            outer["error"].as_str().unwrap_or("no reason given")
+        )));
+    }
+    // The payload nests under `response.response`; `response.models` is tolerated too.
+    let Some(entries) = outer["response"]["models"]
+        .as_array()
+        .or_else(|| outer["models"].as_array())
+    else {
+        return Some(Err("the initialize response has no models list".into()));
+    };
+    let mut models: Vec<DiscoveredModel> = vec![];
+    for entry in entries {
+        let (id, display_name) = match entry {
+            Value::String(s) => (s.as_str(), None),
+            Value::Object(_) => match entry["value"].as_str() {
+                Some(id) => (id, entry["displayName"].as_str().map(String::from)),
+                None => continue,
+            },
+            _ => continue,
+        };
+        if id.is_empty() || models.iter().any(|m| m.id == id) {
+            continue;
+        }
+        models.push(DiscoveredModel {
+            id: id.into(),
+            display_name,
+            listed: true,
+        });
+    }
+    if models.is_empty() {
+        return Some(Err("the harness reported no models".into()));
+    }
+    Some(Ok(models))
 }
 
 fn build_args(request: &SessionRequest) -> Vec<String> {
@@ -636,5 +736,132 @@ mod tests {
         assert_eq!(claude_tools(Tool::NotebookEdit), ["NotebookEdit"]);
         assert_eq!(claude_tools(Tool::WebFetch), ["WebFetch"]);
         assert_eq!(claude_tools(Tool::WebSearch), ["WebSearch"]);
+    }
+
+    const ANSWER: &str =
+        r#"read -r line && [ "$line" = "$REQUEST" ] && printf '%s\n' "$OUTPUT"; sleep 30"#;
+
+    fn fake_claude(script: &'static str, output: &'static str) -> ProcessSpec {
+        ProcessSpec {
+            program: "sh".into(),
+            args: vec!["-c".into(), script.into()],
+            env: vec![("REQUEST", INITIALIZE_REQUEST), ("OUTPUT", output)],
+            ..discovery_spec()
+        }
+    }
+
+    fn ids(models: &[DiscoveredModel]) -> Vec<&str> {
+        models.iter().map(|m| m.id.as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn discovery_reads_the_models_from_the_initialize_response() {
+        let spec = fake_claude(
+            ANSWER,
+            include_str!("../tests/fixtures/claude-initialize.jsonl"),
+        );
+        let models = tokio::time::timeout(std::time::Duration::from_secs(5), discover_with(spec))
+            .await
+            .expect("the process was killed after the answer")
+            .unwrap();
+        assert_eq!(ids(&models), ["default", "opus", "sonnet[1m]", "haiku"]);
+        assert!(models.iter().all(|m| m.listed));
+    }
+
+    #[tokio::test]
+    async fn discovery_fails_when_the_harness_exits_without_answering() {
+        let spec = fake_claude(r#"read -r line; echo '{"type":"system"}'"#, "");
+        match discover_with(spec).await {
+            Err(ProviderError::Discovery { provider, .. }) => assert_eq!(provider, "claude"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_reports_an_error_response() {
+        let spec = fake_claude(
+            ANSWER,
+            r#"{"type":"control_response","response":{"subtype":"error","request_id":"r1","error":"not logged in"}}"#,
+        );
+        match discover_with(spec).await {
+            Err(ProviderError::Discovery { reason, .. }) => {
+                assert!(reason.contains("not logged in"), "{reason}");
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_of_a_missing_cli_is_cli_not_found() {
+        let spec = ProcessSpec {
+            program: "patok-no-such-cli".into(),
+            ..discovery_spec()
+        };
+        let err = discover_with(spec).await.unwrap_err();
+        assert!(matches!(err, ProviderError::CliNotFound { .. }), "{err}");
+    }
+
+    #[test]
+    fn the_discovery_spec_is_the_spec_invocation() {
+        let spec = discovery_spec();
+        assert_eq!(
+            spec.args.join(" "),
+            "-p --input-format stream-json --output-format stream-json --verbose --no-session-persistence"
+        );
+        assert_eq!(spec.stdin, format!("{INITIALIZE_REQUEST}\n"));
+        assert_eq!(spec.env, [("CLAUDECODE", "")]);
+    }
+
+    #[test]
+    fn initialize_lines_that_are_not_the_answer_are_ignored() {
+        assert!(parse_initialize_line("not json").is_none());
+        assert!(parse_initialize_line(r#"{"type":"system"}"#).is_none());
+        assert!(
+            parse_initialize_line(
+                r#"{"type":"control_response","response":{"request_id":"r9","response":{"models":["a"]}}}"#
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_missing_or_empty_models_list_is_an_error() {
+        for line in [
+            r#"{"type":"control_response","response":{"request_id":"r1","response":{"models":"x"}}}"#,
+            r#"{"type":"control_response","response":{"request_id":"r1","response":{"models":[]}}}"#,
+        ] {
+            assert!(
+                matches!(parse_initialize_line(line), Some(Err(_))),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_entries_may_be_objects_and_duplicates_are_dropped() {
+        let line = r#"{"type":"control_response","response":{"request_id":"r1","response":{"models":[{"value":"opus","displayName":"Opus"},"opus","","sonnet",3]}}}"#;
+        let models = parse_initialize_line(line).unwrap().unwrap();
+        assert_eq!(
+            models,
+            [
+                DiscoveredModel {
+                    id: "opus".into(),
+                    display_name: Some("Opus".into()),
+                    listed: true
+                },
+                DiscoveredModel {
+                    id: "sonnet".into(),
+                    display_name: None,
+                    listed: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn models_directly_under_response_are_read_too() {
+        let line = r#"{"type":"control_response","response":{"subtype":"success","request_id":"r1","models":["opus"]}}"#;
+        let models = parse_initialize_line(line).unwrap().unwrap();
+        assert_eq!(ids(&models), ["opus"]);
     }
 }
