@@ -32,6 +32,17 @@ struct CacheFile {
     models: Vec<DiscoveredModel>,
 }
 
+/// Why a cache lookup did not yield models.
+#[derive(Debug)]
+enum Miss {
+    Missing,
+    Unreadable(std::io::Error),
+    Corrupt(serde_json::Error),
+    VersionMismatch { stored: String },
+    Stale { age: Duration },
+    FromTheFuture,
+}
+
 /// One JSON file per provider: `<dir>/<slug>.json`.
 #[derive(Clone, Debug)]
 pub struct ModelCache {
@@ -56,9 +67,9 @@ impl ModelCache {
     }
 
     /// The cached models of `slug` when fresh at `now` and recorded for
-    /// `harness_version` (the caller's trimmed `--version` output, compared
+    /// `harness_version` (the caller's trimmed `--version` line, compared
     /// exactly); `None` when missing, unreadable, corrupt, stale or recorded
-    /// for another version.
+    /// for another version. Every miss logs its reason at debug level.
     pub fn load(
         &self,
         slug: &str,
@@ -66,21 +77,69 @@ impl ModelCache {
         now: SystemTime,
     ) -> Option<Vec<DiscoveredModel>> {
         let path = self.path(slug);
-        let text = std::fs::read_to_string(&path).ok()?;
-        let file: CacheFile = match serde_json::from_str(&text) {
-            Ok(file) => file,
-            Err(error) => {
-                tracing::debug!(path = %path.display(), %error, "ignoring corrupt model cache");
-                return None;
+        let path = path.display();
+        match self.lookup(slug, harness_version, now) {
+            Ok(models) => {
+                tracing::debug!(slug, harness_version, models = models.len(), %path, "model cache hit");
+                Some(models)
             }
-        };
+            Err(Miss::Missing) => {
+                tracing::debug!(slug, %path, "model cache miss: no cache file");
+                None
+            }
+            Err(Miss::Unreadable(error)) => {
+                tracing::debug!(slug, %path, %error, "model cache miss: unreadable");
+                None
+            }
+            Err(Miss::Corrupt(error)) => {
+                tracing::debug!(slug, %path, %error, "model cache miss: corrupt");
+                None
+            }
+            Err(Miss::VersionMismatch { stored }) => {
+                tracing::debug!(slug, %path, %stored, observed = harness_version, "model cache miss: harness version mismatch");
+                None
+            }
+            Err(Miss::Stale { age }) => {
+                tracing::debug!(
+                    slug,
+                    %path,
+                    age_secs = age.as_secs(),
+                    ttl_secs = MODEL_CACHE_TTL.as_secs(),
+                    "model cache miss: stale"
+                );
+                None
+            }
+            Err(Miss::FromTheFuture) => {
+                tracing::debug!(slug, %path, "model cache miss: fetched in the future");
+                None
+            }
+        }
+    }
+
+    fn lookup(
+        &self,
+        slug: &str,
+        harness_version: &str,
+        now: SystemTime,
+    ) -> Result<Vec<DiscoveredModel>, Miss> {
+        let text = std::fs::read_to_string(self.path(slug)).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                Miss::Missing
+            } else {
+                Miss::Unreadable(error)
+            }
+        })?;
+        let file: CacheFile = serde_json::from_str(&text).map_err(Miss::Corrupt)?;
         if file.harness_version != harness_version {
-            return None;
+            return Err(Miss::VersionMismatch {
+                stored: file.harness_version,
+            });
         }
         let fetched = UNIX_EPOCH + Duration::from_secs(file.fetched_at);
         match now.duration_since(fetched) {
-            Ok(age) if age < MODEL_CACHE_TTL => Some(file.models),
-            _ => None,
+            Ok(age) if age < MODEL_CACHE_TTL => Ok(file.models),
+            Ok(age) => Err(Miss::Stale { age }),
+            Err(_) => Err(Miss::FromTheFuture),
         }
     }
 
@@ -180,6 +239,54 @@ mod tests {
         assert_eq!(cache.load("claude", "1", t0()), None);
         cache.store("claude", "1", &sample(), t0()).unwrap();
         assert_eq!(cache.load("claude", "1", t0()), Some(sample()));
+    }
+
+    #[test]
+    fn lookup_names_why_it_missed() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(dir.path());
+        assert!(matches!(
+            cache.lookup("claude", "1", t0()),
+            Err(Miss::Missing)
+        ));
+        cache.store("claude", "1", &sample(), t0()).unwrap();
+        match cache.lookup("claude", "2", t0()) {
+            Err(Miss::VersionMismatch { stored }) => assert_eq!(stored, "1"),
+            other => panic!("unexpected: {other:?}"),
+        }
+        let later = t0() + MODEL_CACHE_TTL + Duration::from_secs(5);
+        match cache.lookup("claude", "1", later) {
+            Err(Miss::Stale { age }) => assert_eq!(age, MODEL_CACHE_TTL + Duration::from_secs(5)),
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert!(matches!(
+            cache.lookup("claude", "1", t0() - Duration::from_secs(1)),
+            Err(Miss::FromTheFuture)
+        ));
+        std::fs::write(cache.path("claude"), "{not json").unwrap();
+        assert!(matches!(
+            cache.lookup("claude", "1", t0()),
+            Err(Miss::Corrupt(_))
+        ));
+        std::fs::remove_file(cache.path("claude")).unwrap();
+        std::fs::create_dir(cache.path("claude")).unwrap();
+        assert!(matches!(
+            cache.lookup("claude", "1", t0()),
+            Err(Miss::Unreadable(_))
+        ));
+    }
+
+    #[test]
+    fn a_cache_stored_under_the_version_line_loads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(dir.path());
+        cache
+            .store("codex", "codex-cli 0.160.0", &sample(), t0())
+            .unwrap();
+        assert_eq!(
+            cache.load("codex", "codex-cli 0.160.0", t0() + Duration::from_secs(60)),
+            Some(sample())
+        );
     }
 
     #[test]

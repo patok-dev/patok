@@ -14,6 +14,9 @@ use support::{Fixture, collect_until};
 
 const ALL_CLAUDE: &str = "research_provider = \"claude\"\nplanner_provider = \"claude\"\nbuilder_provider = \"claude\"\nreviewer_provider = \"claude\"\ndiscovery_provider = \"claude\"\norchestrator_provider = \"claude\"\nbuilder_model = \"opus\"\n";
 
+const ALL_CODEX: &str = "research_provider = \"codex\"\nplanner_provider = \"codex\"\nbuilder_provider = \"codex\"\nreviewer_provider = \"codex\"\ndiscovery_provider = \"codex\"\norchestrator_provider = \"codex\"\nbuilder_model = \"gpt-5\"\n";
+const ALL_VIBE: &str = "research_provider = \"vibe\"\nplanner_provider = \"vibe\"\nbuilder_provider = \"vibe\"\nreviewer_provider = \"vibe\"\ndiscovery_provider = \"vibe\"\norchestrator_provider = \"vibe\"\n";
+
 fn catalog_events(events: &[EngineEvent]) -> Vec<ProviderCatalog> {
     events
         .iter()
@@ -249,4 +252,64 @@ async fn assigning_vibe_discovers_nothing() {
     assert!(catalog_events(&events).is_empty(), "{events:?}");
     assert!(attachment.events.try_recv().is_err());
     assert_eq!(mock.discovery_calls(), 0);
+}
+
+#[tokio::test]
+async fn a_cached_codex_catalog_survives_restarts_and_reassignment() {
+    let cache_dir = tempfile::tempdir().unwrap();
+    let mock = discovering("gpt-5")
+        .with_slug("codex")
+        .with_harness_version("codex-cli 0.160.0");
+
+    // First daemon start: nothing cached, so codex is discovered once.
+    let fixture = Fixture::new("");
+    let engine = fixture.engine_configured(mock.clone(), ALL_CODEX);
+    engine
+        .spawn_model_validation(Some(ModelCache::new(cache_dir.path())))
+        .await
+        .unwrap();
+    assert_eq!(mock.discovery_calls(), 1);
+
+    // A restart: a new engine over the same cache directory.
+    let fixture = Fixture::new("");
+    let engine = fixture.engine_configured(mock.clone(), ALL_CODEX);
+    let mut attachment = engine.attach().unwrap();
+    engine
+        .spawn_model_validation(Some(ModelCache::new(cache_dir.path())))
+        .await
+        .unwrap();
+    assert_eq!(mock.discovery_calls(), 1);
+    let events = collect_until(
+        &mut attachment.events,
+        is_catalog("codex", ModelCatalogStatus::Ready),
+    )
+    .await;
+    let catalog = catalog_events(&events)
+        .into_iter()
+        .find(|c| c.provider == "codex" && c.status == ModelCatalogStatus::Ready)
+        .unwrap();
+    assert_eq!(catalog.models[0].id, "gpt-5");
+
+    // A restart that does not use codex, then a settings change assigning it.
+    let fixture = Fixture::new("");
+    let engine = fixture.engine_configured(mock.clone(), ALL_VIBE);
+    let mut attachment = engine.attach().unwrap();
+    engine
+        .spawn_model_validation(Some(ModelCache::new(cache_dir.path())))
+        .await
+        .unwrap();
+    assert_eq!(mock.discovery_calls(), 1);
+    assign(&engine, "reviewer_provider", "codex");
+    let events = collect_until(
+        &mut attachment.events,
+        is_catalog("codex", ModelCatalogStatus::Ready),
+    )
+    .await;
+    assert_eq!(mock.discovery_calls(), 1);
+    let catalog = catalog_events(&events)
+        .into_iter()
+        .find(|c| c.provider == "codex" && c.status == ModelCatalogStatus::Ready)
+        .unwrap();
+    assert_eq!(catalog.models.len(), 1);
+    assert_eq!(catalog.models[0].id, "gpt-5");
 }

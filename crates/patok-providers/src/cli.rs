@@ -121,19 +121,37 @@ pub(crate) fn version_spec(info: &ProviderInfo) -> ProcessSpec {
     }
 }
 
-/// Runs `spec` and returns the first non-empty trimmed stdout line, the harness version.
+/// The trimmed `line` when it carries a version number (digits, a dot, digits), else
+/// `None`. Notices a CLI prints ahead of its version (an update hint, a warning) have no
+/// such token, so they are never taken for the version.
+fn version_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    let bytes = line.as_bytes();
+    let has_token = bytes.iter().enumerate().any(|(i, &b)| {
+        b == b'.'
+            && i > 0
+            && bytes[i - 1].is_ascii_digit()
+            && bytes.get(i + 1).is_some_and(u8::is_ascii_digit)
+    });
+    has_token.then(|| line.to_owned())
+}
+
+/// Runs `spec` and returns the first stdout line that carries a version number, trimmed:
+/// the harness version, and the model cache's key.
 pub(crate) async fn harness_version_with(
     spec: ProcessSpec,
     slug: &str,
 ) -> Result<String, ProviderError> {
-    let version = process::exchange(&spec, &std::env::temp_dir(), |line| {
-        let line = line.trim();
-        (!line.is_empty()).then(|| line.to_owned())
-    })
-    .await?;
-    version.ok_or_else(|| ProviderError::Discovery {
-        provider: slug.into(),
-        reason: "the harness printed no version".into(),
+    let version = process::exchange(&spec, &std::env::temp_dir(), version_line).await?;
+    version.ok_or_else(|| {
+        tracing::debug!(
+            provider = slug,
+            "the version probe ended without a version line"
+        );
+        ProviderError::Discovery {
+            provider: slug.into(),
+            reason: "the harness printed no version".into(),
+        }
     })
 }
 
@@ -198,6 +216,43 @@ mod tests {
         let spec = sh(r"printf '\n 2.1.0 (Claude Code) \n'");
         let version = harness_version_with(spec, "claude").await.unwrap();
         assert_eq!(version, "2.1.0 (Claude Code)");
+    }
+
+    #[test]
+    fn version_line_needs_digits_around_a_dot() {
+        assert_eq!(
+            version_line(" codex-cli 0.160.0 "),
+            Some("codex-cli 0.160.0".into())
+        );
+        assert_eq!(version_line("v1.2"), Some("v1.2".into()));
+        assert_eq!(version_line("Update available: run npm i"), None);
+        assert_eq!(version_line("build 12 of 30"), None);
+        assert_eq!(version_line("see .5 and 5."), None);
+        assert_eq!(version_line(""), None);
+    }
+
+    #[tokio::test]
+    async fn harness_version_skips_lines_without_a_version() {
+        let spec =
+            sh(r"printf 'Update available: run npm i -g @openai/codex\n\ncodex-cli 0.160.0\n'");
+        let version = harness_version_with(spec, "codex").await.unwrap();
+        assert_eq!(version, "codex-cli 0.160.0");
+    }
+
+    #[tokio::test]
+    async fn harness_version_is_stable_across_varying_noise() {
+        let dir = tempfile::tempdir().unwrap();
+        let counter = dir.path().join("n");
+        std::fs::write(&counter, "0").unwrap();
+        let script = format!(
+            "n=$(cat {c}); echo $((n + 1)) > {c}; echo \"notice number $n: update available\"; echo 'codex-cli 0.160.0'",
+            c = counter.display()
+        );
+        let first = harness_version_with(sh(&script), "codex").await.unwrap();
+        let second = harness_version_with(sh(&script), "codex").await.unwrap();
+        assert_eq!(first, "codex-cli 0.160.0");
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "2");
     }
 
     #[tokio::test]

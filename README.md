@@ -98,7 +98,9 @@ trigger discovery, see above). Shutdown cancels it and kills any harness it star
 
 Discovered models are cached in `$XDG_CACHE_HOME/patok/models/<slug>.json`, else
 `~/.cache/patok/models/<slug>.json`. An entry is fresh for 24 h and only while the
-harness `--version` matches. Deleting the file forces a new discovery at the next start.
+harness `--version` matches (the first output line with a version number, so a notice printed
+ahead of it does not change the key). Deleting the file forces a new discovery at the next start.
+`RUST_LOG=debug patok daemon` logs each model-cache hit and miss with its reason.
 
 Only model ids, display names and visibility are stored. The rest of Claude's response
 contains account data and is never stored or logged. There is no refresh command and no
