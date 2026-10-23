@@ -10,7 +10,7 @@ expression: "draw(&app, W, H)"
 │    │      discovery provider  ‹ claude ›                                                   ││    │
 │    │      discovery model  opus                                                            ││    │
 └────│      orchestrator provider  ‹ claude ›                                                ││────┘
-┌ Tas│      orchestrator model  (not set)                                                    ││────┐
+┌ Tas│      orchestrator model  Provider default                                             ││────┐
 │○ T1│  ▾ Pipeline                                                                           █│    │
 │    │      run mode  ‹ sprint ›                                                             █│    │
 │    │      [ ] plan enabled                                                                 █│    │

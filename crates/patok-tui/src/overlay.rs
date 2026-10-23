@@ -152,6 +152,20 @@ fn model_row(key: &'static str, provider: &'static str) -> Row {
     }
 }
 
+/// The `<role>_model` row paired with the provider row `provider_key`: the row
+/// whose hide rule reads it. `None` for every non-provider key.
+fn paired_model(provider_key: &str) -> Option<&'static str> {
+    SECTIONS
+        .iter()
+        .flat_map(|section| section.rows.iter())
+        .find_map(|row| match row.hide {
+            Some(HideWhen::ProviderLacksModelSelection(provider)) if provider == provider_key => {
+                Some(row.key)
+            }
+            _ => None,
+        })
+}
+
 static PROVIDER_SECTION: LazyLock<Vec<Row>> = LazyLock::new(|| {
     vec![
         Row {
@@ -571,6 +585,28 @@ impl SettingsOverlay {
         }
     }
 
+    /// Drafts `value` for `key`. A model id belongs to the provider it was picked
+    /// for (an `opus` means nothing to codex), so a provider change also drafts
+    /// its role's model empty, which is the provider's default. Both drafts are
+    /// saved or discarded together by the close dialog, so the old provider's
+    /// model never reaches the new harness. Comparing `ProviderKind`s keeps the
+    /// model when the value names the same provider again, including an alias
+    /// such as `mistral` for `vibe`.
+    fn draft(&mut self, key: &str, value: SettingValue) {
+        if let Some(model) = paired_model(key) {
+            let before = self.role_provider(key);
+            let after = value
+                .as_str()
+                .and_then(ProviderName::parse)
+                .and_then(ProviderName::kind);
+            if before != after {
+                self.drafts
+                    .insert(model.to_string(), SettingValue::Str(String::new()));
+            }
+        }
+        self.drafts.insert(key.to_string(), value);
+    }
+
     /// The provider kind of the provider row `provider_key`: its draft, else
     /// the readout; `None` when missing or unknown.
     fn role_provider(&self, provider_key: &str) -> Option<ProviderKind> {
@@ -857,7 +893,7 @@ impl SettingsOverlay {
                     // A valid buffer commits as a draft: no change is sent, applied
                     // or persisted until the close dialog's save choice.
                     Ok(value) => {
-                        self.drafts.insert(editor.field.to_string(), value);
+                        self.draft(editor.field, value);
                         self.status = None;
                         Action::None
                     }
@@ -958,9 +994,7 @@ impl SettingsOverlay {
         let index = values.iter().position(|value| *value == now).unwrap_or(0);
         let next = values[((index as isize + step).rem_euclid(values.len() as isize)) as usize];
         self.keep_focus_across(|overlay| {
-            overlay
-                .drafts
-                .insert(row.key.to_string(), enum_submit_value(row.key, next));
+            overlay.draft(row.key, enum_submit_value(row.key, next));
         });
         Action::None
     }
@@ -1954,6 +1988,122 @@ mod tests {
                 .iter()
                 .any(|(_, key, _)| key == "builder_model")
         );
+    }
+
+    fn cycle(subject: &mut SettingsOverlay, field: &str, current: &str, code: KeyCode) {
+        focus_field(subject, field);
+        subject.on_key(&mut stack(), key(code), str(current));
+    }
+
+    fn model_draft(subject: &SettingsOverlay, role: &str) -> Option<SettingValue> {
+        subject.drafts.get(&format!("{role}_model")).cloned()
+    }
+
+    #[test]
+    fn changing_a_provider_resets_its_model_to_the_provider_default() {
+        let mut subject = overlay();
+        subject.sync_readout(&providers(&[]));
+        subject
+            .drafts
+            .insert("builder_model".into(), SettingValue::Str("opus".into()));
+        cycle(&mut subject, "builder_provider", "claude", KeyCode::Right);
+        assert_eq!(
+            subject.drafts.get("builder_provider"),
+            Some(&SettingValue::Str("codex".into()))
+        );
+        assert_eq!(
+            model_draft(&subject, "builder"),
+            Some(SettingValue::Str(String::new()))
+        );
+        let keys: Vec<String> = subject.pending().into_iter().map(|(_, k, _)| k).collect();
+        let provider = keys.iter().position(|k| k == "builder_provider").unwrap();
+        let model = keys.iter().position(|k| k == "builder_model").unwrap();
+        assert!(provider < model);
+    }
+
+    #[test]
+    fn drafting_the_same_provider_keeps_the_model() {
+        let mut subject = overlay();
+        subject.sync_readout(&providers(&[]));
+        subject
+            .drafts
+            .insert("builder_model".into(), SettingValue::Str("opus".into()));
+        // codex -> claude, which is the readout's provider.
+        cycle(&mut subject, "builder_provider", "codex", KeyCode::Left);
+        assert_eq!(
+            subject.drafts.get("builder_provider"),
+            Some(&SettingValue::Str("claude".into()))
+        );
+        assert_eq!(
+            model_draft(&subject, "builder"),
+            Some(SettingValue::Str("opus".into()))
+        );
+    }
+
+    #[test]
+    fn an_alias_of_the_same_provider_keeps_the_model() {
+        let mut subject = overlay();
+        subject.sync_readout(&providers(&[("builder_provider", "vibe")]));
+        subject
+            .drafts
+            .insert("builder_model".into(), SettingValue::Str("opus".into()));
+        // Cycling never lands on the alias, but the editor path can write it.
+        subject.draft("builder_provider", SettingValue::Str("mistral".into()));
+        assert_eq!(
+            subject.drafts.get("builder_provider"),
+            Some(&SettingValue::Str("mistral".into()))
+        );
+        assert_eq!(
+            model_draft(&subject, "builder"),
+            Some(SettingValue::Str("opus".into()))
+        );
+    }
+
+    #[test]
+    fn cancel_restores_the_provider_and_model() {
+        let mut subject = overlay();
+        let mut modals = stack();
+        subject.sync_readout(&providers(&[]));
+        cycle(&mut subject, "builder_provider", "claude", KeyCode::Right);
+        assert_eq!(subject.drafts.len(), 2);
+        subject.begin_close(&mut modals);
+        assert_eq!(modals.top(), Some(Modal::Confirm));
+        // Cancel (third row) keeps both drafts.
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
+        subject.on_confirm_key(&mut modals, KeyCode::Down);
+        subject.on_confirm_key(&mut modals, KeyCode::Enter);
+        assert_eq!(subject.drafts.len(), 2);
+        // Discard drops both.
+        subject.begin_close(&mut modals);
+        subject.confirm_selected = 1;
+        assert_eq!(
+            subject.on_confirm_key(&mut modals, KeyCode::Enter),
+            Action::CloseSettings
+        );
+        assert!(subject.drafts.is_empty());
+        assert!(subject.pending().is_empty());
+    }
+
+    #[test]
+    fn a_reset_leaves_other_roles_models_untouched() {
+        let mut subject = overlay();
+        subject.sync_readout(&providers(&[]));
+        for role in ROLES {
+            subject
+                .drafts
+                .insert(format!("{role}_model"), SettingValue::Str("opus".into()));
+        }
+        cycle(&mut subject, "builder_provider", "claude", KeyCode::Right);
+        for role in ROLES {
+            let expected = if role == "builder" { "" } else { "opus" };
+            assert_eq!(
+                model_draft(&subject, role),
+                Some(SettingValue::Str(expected.into())),
+                "{role}"
+            );
+            let provider = subject.drafts.contains_key(&format!("{role}_provider"));
+            assert_eq!(provider, role == "builder", "{role}");
+        }
     }
 
     #[test]

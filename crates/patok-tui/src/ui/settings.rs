@@ -14,7 +14,7 @@ use super::common::{
 use super::modal::{ModalTitle, render_modal_frame};
 use crate::app::App;
 use crate::modal::{Modal, ModalLayer};
-use crate::overlay::{Entry, FieldKind, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel};
+use crate::overlay::{Entry, FieldKind, HideWhen, Row, SECTIONS, SETTINGS_CHOICES, StatusLevel};
 use crate::theme::Theme;
 
 /// The settings overlay rect: Large --
@@ -253,14 +253,19 @@ pub(super) fn settings_row_line(
                 FieldKind::Number(_) | FieldKind::Text => {
                     // A field whose editor is open renders the buffer (mid-edit
                     // protection: a reload cannot clobber an in-flight edit).
+                    // An empty model means the provider's default, the picker's term.
+                    let unset =
+                        if matches!(row.hide, Some(HideWhen::ProviderLacksModelSelection(_))) {
+                            "Provider default"
+                        } else {
+                            "(not set)"
+                        };
                     let value = match editor {
                         Some(editor) => editor.buffer.clone(),
                         None => match setting_display_value(app, row.key) {
-                            Some(SettingValue::Str(text)) if text.is_empty() => {
-                                "(not set)".to_string()
-                            }
+                            Some(SettingValue::Str(text)) if text.is_empty() => unset.to_string(),
                             Some(value) => value.to_string(),
-                            None => "(not set)".to_string(),
+                            None => unset.to_string(),
                         },
                     };
                     let prefix = format!("{row_marker}{}  ", row.label);

@@ -2410,6 +2410,48 @@ fn cycling_the_builder_provider_to_vibe_hides_and_restores_its_model_row() {
 }
 
 #[test]
+fn changing_a_provider_reverts_its_model_row_to_the_provider_default() {
+    let mut app = open();
+    apply_catalog(&mut app, claude_ready());
+    apply_catalog(
+        &mut app,
+        catalog(
+            "codex",
+            ModelCatalogStatus::Ready,
+            &[("gpt-5", Some("GPT-5"))],
+        ),
+    );
+    assert!(draw(&app, W, H).contains("builder model  opus"));
+    focus_field(&mut app, "builder_provider");
+    press(&mut app, KeyCode::Right); // claude -> codex
+    assert_eq!(
+        draft(&app, "builder_model"),
+        Some(SettingValue::Str(String::new()))
+    );
+    let screen = draw(&app, W, H);
+    assert!(
+        screen.contains("builder model  Provider default"),
+        "{screen}"
+    );
+    assert!(screen.contains("planner model  opus"), "{screen}");
+    insta::assert_snapshot!(screen);
+    // What the driver sends to the daemon carries the empty model.
+    assert!(app.overlay.pending().iter().any(|(_, key, value)| {
+        key == "builder_model" && *value == SettingValue::Str(String::new())
+    }));
+    // The picker opens for codex with Provider default as the current entry.
+    focus_field(&mut app, "builder_model");
+    press(&mut app, KeyCode::Enter);
+    let picker = draw(&app, W, H);
+    assert!(picker.contains("Model · codex"), "{picker}");
+    let current = picker
+        .lines()
+        .find(|line| line.contains("(current)"))
+        .unwrap_or_else(|| panic!("no current entry\n{picker}"));
+    assert!(current.contains("Provider default"), "{picker}");
+}
+
+#[test]
 fn a_config_changed_provider_hides_the_model_row_in_the_open_overlay() {
     let mut app = open();
     assert!(draw(&app, W, 105).contains("builder model"));
