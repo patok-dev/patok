@@ -11,7 +11,7 @@
 //! not stop a daemon whose builds may not even use that provider.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use patok_config::DaemonSettings;
 use patok_core::event::{CatalogModel, EngineEvent, ModelCatalogStatus, ProviderCatalog};
@@ -93,24 +93,51 @@ async fn models_of(
     cache: Option<ModelCache>,
 ) -> Result<Vec<DiscoveredModel>, ProviderError> {
     let slug = provider.slug();
+    let probe = Instant::now();
     let version = provider.harness_version().await;
+    let probe_ms = probe.elapsed().as_millis();
     let keyed = match (&cache, &version) {
         (Some(cache), Ok(version)) => Some((cache, version.as_str())),
         _ => None,
     };
-    if let Err(error) = &version {
-        tracing::debug!(provider = slug, %error, "no harness version; the model cache is skipped");
+    match (&cache, &version) {
+        (None, _) => {
+            tracing::debug!(
+                provider = slug,
+                "no model cache directory; the model cache is skipped"
+            );
+        }
+        (_, Err(error)) => {
+            tracing::debug!(provider = slug, %error, probe_ms, "no harness version; the model cache is skipped");
+        }
+        (_, Ok(version)) => {
+            tracing::debug!(provider = slug, %version, probe_ms, "harness version probed");
+        }
     }
     if let Some((cache, version)) = keyed
         && let Some(models) = cache.load(slug, version, SystemTime::now())
     {
+        tracing::debug!(
+            provider = slug,
+            version,
+            models = models.len(),
+            "models served from the cache"
+        );
         return Ok(models);
     }
+    let started = Instant::now();
     let models = provider.discover_models().await?;
-    if let Some((cache, version)) = keyed
-        && let Err(error) = cache.store(slug, version, &models, SystemTime::now())
-    {
-        tracing::debug!(provider = slug, %error, "cannot store the model cache");
+    tracing::debug!(
+        provider = slug,
+        models = models.len(),
+        discovery_ms = started.elapsed().as_millis(),
+        "models discovered from the harness"
+    );
+    if let Some((cache, version)) = keyed {
+        match cache.store(slug, version, &models, SystemTime::now()) {
+            Ok(()) => tracing::debug!(provider = slug, version, "model cache stored"),
+            Err(error) => tracing::debug!(provider = slug, %error, "cannot store the model cache"),
+        }
     }
     Ok(models)
 }
@@ -210,8 +237,18 @@ async fn discover(
         let Ok((kind, result)) = joined else { continue };
         let result = match result {
             Ok(Ok(models)) => Ok(models),
-            Ok(Err(error)) => Err(error.to_string()),
-            Err(_) => Err(format!("discovery timed out after {} s", timeout.as_secs())),
+            Ok(Err(error)) => {
+                tracing::debug!(provider = kind.info().slug, %error, "model discovery failed");
+                Err(error.to_string())
+            }
+            Err(_) => {
+                tracing::debug!(
+                    provider = kind.info().slug,
+                    timeout_secs = timeout.as_secs(),
+                    "model discovery timed out"
+                );
+                Err(format!("discovery timed out after {} s", timeout.as_secs()))
+            }
         };
         publish(match &result {
             Ok(models) => ready(kind, models),
@@ -557,6 +594,28 @@ mod tests {
         assert_eq!(
             cache.load("mock", "mock 1.0", SystemTime::now()),
             Some(vec![model("haiku")])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_codex_cache_entry_is_reused_across_validations() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = ModelCache::new(dir.path());
+        let codex = mock(&["gpt-5"])
+            .with_slug("codex")
+            .with_harness_version("codex-cli 0.160.0");
+        let r = resolver(mock(&[]), codex.clone(), mock(&[]));
+        let settings = DaemonSettings {
+            reviewer_provider: ProviderName::Codex,
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            validate_models(&settings, &r, Some(&cache), LONG, &|_| {}).await;
+        }
+        assert_eq!(codex.discovery_calls(), 1);
+        assert_eq!(
+            cache.load("codex", "codex-cli 0.160.0", SystemTime::now()),
+            Some(vec![model("gpt-5")])
         );
     }
 

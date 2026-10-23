@@ -197,7 +197,11 @@ async fn wait_until_gone(project: &Path) -> anyhow::Result<()> {
 /// `patok daemon --foreground`: the engine process itself.
 pub async fn run_engine(project: &Path) -> anyhow::Result<()> {
     // Logs go to stderr: the terminal in the foreground, `engine.log` when detached.
+    // `RUST_LOG` raises or narrows the level; INFO without it.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
+        .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();
