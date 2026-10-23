@@ -707,10 +707,12 @@ fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
     match key.code {
         KeyCode::Char('s') if ctrl => return app.submit_dialog(),
         KeyCode::Char('u') if ctrl => app.dialog.editor.clear(),
-        // Enter submits through the same path as the Submit button;
+        // Plain Enter submits through the same path as the Submit button;
         // an empty input is refused inline. A submit that
         // launches a run closes the dialog; a command error keeps it open.
-        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+        // Enter with Shift, Ctrl or Alt, and Ctrl+J, fall through to the
+        // editor's line break (T10.1).
+        KeyCode::Enter if !crate::dialog_editor::is_newline_key(&key) => {
             if app.dialog.editor.text().trim().is_empty() {
                 app.dialog.status = Some(app.empty_input_message().into());
             } else {
@@ -904,6 +906,76 @@ mod tests {
                 type_hello(&mut app, upper);
                 assert_eq!(app.dialog.editor.text(), "Hello");
             }
+        }
+    }
+
+    /// Opens the add (`inject == false`) or inject dialog on a fresh app.
+    fn dialog_app(inject: bool) -> App {
+        let mut app = app();
+        if inject {
+            app.open_inject();
+        } else {
+            app.open_dialog();
+        }
+        assert_eq!(app.modals.top(), Some(Modal::Dialog));
+        app
+    }
+
+    fn newline_keys() -> [KeyEvent; 6] {
+        let none = KeyModifiers::NONE;
+        let ctrl = KeyModifiers::CONTROL;
+        [
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Enter, ctrl),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char('j'), ctrl),
+            KeyEvent::new(KeyCode::Char('\n'), none),
+            KeyEvent::new(KeyCode::Char('\n'), ctrl),
+        ]
+    }
+
+    #[test]
+    fn newline_keys_break_the_line_in_the_add_and_inject_dialogs() {
+        for inject in [false, true] {
+            for nl in newline_keys() {
+                let mut app = dialog_app(inject);
+                press(&mut app, KeyCode::Char('a'));
+                assert_eq!(app.on_key(nl), Action::None, "{nl:?}");
+                press(&mut app, KeyCode::Char('b'));
+                assert_eq!(app.modals.top(), Some(Modal::Dialog), "{nl:?}");
+                assert_eq!(app.dialog.editor.text(), "a\nb", "{nl:?}");
+                assert_eq!(app.dialog.status, None, "{nl:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn newline_key_leaves_the_cursor_after_the_break() {
+        for inject in [false, true] {
+            for nl in newline_keys() {
+                let mut app = dialog_app(inject);
+                press(&mut app, KeyCode::Char('a'));
+                app.on_key(nl);
+                assert_eq!(app.dialog.editor.cursor(), 2, "{nl:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn plain_enter_still_submits_and_refuses_empty_input() {
+        for inject in [false, true] {
+            let mut app = dialog_app(inject);
+            assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+            assert_eq!(app.modals.top(), Some(Modal::Dialog));
+            assert_eq!(app.dialog.status, Some(app.empty_input_message().into()));
+
+            let mut app = dialog_app(inject);
+            press(&mut app, KeyCode::Char('x'));
+            let got = press(&mut app, KeyCode::Enter);
+            let mut expected_app = dialog_app(inject);
+            press(&mut expected_app, KeyCode::Char('x'));
+            assert_eq!(got, expected_app.submit_dialog());
+            assert_ne!(got, Action::None);
         }
     }
 
