@@ -66,6 +66,7 @@ impl EngineApi for Service {
                 state: attachment.snapshot.to_state(),
                 run_state: run_state(&self.engine) as i32,
                 pipeline: Some(pipeline_proto(&attachment.snapshot.pipeline)),
+                model_catalog: patok_wire::catalogs_to_proto(&attachment.snapshot.model_catalog),
             }),
         };
         let first = EngineUpdate {
@@ -408,11 +409,14 @@ async fn forward(
 }
 
 fn wire(event: &EngineEvent) -> engine_update::Payload {
-    // The pipeline-state change rides the typed oneof;
+    // The pipeline-state and model-catalog changes ride the typed oneof;
     // `kind`/`payload` stay set for the replay path through the recent events.
     let typed = match event {
         EngineEvent::PipelineChanged { state } => {
             Some(event::Typed::PipelineState(pipeline_proto(state)))
+        }
+        EngineEvent::ModelCatalogChanged { catalog } => {
+            patok_wire::catalog_to_proto(catalog).map(event::Typed::ModelCatalogChanged)
         }
         _ => None,
     };

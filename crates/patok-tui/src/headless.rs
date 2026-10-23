@@ -508,6 +508,7 @@ mod tests {
                 model: String::new(),
                 settings: Default::default(),
                 pipeline: Default::default(),
+                model_catalog: Vec::new(),
                 recent: vec![],
             },
             "test".into(),

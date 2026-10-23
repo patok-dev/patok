@@ -252,7 +252,8 @@ pub fn event_lines(event: &EngineEvent, open: bool) -> EventLines {
         | EngineEvent::TasksChanged { .. }
         | EngineEvent::PlanningChanged { .. }
         | EngineEvent::DiscoveryChanged { .. }
-        | EngineEvent::PipelineChanged { .. } => no_lines(open),
+        | EngineEvent::PipelineChanged { .. }
+        | EngineEvent::ModelCatalogChanged { .. } => no_lines(open),
     }
 }
 
@@ -671,6 +672,9 @@ mod tests {
             EngineEvent::DiscoveryChanged { discovering: true },
             EngineEvent::PipelineChanged {
                 state: PipelineState::today(),
+            },
+            EngineEvent::ModelCatalogChanged {
+                catalog: crate::event::ProviderCatalog::default(),
             },
         ];
         for event in &events {

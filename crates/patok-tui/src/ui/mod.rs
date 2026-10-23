@@ -181,6 +181,7 @@ mod tests {
                 model: String::new(),
                 settings: Default::default(),
                 pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
                 recent: vec![],
             },
             "test".into(),

@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::time::{Duration, Instant, SystemTime};
 
 use patok_config::{EnumSpelling, SettingValue, Theme as ThemeKey, TuiSettings};
-use patok_core::event::{AgentRole, Phase, Snapshot, Usage};
+use patok_core::event::{AgentRole, Phase, ProviderCatalog, Snapshot, Usage};
 use patok_core::output::{LineKind, LineOrigin, Pane};
 use patok_core::pipeline::PipelineState;
 use patok_core::scenario::{ProjectScan, Scenario};
@@ -553,6 +553,10 @@ pub struct App {
     /// attach snapshot and updated by every `PipelineChanged`; rendered by the pipeline
     /// rail of T50.1.
     pub pipeline: PipelineState,
+    /// The engine-reported model catalog, keyed by provider slug: seeded from the
+    /// attach snapshot and updated by every `ModelCatalogChanged`. Read by the model
+    /// picker (T4.3); a provider without an entry has not been discovered.
+    pub model_catalog: BTreeMap<String, ProviderCatalog>,
 }
 
 impl App {
@@ -605,6 +609,11 @@ impl App {
             tui: TuiSettings::default(),
             settings: snapshot.settings,
             pipeline: snapshot.pipeline,
+            model_catalog: snapshot
+                .model_catalog
+                .into_iter()
+                .map(|catalog| (catalog.provider.clone(), catalog))
+                .collect(),
         };
         for event in snapshot.recent {
             app.apply(event);

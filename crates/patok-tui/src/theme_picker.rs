@@ -120,6 +120,7 @@ mod tests {
                 model: String::new(),
                 settings: BTreeMap::new(),
                 pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
                 recent: vec![],
             },
             "0.1.0".into(),

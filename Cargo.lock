@@ -1489,6 +1489,7 @@ name = "patok-wire"
 version = "0.0.0"
 dependencies = [
  "patok-config",
+ "patok-core",
  "patok-proto",
  "patok-providers",
 ]

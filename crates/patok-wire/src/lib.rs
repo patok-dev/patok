@@ -14,14 +14,21 @@
 //! bridges (provider, run mode, accept policy) live here too, in one place instead
 //! of mirrored across the engine and the shell.
 //!
+//! The model catalog (proto <-> core) for the attach snapshot and its change event
+//! lives here too.
+//!
 //! Adding a daemon setting is the `daemon_table!` entry in `patok-config`, the proto
 //! oneof field, and one line in the list below -- nothing else on the wire.
 
 use patok_config::{
     AcceptPolicy as CoreAcceptPolicy, EnumSpelling, RunMode as CoreRunMode, SettingValue,
 };
+use patok_core::event::{CatalogModel, ModelCatalogStatus, ProviderCatalog};
 use patok_proto::settings_change::Change;
-use patok_proto::{AcceptPolicy, Provider, Role, RoleModel, RoleProvider, RunMode};
+use patok_proto::{
+    AcceptPolicy, CatalogModel as ProtoCatalogModel, ModelCatalogStatus as ProtoModelCatalogStatus,
+    Provider, ProviderModelCatalog, Role, RoleModel, RoleProvider, RunMode,
+};
 use patok_providers::ProviderName;
 
 /// The agent-role table, generated from one list: the config spelling of every proto
@@ -503,6 +510,69 @@ daemon_wire_table! {
     }
 }
 
+/// The wire enum of a core catalog status.
+fn proto_catalog_status(status: ModelCatalogStatus) -> ProtoModelCatalogStatus {
+    match status {
+        ModelCatalogStatus::NotDiscovered => ProtoModelCatalogStatus::NotDiscovered,
+        ModelCatalogStatus::Pending => ProtoModelCatalogStatus::Pending,
+        ModelCatalogStatus::Ready => ProtoModelCatalogStatus::Ready,
+        ModelCatalogStatus::Failed => ProtoModelCatalogStatus::Failed,
+    }
+}
+
+/// The core enum of a wire catalog status.
+fn core_catalog_status(status: ProtoModelCatalogStatus) -> ModelCatalogStatus {
+    match status {
+        ProtoModelCatalogStatus::NotDiscovered => ModelCatalogStatus::NotDiscovered,
+        ProtoModelCatalogStatus::Pending => ModelCatalogStatus::Pending,
+        ProtoModelCatalogStatus::Ready => ModelCatalogStatus::Ready,
+        ProtoModelCatalogStatus::Failed => ModelCatalogStatus::Failed,
+    }
+}
+
+/// The wire form of one provider's catalog; `None` for a slug that is not a
+/// canonical provider.
+pub fn catalog_to_proto(catalog: &ProviderCatalog) -> Option<ProviderModelCatalog> {
+    let provider = provider_of(&catalog.provider).ok()?;
+    Some(ProviderModelCatalog {
+        provider: provider as i32,
+        status: proto_catalog_status(catalog.status) as i32,
+        error: catalog.error.clone(),
+        models: catalog
+            .models
+            .iter()
+            .map(|model| ProtoCatalogModel {
+                id: model.id.clone(),
+                display_name: model.display_name.clone(),
+                listed: model.listed,
+            })
+            .collect(),
+    })
+}
+
+/// The wire form of the attach snapshot's catalog, skipping unknown slugs.
+pub fn catalogs_to_proto(catalogs: &[ProviderCatalog]) -> Vec<ProviderModelCatalog> {
+    catalogs.iter().filter_map(catalog_to_proto).collect()
+}
+
+/// The core form of a wire catalog; the provider becomes its canonical slug.
+pub fn catalog_from_proto(catalog: &ProviderModelCatalog) -> ProviderCatalog {
+    ProviderCatalog {
+        provider: provider_name(of::<Provider>(catalog.provider)).to_string(),
+        status: core_catalog_status(of(catalog.status)),
+        error: catalog.error.clone(),
+        models: catalog
+            .models
+            .iter()
+            .map(|model| CatalogModel {
+                id: model.id.clone(),
+                display_name: model.display_name.clone(),
+                listed: model.listed,
+            })
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,5 +881,60 @@ mod tests {
         // one stays rejected with the catch-all message.
         let error = to_proto("orchestrator_max_iterations", SettingValue::Uint(1)).unwrap_err();
         assert!(error.contains("no settings-change case"), "{error}");
+    }
+
+    fn sample_catalog(provider: &str, status: ModelCatalogStatus) -> ProviderCatalog {
+        ProviderCatalog {
+            provider: provider.into(),
+            status,
+            error: "boom".into(),
+            models: vec![
+                CatalogModel {
+                    id: "a".into(),
+                    display_name: Some("A".into()),
+                    listed: true,
+                },
+                CatalogModel {
+                    id: "b".into(),
+                    display_name: None,
+                    listed: false,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn every_model_catalog_round_trips_the_wire() {
+        for provider in ["claude", "codex", "vibe"] {
+            for status in [
+                ModelCatalogStatus::NotDiscovered,
+                ModelCatalogStatus::Pending,
+                ModelCatalogStatus::Ready,
+                ModelCatalogStatus::Failed,
+            ] {
+                let catalog = sample_catalog(provider, status);
+                let wire = catalog_to_proto(&catalog).unwrap();
+                assert_eq!(catalog_from_proto(&wire), catalog);
+            }
+        }
+    }
+
+    #[test]
+    fn an_unknown_catalog_provider_is_not_put_on_the_wire() {
+        let unknown = sample_catalog("opencode", ModelCatalogStatus::Ready);
+        assert!(catalog_to_proto(&unknown).is_none());
+        let kept = sample_catalog("codex", ModelCatalogStatus::Ready);
+        let wire = catalogs_to_proto(&[unknown, kept.clone()]);
+        assert_eq!(wire.len(), 1);
+        assert_eq!(catalog_from_proto(&wire[0]), kept);
+    }
+
+    #[test]
+    fn an_unset_wire_catalog_decodes_as_not_discovered_claude() {
+        let catalog = catalog_from_proto(&ProviderModelCatalog::default());
+        assert_eq!(catalog.provider, "claude");
+        assert_eq!(catalog.status, ModelCatalogStatus::NotDiscovered);
+        assert!(catalog.error.is_empty());
+        assert!(catalog.models.is_empty());
     }
 }

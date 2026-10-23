@@ -134,6 +134,11 @@ impl App {
             // The pipeline rail changed: the full state
             // replaces the previous one. Rendered by the pipeline rail of T50.1.
             EngineEvent::PipelineChanged { state } => self.pipeline = state,
+            // One provider's discovery state replaces its previous state; nothing
+            // renders it yet.
+            EngineEvent::ModelCatalogChanged { catalog } => {
+                self.model_catalog.insert(catalog.provider.clone(), catalog);
+            }
             EngineEvent::Notice { .. } => {}
         }
         for line in out.lines {
@@ -211,6 +216,7 @@ mod tests {
                 model: String::new(),
                 settings: BTreeMap::new(),
                 pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
                 recent: vec![],
             },
             "0.1.0".into(),
@@ -285,6 +291,7 @@ mod tests {
                 model: String::new(),
                 settings: BTreeMap::new(),
                 pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
                 recent: vec![
                     EngineEvent::AgentChanged {
                         agent: "planner".into(),
@@ -319,6 +326,7 @@ mod tests {
                 model: String::new(),
                 settings: BTreeMap::new(),
                 pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
                 recent: vec![EngineEvent::AgentChanged {
                     agent: "planner".into(),
                     started_ms: started_ms_ago(10_000),
@@ -364,5 +372,62 @@ mod tests {
 
         app.apply(EngineEvent::PlanningChanged { planning: false });
         assert_eq!(app.overall_elapsed(), None);
+    }
+
+    #[test]
+    fn the_model_catalog_is_seeded_from_the_snapshot_and_replaced_per_provider() {
+        use patok_core::event::{CatalogModel, ModelCatalogStatus, ProviderCatalog};
+
+        let pending = ProviderCatalog {
+            provider: "claude".into(),
+            status: ModelCatalogStatus::Pending,
+            ..ProviderCatalog::default()
+        };
+        let mut app = App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: vec![],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: BTreeMap::new(),
+                pipeline: PipelineState::today(),
+                model_catalog: vec![pending.clone()],
+                recent: vec![],
+            },
+            "0.1.0".into(),
+        );
+        assert_eq!(app.model_catalog.get("claude"), Some(&pending));
+
+        let ready = ProviderCatalog {
+            provider: "claude".into(),
+            status: ModelCatalogStatus::Ready,
+            error: String::new(),
+            models: vec![CatalogModel {
+                id: "sonnet".into(),
+                display_name: Some("Sonnet".into()),
+                listed: true,
+            }],
+        };
+        app.apply(EngineEvent::ModelCatalogChanged {
+            catalog: ready.clone(),
+        });
+        assert_eq!(app.model_catalog.get("claude"), Some(&ready));
+
+        let failed = ProviderCatalog {
+            provider: "codex".into(),
+            status: ModelCatalogStatus::Failed,
+            error: "no binary".into(),
+            models: vec![],
+        };
+        app.apply(EngineEvent::ModelCatalogChanged {
+            catalog: failed.clone(),
+        });
+        assert_eq!(app.model_catalog.len(), 2);
+        assert_eq!(app.model_catalog.get("codex"), Some(&failed));
+        assert_eq!(app.model_catalog.get("claude"), Some(&ready));
     }
 }

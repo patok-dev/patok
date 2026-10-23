@@ -5,4 +5,7 @@ mod agent;
 mod engine;
 
 pub use agent::{AgentEvent, AgentRole, ErrorKind, Usage, classify_error, preview};
-pub use engine::{EngineEvent, NoticeLevel, Outcome, Phase, SessionOutcome, Snapshot, TaskOutcome};
+pub use engine::{
+    CatalogModel, EngineEvent, ModelCatalogStatus, NoticeLevel, Outcome, Phase, ProviderCatalog,
+    SessionOutcome, Snapshot, TaskOutcome,
+};

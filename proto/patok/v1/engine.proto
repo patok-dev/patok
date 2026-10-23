@@ -87,6 +87,9 @@ message Snapshot {
   // the enabled stage tiles in order plus the three standalone tiles. Later
   // changes arrive as the typed `pipeline_state` event below.
   PipelineState pipeline = 3;
+  // Every provider's model discovery state at attach time; later changes
+  // arrive as the typed `model_catalog_changed` event below.
+  repeated ProviderModelCatalog model_catalog = 4;
 }
 
 // One item from the already-specified normalized event vocabulary
@@ -109,6 +112,9 @@ message Event {
     // The pipeline rail changed: the
     // full typed state replaces the previous one.
     PipelineState pipeline_state = 6;
+    // One provider's model discovery state changed; it replaces that
+    // provider's previous state.
+    ProviderModelCatalog model_catalog_changed = 7;
   }
 }
 
@@ -130,6 +136,32 @@ enum TileStatus {
   TILE_STATUS_PENDING = 1;
   TILE_STATUS_ACTIVE = 2;
   TILE_STATUS_DONE = 3;
+}
+
+// One provider's model discovery state (SPEC Phase 4). The zero value is
+// NOT_DISCOVERED, so an unset field means discovery never ran.
+enum ModelCatalogStatus {
+  MODEL_CATALOG_STATUS_NOT_DISCOVERED = 0;
+  MODEL_CATALOG_STATUS_PENDING = 1;
+  MODEL_CATALOG_STATUS_READY = 2;
+  MODEL_CATALOG_STATUS_FAILED = 3;
+}
+
+// One model a harness reports.
+message CatalogModel {
+  string id = 1;
+  optional string display_name = 2;
+  // Whether the harness lists the model to users (Codex hides some).
+  bool listed = 3;
+}
+
+// One provider's discovery state: status, the failure reason (set only when
+// FAILED) and the discovered models (set only when READY).
+message ProviderModelCatalog {
+  Provider provider = 1;
+  ModelCatalogStatus status = 2;
+  string error = 3;
+  repeated CatalogModel models = 4;
 }
 
 // One rail tile: a stage letter with its status.
