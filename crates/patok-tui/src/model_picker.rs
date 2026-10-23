@@ -9,6 +9,11 @@
 //! renderer lives in `ui::model_picker`; `App::open_model_picker` opens the
 //! picker from the settings overlay's model rows and `App::finish_model_picker`
 //! routes `Custom` to `SettingsOverlay::open_editor`.
+//!
+//! Any value stays possible (T4.5): `Custom` and the `Current` entry keep
+//! values outside the discovered list reachable, because discovery is only
+//! advice (warn-only) and the harness is the authority on which models it
+//! accepts.
 
 use std::cell::Cell;
 

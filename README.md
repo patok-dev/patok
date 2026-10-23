@@ -47,6 +47,36 @@ Vibe has no model flag, so patok never passes it a model. A non-empty `<role>_mo
 Vibe role produces a config warning ("ignored: Vibe does not support model selection"),
 and the settings overlay hides the model row for that role.
 
+### Choosing a model in the settings overlay
+
+Enter or Space on a `<role>_model` row opens a model picker for that role's provider. If
+the provider was changed in the overlay and not yet saved, the picker uses the new, unsaved
+value.
+
+The entries are "Provider default" (the empty value), the models the harness reported for
+the provider, the row's current value when it is not among them, and "Custom...", which
+opens the usual text editor on the row. Up/Down, j/k, PageUp/PageDown, the mouse and the
+wheel all move through the list. Enter selects and Esc cancels. Choosing an entry only
+changes the overlay's unsaved edit. It is saved through the overlay's close dialog like any
+other setting.
+
+Any value stays possible. The list is a convenience, not a limit: a model the harness does
+not report can still be typed through "Custom..." or kept as the current value. Like the
+startup check, patok only warns about it and passes it to the harness unchanged.
+
+Until a provider's models are known, a note above the list says so ("Discovering
+models...", "Model discovery failed: ...", "Models not discovered yet"). The list then
+offers only "Provider default", the current value and "Custom...". If the provider is being
+discovered again, the note shows and the last discovered models stay listed. The list
+updates while it is open when discovery finishes.
+
+When a saved settings change, or an edited config file, assigns a role a provider that
+supports model selection and has no discovered models yet, the daemon discovers that
+provider's models in the background. It uses the same cache, timeout and failure rules as
+at startup, and providers without model selection are never asked. Because overlay edits
+apply only on save, save the provider change first and then reopen the model picker to see
+the new provider's models.
+
 ### Model check at startup
 
 When the daemon starts, it checks the configured models in the background and does not
@@ -61,8 +91,8 @@ be asked gets "<harness> models not checked: <reason>".
 A trailing `[...]` suffix such as `sonnet[1m]` is ignored when comparing. Codex's hidden
 models count as known. Warnings go to the daemon log: stderr, or `engine.log` next to
 `engine.sock` when the daemon is detached. They can appear shortly after start. The check
-uses the settings as they were at startup, so later edits do not re-run it. Shutdown
-cancels it and kills any harness it started.
+uses the settings as they were at startup, so later edits do not re-run it (they can still
+trigger discovery, see above). Shutdown cancels it and kills any harness it started.
 
 ### Model cache
 

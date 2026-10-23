@@ -19,6 +19,11 @@ const CONFIG_FILE_POLL: Duration = Duration::from_secs(2);
 
 /// The providers supporting model selection that a role's provider setting changed to
 /// from `old` to `new`, without duplicates.
+///
+/// This runs on every swap (a saved overlay change or a file reload) (T4.5),
+/// so a role switched to a new provider gets a catalog the TUI model picker
+/// can list. Providers without model selection are skipped because they are
+/// never discovered.
 fn newly_assigned_kinds(old: &DaemonSettings, new: &DaemonSettings) -> Vec<ProviderKind> {
     let mut kinds = vec![];
     for (before, after) in role_providers(old).into_iter().zip(role_providers(new)) {
