@@ -60,6 +60,10 @@ impl Provider for Codex {
     async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
         discover_with(discovery_spec()).await
     }
+
+    async fn harness_version(&self) -> Result<String, ProviderError> {
+        cli::harness_version_with(cli::version_spec(&CODEX), CODEX.slug).await
+    }
 }
 
 fn discovery_spec() -> ProcessSpec {

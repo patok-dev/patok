@@ -16,6 +16,7 @@
 mod bus;
 mod commands;
 mod config;
+mod models;
 mod settings;
 mod state;
 mod stop;
