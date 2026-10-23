@@ -876,6 +876,62 @@ mod tests {
         app.on_key(bare(code))
     }
 
+    fn shift(app: &mut App, c: char) -> Action {
+        app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT))
+    }
+
+    /// Types Shift+h, e, l, l, o with the capital as the terminal reports it:
+    /// the base key or the already-shifted char, plus SHIFT.
+    fn type_hello(app: &mut App, upper: bool) {
+        shift(app, if upper { 'H' } else { 'h' });
+        for c in ['e', 'l', 'l', 'o'] {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    #[test]
+    fn shift_letters_type_capitals_in_the_add_and_inject_dialogs() {
+        for upper in [false, true] {
+            for kind in [crate::app::DialogKind::Add, crate::app::DialogKind::Inject] {
+                let mut app = app();
+                if kind == crate::app::DialogKind::Add {
+                    app.open_dialog();
+                } else {
+                    app.open_inject();
+                }
+                assert_eq!(app.modals.top(), Some(Modal::Dialog));
+                assert_eq!(app.dialog.kind, kind);
+                type_hello(&mut app, upper);
+                assert_eq!(app.dialog.editor.text(), "Hello");
+            }
+        }
+    }
+
+    #[test]
+    fn shift_on_an_already_shifted_char_inserts_it_unchanged() {
+        let mut app = app();
+        app.open_inject();
+        for c in ['A', '!', ':'] {
+            shift(&mut app, c);
+        }
+        assert_eq!(app.dialog.editor.text(), "A!:");
+    }
+
+    #[test]
+    fn shift_a_types_a_capital_in_the_settings_editor() {
+        let mut app = app();
+        app.open_settings();
+        app.overlay.editor = Some(crate::overlay::Editor {
+            field: "builder_model",
+            kind: crate::overlay::FieldKind::Text,
+            buffer: String::new(),
+        });
+        shift(&mut app, 'a');
+        shift(&mut app, '!');
+        let editor = app.overlay.editor.as_ref().expect("editor stays open");
+        assert_eq!(editor.buffer, "A!");
+    }
+
     /// The one legitimate combination stacks in the right order through the
     /// real flow: a dirty overlay's Esc opens the confirm above it, its
     /// cancel returns to the overlay, and closing the overlay dismisses the

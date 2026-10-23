@@ -257,6 +257,15 @@ mod tests {
     }
 
     #[test]
+    fn shifted_chars_insert_as_given() {
+        let mut editor = editor_with("");
+        for c in ['H', '!', 'A'] {
+            editor.on_key(key(KeyCode::Char(c), KeyModifiers::SHIFT), false);
+        }
+        assert_eq!(editor.text(), "H!A");
+    }
+
+    #[test]
     fn insert_lands_the_cursor_after_the_text() {
         let mut editor = editor_with("ab");
         editor.set_cursor(1);

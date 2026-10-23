@@ -92,13 +92,19 @@ pub async fn run(
     // so XTerm's modifyOtherKeys level 2 is enabled too -- xterm, VTE,
     // iTerm2 and friends then encode Shift-Enter as `CSI 13;2u`, which
     // crossterm parses into Enter with the SHIFT modifier. A terminal with
-    // neither mode still sends a bare `\r`, where Shift-Enter submits.
+    // neither mode still sends a bare `\r`, where Shift-Enter submits. The
+    // alternate-keys flag makes kitty-capable terminals report the shifted
+    // character for the user's layout (`A`, `!`, `:`), which crossterm then
+    // delivers without SHIFT. Enter and Tab have no shifted form, so
+    // Shift-Enter and Shift-Tab still arrive with SHIFT. Terminals that
+    // report only the base key are covered by the normalization in `keys`.
     let _ = crossterm::execute!(
         std::io::stdout(),
         ModifyOtherKeys(2),
         crossterm::event::PushKeyboardEnhancementFlags(
             crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                 | crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
         ),
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableMouseCapture
