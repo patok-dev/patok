@@ -19,7 +19,7 @@ use patok_config::{
     EnumSpelling, FieldKind as CoreFieldKind, SettingValue, Theme, UpdateChannel, daemon_field,
     daemon_help, daemon_label, tui_help,
 };
-use patok_providers::ProviderName;
+use patok_providers::{ProviderKind, ProviderName};
 use ratatui::layout::Rect;
 
 use crate::app::Action;
@@ -566,14 +566,49 @@ impl SettingsOverlay {
         match row.hide {
             None => false,
             Some(HideWhen::ProviderLacksModelSelection(provider)) => self
-                .drafts
-                .get(provider)
-                .or_else(|| self.readout.get(provider))
-                .and_then(SettingValue::as_str)
-                .and_then(ProviderName::parse)
-                .and_then(ProviderName::kind)
+                .role_provider(provider)
                 .is_some_and(|kind| !kind.info().supports_model_selection),
         }
+    }
+
+    /// The provider kind of the provider row `provider_key`: its draft, else
+    /// the readout; `None` when missing or unknown.
+    fn role_provider(&self, provider_key: &str) -> Option<ProviderKind> {
+        self.drafts
+            .get(provider_key)
+            .or_else(|| self.readout.get(provider_key))
+            .and_then(SettingValue::as_str)
+            .and_then(ProviderName::parse)
+            .and_then(ProviderName::kind)
+    }
+
+    /// The provider slug the model picker opens for on `row`: the role's draft
+    /// provider, else the readout (T4.4). `None` for non-model rows and for a
+    /// missing or unknown provider, which keep the inline editor.
+    pub(crate) fn model_provider(&self, row: &Row) -> Option<&'static str> {
+        match row.hide {
+            Some(HideWhen::ProviderLacksModelSelection(provider)) => {
+                self.role_provider(provider).map(|kind| kind.info().slug)
+            }
+            None => None,
+        }
+    }
+
+    /// Opens the inline editor on `row`, prefilled from `current`.
+    pub(crate) fn open_editor(&mut self, row: &'static Row, current: Option<SettingValue>) {
+        let prefill = current.map(|value| value.to_string()).unwrap_or_default();
+        self.editor = Some(Editor {
+            field: row.key,
+            kind: row.kind,
+            buffer: prefill,
+        });
+        self.status = Some((
+            format!(
+                "Editing {} -- Enter confirms, Ctrl+U clears, Esc cancels",
+                row.label
+            ),
+            StatusLevel::Info,
+        ));
     }
 
     /// Runs a change that may hide or reveal rows (T3.2) and keeps the focus on the
@@ -894,19 +929,7 @@ impl SettingsOverlay {
             },
             FieldKind::Number(_) | FieldKind::Text => {
                 if code == KeyCode::Enter {
-                    let prefill = current.map(|value| value.to_string()).unwrap_or_default();
-                    self.editor = Some(Editor {
-                        field: row.key,
-                        kind: row.kind,
-                        buffer: prefill,
-                    });
-                    self.status = Some((
-                        format!(
-                            "Editing {} -- Enter confirms, Ctrl+U clears, Esc cancels",
-                            row.label
-                        ),
-                        StatusLevel::Info,
-                    ));
+                    self.open_editor(row, current);
                 }
                 Action::None
             }

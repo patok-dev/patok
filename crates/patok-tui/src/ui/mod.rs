@@ -4,8 +4,6 @@ pub(crate) mod choice;
 mod common;
 pub(crate) mod dialogs;
 pub(crate) mod modal;
-// Opened from the settings overlay's model rows in T4.4; drop the allow then.
-#[allow(dead_code)]
 pub(crate) mod model_picker;
 pub(crate) mod output;
 pub(crate) mod settings;

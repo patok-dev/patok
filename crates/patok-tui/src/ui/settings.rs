@@ -123,10 +123,15 @@ pub(crate) fn render_settings_overlay(frame: &mut Frame, app: &App) {
     // The bottom line's two zones (T59.1): the content key hints on the left,
     // the Close button on the right, in the shared footer renderer.
     app.overlay.footer.set(footer);
+    // A model row that opens the model picker says so (T4.4).
+    let edit = match app.overlay.focused() {
+        Entry::Row(row) if app.overlay.model_provider(row).is_some() => "Enter/Space pick model",
+        _ => "Enter/Space edit",
+    };
     render_modal_footer(
         frame,
         footer,
-        &["↑↓ move", "Enter/Space edit", "←→ fold/cycle"],
+        &["↑↓ move", edit, "←→ fold/cycle"],
         &Modal::Overlay.buttons(app),
         theme,
     );
