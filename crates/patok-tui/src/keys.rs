@@ -11,11 +11,41 @@ use crate::app::{Action, App, SOFT_STOP_PENDING};
 use crate::modal::{Modal, ModalLayer};
 use crate::view::FrameFocus;
 
+/// Shift+letter from terminals that report the base key (kitty without
+/// alternate keys, some modifyOtherKeys setups) arrives as the lowercase
+/// char plus SHIFT; every text input and shortcut wants the char the user
+/// typed, so it becomes the uppercase char. Ctrl and Alt chords keep their
+/// base key, and chars without a single-char uppercase form pass through.
+fn shifted_char(key: KeyEvent) -> KeyEvent {
+    let KeyCode::Char(c) = key.code else {
+        return key;
+    };
+    if !key.modifiers.contains(KeyModifiers::SHIFT)
+        || key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        || !c.is_lowercase()
+    {
+        return key;
+    }
+    let mut upper = c.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(u), None) => KeyEvent {
+            code: KeyCode::Char(u),
+            ..key
+        },
+        _ => key,
+    }
+}
+
 impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> Action {
         if key.kind == KeyEventKind::Release {
             return Action::None;
         }
+        // Runs before the terminal, modal and main-view dispatch, so every
+        // text field and shortcut sees the same char.
+        let key = shifted_char(key);
         self.run.new_tasks.clear();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         // The embedded terminal takes every key first: Ctrl+C belongs to its
@@ -56,7 +86,8 @@ impl App {
                 Action::None
             }
             // The interactive picker's key (T2.1): Shift+i, distinct from the
-            // task frame's `i` inject key; like `m` it opens from any engine
+            // task frame's `i` inject key (`shifted_char` turns a kitty
+            // `i`+SHIFT into `I` on every terminal); like `m` it opens from any engine
             // state, a pending soft stop included, so it sits above the
             // stopping guard.
             KeyCode::Char('I') if !ctrl => {
@@ -184,5 +215,83 @@ impl App {
         };
         self.status = Some(format!("Run mode switched to {mode}."));
         Action::SetRunMode(mode.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    use patok_core::event::Snapshot;
+    use patok_core::pipeline::PipelineState;
+
+    fn app() -> App {
+        App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: vec![],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: BTreeMap::new(),
+                pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
+                recent: vec![],
+            },
+            "0.1.0".into(),
+        )
+    }
+
+    fn ev(c: char, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), modifiers)
+    }
+
+    #[test]
+    fn shifted_char_normalization() {
+        let shifted = |c, m| shifted_char(ev(c, m)).code;
+        assert_eq!(shifted('a', KeyModifiers::SHIFT), KeyCode::Char('A'));
+        assert_eq!(shifted('A', KeyModifiers::SHIFT), KeyCode::Char('A'));
+        assert_eq!(shifted('!', KeyModifiers::SHIFT), KeyCode::Char('!'));
+        assert_eq!(shifted('a', KeyModifiers::NONE), KeyCode::Char('a'));
+        let ctrl_shift = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        assert_eq!(shifted('a', ctrl_shift), KeyCode::Char('a'));
+        let alt_shift = KeyModifiers::ALT | KeyModifiers::SHIFT;
+        assert_eq!(shifted('a', alt_shift), KeyCode::Char('a'));
+        assert_eq!(shifted('ß', KeyModifiers::SHIFT), KeyCode::Char('ß'));
+        assert_eq!(shifted('é', KeyModifiers::SHIFT), KeyCode::Char('É'));
+    }
+
+    #[test]
+    fn unshifted_j_k_still_scroll() {
+        let mut app = app();
+        app.focus = FrameFocus::Output;
+        app.layout.max_scroll.set(10);
+        app.on_key(ev('k', KeyModifiers::NONE));
+        assert_eq!(app.scroll, 1);
+        app.on_key(ev('j', KeyModifiers::NONE));
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn shift_letters_do_not_trigger_lowercase_shortcuts() {
+        let mut app = app();
+        app.focus = FrameFocus::Output;
+        app.layout.max_scroll.set(10);
+        app.on_key(ev('k', KeyModifiers::SHIFT));
+        assert_eq!(app.scroll, 0);
+        app.on_key(ev('j', KeyModifiers::SHIFT));
+        assert_eq!(app.scroll, 0);
+        assert_eq!(app.on_key(ev('q', KeyModifiers::SHIFT)), Action::None);
+        assert!(!app.run.stopping);
+        app.focus = FrameFocus::Tasks;
+        app.on_key(ev('a', KeyModifiers::SHIFT));
+        assert!(app.modals.is_empty());
+        app.on_key(ev('i', KeyModifiers::SHIFT));
+        assert_ne!(app.modals.top(), Some(Modal::Dialog));
     }
 }

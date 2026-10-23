@@ -175,9 +175,11 @@ pub(crate) fn encode_key(key: &KeyEvent, modes: &InputModes) -> KeyInput {
         // swallowed here.
         KeyCode::Esc => alt_prefix(alt, &[ESC]),
         KeyCode::Char(c) => {
-            // Kitty reports Shift+a as `Char('a')` + SHIFT (we don't request
-            // alternate keys), so uppercase letters here. Shifted non-letters
-            // can't be recovered without the keyboard layout and pass through.
+            // `App::on_key` already uppercases Shift+letter (the TUI also
+            // requests alternate keys). This stays for direct callers and
+            // Alt+Shift chords, which the central normalization skips.
+            // Shifted non-letters can't be recovered without the keyboard
+            // layout and pass through.
             let c = if shift && c.is_ascii_lowercase() {
                 c.to_ascii_uppercase()
             } else {
