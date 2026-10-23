@@ -907,12 +907,12 @@ daemon_table! {
     /// or shell; add a field only together with its consumer.
     entries {
         // Routing (section 4).
-        [str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default." default String::new()],
-        [str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default." default String::new()],
-        [str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default." default String::new()],
-        [str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default." default String::new()],
-        [str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default." default String::new()],
-        [str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default." default String::new()],
+        [opt_str research_model "research_model" label "research model" help "The model the research role runs on; empty uses the provider's default."],
+        [opt_str planner_model "planner_model" label "planner model" help "The model the planner role runs on; empty uses the provider's default."],
+        [opt_str builder_model "builder_model" label "builder model" help "The model the builder role runs on; empty uses the provider's default."],
+        [opt_str reviewer_model "reviewer_model" label "reviewer model" help "The model the reviewer role runs on; empty uses the provider's default."],
+        [opt_str discovery_model "discovery_model" label "discovery model" help "The model the discovery role runs on; empty uses the provider's default."],
+        [opt_str orchestrator_model "orchestrator_model" label "orchestrator model" help "The model the orchestrator role runs on; empty uses the provider's default."],
         [provider research_provider "research_provider" label "research provider" help "The provider the research role runs on. Applies at the next research session start."],
         [provider planner_provider "planner_provider" label "planner provider" help "The provider the planner role runs on. Applies at the next planner session start."],
         [provider builder_provider "builder_provider" label "builder provider" help "The provider the builder role runs on. Applies at the next builder session start."],
@@ -1150,32 +1150,32 @@ fn model_selection_warnings(settings: &DaemonSettings, warnings: &mut Vec<String
         (
             "research_model",
             settings.research_provider,
-            &settings.research_model,
+            settings.research_model.as_deref().unwrap_or_default(),
         ),
         (
             "planner_model",
             settings.planner_provider,
-            &settings.planner_model,
+            settings.planner_model.as_deref().unwrap_or_default(),
         ),
         (
             "builder_model",
             settings.builder_provider,
-            &settings.builder_model,
+            settings.builder_model.as_deref().unwrap_or_default(),
         ),
         (
             "reviewer_model",
             settings.reviewer_provider,
-            &settings.reviewer_model,
+            settings.reviewer_model.as_deref().unwrap_or_default(),
         ),
         (
             "discovery_model",
             settings.discovery_provider,
-            &settings.discovery_model,
+            settings.discovery_model.as_deref().unwrap_or_default(),
         ),
         (
             "orchestrator_model",
             settings.orchestrator_provider,
-            &settings.orchestrator_model,
+            settings.orchestrator_model.as_deref().unwrap_or_default(),
         ),
     ] {
         let Some(info) = provider.kind().map(ProviderKind::info) else {

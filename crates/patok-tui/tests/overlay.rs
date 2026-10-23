@@ -2410,6 +2410,61 @@ fn cycling_the_builder_provider_to_vibe_hides_and_restores_its_model_row() {
 }
 
 #[test]
+fn saving_a_vibe_builder_with_its_cleared_model_succeeds() {
+    use patok_proto::{Provider, Role, RoleModel, RoleProvider, settings_change::Change};
+
+    let mut app = open();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("patok.config.toml");
+    std::fs::write(&path, "[daemon]\nbuilder_model = \"opus\"\n").unwrap();
+
+    focus_field(&mut app, "builder_provider");
+    press(&mut app, KeyCode::Right); // claude -> codex
+    press(&mut app, KeyCode::Right); // codex -> vibe
+    assert!(!model_row_visible(&app, "builder_model"));
+    assert_eq!(
+        draft(&app, "builder_model"),
+        Some(SettingValue::Str(String::new()))
+    );
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::SaveSettings);
+
+    // Stand in for the driver and the daemon: the wire conversion, then the
+    // daemon's persist path (what `apply_settings_change` runs).
+    let mut changes = Vec::new();
+    for (schema, field, value) in app.overlay.pending() {
+        changes.push(patok_tui::to_proto(&field, value.clone()).unwrap());
+        let mut warnings = Vec::new();
+        patok_config::set_daemon_field(dir.path(), &field, value.clone(), &mut warnings)
+            .unwrap_or_else(|error| panic!("saving `{field}` failed: {error}"));
+        app.on_settings_applied(schema, &field, value);
+    }
+    assert!(changes.contains(&Change::RoleProvider(RoleProvider {
+        role: Role::Builder as i32,
+        provider: Provider::Vibe as i32,
+    })));
+    assert!(changes.contains(&Change::RoleModel(RoleModel {
+        role: Role::Builder as i32,
+        model: String::new(),
+    })));
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("builder_provider = \"vibe\""), "{text}");
+    assert!(!text.contains("builder_model"), "{text}");
+    assert!(!app.overlay.dirty());
+    assert!(app.overlay.status.is_none(), "{:?}", app.overlay.status);
+    assert_eq!(
+        app.settings.get("builder_model"),
+        Some(&SettingValue::Str(String::new()))
+    );
+    assert_eq!(
+        app.settings.get("builder_provider"),
+        Some(&SettingValue::Str("vibe".into()))
+    );
+    app.close_settings();
+    assert!(!app.settings_open());
+}
+
+#[test]
 fn changing_a_provider_reverts_its_model_row_to_the_provider_default() {
     let mut app = open();
     apply_catalog(&mut app, claude_ready());

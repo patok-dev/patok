@@ -1787,7 +1787,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         "{lines:?}"
     );
 
-    // An empty model is not a valid builder model: rejected with the field named.
+    // An empty builder model is valid: it means the provider's default.
     let response = client
         .submit_command(CommandRequest {
             action: Some(command_request::Action::SettingsChange(SettingsChange {
@@ -1800,13 +1800,7 @@ async fn a_settings_change_round_trips_over_grpc_and_updates_the_shell() {
         .await
         .unwrap()
         .into_inner();
-    assert!(!response.accepted);
-    assert!(
-        response.error.contains("builder_model"),
-        "{}",
-        response.error
-    );
-    assert!(response.settings_change_result.is_none());
+    assert!(response.accepted, "{}", response.error);
 
     // An orchestrator role seat has no daemon registry key: rejected with a clear error.
     let response = client

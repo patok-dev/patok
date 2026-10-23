@@ -341,7 +341,7 @@ mod tests {
         assert!(changed.iter().any(|f| f == "agent_timeout_secs"));
         assert!(changed.iter().any(|f| f == "builder_provider"));
         // Role-specific model changes are independent.
-        new.builder_model = "mistral-small".into();
+        new.builder_model = Some("mistral-small".into());
         let changed = daemon_changed_fields(&DaemonSettings::default(), &new);
         assert_eq!(changed.len(), 3);
         assert!(changed.iter().any(|f| f == "agent_timeout_secs"));
@@ -468,6 +468,50 @@ mod tests {
             &mut warnings,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn an_empty_or_blank_role_model_removes_the_key_and_a_model_is_still_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("patok.config.toml");
+        std::fs::write(
+            &path,
+            "[daemon]\nbuilder_model = \"opus\"\nagent_timeout_secs = 120\n",
+        )
+        .unwrap();
+        let mut warnings = Vec::new();
+        set_daemon_field(
+            dir.path(),
+            "builder_model",
+            SettingValue::Str(String::new()),
+            &mut warnings,
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("builder_model"), "{text}");
+        assert!(text.contains("agent_timeout_secs = 120"), "{text}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        set_daemon_field(
+            dir.path(),
+            "builder_model",
+            SettingValue::Str("sonnet".into()),
+            &mut warnings,
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("builder_model = \"sonnet\""), "{text}");
+
+        set_daemon_field(
+            dir.path(),
+            "builder_model",
+            SettingValue::Str("   ".into()),
+            &mut warnings,
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("builder_model"), "{text}");
+        assert!(text.contains("agent_timeout_secs = 120"), "{text}");
     }
 
     #[test]
