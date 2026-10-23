@@ -13,6 +13,9 @@ mod interactive;
 mod keys;
 mod markdown;
 mod modal;
+// Opened from the settings overlay's model rows in T4.4; drop the allow then.
+#[allow(dead_code)]
+mod model_picker;
 mod monitor;
 mod mouse;
 mod overlay;

@@ -1,0 +1,20 @@
+---
+source: crates/patok-tui/src/ui/model_picker.rs
+expression: "snap(&draw(&picker, Some(&c), 80, 16))"
+---
+             ┌────────────────── Model · codex ──────────── [ x ] ┐
+             │  model-19                                          │
+             │  model-20                                          │
+             │  model-21                                          │
+             │  model-22                                          │
+             │  model-23                                          │
+             │  model-24                                          │
+             │  model-25                                          │
+             │  model-26                                          │
+             │  model-27                                          │
+             │  model-28                                          │
+             │  model-29                                          │
+             │  model-30                                          │
+             │▶ Custom...                                         │
+             │ ↑↓/jk move        [ Enter ] Select  [ Esc ] Cancel │
+             └────────────────────────────────────────────────────┘
