@@ -171,6 +171,7 @@ mod tests {
     /// viewport (T136.1); the close and footer rects stay zero, so clicks
     /// there miss naturally.
     fn settings_app() -> (App, Rect) {
+        // No provider readout here: model rows keep the inline editor (T4.4).
         let mut app = app();
         app.open_settings();
         let list = Rect::new(10, 5, 60, 10);

@@ -8,6 +8,7 @@
 use std::borrow::Cow;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use patok_config::SettingValue;
 use patok_core::event::Phase;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -17,8 +18,9 @@ use crate::choice::{ChoiceKey, ChoiceMouse, choice_area, choice_key, choice_mous
 use crate::hit::{
     chip_clicked, close_clicked, footer_button_code, menu_row_at, settings_row_at, theme_row_at,
 };
+use crate::model_picker::{MODEL_PICKER_BUTTONS, ModelPicker};
 use crate::overlay::{Entry, SETTINGS_CHOICES, header_fold};
-use crate::ui::{dialogs, settings};
+use crate::ui::{dialogs, model_picker, settings};
 use crate::view::{STOP_CHOICES, StopChoice};
 
 /// Which modal is open (finding 20): one enum over the modals plus the
@@ -39,6 +41,8 @@ pub enum Modal {
     Confirm,
     /// The theme picker.
     Theme,
+    /// The model picker, stacked on the settings overlay (T4.4).
+    ModelPicker,
     /// The interactive provider picker.
     InteractivePicker,
     /// The embedded provider terminal (T2.3).
@@ -51,19 +55,20 @@ pub enum Modal {
 /// stack, so they cannot disagree.
 ///
 /// Which combinations are legitimately open together, from reading every
-/// opener: exactly one. The unsaved-changes confirm dialog over a dirty
-/// settings overlay -- [`Modal::Overlay`] with [`Modal::Confirm`] above it --
-/// created solely by the overlay's own close path (Esc or q on a dirty
-/// overlay), popped by its Cancel choice and closed together with the
-/// overlay by its Save and Discard choices. Every other modal is opened only
+/// opener: two, both over [`Modal::Overlay`]. The unsaved-changes confirm
+/// dialog over a dirty settings overlay, created solely by the overlay's own
+/// close path (Esc or q on a dirty overlay), popped by its Cancel choice and
+/// closed together with the overlay by its Save and Discard choices. And the
+/// model picker, opened by Enter, Space or a click on a `*_model` row and
+/// popped by its own Esc, Select or Custom (T4.4). Every other modal is opened only
 /// with an empty stack: an open modal swallows every key and mouse event, so
 /// the direct keys (`t`, `m`, `?`, `a`, `i` and Esc while a run is active)
 /// and the three status-bar chips never run while another modal is open.
 /// The m menu's Enter entries are replacements, not stacks -- the menu
 /// closes first, then the target opens -- and a click on the menu chip while
 /// the menu is open closes it. So [`ModalStack::push`] accepts only an empty
-/// stack or the confirm over the overlay; every other push is a refused
-/// no-op.
+/// stack or the confirm or the model picker over the overlay; every other
+/// push is a refused no-op.
 #[derive(Default)]
 pub(crate) struct ModalStack {
     /// The open modals, bottom first.
@@ -82,13 +87,14 @@ impl ModalStack {
     /// state untouched.
     pub(crate) fn push(&mut self, modal: Modal) -> bool {
         let stacks = match (self.modals.last(), modal) {
-            // A modal opens on the empty stack; the confirm is not a modal of
-            // its own, it exists only stacked on the overlay.
-            (None, Modal::Confirm) => false,
+            // A modal opens on the empty stack; the confirm and the model
+            // picker are not modals of their own, they exist only stacked on
+            // the overlay.
+            (None, Modal::Confirm | Modal::ModelPicker) => false,
             (None, _) => true,
-            // The one legitimate co-open pair: the unsaved-changes dialog
-            // over the dirty settings overlay.
-            (Some(&Modal::Overlay), Modal::Confirm) => true,
+            // The legitimate co-open pairs: the unsaved-changes dialog or the
+            // model picker over the settings overlay.
+            (Some(&Modal::Overlay), Modal::Confirm | Modal::ModelPicker) => true,
             (Some(_), _) => false,
         };
         if stacks {
@@ -197,6 +203,7 @@ impl ModalLayer for Modal {
             Modal::Dialog => dialogs::dialog_area(screen),
             Modal::Menu => dialogs::menu_area(screen, app.run.phase == Phase::Running),
             Modal::Theme => dialogs::theme_area(screen),
+            Modal::ModelPicker => model_picker_rect(app, screen),
             Modal::InteractivePicker => {
                 dialogs::interactive_picker_area(screen, app.run.phase == Phase::Running)
             }
@@ -212,6 +219,7 @@ impl ModalLayer for Modal {
             Modal::Stop => Cow::Borrowed(&STOP_BUTTONS),
             Modal::Confirm => Cow::Borrowed(&CONFIRM_BUTTONS),
             Modal::Theme => Cow::Borrowed(&THEME_BUTTONS),
+            Modal::ModelPicker => Cow::Borrowed(&MODEL_PICKER_BUTTONS),
             Modal::InteractivePicker => Cow::Borrowed(&PICKER_BUTTONS),
             Modal::Terminal => Cow::Borrowed(&TERMINAL_BUTTONS),
         }
@@ -227,6 +235,7 @@ impl ModalLayer for Modal {
             // dialog's, not the overlay's own rows'.
             Modal::Confirm => app.overlay.on_confirm_key(&mut app.modals, key.code),
             Modal::Theme => theme_key(app, key, ctrl),
+            Modal::ModelPicker => model_picker_key(app, key),
             Modal::InteractivePicker => picker_key(app, key),
             Modal::Terminal => app.terminal_key(key),
         }
@@ -240,6 +249,7 @@ impl ModalLayer for Modal {
             Modal::Stop => stop_mouse(app, mouse),
             Modal::Confirm => confirm_mouse(app, mouse),
             Modal::Theme => theme_mouse(app, mouse),
+            Modal::ModelPicker => model_picker_mouse(app, mouse),
             Modal::InteractivePicker => picker_mouse(app, mouse),
             Modal::Terminal => app.terminal_mouse(mouse),
         }
@@ -253,6 +263,12 @@ impl ModalLayer for Modal {
             Modal::Menu => dialogs::render_menu(frame, app),
             Modal::Stop => dialogs::render_stop_dialog(frame, app),
             Modal::Theme => dialogs::render_theme_modal(frame, app),
+            Modal::ModelPicker => {
+                if let Some(state) = &app.model_picker {
+                    let catalog = app.model_catalog.get(state.picker.provider());
+                    model_picker::render_model_picker(frame, app.theme(), &state.picker, catalog);
+                }
+            }
             Modal::InteractivePicker => dialogs::render_interactive_picker(frame, app),
             Modal::Terminal => dialogs::render_terminal(frame, app),
         }
@@ -270,6 +286,21 @@ fn bare(code: KeyCode) -> KeyEvent {
 fn overlay_key(app: &mut App, key: KeyEvent) -> Action {
     let entry = app.overlay.focused();
     let current = app.setting_value(entry);
+    // Enter/Space on a model row whose role's (draft) provider is known opens
+    // the model picker over the overlay (T4.4); an unknown provider keeps the
+    // inline editor.
+    if app.overlay.editor.is_none()
+        && matches!(key.code, KeyCode::Enter | KeyCode::Char(' '))
+        && let Entry::Row(row) = entry
+        && let Some(provider) = app.overlay.model_provider(row)
+    {
+        let current = current
+            .as_ref()
+            .and_then(SettingValue::as_str)
+            .unwrap_or("");
+        app.open_model_picker(row, provider, current);
+        return Action::None;
+    }
     app.overlay.on_key(&mut app.modals, key, current)
 }
 
@@ -281,7 +312,8 @@ fn overlay_key(app: &mut App, key: KeyEvent) -> Action {
 /// step without moving the selection, clamped at the list's ends, and a
 /// left click inside a rendered list row runs that row's Enter key
 /// verbatim -- it selects the row first, so a click and Enter on the
-/// same row are indistinguishable. A pointer move inside a rendered
+/// same row are indistinguishable (a click on a model row opens the
+/// model picker, T4.4). A pointer move inside a rendered
 /// list row moves the selection highlight to that row with the same
 /// viewport follow the Up and Down keys run, without running it
 /// (T145.1). The inline editor is modal like its keys: while it is
@@ -339,6 +371,41 @@ fn overlay_mouse(app: &mut App, mouse: MouseEvent) -> Action {
         _ => {}
     }
     Action::None
+}
+
+/// The model picker's rect: empty when it is not open.
+fn model_picker_rect(app: &App, screen: Rect) -> Rect {
+    let Some(state) = &app.model_picker else {
+        return Rect::default();
+    };
+    let catalog = app.model_catalog.get(state.picker.provider());
+    model_picker::model_picker_area(
+        screen,
+        state.picker.entries(catalog).len(),
+        ModelPicker::status_note(catalog).is_some(),
+    )
+}
+
+/// The model picker's keys (T4.4): the picker steps, the app applies the outcome.
+fn model_picker_key(app: &mut App, key: KeyEvent) -> Action {
+    let Some(state) = app.model_picker.as_mut() else {
+        app.modals.pop(Modal::ModelPicker);
+        return Action::None;
+    };
+    let catalog = app.model_catalog.get(state.picker.provider());
+    let outcome = state.picker.on_key(key, catalog);
+    app.finish_model_picker(outcome)
+}
+
+/// The model picker's mouse handling (T4.4), applied like its keys.
+fn model_picker_mouse(app: &mut App, mouse: MouseEvent) -> Action {
+    let Some(state) = app.model_picker.as_mut() else {
+        app.modals.pop(Modal::ModelPicker);
+        return Action::None;
+    };
+    let catalog = app.model_catalog.get(state.picker.provider());
+    let outcome = state.picker.on_mouse(mouse, catalog);
+    app.finish_model_picker(outcome)
 }
 
 /// The unsaved-changes dialog's mouse handling (T59.1): a click on one of
@@ -773,12 +840,13 @@ mod tests {
     use patok_core::pipeline::PipelineState;
 
     /// Every modal, in no meaningful order; the stack test matrix iterates it.
-    const ALL_MODALS: [Modal; 8] = [
+    const ALL_MODALS: [Modal; 9] = [
         Modal::Overlay,
         Modal::Dialog,
         Modal::Menu,
         Modal::Stop,
         Modal::Confirm,
+        Modal::ModelPicker,
         Modal::Theme,
         Modal::InteractivePicker,
         Modal::Terminal,
@@ -840,15 +908,15 @@ mod tests {
     }
 
     /// Every other pair is refused: the matrix over all first/second
-    /// combinations, with the overlay's confirm the only stack.
+    /// combinations, with the overlay's confirm and model picker the only stacks.
     #[test]
     fn every_other_pair_is_a_refused_no_op() {
         for first in ALL_MODALS {
             // The confirm is not a modal of its own: it never opens on an
             // empty stack.
             let mut stack = ModalStack::new();
-            if first == Modal::Confirm {
-                assert!(!stack.push(first), "the confirm never opens alone");
+            if matches!(first, Modal::Confirm | Modal::ModelPicker) {
+                assert!(!stack.push(first), "{first:?} never opens alone");
                 continue;
             }
             assert!(
@@ -856,14 +924,15 @@ mod tests {
                 "the first modal opens on the empty stack"
             );
             for second in ALL_MODALS {
-                if first == Modal::Overlay && second == Modal::Confirm {
-                    assert!(stack.push(second), "the one legitimate pair");
-                    assert_eq!(stack.top(), Some(Modal::Confirm));
+                if first == Modal::Overlay && matches!(second, Modal::Confirm | Modal::ModelPicker)
+                {
+                    assert!(stack.push(second), "a legitimate pair");
+                    assert_eq!(stack.top(), Some(second));
                     assert_eq!(
                         stack.iter().collect::<Vec<_>>(),
-                        vec![Modal::Overlay, Modal::Confirm]
+                        vec![Modal::Overlay, second]
                     );
-                    stack.pop(Modal::Confirm);
+                    stack.pop(second);
                     continue;
                 }
                 assert!(
@@ -905,9 +974,64 @@ mod tests {
             ),
             "the picker's state and the status line are untouched"
         );
+        // The row comes from a throwaway app whose overlay is open (sections
+        // expand on open).
+        let mut other = self::app();
+        other.open_settings();
+        let row = other
+            .overlay
+            .visible()
+            .into_iter()
+            .find_map(|entry| match entry {
+                Entry::Row(row) if row.key == "builder_model" => Some(row),
+                _ => None,
+            })
+            .unwrap();
+        app.open_model_picker(row, "claude", "opus");
         assert_eq!(app.open_modals(), vec![Modal::Theme]);
+        assert!(app.model_picker.is_none());
         assert!(app.overlay.drafts.is_empty());
         assert_eq!(app.menu.selected, 0);
+    }
+
+    /// The model picker stacks over the overlay from Enter on a model row,
+    /// and its Esc returns to the overlay with no draft.
+    #[test]
+    fn the_model_picker_stacks_over_the_overlay_and_esc_returns_to_it() {
+        let mut app = App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: vec![],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: [
+                    (
+                        "builder_provider".to_owned(),
+                        SettingValue::Str("claude".into()),
+                    ),
+                    ("builder_model".to_owned(), SettingValue::Str("opus".into())),
+                ]
+                .into_iter()
+                .collect(),
+                pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
+                recent: vec![],
+            },
+            "0.1.0".into(),
+        );
+        app.open_settings();
+        while !matches!(app.overlay.focused(), Entry::Row(row) if row.key == "builder_model") {
+            assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+        }
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert_eq!(app.open_modals(), vec![Modal::Overlay, Modal::ModelPicker]);
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert_eq!(app.open_modals(), vec![Modal::Overlay]);
+        assert!(app.overlay.drafts.is_empty());
     }
 
     /// The interactive picker obeys the same rule: opened over another modal

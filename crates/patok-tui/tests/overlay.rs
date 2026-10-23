@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 use patok_config::{ApplyTiming, SettingValue};
-use patok_core::event::EngineEvent;
+use patok_core::event::{CatalogModel, EngineEvent, ModelCatalogStatus, ProviderCatalog};
 use patok_core::update::UpdateChannel;
 use patok_tui::{
     Action, App, Entry, FieldKind, Modal, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
@@ -918,6 +918,12 @@ fn a_narrow_terminal_clamps_the_editor_to_the_modal_body() {
     // far longer than the row has room for.
     focus_field(&mut app, "research_model");
     press(&mut app, KeyCode::Enter);
+    assert!(app.model_picker_open());
+    // Custom... is the last entry; it opens the editor prefilled with `sonnet`.
+    press(&mut app, KeyCode::End);
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.model_picker_open());
+    ctrl(&mut app, 'u');
     for c in "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHTTTTTTTTTTTTTTTTTTTT".chars() {
         press(&mut app, KeyCode::Char(c));
     }
@@ -1388,6 +1394,9 @@ fn hjkl_type_as_characters_in_the_open_editors() {
     // folds or moves while the editor is open.
     let mut app = open();
     focus_field(&mut app, "orchestrator_model");
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    // The model picker opens first; Custom... leads to the inline editor.
+    assert_eq!(press(&mut app, KeyCode::End), Action::None);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
     assert_eq!(app.overlay.editor.as_ref().unwrap().buffer, "");
     let before = app.overlay.visible();
@@ -2411,4 +2420,256 @@ fn a_config_changed_provider_hides_the_model_row_in_the_open_overlay() {
     });
     assert!(!model_row_visible(&app, "builder_model"));
     assert!(!draw(&app, W, 105).contains("builder model"));
+}
+
+// --- The model picker over the overlay (T4.4) ---
+
+fn catalog(
+    provider: &str,
+    status: ModelCatalogStatus,
+    models: &[(&str, Option<&str>)],
+) -> ProviderCatalog {
+    ProviderCatalog {
+        provider: provider.into(),
+        status,
+        error: String::new(),
+        models: models
+            .iter()
+            .map(|(id, name)| CatalogModel {
+                id: (*id).into(),
+                display_name: name.map(str::to_owned),
+                listed: true,
+            })
+            .collect(),
+    }
+}
+
+fn claude_ready() -> ProviderCatalog {
+    catalog(
+        "claude",
+        ModelCatalogStatus::Ready,
+        &[
+            ("opus", Some("Opus")),
+            ("sonnet", Some("Sonnet")),
+            ("haiku", None),
+        ],
+    )
+}
+
+fn apply_catalog(app: &mut App, catalog: ProviderCatalog) {
+    app.apply(EngineEvent::ModelCatalogChanged { catalog });
+}
+
+/// The overlay with a ready claude catalog and the picker open on `field`.
+fn picker_open(field: &str) -> App {
+    let mut app = open();
+    apply_catalog(&mut app, claude_ready());
+    focus_field(&mut app, field);
+    press(&mut app, KeyCode::Enter);
+    assert!(app.model_picker_open());
+    app
+}
+
+fn draft(app: &App, field: &str) -> Option<SettingValue> {
+    app.overlay.drafts.get(field).cloned()
+}
+
+#[test]
+fn enter_on_a_model_row_opens_the_picker_over_the_overlay() {
+    let app = picker_open("builder_model");
+    assert_eq!(app.open_modals(), vec![Modal::Overlay, Modal::ModelPicker]);
+    let screen = draw(&app, W, H);
+    for text in [
+        "Model · claude",
+        "Provider default",
+        "Custom...",
+        "(current)",
+    ] {
+        assert!(screen.contains(text), "{text}: {screen}");
+    }
+    insta::assert_snapshot!(screen);
+}
+
+#[test]
+fn space_on_a_model_row_opens_the_picker_too() {
+    let mut app = open();
+    focus_field(&mut app, "builder_model");
+    press(&mut app, KeyCode::Char(' '));
+    assert!(app.model_picker_open());
+}
+
+#[test]
+fn keys_go_to_the_picker_not_the_overlay() {
+    let mut app = picker_open("builder_model");
+    let focus = app.overlay.focus;
+    press(&mut app, KeyCode::Char('q'));
+    press(&mut app, KeyCode::Down);
+    assert!(app.settings_open());
+    assert!(app.model_picker_open());
+    assert_eq!(app.overlay.focus, focus);
+}
+
+#[test]
+fn choosing_a_listed_model_writes_the_draft() {
+    let mut app = picker_open("builder_model");
+    press(&mut app, KeyCode::Home);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.model_picker_open());
+    assert!(app.settings_open());
+    assert_eq!(
+        draft(&app, "builder_model"),
+        Some(SettingValue::Str("sonnet".into()))
+    );
+    assert!(app.overlay.dirty());
+    assert_eq!(
+        app.settings["builder_model"],
+        SettingValue::Str("opus".into())
+    );
+    insta::assert_snapshot!(draw(&app, W, H));
+}
+
+#[test]
+fn provider_default_drafts_the_empty_value() {
+    let mut app = picker_open("builder_model");
+    press(&mut app, KeyCode::Home);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        draft(&app, "builder_model"),
+        Some(SettingValue::Str(String::new()))
+    );
+}
+
+#[test]
+fn custom_closes_the_picker_and_opens_the_inline_editor() {
+    let mut app = picker_open("builder_model");
+    press(&mut app, KeyCode::End);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.open_modals(), vec![Modal::Overlay]);
+    let editor = app.overlay.editor.as_ref().unwrap();
+    assert_eq!(editor.field, "builder_model");
+    assert_eq!(editor.buffer, "opus");
+    insta::assert_snapshot!(draw(&app, W, H));
+    for c in "-x".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        draft(&app, "builder_model"),
+        Some(SettingValue::Str("opus-x".into()))
+    );
+}
+
+#[test]
+fn esc_cancels_the_picker_without_a_draft() {
+    let mut app = picker_open("builder_model");
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.open_modals(), vec![Modal::Overlay]);
+    assert!(app.overlay.drafts.is_empty());
+    press(&mut app, KeyCode::Esc);
+    assert!(app.open_modals().is_empty());
+}
+
+#[test]
+fn the_picker_lists_the_draft_provider() {
+    let mut app = open();
+    apply_catalog(&mut app, claude_ready());
+    apply_catalog(
+        &mut app,
+        catalog(
+            "codex",
+            ModelCatalogStatus::Ready,
+            &[("gpt-5", Some("GPT-5")), ("gpt-5-mini", None)],
+        ),
+    );
+    focus_field(&mut app, "builder_provider");
+    press(&mut app, KeyCode::Right);
+    focus_field(&mut app, "builder_model");
+    press(&mut app, KeyCode::Enter);
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("Model · codex"), "{screen}");
+    assert!(screen.contains("gpt-5-mini"), "{screen}");
+    assert!(!screen.contains("Sonnet"), "{screen}");
+    insta::assert_snapshot!(screen);
+}
+
+#[test]
+fn a_catalog_event_updates_the_open_picker() {
+    let mut app = open();
+    focus_field(&mut app, "research_model");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.model_picker_open());
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("Models not discovered yet"), "{screen}");
+    apply_catalog(
+        &mut app,
+        catalog("claude", ModelCatalogStatus::Pending, &[]),
+    );
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("Discovering models..."), "{screen}");
+    insta::assert_snapshot!(screen);
+    apply_catalog(&mut app, claude_ready());
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("haiku"), "{screen}");
+    assert!(!screen.contains("Discovering models..."), "{screen}");
+    insta::assert_snapshot!(screen);
+}
+
+#[test]
+fn a_click_on_a_model_row_opens_the_picker_and_a_click_on_an_entry_chooses_it() {
+    let mut app = open();
+    apply_catalog(&mut app, claude_ready());
+    let screen = draw(&app, W, H);
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("builder model"))
+        .unwrap();
+    let column = line.find("builder model").unwrap();
+    let column = u16::try_from(line[..column].chars().count()).unwrap();
+    let down = |app: &mut App, column: u16, row: usize| {
+        app.on_mouse(mouse(
+            MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column,
+            u16::try_from(row).unwrap(),
+        ))
+    };
+    down(&mut app, column, row);
+    assert!(app.model_picker_open());
+    let screen = draw(&app, W, H);
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("Provider default"))
+        .unwrap();
+    let column = u16::try_from(line.find("Provider default").unwrap()).unwrap();
+    down(&mut app, column, row);
+    assert!(!app.model_picker_open());
+    assert_eq!(
+        draft(&app, "builder_model"),
+        Some(SettingValue::Str(String::new()))
+    );
+}
+
+#[test]
+fn the_footer_names_the_picker_on_a_model_row() {
+    let mut app = open();
+    focus_field(&mut app, "builder_model");
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("Enter/Space pick model"), "{screen}");
+    insta::assert_snapshot!(screen);
+    focus_field(&mut app, "run_mode");
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("Enter/Space edit"), "{screen}");
+    assert!(!screen.contains("pick model"), "{screen}");
+}
+
+#[test]
+fn an_unknown_provider_keeps_the_inline_editor() {
+    let mut app = open_with_provider("builder_provider", "bogus");
+    focus_field(&mut app, "builder_model");
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.model_picker_open());
+    assert!(app.overlay.editor.is_some());
 }

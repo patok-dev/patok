@@ -1,0 +1,44 @@
+---
+source: crates/patok-tui/tests/overlay.rs
+expression: "draw(&app, W, H)"
+---
+─ Stopped ─ sprint ─── [ Research ] > [ Plan ] > [ Build ] > [ Review ]   [ Discover ] ─────────────
+┌ Builder | Claude Code ───────────────────────────────────────────────────────────────────────────┐
+│no output yet                                                                                     │
+│                                                                                                  │
+│    ┌────────────────────────────────── Settings -- Patok ──────────────────────────── [ x ] ┐    │
+│    │  ▾ Provider and model                                                                 █│    │
+│    │      engine version: 0.1.0                                                            █│    │
+└────│      shell version: 0.0.0                                                             █│────┘
+┌ Tas│      research provider  ‹ claude ›                                                    █│────┐
+│○ T1│      research model  sonnet                                                           █│    │
+│    │      planner provider  ‹ claude ›                                                     █│    │
+│    │      planner model  opus                                                              █│    │
+│    │      builder provider  ‹ claude ›                                                     █│    │
+│    │▶     builder model  opus                                                              ││    │
+│    │      reviewer provider  ‹ claude ›                                                    ││    │
+│    │      reviewer model  sonnet                                                           ││    │
+│    │      discovery provider  ‹ claude ›                                                   ││    │
+│    │      discovery model  opus                                                            ││    │
+│    │      orchestrator provider  ‹ claude ›                                                ││    │
+│    │      orchestrator model  (not set)                                                    ││    │
+│    │  ▾ Pipeline                                                                           ││    │
+│    │      run mode  ‹ sprint ›                                                             ││    │
+│    │      [ ] plan enabled                                                                 ││    │
+│    │      [ ] skip research for simple                                                     ││    │
+│    │      [ ] skip review for simple                                                       ││    │
+│    │┌─────────────────────────────────── builder model ────────────────────────────────────┐│    │
+│    ││The model the builder role runs on; empty uses the provider's default.                ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    ││                                                                                      ││    │
+│    │└──────────────────────────────────────────────────────────────────────────────────────┘│    │
+│    │Editing builder model -- Enter confirms, Ctrl+U clears, Esc cancels                     │    │
+│    │ ↑↓ move · Enter/Space pick model · ←→ fold/cycle                         [ Esc ] Close │    │
+│    └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                  │
+│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                        [ Enter ] start  [ m ] menu

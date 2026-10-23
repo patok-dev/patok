@@ -6,8 +6,9 @@
 //! `Option<&ProviderCatalog>` into every method, so a discovery update shows
 //! at the next key, mouse event or render, and the selection is kept by
 //! value so it stays on the same entry while models come and go. The
-//! renderer lives in `ui::model_picker`; T4.4 opens the picker from the
-//! settings overlay's model rows and routes `Custom` to the inline editor.
+//! renderer lives in `ui::model_picker`; `App::open_model_picker` opens the
+//! picker from the settings overlay's model rows and `App::finish_model_picker`
+//! routes `Custom` to `SettingsOverlay::open_editor`.
 
 use std::cell::Cell;
 

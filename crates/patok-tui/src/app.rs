@@ -16,6 +16,7 @@ use ratatui::layout::Rect;
 
 use crate::dialog_editor::DialogEditor;
 use crate::modal::{Modal, ModalStack};
+use crate::model_picker::{ModelPicker, PickerOutcome};
 use crate::overlay::{
     Entry, Row, Schema, SettingsOverlay, StatusLevel, clamp_focus, group_entries, truecolor_choice,
 };
@@ -192,6 +193,14 @@ pub enum DialogKind {
     /// well-formed unchecked task line before appending it to TASKS.md,
     /// with no agent session.
     Inject,
+}
+
+/// The model picker's state (T4.4): the picker and the settings row it was
+/// opened from, so a choice knows its draft key and `Custom` can open the
+/// inline editor on that row.
+pub(crate) struct ModelPickerState {
+    pub(crate) row: &'static Row,
+    pub(crate) picker: ModelPicker,
 }
 
 /// The theme picker modal's state (T43.1, T116.1) -- its own modal state,
@@ -542,6 +551,8 @@ pub struct App {
     pub overlay: SettingsOverlay,
     /// The theme picker modal's state (T43.1), distinct from the overlay.
     pub theme_modal: ThemeModal,
+    /// The model picker's state while its modal is open (T4.4).
+    pub(crate) model_picker: Option<ModelPickerState>,
     /// The shell's tui-schema settings as the overlay renders them; refreshed by the
     /// driver after every load, reload and apply.
     pub tui: TuiSettings,
@@ -606,6 +617,7 @@ impl App {
             },
             overlay: SettingsOverlay::default(),
             theme_modal: ThemeModal::default(),
+            model_picker: None,
             tui: TuiSettings::default(),
             settings: snapshot.settings,
             pipeline: snapshot.pipeline,
@@ -771,6 +783,12 @@ impl App {
         self.modals.contains(Modal::Theme)
     }
 
+    /// Whether the model picker is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn model_picker_open(&self) -> bool {
+        self.modals.contains(Modal::ModelPicker)
+    }
+
     /// Whether the settings overlay's unsaved-changes dialog is open.
     #[cfg(any(test, feature = "test-support"))]
     pub fn confirm_open(&self) -> bool {
@@ -837,7 +855,46 @@ impl App {
     /// the unsaved-changes dialog stacked on it.
     pub fn close_settings(&mut self) {
         self.modals.pop(Modal::Overlay);
+        self.model_picker = None;
         self.overlay.discard();
+    }
+
+    /// Opens the model picker for `provider` over the settings overlay, on
+    /// `row` with `current` as its value (T4.4). A refused push leaves the
+    /// state untouched.
+    pub(crate) fn open_model_picker(&mut self, row: &'static Row, provider: &str, current: &str) {
+        if self.modals.push(Modal::ModelPicker) {
+            self.model_picker = Some(ModelPickerState {
+                row,
+                picker: ModelPicker::new(provider, current),
+            });
+        }
+    }
+
+    /// Applies one picker outcome (T4.4): a choice drafts the row, `Custom`
+    /// closes the picker and opens the inline editor, `Close` just closes.
+    pub(crate) fn finish_model_picker(&mut self, outcome: PickerOutcome) -> Action {
+        if matches!(outcome, PickerOutcome::Stay) {
+            return Action::None;
+        }
+        self.modals.pop(Modal::ModelPicker);
+        let Some(state) = self.model_picker.take() else {
+            return Action::None;
+        };
+        match outcome {
+            PickerOutcome::Stay | PickerOutcome::Close => {}
+            PickerOutcome::Choose(value) => {
+                self.overlay
+                    .drafts
+                    .insert(state.row.key.into(), SettingValue::Str(value));
+                self.overlay.status = None;
+            }
+            PickerOutcome::Custom => {
+                let current = SettingValue::Str(state.picker.current().to_owned());
+                self.overlay.open_editor(state.row, Some(current));
+            }
+        }
+        Action::None
     }
 
     /// One entry's current value: the drafted change when one exists (the overlay
