@@ -120,6 +120,11 @@ pub enum EngineEvent {
     PipelineChanged {
         state: PipelineState,
     },
+    /// One provider's model discovery state changed; it replaces that provider's
+    /// previous state. The provider slug is `catalog.provider`.
+    ModelCatalogChanged {
+        catalog: ProviderCatalog,
+    },
     Notice {
         level: NoticeLevel,
         text: String,
@@ -142,6 +147,7 @@ impl EngineEvent {
             Self::TaskFinished { .. } => "task_finished",
             Self::ConfigChanged { .. } => "config_changed",
             Self::PipelineChanged { .. } => "pipeline_changed",
+            Self::ModelCatalogChanged { .. } => "model_catalog_changed",
             Self::Notice { .. } => "notice",
         }
     }
@@ -153,6 +159,42 @@ impl EngineEvent {
     pub fn from_payload(payload: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(payload)
     }
+}
+
+/// A provider's model discovery status.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCatalogStatus {
+    #[default]
+    NotDiscovered,
+    Pending,
+    Ready,
+    Failed,
+}
+
+/// One discovered model. Mirrors `patok_providers::DiscoveredModel`, which core
+/// cannot name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogModel {
+    pub id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub listed: bool,
+}
+
+/// One provider's model discovery state. `provider` is the canonical slug
+/// (`claude`, `codex`, `vibe`), because core cannot name `ProviderName`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCatalog {
+    pub provider: String,
+    #[serde(default)]
+    pub status: ModelCatalogStatus,
+    /// Why discovery failed; empty unless `Failed`.
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub models: Vec<CatalogModel>,
 }
 
 /// Full engine state at attach time.
@@ -183,6 +225,10 @@ pub struct Snapshot {
     /// plus the three standalone tiles, as the engine computed it at attach time.
     #[serde(default)]
     pub pipeline: PipelineState,
+    /// Every provider's discovery state at attach time; later changes arrive as
+    /// `ModelCatalogChanged`.
+    #[serde(default)]
+    pub model_catalog: Vec<ProviderCatalog>,
     /// Recent events (bounded), replayed so a reattaching shell sees the running agent's output.
     pub recent: Vec<EngineEvent>,
 }
@@ -303,6 +349,16 @@ mod tests {
                 .into_iter()
                 .collect(),
             pipeline: PipelineState::today(),
+            model_catalog: vec![ProviderCatalog {
+                provider: "codex".into(),
+                status: ModelCatalogStatus::Ready,
+                error: String::new(),
+                models: vec![CatalogModel {
+                    id: "gpt".into(),
+                    display_name: None,
+                    listed: true,
+                }],
+            }],
             recent: vec![],
         };
         let decoded = Snapshot::from_state(&snapshot.to_state()).unwrap();
@@ -311,6 +367,7 @@ mod tests {
             decoded.settings.get("run_mode"),
             Some(&SettingValue::Str("sprint".into()))
         );
+        assert_eq!(decoded.model_catalog.len(), 1);
     }
 
     #[test]
@@ -340,5 +397,67 @@ mod tests {
         let snapshot = Snapshot::from_state(legacy.as_bytes()).unwrap();
         assert_eq!(snapshot.project_dir, "/p");
         assert!(snapshot.settings.is_empty());
+        assert!(snapshot.model_catalog.is_empty());
+    }
+
+    #[test]
+    fn model_catalog_changed_round_trips_with_kind() {
+        let failed = EngineEvent::ModelCatalogChanged {
+            catalog: ProviderCatalog {
+                provider: "claude".into(),
+                status: ModelCatalogStatus::Failed,
+                error: "binary missing".into(),
+                models: vec![],
+            },
+        };
+        let ready = EngineEvent::ModelCatalogChanged {
+            catalog: ProviderCatalog {
+                provider: "codex".into(),
+                status: ModelCatalogStatus::Ready,
+                error: String::new(),
+                models: vec![
+                    CatalogModel {
+                        id: "a".into(),
+                        display_name: Some("A".into()),
+                        listed: true,
+                    },
+                    CatalogModel {
+                        id: "b".into(),
+                        display_name: None,
+                        listed: false,
+                    },
+                ],
+            },
+        };
+        for event in [failed, ready] {
+            assert_eq!(event.kind(), "model_catalog_changed");
+            assert_eq!(
+                EngineEvent::from_payload(&event.to_payload()).unwrap(),
+                event
+            );
+        }
+    }
+
+    #[test]
+    fn the_model_catalog_status_wire_spellings_stay_pinned() {
+        for (status, spelling) in [
+            (ModelCatalogStatus::NotDiscovered, "not_discovered"),
+            (ModelCatalogStatus::Pending, "pending"),
+            (ModelCatalogStatus::Ready, "ready"),
+            (ModelCatalogStatus::Failed, "failed"),
+        ] {
+            let event = EngineEvent::ModelCatalogChanged {
+                catalog: ProviderCatalog {
+                    provider: "claude".into(),
+                    status,
+                    ..ProviderCatalog::default()
+                },
+            };
+            let json = String::from_utf8(event.to_payload()).unwrap();
+            assert!(
+                json.contains(&format!(r#""status":"{spelling}""#)),
+                "{json}"
+            );
+        }
     }
 }

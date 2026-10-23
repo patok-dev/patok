@@ -37,6 +37,7 @@ pub fn snapshot(tasks: &str) -> SnapshotBuilder {
             model: String::new(),
             settings: BTreeMap::new(),
             pipeline: PipelineState::today(),
+            model_catalog: Vec::new(),
             recent: vec![],
         },
     }
