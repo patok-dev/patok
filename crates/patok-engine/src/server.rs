@@ -156,6 +156,13 @@ impl EngineApi for Service {
                 }
                 None => rejected("the settings change is empty".into()),
             },
+            // The settings overlay's model picker opened for a provider with no
+            // discovered models (T8.1): claimed under the state lock like a saved
+            // provider change; the catalog reaches the shell as ModelCatalogChanged.
+            Some(command_request::Action::DiscoverModels(discover)) => outcome(
+                self.engine
+                    .discover_models(patok_wire::discover_models_from_proto(&discover)),
+            ),
             Some(_) => rejected("this command is not supported yet".into()),
             None => return Err(Status::invalid_argument("empty command")),
         };

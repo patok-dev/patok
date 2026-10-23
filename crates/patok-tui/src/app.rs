@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::time::{Duration, Instant, SystemTime};
 
 use patok_config::{EnumSpelling, SettingValue, Theme as ThemeKey, TuiSettings};
-use patok_core::event::{AgentRole, Phase, ProviderCatalog, Snapshot, Usage};
+use patok_core::event::{AgentRole, ModelCatalogStatus, Phase, ProviderCatalog, Snapshot, Usage};
 use patok_core::output::{LineKind, LineOrigin, Pane};
 use patok_core::pipeline::PipelineState;
 use patok_core::scenario::{ProjectScan, Scenario};
@@ -106,6 +106,10 @@ pub enum Action {
     /// settings-change flow, so it validates, persists and reports back like
     /// an overlay save. Carries the newly selected mode's name.
     SetRunMode(String),
+    /// Discover the named provider's models now (T8.1): the model picker opened
+    /// for a provider whose catalog is absent, not discovered or failed. The open
+    /// picker updates from the resulting catalog events.
+    DiscoverModels(String),
 }
 
 /// The m menu's choices (the `m` key, which replaced the status bar's
@@ -861,13 +865,27 @@ impl App {
 
     /// Opens the model picker for `provider` over the settings overlay, on
     /// `row` with `current` as its value (T4.4). A refused push leaves the
-    /// state untouched.
-    pub(crate) fn open_model_picker(&mut self, row: &'static Row, provider: &str, current: &str) {
-        if self.modals.push(Modal::ModelPicker) {
-            self.model_picker = Some(ModelPickerState {
-                row,
-                picker: ModelPicker::new(provider, current),
-            });
+    /// state untouched. Returns `DiscoverModels` when the provider's catalog is
+    /// absent, not discovered or failed (T8.1), so the open picker fills in from
+    /// the catalog events; a `Ready` or `Pending` catalog needs no request.
+    pub(crate) fn open_model_picker(
+        &mut self,
+        row: &'static Row,
+        provider: &str,
+        current: &str,
+    ) -> Action {
+        if !self.modals.push(Modal::ModelPicker) {
+            return Action::None;
+        }
+        self.model_picker = Some(ModelPickerState {
+            row,
+            picker: ModelPicker::new(provider, current),
+        });
+        match self.model_catalog.get(provider).map(|c| c.status) {
+            None | Some(ModelCatalogStatus::NotDiscovered | ModelCatalogStatus::Failed) => {
+                Action::DiscoverModels(provider.to_string())
+            }
+            Some(ModelCatalogStatus::Ready | ModelCatalogStatus::Pending) => Action::None,
         }
     }
 

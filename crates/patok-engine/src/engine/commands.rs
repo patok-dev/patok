@@ -1,5 +1,6 @@
 use patok_config::daemon_readout;
 use patok_core::event::{AgentRole, EngineEvent, Snapshot};
+use patok_providers::ProviderKind;
 use tokio_util::sync::CancellationToken;
 
 use super::state::State;
@@ -322,6 +323,21 @@ impl Engine {
             .run()
             .await
         });
+        Ok(())
+    }
+
+    /// Discovers one provider's models on demand (T8.1): the settings overlay's model
+    /// picker asks when it opens for a provider whose catalog is missing, not discovered or
+    /// failed. The claim follows the saved-settings rule (`discover_unclaimed`), so a Ready
+    /// or Pending catalog starts nothing and a fresh ModelCache entry is served without the
+    /// harness. Errors are user-facing rejection reasons.
+    pub fn discover_models(&self, provider: &str) -> Result<(), String> {
+        let kind = ProviderKind::parse(provider)
+            .ok_or_else(|| format!("unknown provider {provider:?}"))?;
+        if !kind.info().supports_model_selection {
+            return Err(format!("{} has no model discovery", kind.info().slug));
+        }
+        self.discover_unclaimed(self.state(), [kind]);
         Ok(())
     }
 

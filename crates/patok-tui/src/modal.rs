@@ -298,8 +298,7 @@ fn overlay_key(app: &mut App, key: KeyEvent) -> Action {
             .as_ref()
             .and_then(SettingValue::as_str)
             .unwrap_or("");
-        app.open_model_picker(row, provider, current);
-        return Action::None;
+        return app.open_model_picker(row, provider, current);
     }
     app.overlay.on_key(&mut app.modals, key, current)
 }
@@ -987,7 +986,7 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        app.open_model_picker(row, "claude", "opus");
+        assert_eq!(app.open_model_picker(row, "claude", "opus"), Action::None);
         assert_eq!(app.open_modals(), vec![Modal::Theme]);
         assert!(app.model_picker.is_none());
         assert!(app.overlay.drafts.is_empty());
@@ -1027,7 +1026,10 @@ mod tests {
         while !matches!(app.overlay.focused(), Entry::Row(row) if row.key == "builder_model") {
             assert_eq!(press(&mut app, KeyCode::Down), Action::None);
         }
-        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Action::DiscoverModels("claude".into())
+        );
         assert_eq!(app.open_modals(), vec![Modal::Overlay, Modal::ModelPicker]);
         assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
         assert_eq!(app.open_modals(), vec![Modal::Overlay]);

@@ -1394,7 +1394,11 @@ fn hjkl_type_as_characters_in_the_open_editors() {
     // folds or moves while the editor is open.
     let mut app = open();
     focus_field(&mut app, "orchestrator_model");
-    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    // `open()` has no catalog, so the picker asks for discovery (T8.1).
+    assert_eq!(
+        press(&mut app, KeyCode::Enter),
+        Action::DiscoverModels("claude".into())
+    );
     // The model picker opens first; Custom... leads to the inline editor.
     assert_eq!(press(&mut app, KeyCode::End), Action::None);
     assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
@@ -2769,4 +2773,123 @@ fn an_unknown_provider_keeps_the_inline_editor() {
     press(&mut app, KeyCode::Enter);
     assert!(!app.model_picker_open());
     assert!(app.overlay.editor.is_some());
+}
+
+/// The overlay with a claude catalog, builder_provider switched to codex in the draft
+/// (codex undiscovered) and Enter pressed on builder_model (T8.1).
+fn codex_draft_picker() -> (App, Action) {
+    let mut app = open();
+    apply_catalog(&mut app, claude_ready());
+    focus_field(&mut app, "builder_provider");
+    press(&mut app, KeyCode::Right);
+    focus_field(&mut app, "builder_model");
+    let action = press(&mut app, KeyCode::Enter);
+    (app, action)
+}
+
+fn codex_ready(models: &[(&str, Option<&str>)]) -> ProviderCatalog {
+    catalog("codex", ModelCatalogStatus::Ready, models)
+}
+
+fn codex_pending() -> ProviderCatalog {
+    catalog("codex", ModelCatalogStatus::Pending, &[])
+}
+
+fn codex_failed() -> ProviderCatalog {
+    ProviderCatalog {
+        error: "codex is not logged in".into(),
+        ..catalog("codex", ModelCatalogStatus::Failed, &[])
+    }
+}
+
+#[test]
+fn opening_the_picker_for_an_undiscovered_draft_provider_asks_for_discovery() {
+    let (app, action) = codex_draft_picker();
+    assert_eq!(action, Action::DiscoverModels("codex".into()));
+    assert_eq!(app.open_modals(), vec![Modal::Overlay, Modal::ModelPicker]);
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("Model · codex"), "{screen}");
+    assert!(screen.contains("Models not discovered yet"), "{screen}");
+    assert_eq!(
+        draft(&app, "builder_provider"),
+        Some(SettingValue::Str("codex".into()))
+    );
+}
+
+#[test]
+fn the_open_picker_follows_discovery_of_the_draft_provider() {
+    let (mut app, _) = codex_draft_picker();
+    let drafts = app.overlay.drafts.clone();
+
+    apply_catalog(&mut app, codex_pending());
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("Discovering models..."), "{screen}");
+    assert_eq!(app.open_modals(), vec![Modal::Overlay, Modal::ModelPicker]);
+    assert_eq!(app.overlay.drafts, drafts);
+    insta::assert_snapshot!(screen);
+
+    let models = [("gpt-5", Some("GPT-5")), ("gpt-5-mini", None)];
+    apply_catalog(&mut app, codex_ready(&models));
+    let screen = draw(&app, W, H);
+    assert!(screen.contains("gpt-5-mini"), "{screen}");
+    assert!(screen.contains("Custom..."), "{screen}");
+    assert!(!screen.contains("Discovering"), "{screen}");
+    assert_eq!(app.open_modals(), vec![Modal::Overlay, Modal::ModelPicker]);
+    assert_eq!(app.overlay.drafts, drafts);
+    insta::assert_snapshot!(screen);
+
+    // The selection is kept by value when the list changes under it.
+    press(&mut app, KeyCode::Home);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    let mut longer = vec![("gpt-4.1", None)];
+    longer.extend(models);
+    apply_catalog(&mut app, codex_ready(&longer));
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.model_picker_open());
+    assert_eq!(
+        draft(&app, "builder_model"),
+        Some(SettingValue::Str("gpt-5-mini".into()))
+    );
+    assert_eq!(
+        draft(&app, "builder_provider"),
+        Some(SettingValue::Str("codex".into()))
+    );
+}
+
+#[test]
+fn a_failed_discovery_shows_in_the_open_picker_and_custom_stays_usable() {
+    let (mut app, _) = codex_draft_picker();
+    let drafts = app.overlay.drafts.clone();
+    apply_catalog(&mut app, codex_pending());
+    apply_catalog(&mut app, codex_failed());
+    let screen = draw(&app, W, H);
+    assert!(
+        screen.contains("Model discovery failed: codex is not logged in"),
+        "{screen}"
+    );
+    assert_eq!(app.open_modals(), vec![Modal::Overlay, Modal::ModelPicker]);
+    assert_eq!(app.overlay.drafts, drafts);
+    insta::assert_snapshot!(screen);
+
+    press(&mut app, KeyCode::End);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.open_modals(), vec![Modal::Overlay]);
+    assert_eq!(app.overlay.editor.as_ref().unwrap().field, "builder_model");
+}
+
+#[test]
+fn reopening_the_picker_retries_only_a_failed_catalog() {
+    let (mut app, _) = codex_draft_picker();
+    for (catalog, expected) in [
+        (codex_failed(), Action::DiscoverModels("codex".into())),
+        (codex_pending(), Action::None),
+        (codex_ready(&[("gpt-5", None)]), Action::None),
+    ] {
+        apply_catalog(&mut app, catalog);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.open_modals(), vec![Modal::Overlay]);
+        assert_eq!(press(&mut app, KeyCode::Enter), expected);
+        assert!(app.model_picker_open());
+    }
 }

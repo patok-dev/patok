@@ -255,6 +255,11 @@ message CommandRequest {
     // exists. Accepted in every engine state; the removal runs under the
     // engine's task-file lock and the queue reconciles immediately.
     RemoveTask remove_task = 8;
+    // The settings overlay's model picker opened for a provider with no
+    // discovered models (T8.1): discover that provider's models now, under
+    // the same claim rule as a saved provider change. Rejected for unknown
+    // slugs and providers without model selection.
+    DiscoverModels discover_models = 9;
   }
 }
 
@@ -300,6 +305,15 @@ message InjectTask {
 // to remove from TASKS.md, e.g. "T3.1".
 message RemoveTask {
   string id = 1;
+}
+
+// The settings overlay's model picker opened for a provider with no
+// discovered models (T8.1): discover that provider's models now. The
+// provider is its config slug ("claude", "codex") as a string, not the
+// Provider enum: enum value 0 is Claude, so the engine could never see or
+// reject an unknown slug.
+message DiscoverModels {
+  string provider = 1;
 }
 
 // The pipeline roles and design-command orchestrator seats that carry

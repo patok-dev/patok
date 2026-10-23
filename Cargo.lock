@@ -1501,6 +1501,7 @@ dependencies = [
  "patok-core",
  "patok-proto",
  "patok-providers",
+ "prost",
 ]
 
 [[package]]

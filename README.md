@@ -70,12 +70,12 @@ offers only "Provider default", the current value and "Custom...". If the provid
 discovered again, the note shows and the last discovered models stay listed. The list
 updates while it is open when discovery finishes.
 
-When a saved settings change, or an edited config file, assigns a role a provider that
-supports model selection and has no discovered models yet, the daemon discovers that
-provider's models in the background. It uses the same cache, timeout and failure rules as
-at startup, and providers without model selection are never asked. Because overlay edits
-apply only on save, save the provider change first and then reopen the model picker to see
-the new provider's models.
+Opening a model row's picker starts discovery for the role's provider, including a
+provider that is only changed in the unsaved overlay draft, when its models are not known
+yet or the last discovery failed. The picker stays open and fills in when discovery
+finishes. A saved settings change or an edited config file that assigns a provider
+still discovers it in the background. The same cache, timeout and failure rules apply, and
+providers without model selection are never asked.
 
 ### Model check at startup
 
