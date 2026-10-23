@@ -109,11 +109,9 @@ pub fn parse_initialize_line(line: &str) -> Option<Result<Vec<DiscoveredModel>, 
             outer["error"].as_str().unwrap_or("no reason given")
         )));
     }
-    // The payload nests under `response.response`; `response.models` is tolerated too.
-    let Some(entries) = outer["response"]["models"]
-        .as_array()
-        .or_else(|| outer["models"].as_array())
-    else {
+    // Only `models` of the initialize payload (`response.response`) is read; the rest of the
+    // payload carries account data and is never inspected.
+    let Some(entries) = outer["response"]["models"].as_array() else {
         return Some(Err("the initialize response has no models list".into()));
     };
     let mut models: Vec<DiscoveredModel> = vec![];
@@ -859,9 +857,8 @@ mod tests {
     }
 
     #[test]
-    fn models_directly_under_response_are_read_too() {
+    fn models_outside_the_initialize_payload_are_not_read() {
         let line = r#"{"type":"control_response","response":{"subtype":"success","request_id":"r1","models":["opus"]}}"#;
-        let models = parse_initialize_line(line).unwrap().unwrap();
-        assert_eq!(ids(&models), ["opus"]);
+        assert!(matches!(parse_initialize_line(line), Some(Err(_))));
     }
 }
