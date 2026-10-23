@@ -94,8 +94,7 @@ impl Engine {
             model: model.unwrap_or_default(),
             settings,
             pipeline: state.pipeline.clone(),
-            // published by the discovery task (T4.2)
-            model_catalog: Vec::new(),
+            model_catalog: state.model_catalog.values().cloned().collect(),
             recent: state.recent.iter().cloned().collect(),
         };
         let events = self.inner.events.subscribe();

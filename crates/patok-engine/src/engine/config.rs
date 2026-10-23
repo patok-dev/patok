@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -249,6 +249,8 @@ impl Engine {
                     group_number: None,
                     group_base: None,
                     discovery_ran: false,
+                    model_catalog: BTreeMap::new(),
+                    model_cache: None,
                 }),
                 events,
                 phase,

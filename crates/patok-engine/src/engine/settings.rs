@@ -5,15 +5,35 @@ use patok_config::{
     ApplyTiming, DaemonSettings, SettingValue, daemon_apply_timing, daemon_changed_fields,
     daemon_field_value, load_daemon, set_daemon_field,
 };
-use patok_core::event::EngineEvent;
+use patok_core::event::{EngineEvent, ModelCatalogStatus};
+use patok_providers::ProviderKind;
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
+use super::models::{pending, role_providers};
 use super::state::resolve_or_reject;
 use crate::context::SessionContext;
 
 /// How often the config files' modification times are checked.
 const CONFIG_FILE_POLL: Duration = Duration::from_secs(2);
+
+/// The providers supporting model selection that a role's provider setting changed to
+/// from `old` to `new`, without duplicates.
+fn newly_assigned_kinds(old: &DaemonSettings, new: &DaemonSettings) -> Vec<ProviderKind> {
+    let mut kinds = vec![];
+    for (before, after) in role_providers(old).into_iter().zip(role_providers(new)) {
+        if before == after {
+            continue;
+        }
+        if let Some(kind) = after.kind()
+            && kind.info().supports_model_selection
+            && !kinds.contains(&kind)
+        {
+            kinds.push(kind);
+        }
+    }
+    kinds
+}
 
 impl Engine {
     /// The central in-memory daemon settings: every consumer
@@ -90,19 +110,23 @@ impl Engine {
     /// display fields, reconfigures the discovery schedule and broadcasts one
     /// `ConfigChanged` per changed field, carrying the field's effective (post-merge,
     /// post-normalization) value and apply timing. An empty
-    /// diff emits nothing.
+    /// diff emits nothing. A provider newly assigned to a role that does not have a
+    /// `Ready` (or running) model discovery gets a background one.
     fn swap_settings(&self, new: DaemonSettings, warnings: &[String]) {
         for warning in warnings {
             tracing::warn!("{warning}");
         }
-        let changed = {
+        let (changed, assigned) = {
             let mut central = self.central();
             let old = std::mem::replace(&mut central.settings, new.clone());
             if self.inner.resolver.is_some() {
                 central.provider_name = new.builder_provider.to_string();
                 central.model = Some(new.builder_model.clone()).filter(|m| !m.is_empty());
             }
-            daemon_changed_fields(&old, &new)
+            (
+                daemon_changed_fields(&old, &new),
+                newly_assigned_kinds(&old, &new),
+            )
         };
         let mut state = self.state();
         state.schedule.reconfigure(
@@ -130,6 +154,29 @@ impl Engine {
         }
         if run_mode_changed {
             self.refresh_pipeline_locked(&mut state);
+        }
+        // Claim under the lock, so concurrent swaps never start the same discovery twice;
+        // a `Pending` entry means one is already running.
+        let mut claimed = vec![];
+        if self.inner.resolver.is_some() {
+            for kind in assigned {
+                let status = state
+                    .model_catalog
+                    .get(kind.info().slug)
+                    .map(|catalog| catalog.status);
+                if !matches!(
+                    status,
+                    Some(ModelCatalogStatus::Ready | ModelCatalogStatus::Pending)
+                ) {
+                    self.publish_catalog_locked(&mut state, pending(kind));
+                    claimed.push(kind);
+                }
+            }
+        }
+        let cache = state.model_cache.clone();
+        drop(state);
+        if !claimed.is_empty() {
+            self.spawn_discovery(claimed, cache);
         }
     }
 

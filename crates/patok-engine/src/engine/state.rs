@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use patok_config::{DaemonEnv, DaemonSettings, EnumSpelling};
-use patok_core::event::{EngineEvent, Phase};
+use patok_core::event::{EngineEvent, Phase, ProviderCatalog};
 use patok_core::pipeline::{PipelineState, Stage, TileStatus};
-use patok_providers::{Provider, ProviderError, ProviderKind, ProviderName};
+use patok_providers::{ModelCache, Provider, ProviderError, ProviderKind, ProviderName};
 use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -75,6 +75,12 @@ pub(crate) struct State {
     pub(crate) group_base: Option<String>,
     /// A discovery round ran to completion this session.
     pub(crate) discovery_ran: bool,
+    /// The model discovery state per provider, keyed by the canonical slug. Only
+    /// providers that were asked have an entry; no entry means not discovered.
+    pub(crate) model_catalog: BTreeMap<String, ProviderCatalog>,
+    /// The model cache the daemon started with, reused by discoveries that a settings
+    /// change starts later.
+    pub(crate) model_cache: Option<ModelCache>,
 }
 
 /// The central in-memory configuration: the merged, normalized
