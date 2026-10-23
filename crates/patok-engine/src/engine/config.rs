@@ -194,7 +194,7 @@ impl Engine {
         }
         let settings = loaded.settings;
         let name = settings.builder_provider.to_string();
-        let model = Some(settings.builder_model.clone()).filter(|m| !m.is_empty());
+        let model = settings.builder_model.clone().filter(|m| !m.is_empty());
         let central = Central {
             settings,
             provider_name: name.clone(),

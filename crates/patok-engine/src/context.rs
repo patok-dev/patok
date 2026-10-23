@@ -555,7 +555,7 @@ impl SessionContext {
         let selectable = name
             .kind()
             .is_some_and(|kind| kind.info().supports_model_selection);
-        let role_model = Some(role_model.clone()).filter(|m| selectable && !m.is_empty());
+        let role_model = role_model.clone().filter(|m| selectable && !m.is_empty());
         let fallback = || {
             let model = role_model
                 .clone()

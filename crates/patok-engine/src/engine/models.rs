@@ -28,17 +28,37 @@ const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The six (field, provider, model) role settings, in the order of
 /// `model_selection_warnings` in `patok-config`, which this mirrors.
-fn role_models(s: &DaemonSettings) -> [(&'static str, ProviderName, &String); 6] {
+fn role_models(s: &DaemonSettings) -> [(&'static str, ProviderName, &str); 6] {
     [
-        ("research_model", s.research_provider, &s.research_model),
-        ("planner_model", s.planner_provider, &s.planner_model),
-        ("builder_model", s.builder_provider, &s.builder_model),
-        ("reviewer_model", s.reviewer_provider, &s.reviewer_model),
-        ("discovery_model", s.discovery_provider, &s.discovery_model),
+        (
+            "research_model",
+            s.research_provider,
+            s.research_model.as_deref().unwrap_or_default(),
+        ),
+        (
+            "planner_model",
+            s.planner_provider,
+            s.planner_model.as_deref().unwrap_or_default(),
+        ),
+        (
+            "builder_model",
+            s.builder_provider,
+            s.builder_model.as_deref().unwrap_or_default(),
+        ),
+        (
+            "reviewer_model",
+            s.reviewer_provider,
+            s.reviewer_model.as_deref().unwrap_or_default(),
+        ),
+        (
+            "discovery_model",
+            s.discovery_provider,
+            s.discovery_model.as_deref().unwrap_or_default(),
+        ),
         (
             "orchestrator_model",
             s.orchestrator_provider,
-            &s.orchestrator_model,
+            s.orchestrator_model.as_deref().unwrap_or_default(),
         ),
     ]
 }
@@ -378,7 +398,7 @@ mod tests {
             reviewer_provider: provider,
             discovery_provider: provider,
             orchestrator_provider: provider,
-            builder_model: model.into(),
+            builder_model: Some(model.into()),
             ..Default::default()
         }
     }

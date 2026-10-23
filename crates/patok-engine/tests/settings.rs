@@ -83,6 +83,41 @@ async fn a_valid_settings_change_updates_the_config_the_file_and_broadcasts() {
     );
 }
 
+/// An empty role model is valid (the provider's default): it clears the model.
+#[tokio::test]
+async fn an_empty_builder_model_change_clears_the_model() {
+    let fixture = Fixture::new(TASKS);
+    let engine = Engine::new(
+        defaults_config(&fixture),
+        Arc::new(MockProvider::new(vec![])),
+    );
+    let mut attachment = engine.attach().unwrap();
+
+    engine
+        .apply_settings_change("builder_model", SettingValue::Str("sonnet".into()))
+        .unwrap();
+    assert_eq!(engine.settings().builder_model.as_deref(), Some("sonnet"));
+    assert!(project_config(&fixture).contains("builder_model = \"sonnet\""));
+
+    engine
+        .apply_settings_change("builder_model", SettingValue::Str(String::new()))
+        .unwrap();
+    assert_eq!(engine.settings().builder_model, None);
+    let text = project_config(&fixture);
+    assert!(!text.contains("builder_model"), "{text}");
+
+    let events = collect_until(&mut attachment.events, |event| {
+        matches!(event, EngineEvent::ConfigChanged { field, value, .. }
+            if field == "builder_model" && *value == SettingValue::Str(String::new()))
+    })
+    .await;
+    assert_eq!(
+        config_change(&events, "builder_model").map(|(value, _)| value),
+        Some(SettingValue::Str("sonnet".into())),
+        "{events:#?}"
+    );
+}
+
 /// S-Tab's run-mode flip (T60.1): the same flow as any other field, through the
 /// daemon registry's run-mode key.
 #[tokio::test]
@@ -309,7 +344,7 @@ async fn a_mid_run_change_takes_effect_at_the_next_build_start() {
         codex_recorded.sessions().is_empty(),
         "the running unit was untouched"
     );
-    assert_eq!(engine.settings().builder_model, "sonnet");
+    assert_eq!(engine.settings().builder_model.as_deref(), Some("sonnet"));
 
     // The next build start takes the new routing.
     std::fs::write(
