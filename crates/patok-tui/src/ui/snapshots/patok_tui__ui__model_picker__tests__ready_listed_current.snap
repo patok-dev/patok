@@ -1,0 +1,20 @@
+---
+source: crates/patok-tui/src/ui/model_picker.rs
+expression: "snap(&draw(&picker, Some(&c), 80, 24))"
+---
+
+
+
+
+
+
+
+
+             ┌────────────────── Model · codex ──────────── [ x ] ┐
+             │  Provider default                                  │
+             │  gpt-5.5           GPT-5.5                         │
+             │▶ gpt-5.4-mini      GPT-5.4 Mini  (current)         │
+             │  codex-auto                                        │
+             │  Custom...                                         │
+             │ ↑↓/jk move        [ Enter ] Select  [ Esc ] Cancel │
+             └────────────────────────────────────────────────────┘
