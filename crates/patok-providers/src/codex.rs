@@ -9,12 +9,18 @@
 
 use async_trait::async_trait;
 use patok_core::event::{AgentEvent, preview};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::catalog::CODEX;
 use crate::cli::{self, CliSpec};
-use crate::process::Parsed;
-use crate::{Provider, ProviderError, ProviderInfo, SessionRequest, SessionResult, Tool};
+use crate::process::{self, Parsed, ProcessSpec};
+use crate::{
+    DiscoveredModel, Provider, ProviderError, ProviderInfo, SessionRequest, SessionResult, Tool,
+};
+
+/// Prints the model catalog as one JSON line.
+const DISCOVERY_ARGS: &[&str] = &["debug", "models"];
 
 pub struct Codex;
 
@@ -50,6 +56,73 @@ impl Provider for Codex {
     async fn run_session(&self, request: SessionRequest) -> Result<SessionResult, ProviderError> {
         cli::run_session::<Codex>(request).await
     }
+
+    async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        discover_with(discovery_spec()).await
+    }
+}
+
+fn discovery_spec() -> ProcessSpec {
+    ProcessSpec {
+        program: CODEX.binary.into(),
+        args: DISCOVERY_ARGS.iter().map(|a| (*a).to_string()).collect(),
+        env: vec![],
+        stdin: String::new(),
+    }
+}
+
+/// Runs `spec` as the discovery process; tests substitute the spec to mock the spawn.
+async fn discover_with(spec: ProcessSpec) -> Result<Vec<DiscoveredModel>, ProviderError> {
+    // A neutral directory keeps project config and AGENTS.md out of the harness.
+    let cwd = std::env::temp_dir();
+    let discovery_error = |reason: String| ProviderError::Discovery {
+        provider: CODEX.slug.into(),
+        reason,
+    };
+    match process::exchange(&spec, &cwd, parse_models_line).await? {
+        Some(Ok(models)) => Ok(models),
+        Some(Err(reason)) => Err(discovery_error(reason)),
+        None => Err(discovery_error(
+            "the harness exited without listing models".into(),
+        )),
+    }
+}
+
+/// The `codex debug models` payload, reduced to the fields discovery reads; serde skips the rest
+/// (instructions, reasoning levels, ...), so none of it is kept.
+#[derive(Deserialize)]
+struct ModelsOutput {
+    models: Vec<ModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelEntry {
+    #[serde(default)]
+    slug: String,
+    display_name: Option<String>,
+    /// `list` or `hide` today; any other value or none counts as not listed.
+    visibility: Option<String>,
+}
+
+/// What one stdout line of `codex debug models` says: `None` for any other line, otherwise the
+/// models or why there are none. Only `slug`, `display_name` and `visibility` are read.
+pub fn parse_models_line(line: &str) -> Option<Result<Vec<DiscoveredModel>, String>> {
+    let output: ModelsOutput = serde_json::from_str(line.trim()).ok()?;
+    let mut models: Vec<DiscoveredModel> = vec![];
+    for entry in output.models {
+        if entry.slug.is_empty() || models.iter().any(|m| m.id == entry.slug) {
+            continue;
+        }
+        models.push(DiscoveredModel {
+            listed: entry.visibility.as_deref() == Some("list"),
+            display_name: entry.display_name.filter(|n| !n.is_empty()),
+            id: entry.slug,
+        });
+    }
+    if models.is_empty() {
+        return Some(Err("the harness reported no models".into()));
+    }
+    Some(Ok(models))
 }
 
 /// Codex exec has no system-prompt flag and takes the prompt as a positional argument,
@@ -404,5 +477,76 @@ mod tests {
         assert!(Codex::check_available_in(Some(&path)).is_err());
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         Codex::check_available_in(Some(&path)).unwrap();
+    }
+
+    fn fake_codex(script: &'static str, output: &'static str) -> ProcessSpec {
+        ProcessSpec {
+            program: "sh".into(),
+            args: vec!["-c".into(), script.into()],
+            env: vec![("OUTPUT", output)],
+            ..discovery_spec()
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_reads_the_models_from_debug_models() {
+        let spec = fake_codex(
+            r#"printf '%s' "$OUTPUT"; sleep 30"#,
+            include_str!("../tests/fixtures/codex-debug-models.jsonl"),
+        );
+        let models = tokio::time::timeout(std::time::Duration::from_secs(5), discover_with(spec))
+            .await
+            .expect("the process was killed after the answer")
+            .unwrap();
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "gpt-test-pro",
+                "gpt-test-mini",
+                "gpt-test-reserve",
+                "gpt-test-plain"
+            ]
+        );
+        let listed: Vec<bool> = models.iter().map(|m| m.listed).collect();
+        assert_eq!(listed, [true, true, false, false]);
+    }
+
+    #[tokio::test]
+    async fn discovery_fails_when_the_harness_prints_no_models() {
+        let spec = fake_codex("echo 'not json'", "");
+        match discover_with(spec).await {
+            Err(ProviderError::Discovery { provider, .. }) => assert_eq!(provider, "codex"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_of_a_missing_cli_is_cli_not_found() {
+        let spec = ProcessSpec {
+            program: "patok-no-such-cli".into(),
+            ..discovery_spec()
+        };
+        let err = discover_with(spec).await.unwrap_err();
+        assert!(matches!(err, ProviderError::CliNotFound { .. }), "{err}");
+    }
+
+    #[test]
+    fn the_discovery_spec_is_debug_models() {
+        let spec = discovery_spec();
+        assert_eq!(spec.program, "codex");
+        assert_eq!(spec.args.join(" "), "debug models");
+        assert!(spec.stdin.is_empty());
+        assert!(spec.env.is_empty());
+    }
+
+    #[test]
+    fn models_lines_that_are_not_the_answer_are_ignored() {
+        assert!(parse_models_line("not json").is_none());
+        assert!(parse_models_line(r#"{"other":1}"#).is_none());
+        assert!(matches!(
+            parse_models_line(r#"{"models":[]}"#),
+            Some(Err(_))
+        ));
     }
 }
