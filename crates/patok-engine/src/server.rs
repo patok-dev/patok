@@ -472,7 +472,8 @@ pub async fn serve(engine: Engine) -> anyhow::Result<()> {
     engine.cleanup_completed_tasks().await;
     engine.spawn_task_file_watch();
     engine.spawn_config_watch();
-    // Warn-only and never awaited: startup does not wait for the harnesses.
+    // Warn-only and never awaited: startup does not wait for the harnesses, so a slow or
+    // missing harness cannot delay or fail daemon start; see `engine::models`.
     drop(engine.spawn_model_validation(patok_providers::ModelCache::from_env()));
     engine.spawn_history_writer();
     spawn_idle_watch(engine.clone());

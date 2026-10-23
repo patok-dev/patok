@@ -1,4 +1,9 @@
 //! Discovered models and their on-disk per-provider cache.
+//!
+//! The cache exists so that daemon starts usually spawn no harness. It is keyed by the
+//! harness version, because an upgraded harness may report different models. It stores
+//! only the parsed models, never the raw harness output: Claude's `initialize` response
+//! carries account data, and Codex's payload is hundreds of KB.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

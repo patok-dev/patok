@@ -33,6 +33,9 @@ impl Provider for Vibe {
         VIBE.slug
     }
 
+    // False (see `VIBE` in the catalog): the CLI has no model flag. Vibe therefore keeps
+    // the default `discover_models` and `harness_version`, which return
+    // `DiscoveryUnsupported`.
     fn supports_model_selection(&self) -> bool {
         VIBE.supports_model_selection
     }

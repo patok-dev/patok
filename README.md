@@ -31,6 +31,49 @@ patok does not answer or pre-seed a provider's trust or first-run prompts and
 never edits its config (for example `~/.claude.json`): answer them yourself in
 the terminal. Session resume is not supported.
 
+## Models
+
+Each role (`research`, `planner`, `builder`, `reviewer`, `discovery`, `orchestrator`) has
+a `<role>_provider` and a `<role>_model`. An empty model, which is the default, means the
+provider's own default model.
+
+| Harness     | Model selection | Discovery                |
+| ----------- | --------------- | ------------------------ |
+| Claude Code | yes (`--model`) | the `initialize` request |
+| Codex       | yes (`-m`)      | `codex debug models`     |
+| Vibe        | no              | none                     |
+
+Vibe has no model flag, so patok never passes it a model. A non-empty `<role>_model` for a
+Vibe role produces a config warning ("ignored: Vibe does not support model selection"),
+and the settings overlay hides the model row for that role.
+
+### Model check at startup
+
+When the daemon starts, it checks the configured models in the background and does not
+wait for the check. Only providers that some role uses and that support model selection
+are asked. They are asked in parallel, with 10 s each.
+
+A model the harness does not report gets a warning ("... is not among the models ...
+reports; it is passed ... unchanged"), and patok still passes it to the harness. The check
+only warns: the harness is the authority on which models it accepts. A harness that cannot
+be asked gets "<harness> models not checked: <reason>".
+
+A trailing `[...]` suffix such as `sonnet[1m]` is ignored when comparing. Codex's hidden
+models count as known. Warnings go to the daemon log: stderr, or `engine.log` next to
+`engine.sock` when the daemon is detached. They can appear shortly after start. The check
+uses the settings as they were at startup, so later edits do not re-run it. Shutdown
+cancels it and kills any harness it started.
+
+### Model cache
+
+Discovered models are cached in `$XDG_CACHE_HOME/patok/models/<slug>.json`, else
+`~/.cache/patok/models/<slug>.json`. An entry is fresh for 24 h and only while the
+harness `--version` matches. Deleting the file forces a new discovery at the next start.
+
+Only model ids, display names and visibility are stored. The rest of Claude's response
+contains account data and is never stored or logged. There is no refresh command and no
+setting for this.
+
 ## Install
 
 Supported platforms: macOS (arm64, x86_64) and Linux (x86_64).

@@ -1,5 +1,11 @@
 //! Start-up model validation: a background check that the configured models are among the
 //! ones the configured harnesses report. Warn-only; it never delays or fails startup.
+//!
+//! The check only warns because a harness's model list can be stale or incomplete:
+//! aliases, hidden models and newly released ids may be accepted before the list shows
+//! them. The harness is the authority, so an unknown model is passed through unchanged and
+//! the harness decides. A failing or slow harness (missing login, network, timeout) must
+//! not stop a daemon whose builds may not even use that provider.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -83,8 +89,12 @@ async fn models_of(
 /// The warnings for the configured models that the configured harnesses do not report.
 ///
 /// Only providers that appear in a `*_provider` setting and support model selection are
-/// asked (Vibe never is), concurrently and each within `timeout`. A harness that cannot
-/// be asked yields a "not checked" warning instead of unknown-model warnings.
+/// asked (Vibe never is: its catalog entry has no model selection, so there is nothing to
+/// validate), concurrently and each within `timeout`. A harness that cannot be asked
+/// yields a "not checked" warning instead of unknown-model warnings.
+///
+/// Unused harnesses are left alone because spawning one costs time, can start a login or
+/// first-run flow, and asks Claude for account data for no reason.
 pub(crate) async fn validate_models(
     settings: &DaemonSettings,
     resolver: &Resolver,
