@@ -11,7 +11,7 @@ expression: screen
 │    │      discovery provider  ‹ claude ›                                                   ││    │
 └────│      discovery model  opus                                                            ││────┘
 ┌ Tas│      orchestrator provider  ‹ claude ›                                                ││────┐
-│○ T1│      orchestrator model  (not set)                                                    ││    │
+│○ T1│      orchestrator model  Provider default                                             ││    │
 │    │  ▾ Pipeline                                                                           █│    │
 │    │      run mode  ‹ sprint ›                                                             █│    │
 │    │      [ ] plan enabled                                                                 █│    │

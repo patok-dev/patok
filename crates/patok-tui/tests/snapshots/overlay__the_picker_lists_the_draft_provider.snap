@@ -15,17 +15,17 @@ expression: screen
 │    │      planner provider  ‹ claude ›                                                     █│    │
 │    │      planner model  opus                                                              █│    │
 │    │      builder provider  ‹ codex ›                                                      █│    │
-│    │▶     builder model  opus                                                              ││    │
+│    │▶     builder model  Provider default                                                  ││    │
 │    │      reviewer provider  ‹ claude ›                                                    ││    │
 │    │      reviewer model  sonnet                                                           ││    │
 │    │      discover┌───────────────────── Model · codex ─────────────── [ x ] ┐             ││    │
-│    │      discover│  Provider default                                        │             ││    │
+│    │      discover│▶ Provider default  (current)                             │             ││    │
 │    │      orchestr│  gpt-5             GPT-5                                 │             ││    │
 │    │      orchestr│  gpt-5-mini                                              │             ││    │
-│    │  ▾ Pipeline  │▶ opus              (current)                             │             ││    │
-│    │      run mode│  Custom...                                               │             ││    │
-│    │      [ ] plan│ ↑↓/jk move              [ Enter ] Select  [ Esc ] Cancel │             ││    │
-│    │      [ ] skip└──────────────────────────────────────────────────────────┘             ││    │
+│    │  ▾ Pipeline  │  Custom...                                               │             ││    │
+│    │      run mode│ ↑↓/jk move              [ Enter ] Select  [ Esc ] Cancel │             ││    │
+│    │      [ ] plan└──────────────────────────────────────────────────────────┘             ││    │
+│    │      [ ] skip research for simple                                                     ││    │
 │    │      [ ] skip review for simple                                                       ││    │
 │    │┌─────────────────────────────────── builder model ────────────────────────────────────┐│    │
 │    ││The model the builder role runs on; empty uses the provider's default.                ││    │
