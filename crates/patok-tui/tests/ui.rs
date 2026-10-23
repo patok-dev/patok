@@ -2081,11 +2081,6 @@ mod dialog {
     use patok_core::event::NoticeLevel;
     use patok_tui::{Action, DialogKind};
 
-    /// Shift-Enter: the line-break key of the multi-line input (T41.1).
-    fn shift_enter(app: &mut App) -> Action {
-        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT))
-    }
-
     fn type_text(app: &mut App, text: &str) {
         for c in text.chars() {
             press(app, KeyCode::Char(c));
@@ -2393,7 +2388,7 @@ mod dialog {
     fn dialog_with_text() {
         let mut app = open();
         type_text(&mut app, "add a login page");
-        shift_enter(&mut app);
+        app.on_paste("\n");
         type_text(&mut app, "and a logout button");
         insta::assert_snapshot!(draw(&app, 80, 24));
     }
@@ -2438,7 +2433,7 @@ mod dialog {
         // A multi-line input submits every line, not just the cursor's.
         let mut app = open();
         type_text(&mut app, "first line");
-        shift_enter(&mut app);
+        app.on_paste("\n");
         type_text(&mut app, "second line");
         assert_eq!(
             press(&mut app, KeyCode::Enter),
@@ -2446,41 +2441,21 @@ mod dialog {
         );
     }
 
-    /// Shift-Enter breaks the line at the cursor without submitting (T41.1).
+    /// A pasted line break lands at the cursor mid-text, after pasted text and
+    /// at the very end, and Backspace joins the halves back over the newline
+    /// (T62.1).
     #[test]
-    fn shift_enter_inserts_a_newline_without_submitting() {
-        let mut app = open();
-        type_text(&mut app, "first line");
-        assert!(app.dialog_open());
-        assert_eq!(shift_enter(&mut app), Action::None);
-        assert_eq!(
-            app.dialog.editor.cursor(),
-            11,
-            "the cursor moved past the newline"
-        );
-        type_text(&mut app, "second line");
-        assert_eq!(app.dialog.editor.text(), "first line\nsecond line");
-        assert!(app.dialog_open(), "the dialog never submitted");
-        let screen = draw(&app, 80, 24);
-        assert!(screen.contains("first line"), "{screen}");
-        assert!(screen.contains("second line"), "{screen}");
-    }
-
-    /// Shift-Enter breaks the line at the cursor mid-text, after pasted text
-    /// and at the very end, and Backspace joins the halves back over the
-    /// newline (T62.1).
-    #[test]
-    fn shift_enter_mid_text_round_trips_with_backspace() {
+    fn a_pasted_line_break_round_trips_with_backspace() {
         // Mid-text: the line splits at the cursor and the cursor lands at the
-        // new line's start, without submitting.
+        // new line's start.
         let mut app = open();
         type_text(&mut app, "abcdef");
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
         assert_eq!(app.dialog.editor.cursor(), 3);
-        assert_eq!(shift_enter(&mut app), Action::None);
-        assert!(app.dialog_open(), "Shift-Enter never submits");
+        app.on_paste("\n");
+        assert!(app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "abc\ndef");
         assert_eq!(
             app.dialog.editor.cursor(),
@@ -2496,12 +2471,12 @@ mod dialog {
             "the cursor returns to the join point"
         );
 
-        // After pasted text: the paste lands first, Shift-Enter splits at the
-        // cursor, and Backspace round-trips the same way.
+        // After pasted text: the line break splits at the cursor, and
+        // Backspace round-trips the same way.
         let mut app = open();
         app.on_paste("one two");
         press(&mut app, KeyCode::Left);
-        assert_eq!(shift_enter(&mut app), Action::None);
+        app.on_paste("\n");
         assert_eq!(app.dialog.editor.text(), "one tw\no");
         press(&mut app, KeyCode::Backspace);
         assert_eq!(app.dialog.editor.text(), "one two");
@@ -2510,7 +2485,7 @@ mod dialog {
         // At the very end: the newline appends and typing continues below it.
         let mut app = open();
         type_text(&mut app, "end");
-        assert_eq!(shift_enter(&mut app), Action::None);
+        app.on_paste("\n");
         assert_eq!(app.dialog.editor.text(), "end\n");
         type_text(&mut app, "tail");
         assert_eq!(app.dialog.editor.text(), "end\ntail");
@@ -2684,7 +2659,7 @@ mod dialog {
         let mut app = open();
         type_text(&mut app, "abc");
         press(&mut app, KeyCode::Backspace);
-        shift_enter(&mut app);
+        app.on_paste("\n");
         type_text(&mut app, "d");
         assert_eq!(app.dialog.editor.text(), "ab\nd");
         // Dialog keys do not leak to the shell: `q` is text, not quit.
@@ -2734,7 +2709,7 @@ mod dialog {
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::End);
         assert_eq!(app.dialog.editor.cursor(), 2);
-        shift_enter(&mut app);
+        app.on_paste("\n");
         assert_eq!(app.dialog.editor.text(), "日本\n\nho");
         ctrl(&mut app, 'u');
         assert_eq!(
@@ -3111,16 +3086,16 @@ mod dialog {
         }
     }
 
-    /// The dialog's bottom line names Alt-Enter as the line-break key (T62.1, T10.1):
-    /// a hint without brackets, in the low-emphasis footer colour -- never the
-    /// button accent -- alongside the existing hints (the tail hint gives up
-    /// its width first, T59.1) and the buttons on the same row.
+    /// The dialog's bottom line shows its hints without brackets, in the
+    /// low-emphasis footer colour -- never the button accent -- with no
+    /// line-break hint, and the buttons on the same row (the tail hint gives
+    /// up its width first, T59.1).
     #[test]
-    fn dialog_footer_hints_at_alt_enter() {
+    fn dialog_footer_hints_wear_the_muted_colour() {
         use patok_tui::Theme;
 
         let buffer = draw_buffer(&open());
-        let needle = "Alt-Enter line break";
+        let needle = "Ctrl+U clear";
         let mut found = None;
         for y in 0..buffer.area.height {
             let row: String = (0..buffer.area.width)
@@ -3131,8 +3106,10 @@ mod dialog {
                 break;
             }
         }
-        let (y, row, at) = found.expect("the footer names Alt-Enter");
-        assert!(!row.contains("[ Alt-Enter"), "a hint wears no brackets");
+        let (y, row, at) = found.expect("the footer names the clear hint");
+        assert!(!row.contains("[ Ctrl+U"), "a hint wears no brackets");
+        assert!(!row.contains("line break"), "{row}");
+        assert!(!row.contains("Alt-Enter"), "{row}");
         assert!(row.contains("[ Enter ]"), "{row}");
         assert!(row.contains("[ Esc ]"), "{row}");
         let x = row[..at].chars().count() as u16;
@@ -5296,7 +5273,7 @@ mod modal_footer {
         assert_two_zones(
             &buffer,
             app.dialog.footer.get(),
-            "↑↓←→ move · Alt-Enter line break · Ctrl+U clear",
+            "↑↓←→ move · Ctrl+U clear",
             &[("Enter", app.primary_label()), ("Esc", "Close")],
             &app.theme(),
         );
@@ -5313,7 +5290,7 @@ mod modal_footer {
         assert_two_zones(
             &buffer,
             app.dialog.footer.get(),
-            "↑↓←→ move · Alt-Enter line break · Ctrl+U clear",
+            "↑↓←→ move · Ctrl+U clear",
             &[("Enter", app.primary_label()), ("Esc", "Close")],
             &theme,
         );

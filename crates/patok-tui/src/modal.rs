@@ -707,12 +707,11 @@ fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
     match key.code {
         KeyCode::Char('s') if ctrl => return app.submit_dialog(),
         KeyCode::Char('u') if ctrl => app.dialog.editor.clear(),
-        // Plain Enter submits through the same path as the Submit button;
-        // an empty input is refused inline. A submit that
-        // launches a run closes the dialog; a command error keeps it open.
-        // Enter with Shift, Ctrl or Alt, and Ctrl+J, fall through to the
-        // editor's line break (T10.1).
-        KeyCode::Enter if !crate::dialog_editor::is_newline_key(&key) => {
+        // Enter, with or without Shift, Ctrl or Alt, submits through the same
+        // path as the Submit button; an empty input is refused inline. A
+        // submit that launches a run closes the dialog; a command error keeps
+        // it open.
+        KeyCode::Enter => {
             if app.dialog.editor.text().trim().is_empty() {
                 app.dialog.status = Some(app.empty_input_message().into());
             } else {
@@ -921,42 +920,62 @@ mod tests {
         app
     }
 
-    fn newline_keys() -> [KeyEvent; 6] {
-        let none = KeyModifiers::NONE;
-        let ctrl = KeyModifiers::CONTROL;
+    fn modified_enters() -> [KeyEvent; 3] {
         [
             KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
-            KeyEvent::new(KeyCode::Enter, ctrl),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
-            KeyEvent::new(KeyCode::Char('j'), ctrl),
-            KeyEvent::new(KeyCode::Char('\n'), none),
-            KeyEvent::new(KeyCode::Char('\n'), ctrl),
         ]
     }
 
     #[test]
-    fn newline_keys_break_the_line_in_the_add_and_inject_dialogs() {
+    fn modified_enter_submits_like_plain_enter_in_the_add_and_inject_dialogs() {
         for inject in [false, true] {
-            for nl in newline_keys() {
+            for k in modified_enters() {
                 let mut app = dialog_app(inject);
                 press(&mut app, KeyCode::Char('a'));
-                assert_eq!(app.on_key(nl), Action::None, "{nl:?}");
-                press(&mut app, KeyCode::Char('b'));
-                assert_eq!(app.modals.top(), Some(Modal::Dialog), "{nl:?}");
-                assert_eq!(app.dialog.editor.text(), "a\nb", "{nl:?}");
-                assert_eq!(app.dialog.status, None, "{nl:?}");
+                let got = app.on_key(k);
+                let mut expected_app = dialog_app(inject);
+                press(&mut expected_app, KeyCode::Char('a'));
+                assert_eq!(got, expected_app.submit_dialog(), "{k:?}");
+                assert_ne!(got, Action::None, "{k:?}");
+                assert!(!format!("{got:?}").contains('\n'), "{k:?}");
             }
         }
     }
 
     #[test]
-    fn newline_key_leaves_the_cursor_after_the_break() {
+    fn modified_enter_on_empty_input_shows_the_refusal() {
         for inject in [false, true] {
-            for nl in newline_keys() {
+            for k in modified_enters() {
+                let mut app = dialog_app(inject);
+                assert_eq!(app.on_key(k), Action::None, "{k:?}");
+                assert_eq!(app.modals.top(), Some(Modal::Dialog), "{k:?}");
+                assert_eq!(
+                    app.dialog.status,
+                    Some(app.empty_input_message().into()),
+                    "{k:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_j_is_a_no_op_in_the_add_and_inject_dialogs() {
+        let keys = [
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('\n'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('\n'), KeyModifiers::CONTROL),
+        ];
+        for inject in [false, true] {
+            for cj in keys {
                 let mut app = dialog_app(inject);
                 press(&mut app, KeyCode::Char('a'));
-                app.on_key(nl);
-                assert_eq!(app.dialog.editor.cursor(), 2, "{nl:?}");
+                assert_eq!(app.on_key(cj), Action::None, "{cj:?}");
+                press(&mut app, KeyCode::Char('b'));
+                assert_eq!(app.modals.top(), Some(Modal::Dialog), "{cj:?}");
+                assert_eq!(app.dialog.editor.text(), "ab", "{cj:?}");
+                assert_eq!(app.dialog.status, None, "{cj:?}");
             }
         }
     }
