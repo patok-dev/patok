@@ -313,3 +313,94 @@ async fn a_cached_codex_catalog_survives_restarts_and_reassignment() {
     assert_eq!(catalog.models.len(), 1);
     assert_eq!(catalog.models[0].id, "gpt-5");
 }
+
+#[tokio::test]
+async fn discover_models_discovers_an_unassigned_provider() {
+    let fixture = Fixture::new("");
+    let mock = discovering("gpt");
+    let engine = fixture.engine_configured(mock.clone(), ALL_CLAUDE);
+    let mut attachment = engine.attach().unwrap();
+    engine.discover_models("codex").unwrap();
+    let events = collect_until(
+        &mut attachment.events,
+        is_catalog("codex", ModelCatalogStatus::Ready),
+    )
+    .await;
+    assert_eq!(
+        statuses(&events, "codex"),
+        [ModelCatalogStatus::Pending, ModelCatalogStatus::Ready]
+    );
+    assert_eq!(mock.discovery_calls(), 1);
+}
+
+#[tokio::test]
+async fn a_pending_or_ready_provider_is_not_rediscovered_on_demand() {
+    let fixture = Fixture::new("");
+    let mock = discovering("gpt").with_discovery_delay(Duration::from_millis(200));
+    let engine = fixture.engine_configured(mock.clone(), ALL_CLAUDE);
+    let mut attachment = engine.attach().unwrap();
+    engine.discover_models("codex").unwrap();
+    engine.discover_models("codex").unwrap();
+    collect_until(
+        &mut attachment.events,
+        is_catalog("codex", ModelCatalogStatus::Ready),
+    )
+    .await;
+    engine.discover_models("codex").unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mock.discovery_calls(), 1);
+    let mut later = vec![];
+    while let Ok(event) = attachment.events.try_recv() {
+        later.push(event);
+    }
+    assert!(statuses(&later, "codex").is_empty(), "{later:?}");
+}
+
+#[tokio::test]
+async fn a_failed_provider_is_rediscovered_on_demand() {
+    let fixture = Fixture::new("");
+    let mock = MockProvider::new(vec![]);
+    let engine = fixture.engine_configured(mock.clone(), ALL_CLAUDE);
+    let mut attachment = engine.attach().unwrap();
+    engine.discover_models("codex").unwrap();
+    collect_until(
+        &mut attachment.events,
+        is_catalog("codex", ModelCatalogStatus::Failed),
+    )
+    .await;
+    assert_eq!(mock.discovery_calls(), 1);
+
+    engine.discover_models("codex").unwrap();
+    let events = collect_until(
+        &mut attachment.events,
+        is_catalog("codex", ModelCatalogStatus::Failed),
+    )
+    .await;
+    assert!(
+        statuses(&events, "codex").contains(&ModelCatalogStatus::Pending),
+        "{events:?}"
+    );
+    assert_eq!(mock.discovery_calls(), 2);
+}
+
+#[tokio::test]
+async fn discover_models_rejects_unknown_and_unselectable_providers() {
+    let fixture = Fixture::new("");
+    let mock = discovering("gpt");
+    let engine = fixture.engine_configured(mock.clone(), ALL_CLAUDE);
+    assert!(engine.discover_models("nope").is_err());
+    assert!(engine.discover_models("vibe").is_err());
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(mock.discovery_calls(), 0);
+}
+
+#[tokio::test]
+async fn discover_models_on_a_fixed_provider_engine_does_nothing() {
+    let fixture = Fixture::new("");
+    let mock = discovering("sonnet");
+    let engine = fixture.engine(mock.clone());
+    engine.discover_models("codex").unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(mock.discovery_calls(), 0);
+    assert!(engine.attach().unwrap().snapshot.model_catalog.is_empty());
+}

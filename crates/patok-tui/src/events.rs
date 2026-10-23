@@ -134,8 +134,9 @@ impl App {
             // The pipeline rail changed: the full state
             // replaces the previous one. Rendered by the pipeline rail of T50.1.
             EngineEvent::PipelineChanged { state } => self.pipeline = state,
-            // One provider's discovery state replaces its previous state; nothing
-            // renders it yet.
+            // One provider's discovery state replaces its previous state. The open
+            // model picker reads `model_catalog` on every render and key, so this
+            // insert alone updates it live; no overlay, draft or modal state is touched.
             EngineEvent::ModelCatalogChanged { catalog } => {
                 self.model_catalog.insert(catalog.provider.clone(), catalog);
             }

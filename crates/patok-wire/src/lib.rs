@@ -15,7 +15,7 @@
 //! of mirrored across the engine and the shell.
 //!
 //! The model catalog (proto <-> core) for the attach snapshot and its change event
-//! lives here too.
+//! lives here too, and so does the `DiscoverModels` command mapping (T8.1).
 //!
 //! Adding a daemon setting is the `daemon_table!` entry in `patok-config`, the proto
 //! oneof field, and one line in the list below -- nothing else on the wire.
@@ -24,10 +24,12 @@ use patok_config::{
     AcceptPolicy as CoreAcceptPolicy, EnumSpelling, RunMode as CoreRunMode, SettingValue,
 };
 use patok_core::event::{CatalogModel, ModelCatalogStatus, ProviderCatalog};
+use patok_proto::command_request;
 use patok_proto::settings_change::Change;
 use patok_proto::{
-    AcceptPolicy, CatalogModel as ProtoCatalogModel, ModelCatalogStatus as ProtoModelCatalogStatus,
-    Provider, ProviderModelCatalog, Role, RoleModel, RoleProvider, RunMode,
+    AcceptPolicy, CatalogModel as ProtoCatalogModel, DiscoverModels,
+    ModelCatalogStatus as ProtoModelCatalogStatus, Provider, ProviderModelCatalog, Role, RoleModel,
+    RoleProvider, RunMode,
 };
 use patok_providers::ProviderName;
 
@@ -573,9 +575,38 @@ pub fn catalog_from_proto(catalog: &ProviderModelCatalog) -> ProviderCatalog {
     }
 }
 
+/// The `DiscoverModels` command for `provider`'s config slug (T8.1), the shell direction.
+pub fn discover_models_to_proto(provider: &str) -> command_request::Action {
+    command_request::Action::DiscoverModels(DiscoverModels {
+        provider: provider.to_string(),
+    })
+}
+
+/// The provider slug a `DiscoverModels` command carries (T8.1), the engine direction.
+/// Unknown slugs pass through: rejecting them is the engine's job.
+pub fn discover_models_from_proto(command: &DiscoverModels) -> &str {
+    command.provider.trim()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use patok_proto::CommandRequest;
+    use prost::Message;
+
+    #[test]
+    fn discover_models_round_trips_the_wire() {
+        for slug in ["codex", "vibe"] {
+            let request = CommandRequest {
+                action: Some(discover_models_to_proto(slug)),
+            };
+            let decoded = CommandRequest::decode(request.encode_to_vec().as_slice()).unwrap();
+            let Some(command_request::Action::DiscoverModels(command)) = decoded.action else {
+                panic!("not a DiscoverModels action: {decoded:?}");
+            };
+            assert_eq!(discover_models_from_proto(&command), slug);
+        }
+    }
     use patok_proto::{RoleModel, RoleProvider};
 
     fn maps_to(change: Change, key: &str, value: SettingValue) {

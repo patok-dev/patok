@@ -12,5 +12,8 @@ patok-core.workspace = true
 patok-proto.workspace = true
 patok-providers.workspace = true
 
+[dev-dependencies]
+prost.workspace = true
+
 [lints]
 workspace = true

@@ -314,6 +314,25 @@ enum SubmitFlow {
     Keep,
 }
 
+/// Asks the engine to discover a provider's models (T8.1): the model picker opened for a
+/// provider with no discovered models. The picker stays open and follows the catalog
+/// events; a rejection or transport failure lands in the status bar.
+async fn discover_models<Req, Fut>(app: &mut App, provider: &str, submit: Req)
+where
+    Req: FnOnce(CommandRequest) -> Fut,
+    Fut: std::future::Future<Output = CommandCall>,
+{
+    if let Err(error) = crate::driver::submit(
+        submit,
+        patok_wire::discover_models_to_proto(provider),
+        "model discovery failed",
+    )
+    .await
+    {
+        app.status = Some(error);
+    }
+}
+
 /// Runs one submit-family action's dispatch (T144.1): the one dispatch both
 /// the key arm and the mouse arm of [`event_loop`] route `SubmitTasks`,
 /// `ResearchQueue`, `SaveBrief` and `InjectTask` through, so a click on the
@@ -561,6 +580,12 @@ async fn event_loop(
                         )
                         .await;
                     }
+                    // The model picker opened for a provider with no discovered
+                    // models (T8.1): the picker stays open and follows the
+                    // catalog events.
+                    Action::DiscoverModels(provider) => {
+                        discover_models(app, &provider, |c| client.submit_command(c)).await;
+                    }
                 },
                 Some(Ok(TermEvent::Paste(text))) => app.on_paste(&text),
                 // A click inside one of the two frames focuses it (T30.1);
@@ -607,6 +632,11 @@ async fn event_loop(
                     // exactly like the key.
                     Action::SaveSettings => {
                         save_settings(app, &mut shell_settings, client).await;
+                    }
+                    // A model row's click opens the model picker like Enter
+                    // does (T8.1), so it can ask for discovery too.
+                    Action::DiscoverModels(provider) => {
+                        discover_models(app, &provider, |c| client.submit_command(c)).await;
                     }
                     _ => {}
                 },
@@ -936,8 +966,8 @@ mod tests {
 
     use super::{
         Action, App, CommandCall, Outcome, QueueRun, Schema, SettingsSubmit, ShutdownCall,
-        ShutdownFlow, SubmitFlow, interrupt_status, run_shutdown_family, run_submit_family,
-        save_settings,
+        ShutdownFlow, SubmitFlow, discover_models, interrupt_status, run_shutdown_family,
+        run_submit_family, save_settings,
     };
     use super::{ModifyOtherKeys, shutdown_request};
 
@@ -1197,6 +1227,31 @@ mod tests {
             interrupt_status(&running()),
             "Interrupting -- the current task is cancelled and the app keeps running."
         );
+    }
+
+    /// The model picker's discovery request (T8.1) carries the provider slug; a
+    /// rejection lands in the status bar and an accepted one leaves it alone.
+    #[tokio::test]
+    async fn discover_models_sends_the_provider_and_reports_a_rejection() {
+        let mut app = app();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        discover_models(&mut app, "codex", recording_submit(&commands, true, "")).await;
+        {
+            let sent = commands.lock().unwrap();
+            assert_eq!(sent.len(), 1);
+            assert!(matches!(
+                &sent[0].action,
+                Some(patok_proto::command_request::Action::DiscoverModels(d)) if d.provider == "codex"
+            ));
+        }
+        assert_eq!(app.status, None);
+        discover_models(
+            &mut app,
+            "vibe",
+            recording_submit(&commands, false, "no discovery"),
+        )
+        .await;
+        assert_eq!(app.status.as_deref(), Some("no discovery"));
     }
 
     /// Every other action keeps its own arm in the event loop: the shared

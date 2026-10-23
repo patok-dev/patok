@@ -5,12 +5,12 @@ use patok_config::{
     ApplyTiming, DaemonSettings, SettingValue, daemon_apply_timing, daemon_changed_fields,
     daemon_field_value, load_daemon, set_daemon_field,
 };
-use patok_core::event::{EngineEvent, ModelCatalogStatus};
+use patok_core::event::EngineEvent;
 use patok_providers::ProviderKind;
 use tokio_util::sync::CancellationToken;
 
 use super::Engine;
-use super::models::{pending, role_providers};
+use super::models::role_providers;
 use super::state::resolve_or_reject;
 use crate::context::SessionContext;
 
@@ -160,29 +160,8 @@ impl Engine {
         if run_mode_changed {
             self.refresh_pipeline_locked(&mut state);
         }
-        // Claim under the lock, so concurrent swaps never start the same discovery twice;
-        // a `Pending` entry means one is already running.
-        let mut claimed = vec![];
-        if self.inner.resolver.is_some() {
-            for kind in assigned {
-                let status = state
-                    .model_catalog
-                    .get(kind.info().slug)
-                    .map(|catalog| catalog.status);
-                if !matches!(
-                    status,
-                    Some(ModelCatalogStatus::Ready | ModelCatalogStatus::Pending)
-                ) {
-                    self.publish_catalog_locked(&mut state, pending(kind));
-                    claimed.push(kind);
-                }
-            }
-        }
-        let cache = state.model_cache.clone();
-        drop(state);
-        if !claimed.is_empty() {
-            self.spawn_discovery(claimed, cache);
-        }
+        // The claim rule (missing/NotDiscovered/Failed only) lives in `discover_unclaimed`.
+        self.discover_unclaimed(state, assigned);
     }
 
     /// Polls the config files' modification times and reloads the central settings when

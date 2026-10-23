@@ -10,7 +10,7 @@
 //! the harness decides. A failing or slow harness (missing login, network, timeout) must
 //! not stop a daemon whose builds may not even use that provider.
 
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use patok_config::DaemonSettings;
@@ -366,6 +366,40 @@ impl Engine {
                 }
             }
         })
+    }
+
+    /// Claims discovery for every kind whose catalog is missing, `NotDiscovered` or `Failed`
+    /// (T8.1, shared by saved settings changes and the picker's `DiscoverModels`): under the
+    /// held state lock it publishes `Pending` and records the claim, so concurrent callers
+    /// never start the same discovery twice -- a `Pending` entry means one is already
+    /// running, a `Ready` one needs none. The lock is released before anything is spawned.
+    /// Does nothing on an engine with a fixed provider (no resolver).
+    pub(super) fn discover_unclaimed(
+        &self,
+        mut state: MutexGuard<'_, State>,
+        kinds: impl IntoIterator<Item = ProviderKind>,
+    ) {
+        let mut claimed = vec![];
+        if self.inner.resolver.is_some() {
+            for kind in kinds {
+                let status = state
+                    .model_catalog
+                    .get(kind.info().slug)
+                    .map(|catalog| catalog.status);
+                if !matches!(
+                    status,
+                    Some(ModelCatalogStatus::Ready | ModelCatalogStatus::Pending)
+                ) {
+                    self.publish_catalog_locked(&mut state, pending(kind));
+                    claimed.push(kind);
+                }
+            }
+        }
+        let cache = state.model_cache.clone();
+        drop(state);
+        if !claimed.is_empty() {
+            self.spawn_discovery(claimed, cache);
+        }
     }
 
     /// Discovers the models of `kinds` in a background task, publishing their state as
