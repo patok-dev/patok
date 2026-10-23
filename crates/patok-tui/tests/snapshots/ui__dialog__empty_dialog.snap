@@ -22,7 +22,7 @@ expression: "draw(&open(), 80, 24)"
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
-│   │ ↑↓←→ move · Shift-Enter new line ·    [ Enter ] Start  [ Esc ] Close │   │
+│   │ ↑↓←→ move · Alt-Enter line break ·    [ Enter ] Start  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
                                                     [ Enter ] start  [ m ] menu

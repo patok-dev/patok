@@ -22,7 +22,7 @@ expression: "draw(&app, 80, 24)"
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
-│   │ ↑↓←→ move · Shift-Enter new line ·   [ Enter ] Submit  [ Esc ] Close │   │
+│   │ ↑↓←→ move · Alt-Enter line break ·   [ Enter ] Submit  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
                                                     [ Enter ] start  [ m ] menu

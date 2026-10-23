@@ -3111,16 +3111,16 @@ mod dialog {
         }
     }
 
-    /// The dialog's bottom line names Shift-Enter as the new-line key (T62.1):
+    /// The dialog's bottom line names Alt-Enter as the line-break key (T62.1, T10.1):
     /// a hint without brackets, in the low-emphasis footer colour -- never the
     /// button accent -- alongside the existing hints (the tail hint gives up
     /// its width first, T59.1) and the buttons on the same row.
     #[test]
-    fn dialog_footer_hints_at_shift_enter() {
+    fn dialog_footer_hints_at_alt_enter() {
         use patok_tui::Theme;
 
         let buffer = draw_buffer(&open());
-        let needle = "Shift-Enter new line";
+        let needle = "Alt-Enter line break";
         let mut found = None;
         for y in 0..buffer.area.height {
             let row: String = (0..buffer.area.width)
@@ -3131,8 +3131,8 @@ mod dialog {
                 break;
             }
         }
-        let (y, row, at) = found.expect("the footer names Shift-Enter");
-        assert!(!row.contains("[ Shift-Enter"), "a hint wears no brackets");
+        let (y, row, at) = found.expect("the footer names Alt-Enter");
+        assert!(!row.contains("[ Alt-Enter"), "a hint wears no brackets");
         assert!(row.contains("[ Enter ]"), "{row}");
         assert!(row.contains("[ Esc ]"), "{row}");
         let x = row[..at].chars().count() as u16;
@@ -5296,7 +5296,7 @@ mod modal_footer {
         assert_two_zones(
             &buffer,
             app.dialog.footer.get(),
-            "↑↓←→ move · Shift-Enter new line · Ctrl+U clear",
+            "↑↓←→ move · Alt-Enter line break · Ctrl+U clear",
             &[("Enter", app.primary_label()), ("Esc", "Close")],
             &app.theme(),
         );
@@ -5313,7 +5313,7 @@ mod modal_footer {
         assert_two_zones(
             &buffer,
             app.dialog.footer.get(),
-            "↑↓←→ move · Shift-Enter new line · Ctrl+U clear",
+            "↑↓←→ move · Alt-Enter line break · Ctrl+U clear",
             &[("Enter", app.primary_label()), ("Esc", "Close")],
             &theme,
         );

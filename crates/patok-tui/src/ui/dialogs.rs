@@ -130,7 +130,7 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     render_modal_footer(
         frame,
         footer,
-        &["↑↓←→ move", "Shift-Enter new line", "Ctrl+U clear"],
+        &["↑↓←→ move", "Alt-Enter line break", "Ctrl+U clear"],
         &buttons,
         theme,
     );
