@@ -10,21 +10,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::geom::wrap_chunks;
 
-/// The dialog's line-break keys (T10.1): Shift-, Ctrl- or Alt-Enter, and
-/// Ctrl+J -- a raw LF, which crossterm reports in raw mode as Ctrl+J (or as
-/// `\n` under the kitty flags). Alt-Enter (ESC CR) and Ctrl+J reach the TUI
-/// even on terminals that send a bare CR for Shift- and Ctrl-Enter.
-pub fn is_newline_key(key: &KeyEvent) -> bool {
-    match key.code {
-        KeyCode::Enter => key
-            .modifiers
-            .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL | KeyModifiers::ALT),
-        KeyCode::Char('j') => key.modifiers.contains(KeyModifiers::CONTROL),
-        KeyCode::Char('\n') => true,
-        _ => false,
-    }
-}
-
 /// One visual row of the dialog text: a character range of the editor's text.
 /// `last` marks the final row of a logical line (the cursor may sit at its end).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,16 +98,15 @@ impl DialogEditor {
     /// The pure editing keys: character insert, Backspace/Delete, Left/Right
     /// (word motion on Ctrl or Alt), Home/End on the logical line and
     /// Up/Down across visual rows. Everything else is a no-op -- the modal
-    /// chrome keys (Esc, Ctrl+C, Ctrl+S, Ctrl+U and plain Enter) never reach
-    /// it; the line-break keys ([`is_newline_key`]) do.
+    /// chrome keys (Esc, Ctrl+C, Ctrl+S, Ctrl+U and Enter with any modifier)
+    /// never reach it. Ctrl+J is a no-op; line breaks come only from pasted
+    /// or already present text.
     pub fn on_key(&mut self, key: KeyEvent, ctrl: bool) {
         let word = ctrl || key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
-            // The line-break keys break the line at the cursor (T41.1, T10.1):
-            // multi-line requests are typed inside the input. First, so the
-            // char arm below does not swallow a `\n`.
-            _ if is_newline_key(&key) => self.insert("\n"),
-            KeyCode::Char(c) if !ctrl => self.insert(c.encode_utf8(&mut [0; 4])),
+            // Ctrl+J can arrive as a bare `\n` under the kitty flags; it must
+            // not insert a line break.
+            KeyCode::Char(c) if !ctrl && c != '\n' => self.insert(c.encode_utf8(&mut [0; 4])),
             KeyCode::Backspace => {
                 let cursor = self.cursor();
                 if cursor > 0 {
@@ -331,47 +315,26 @@ mod tests {
     }
 
     #[test]
-    fn shift_enter_breaks_the_line_at_the_cursor() {
-        let mut editor = editor_with("ab");
-        editor.on_key(key(KeyCode::Enter, KeyModifiers::SHIFT), false);
-        assert_eq!((editor.text(), editor.cursor()), ("ab\n", 3));
-        editor.insert("cd");
-        assert_eq!(editor.text(), "ab\ncd");
-    }
-
-    #[test]
-    fn every_newline_binding_breaks_the_line_at_the_cursor() {
+    fn ctrl_j_and_modified_enter_leave_the_text_alone() {
         let none = KeyModifiers::NONE;
         let ctrl = KeyModifiers::CONTROL;
         for (code, modifiers) in [
-            (KeyCode::Enter, KeyModifiers::SHIFT),
-            (KeyCode::Enter, ctrl),
-            (KeyCode::Enter, KeyModifiers::ALT),
             (KeyCode::Char('j'), ctrl),
             (KeyCode::Char('\n'), none),
             (KeyCode::Char('\n'), ctrl),
+            (KeyCode::Enter, KeyModifiers::SHIFT),
+            (KeyCode::Enter, ctrl),
+            (KeyCode::Enter, KeyModifiers::ALT),
         ] {
             let mut editor = editor_with("ab");
+            let cursor = editor.cursor();
             editor.on_key(key(code, modifiers), modifiers.contains(ctrl));
             assert_eq!(
                 (editor.text(), editor.cursor()),
-                ("ab\n", 3),
+                ("ab", cursor),
                 "{code:?} {modifiers:?}"
             );
         }
-    }
-
-    #[test]
-    fn is_newline_key_rejects_plain_enter_and_other_chars() {
-        assert!(!is_newline_key(&key(KeyCode::Enter, KeyModifiers::NONE)));
-        assert!(!is_newline_key(&key(
-            KeyCode::Char('j'),
-            KeyModifiers::NONE
-        )));
-        assert!(!is_newline_key(&key(
-            KeyCode::Char('k'),
-            KeyModifiers::CONTROL
-        )));
     }
 
     #[test]

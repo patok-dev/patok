@@ -22,7 +22,7 @@ expression: "draw(&app, 80, 24)"
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │Nothing to submit -- type a request first.                            │   │
-│   │ ↑↓←→ move · Alt-Enter line break ·    [ Enter ] Start  [ Esc ] Close │   │
+│   │ ↑↓←→ move · Ctrl+U clear              [ Enter ] Start  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
                                                     [ Enter ] start  [ m ] menu

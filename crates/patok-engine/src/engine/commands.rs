@@ -412,8 +412,7 @@ impl Engine {
         if text.trim().is_empty() {
             return Err("the task line is empty".into());
         }
-        // The modal's shared input accepts multi-line text (a line-break key, a
-        // paste), but one inject is always one task line: a line break in
+        // The modal's shared input accepts multi-line text (a paste), but one inject is always one task line: a line break in
         // the text would land the lines after the first as raw text in
         // TASKS.md. The trimmed check lets a trailing line break through.
         if text.trim().contains('\n') {

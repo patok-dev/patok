@@ -52,9 +52,9 @@ pub type Spawner =
 
 /// XTerm's modifyOtherKeys mode (T65.1): level 2 makes terminals without the
 /// kitty keyboard protocol encode modified keys as CSI u sequences, so
-/// Shift-, Ctrl- and Alt-Enter arrive as `CSI 13;Nu`, which crossterm parses
-/// into Enter with that modifier and the dialog's line-break arm runs. 0
-/// resets the mode.
+/// modified keys such as Shift-Tab and Shift+letter, and modified keys passed
+/// through to the interactive terminal, arrive with their modifiers. 0 resets
+/// the mode.
 struct ModifyOtherKeys(u8);
 
 impl crossterm::Command for ModifyOtherKeys {
@@ -87,20 +87,16 @@ pub async fn run(
 
     let mut terminal = ratatui::init();
     // Keyboard encoding (T62.1, T65.1): the kitty flags make kitty-capable
-    // terminals encode every key press as a CSI u sequence, so Shift-Enter
-    // arrives as Enter with the SHIFT modifier. Terminals without the kitty
-    // protocol ignore that push and would send a bare `\r` for Shift-Enter,
-    // so XTerm's modifyOtherKeys level 2 is enabled too -- xterm, VTE,
-    // iTerm2 and friends then encode Shift-Enter as `CSI 13;2u`, which
-    // crossterm parses into Enter with the SHIFT modifier. A terminal with
-    // neither mode still sends a bare `\r` for Shift- and Ctrl-Enter, which
-    // submit there; Alt-Enter (ESC CR, parsed as Enter + ALT) and Ctrl+J (a
-    // raw LF, reported as Ctrl+J in raw mode) still break the line (T10.1). The
-    // alternate-keys flag makes kitty-capable terminals report the shifted
-    // character for the user's layout (`A`, `!`, `:`), which crossterm then
-    // delivers without SHIFT. Enter and Tab have no shifted form, so
-    // Shift-Enter and Shift-Tab still arrive with SHIFT. Terminals that
-    // report only the base key are covered by the normalization in `keys`.
+    // terminals encode every key press as a CSI u sequence, so modified keys
+    // arrive with their modifiers. Terminals without the kitty protocol
+    // ignore that push, so XTerm's modifyOtherKeys level 2 is enabled too --
+    // xterm, VTE, iTerm2 and friends then encode modified keys as CSI u as
+    // well. The alternate-keys flag makes kitty-capable terminals report the
+    // shifted character for the user's layout (`A`, `!`, `:`), which crossterm
+    // then delivers without SHIFT. Tab has no shifted form, so Shift-Tab
+    // still arrives with SHIFT. Terminals that report only the base key are
+    // covered by the normalization in `keys`. The dialog's Enter submits
+    // whatever its modifiers.
     let _ = crossterm::execute!(
         std::io::stdout(),
         ModifyOtherKeys(2),

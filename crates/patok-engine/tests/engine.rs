@@ -5400,7 +5400,7 @@ async fn inject_task_normalizes_plain_text_into_a_well_formed_line() {
         Err("the task line is empty".into())
     );
     assert_eq!(fixture.tasks_file(), after);
-    // A multi-line input (the modal's Shift-Enter or a paste) is refused
+    // A multi-line input (for example a paste into the modal) is refused
     // the same way, so no raw text line lands in TASKS.md; only the
     // trailing line break of an otherwise single-line text is tolerated.
     assert_eq!(
