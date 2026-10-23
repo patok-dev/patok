@@ -873,6 +873,9 @@ impl App {
 
     /// Applies one picker outcome (T4.4): a choice drafts the row, `Custom`
     /// closes the picker and opens the inline editor, `Close` just closes.
+    ///
+    /// A choice edits only the overlay draft (T4.5): nothing is applied until
+    /// the close dialog saves, which is also why Esc has nothing to restore.
     pub(crate) fn finish_model_picker(&mut self, outcome: PickerOutcome) -> Action {
         if matches!(outcome, PickerOutcome::Stay) {
             return Action::None;

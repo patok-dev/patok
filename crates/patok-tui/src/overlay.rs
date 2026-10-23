@@ -585,6 +585,12 @@ impl SettingsOverlay {
     /// The provider slug the model picker opens for on `row`: the role's draft
     /// provider, else the readout (T4.4). `None` for non-model rows and for a
     /// missing or unknown provider, which keep the inline editor.
+    ///
+    /// The draft provider wins (T4.5) so the picker matches the provider that
+    /// will be saved together with the model; a model chosen for the old
+    /// provider would be wrong after the save. The daemon discovers only on a
+    /// settings swap, so the drafted provider's catalog may be missing until
+    /// the change is saved; the picker then shows its status note.
     pub(crate) fn model_provider(&self, row: &Row) -> Option<&'static str> {
         match row.hide {
             Some(HideWhen::ProviderLacksModelSelection(provider)) => {
