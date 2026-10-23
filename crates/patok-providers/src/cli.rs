@@ -111,6 +111,32 @@ pub(crate) trait CliSpec {
     fn build_args(request: &SessionRequest) -> Vec<String>;
 }
 
+/// The `<binary> --version` invocation that reports a harness's version.
+pub(crate) fn version_spec(info: &ProviderInfo) -> ProcessSpec {
+    ProcessSpec {
+        program: info.binary.into(),
+        args: vec!["--version".into()],
+        env: vec![],
+        stdin: String::new(),
+    }
+}
+
+/// Runs `spec` and returns the first non-empty trimmed stdout line, the harness version.
+pub(crate) async fn harness_version_with(
+    spec: ProcessSpec,
+    slug: &str,
+) -> Result<String, ProviderError> {
+    let version = process::exchange(&spec, &std::env::temp_dir(), |line| {
+        let line = line.trim();
+        (!line.is_empty()).then(|| line.to_owned())
+    })
+    .await?;
+    version.ok_or_else(|| ProviderError::Discovery {
+        provider: slug.into(),
+        reason: "the harness printed no version".into(),
+    })
+}
+
 /// The availability check for a CLI named `cli`: `Err(CliNotFound)` naming it
 /// when it is not on `PATH`. Run before a session starts.
 pub(crate) fn check_cli_on_path(cli: &str) -> Result<(), ProviderError> {
@@ -151,4 +177,51 @@ pub(crate) async fn run_session<S: CliSpec>(
     };
     let model = request.model.clone().unwrap_or_default();
     process::run(spec, &request, S::Parser::default(), S::INFO.slug, &model).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::CLAUDE;
+
+    fn sh(script: &str) -> ProcessSpec {
+        ProcessSpec {
+            program: "sh".into(),
+            args: vec!["-c".into(), script.into()],
+            env: vec![],
+            stdin: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn harness_version_is_the_first_non_empty_trimmed_line() {
+        let spec = sh(r"printf '\n 2.1.0 (Claude Code) \n'");
+        let version = harness_version_with(spec, "claude").await.unwrap();
+        assert_eq!(version, "2.1.0 (Claude Code)");
+    }
+
+    #[tokio::test]
+    async fn harness_version_fails_when_nothing_is_printed() {
+        match harness_version_with(sh("true"), "claude").await {
+            Err(ProviderError::Discovery { provider, .. }) => assert_eq!(provider, "claude"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn harness_version_of_a_missing_cli_is_cli_not_found() {
+        let spec = ProcessSpec {
+            program: "patok-no-such-cli".into(),
+            ..version_spec(&CLAUDE)
+        };
+        let err = harness_version_with(spec, "claude").await.unwrap_err();
+        assert!(matches!(err, ProviderError::CliNotFound { .. }), "{err}");
+    }
+
+    #[test]
+    fn the_version_spec_is_dash_dash_version() {
+        let spec = version_spec(&CLAUDE);
+        assert_eq!(spec.program, "claude");
+        assert_eq!(spec.args, ["--version"]);
+    }
 }

@@ -1,6 +1,7 @@
 //! A scripted provider for engine and pipeline tests.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -51,6 +52,12 @@ pub struct MockProvider {
     rate_limited: bool,
     /// What `discover_models()` returns (`None`: the default unsupported error).
     discovered_models: Option<Vec<DiscoveredModel>>,
+    /// What `harness_version()` returns.
+    harness_version: &'static str,
+    /// How long `discover_models()` waits before answering, so tests can script a slow harness.
+    discovery_delay: Duration,
+    /// How many times `discover_models()` was called, shared across clones.
+    discovery_calls: Arc<AtomicUsize>,
     sessions: Arc<Mutex<Vec<RecordedSession>>>,
 }
 
@@ -64,6 +71,9 @@ impl MockProvider {
             supports_model_selection: false,
             rate_limited: false,
             discovered_models: None,
+            harness_version: "mock 1.0",
+            discovery_delay: Duration::ZERO,
+            discovery_calls: Arc::default(),
             sessions: Arc::default(),
         }
     }
@@ -80,6 +90,9 @@ impl MockProvider {
             supports_model_selection: false,
             rate_limited: false,
             discovered_models: None,
+            harness_version: "mock 1.0",
+            discovery_delay: Duration::ZERO,
+            discovery_calls: Arc::default(),
             sessions: Arc::default(),
         }
     }
@@ -117,6 +130,23 @@ impl MockProvider {
         self
     }
 
+    /// Reports `version` from `harness_version()`.
+    pub fn with_harness_version(mut self, version: &'static str) -> Self {
+        self.harness_version = version;
+        self
+    }
+
+    /// Makes `discover_models()` wait `delay` before answering.
+    pub fn with_discovery_delay(mut self, delay: Duration) -> Self {
+        self.discovery_delay = delay;
+        self
+    }
+
+    /// How many times `discover_models()` was called on this provider or its clones.
+    pub fn discovery_calls(&self) -> usize {
+        self.discovery_calls.load(Ordering::SeqCst)
+    }
+
     pub fn sessions(&self) -> Vec<RecordedSession> {
         self.sessions.lock().expect("mock lock").clone()
     }
@@ -137,7 +167,15 @@ impl Provider for MockProvider {
         Ok(())
     }
 
+    async fn harness_version(&self) -> Result<String, ProviderError> {
+        Ok(self.harness_version.into())
+    }
+
     async fn discover_models(&self) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        self.discovery_calls.fetch_add(1, Ordering::SeqCst);
+        if !self.discovery_delay.is_zero() {
+            tokio::time::sleep(self.discovery_delay).await;
+        }
         match &self.discovered_models {
             Some(models) => Ok(models.clone()),
             None => Err(ProviderError::DiscoveryUnsupported {

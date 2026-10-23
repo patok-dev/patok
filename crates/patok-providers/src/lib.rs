@@ -131,6 +131,14 @@ pub trait Provider: Send + Sync {
             provider: self.slug().into(),
         })
     }
+
+    /// The harness's trimmed `--version` output, which keys the model cache. The default
+    /// reports `Err(DiscoveryUnsupported)`, like `discover_models`.
+    async fn harness_version(&self) -> Result<String, ProviderError> {
+        Err(ProviderError::DiscoveryUnsupported {
+            provider: self.slug().into(),
+        })
+    }
 }
 
 /// The provider for `kind`, after checking that its CLI is on `PATH`.
@@ -230,6 +238,10 @@ mod tests {
     #[tokio::test]
     async fn discovery_is_unsupported_by_default() {
         match vibe::Vibe.discover_models().await {
+            Err(ProviderError::DiscoveryUnsupported { provider }) => assert_eq!(provider, "vibe"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+        match vibe::Vibe.harness_version().await {
             Err(ProviderError::DiscoveryUnsupported { provider }) => assert_eq!(provider, "vibe"),
             other => panic!("unexpected result: {other:?}"),
         }
