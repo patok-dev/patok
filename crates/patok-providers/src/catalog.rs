@@ -8,9 +8,10 @@
 //! below providers: the layering is `patok-core` <- `patok-providers` <- `patok-config`,
 //! so provider types can't be named in config while config lives in core.
 //!
-//! Models are deliberately not listed. A later phase discovers them by asking each
-//! harness, so a hard-coded model list (or placeholder fields for one) would only go
-//! stale. Add model data when discovery lands, not before.
+//! Models are deliberately not listed: a hard-coded model list would only go stale.
+//! They are discovered at runtime by asking each harness (`Provider::discover_models`)
+//! and cached in `crate::models`. The catalog records only the static capability
+//! `supports_model_selection`.
 
 use crate::ProviderKind;
 
@@ -29,6 +30,9 @@ pub struct ProviderInfo {
     pub binary: &'static str,
     /// Whether the harness accepts a model choice. The engine passes a role's
     /// `<role>_model` only to providers that do (see `Provider::supports_model_selection`).
+    /// The flag also decides which harnesses are asked for their models: discovery runs
+    /// only where a model can actually be passed, otherwise the check would validate a
+    /// value that is never used.
     pub supports_model_selection: bool,
 }
 
@@ -53,6 +57,11 @@ pub(crate) const CODEX: ProviderInfo = ProviderInfo {
 };
 
 /// Mistral's Vibe CLI (config alias `mistral`, see `ProviderName`).
+///
+/// `supports_model_selection` is false because the Vibe CLI has no model flag. That one
+/// flag excludes Vibe from model passing, from discovery and from the settings overlay's
+/// model row; there is no Vibe-specific check anywhere. Vibe model selection is out of
+/// scope.
 pub(crate) const VIBE: ProviderInfo = ProviderInfo {
     kind: ProviderKind::Vibe,
     provider_name: "Mistral",
