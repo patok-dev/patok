@@ -4683,7 +4683,8 @@ mod hints {
             assert_eq!(app.on_key(key(KeyCode::Enter)), Action::StartBuild);
         }
         // The edit keys (T4.4): `e` opens the edit dialog on the first pending
-        // task, the arrows move the selection, Shift+HJKL and `d` change it.
+        // task, the arrows move the selection, Shift+HJKL change it and `d`
+        // asks for confirmation first.
         {
             let mut app = app();
             assert_eq!(app.on_key(key(KeyCode::Char('e'))), Action::None);
@@ -4697,8 +4698,20 @@ mod hints {
             assert_eq!(app.on_key(key(KeyCode::Char('k'))), Action::None);
             assert_eq!(app.selected_task_index(), Some(1));
         }
+        // `d` opens the delete confirmation (T7.2); Enter confirms it.
+        {
+            let mut app = app();
+            assert_eq!(app.on_key(key(KeyCode::Char('d'))), Action::None);
+            assert!(app.delete_open());
+            assert_eq!(
+                app.on_key(key(KeyCode::Enter)),
+                Action::ChangeTask {
+                    id: "T1.2".into(),
+                    change: TaskChange::Remove
+                }
+            );
+        }
         for (c, change) in [
-            ('d', TaskChange::Remove),
             ('K', TaskChange::MoveUp),
             ('J', TaskChange::MoveDown),
             ('L', TaskChange::Indent),
@@ -4842,6 +4855,128 @@ mod hints {
     fn narrow_frame_truncates_the_trailing_hints() {
         let app = app();
         insta::assert_snapshot!(draw(&app, 60, 14));
+    }
+}
+
+/// The delete confirmation (T7.2): `d` on a pending task opens a
+/// " Delete task <id> " dialog; Enter on Delete returns the remove action.
+mod delete_dialog {
+    use super::*;
+    use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
+    use patok_tui::{Action, TaskChange, footer_button_rects};
+
+    /// The delete dialog opened on the idle default cursor (`T1.2`).
+    fn open() -> App {
+        let mut app = app();
+        assert_eq!(press(&mut app, KeyCode::Char('d')), Action::None);
+        assert!(app.delete_open(), "the dialog must be open");
+        app
+    }
+
+    fn remove() -> Action {
+        Action::ChangeTask {
+            id: "T1.2".into(),
+            change: TaskChange::Remove,
+        }
+    }
+
+    #[test]
+    fn esc_cancels_without_an_action() {
+        let mut app = open();
+        let tasks = app.run.tasks.len();
+        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
+        assert!(!app.delete_open());
+        assert_eq!(app.run.tasks.len(), tasks);
+    }
+
+    #[test]
+    fn cancel_row_cancels() {
+        let mut app = open();
+        press(&mut app, KeyCode::Down);
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert!(!app.delete_open());
+    }
+
+    #[test]
+    fn enter_confirms_the_delete() {
+        let mut app = open();
+        assert_eq!(press(&mut app, KeyCode::Enter), remove());
+        assert!(!app.delete_open());
+    }
+
+    #[test]
+    fn other_keys_are_swallowed() {
+        let mut app = open();
+        for code in [
+            KeyCode::Char('d'),
+            KeyCode::Char('j'),
+            KeyCode::Char('a'),
+            KeyCode::Char('q'),
+        ] {
+            assert_eq!(press(&mut app, code), Action::None);
+            assert!(app.delete_open(), "the dialog stays open");
+            assert_eq!(app.delete.selected, 0);
+        }
+        assert_eq!(ctrl(&mut app, 'c'), Action::Detach);
+    }
+
+    #[test]
+    fn refused_row_opens_no_dialog() {
+        let mut app = app();
+        app.task_cursor = Some(0);
+        assert_eq!(press(&mut app, KeyCode::Char('d')), Action::None);
+        assert!(!app.delete_open());
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Task T1.1 is completed and cannot be removed.")
+        );
+    }
+
+    #[test]
+    fn mouse_parity() {
+        let click = |x, y| mouse(MouseEventKind::Down(MouseButton::Left), x, y);
+
+        let mut app = open();
+        draw(&app, 60, 16);
+        let close = app.delete.close.get();
+        assert_eq!(app.on_mouse(click(close.x, close.y)), Action::None);
+        assert!(!app.delete_open());
+
+        let mut app = open();
+        draw(&app, 60, 16);
+        let body = app.delete.body.get();
+        assert_eq!(
+            app.on_mouse(mouse(MouseEventKind::Moved, body.x + 3, body.y + 1)),
+            Action::None
+        );
+        assert_eq!(app.delete.selected, 1);
+        assert!(app.delete_open());
+        assert_eq!(app.on_mouse(click(body.x + 3, body.y)), remove());
+        assert!(!app.delete_open());
+
+        let mut app = open();
+        draw(&app, 60, 16);
+        let rects = footer_button_rects(
+            app.delete.footer.get(),
+            &[("Enter", "Confirm"), ("Esc", "Cancel")],
+        );
+        assert_eq!(
+            app.on_mouse(click(rects[1].x + 2, rects[1].y)),
+            Action::None
+        );
+        assert!(!app.delete_open());
+    }
+
+    #[test]
+    fn delete_dialog_initial() {
+        insta::assert_snapshot!(draw(&open(), 60, 16));
+    }
+
+    #[test]
+    fn delete_dialog_cancel_selected() {
+        let mut app = open();
+        press(&mut app, KeyCode::Down);
+        insta::assert_snapshot!(draw(&app, 60, 16));
     }
 }
 

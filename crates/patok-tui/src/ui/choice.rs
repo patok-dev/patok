@@ -1,7 +1,8 @@
 //! The shared three-choice dialog's renderer (finding 6 in
 //! docs/private/structure-review.md): the one `Frame`-touching half of the
-//! generic choice list behind both the stop dialog (T46.1, T148.1) and the
-//! settings overlay's unsaved-changes dialog (T146.1); the pure core -- the
+//! generic choice list behind the stop dialog (T46.1, T148.1), the delete
+//! dialog (T7.2) and the settings overlay's unsaved-changes dialog (T146.1);
+//! the pure core -- the
 //! area, the row hit-test, the key handling and the mouse behaviour the
 //! shell's dispatch reads -- lives in [`crate::choice`] so app.rs reaches it
 //! without importing the render side.
@@ -31,7 +32,7 @@ use crate::theme::Theme;
 pub(crate) fn render_choice_dialog<T: Choice>(
     frame: &mut Frame,
     theme: Theme,
-    title: &'static str,
+    title: &str,
     choices: &[T],
     selected: usize,
     area: Rect,

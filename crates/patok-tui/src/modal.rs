@@ -22,7 +22,7 @@ use crate::hit::{
 use crate::model_picker::{MODEL_PICKER_BUTTONS, ModelPicker};
 use crate::overlay::{Entry, SETTINGS_CHOICES, header_fold};
 use crate::ui::{dialogs, model_picker, settings};
-use crate::view::{STOP_CHOICES, StopChoice};
+use crate::view::{DELETE_CHOICES, DeleteChoice, STOP_CHOICES, StopChoice};
 
 /// Which modal is open (finding 20): one enum over the modals plus the
 /// settings overlay's nested unsaved-changes dialog. The modal stack
@@ -38,6 +38,8 @@ pub enum Modal {
     Menu,
     /// The stop dialog.
     Stop,
+    /// The delete-task confirmation dialog (T7.2).
+    Delete,
     /// The settings overlay's unsaved-changes dialog, stacked on it.
     Confirm,
     /// The theme picker.
@@ -63,7 +65,7 @@ pub enum Modal {
 /// model picker, opened by Enter, Space or a click on a `*_model` row and
 /// popped by its own Esc, Select or Custom (T4.4). Every other modal is opened only
 /// with an empty stack: an open modal swallows every key and mouse event, so
-/// the direct keys (`t`, `m`, `?`, `a` and Esc while a run is active)
+/// the direct keys (`t`, `m`, `?`, `a`, `d` and Esc while a run is active)
 /// and the three status-bar chips never run while another modal is open.
 /// The m menu's Enter entries are replacements, not stacks -- the menu
 /// closes first, then the target opens -- and a click on the menu chip while
@@ -166,6 +168,13 @@ pub(crate) const STOP_ESC_LABEL: &str = "Close";
 /// footer pairs built from the stop dialog's Esc label.
 pub(crate) const STOP_BUTTONS: [(&str, &str); 2] = [("Enter", "Confirm"), ("Esc", STOP_ESC_LABEL)];
 
+/// The delete dialog's footer Esc label (T7.2): shared by its renderer and its mouse hit-test.
+pub(crate) const DELETE_ESC_LABEL: &str = "Cancel";
+
+/// The delete dialog's footer buttons (T7.2).
+pub(crate) const DELETE_BUTTONS: [(&str, &str); 2] =
+    [("Enter", "Confirm"), ("Esc", DELETE_ESC_LABEL)];
+
 /// The unsaved-changes dialog's footer Esc label (finding 20): the one
 /// spelling its renderer and its mouse hit-test share.
 pub(crate) const CONFIRM_ESC_LABEL: &str = "Cancel";
@@ -201,7 +210,7 @@ impl ModalLayer for Modal {
     fn area(self, app: &App, screen: Rect) -> Rect {
         match self {
             Modal::Overlay => settings::settings_area(screen),
-            Modal::Confirm | Modal::Stop => choice_area(screen),
+            Modal::Confirm | Modal::Stop | Modal::Delete => choice_area(screen),
             Modal::Dialog => dialogs::dialog_area(screen),
             Modal::Menu => dialogs::menu_area(screen, app.run.phase == Phase::Running),
             Modal::Theme => dialogs::theme_area(screen),
@@ -219,6 +228,7 @@ impl ModalLayer for Modal {
             Modal::Dialog => Cow::Owned(vec![("Enter", app.primary_label()), ("Esc", "Close")]),
             Modal::Menu => Cow::Borrowed(&MENU_BUTTONS),
             Modal::Stop => Cow::Borrowed(&STOP_BUTTONS),
+            Modal::Delete => Cow::Borrowed(&DELETE_BUTTONS),
             Modal::Confirm => Cow::Borrowed(&CONFIRM_BUTTONS),
             Modal::Theme => Cow::Borrowed(&THEME_BUTTONS),
             Modal::ModelPicker => Cow::Borrowed(&MODEL_PICKER_BUTTONS),
@@ -233,6 +243,7 @@ impl ModalLayer for Modal {
             Modal::Dialog => dialog_key(app, key, ctrl),
             Modal::Menu => menu_key(app, key),
             Modal::Stop => stop_key(app, key),
+            Modal::Delete => delete_key(app, key),
             // The unsaved-changes dialog's keys are the overlay's nested
             // dialog's, not the overlay's own rows'.
             Modal::Confirm => app.overlay.on_confirm_key(&mut app.modals, key.code),
@@ -249,6 +260,7 @@ impl ModalLayer for Modal {
             Modal::Dialog => dialog_mouse(app, mouse),
             Modal::Menu => menu_mouse(app, mouse),
             Modal::Stop => stop_mouse(app, mouse),
+            Modal::Delete => delete_mouse(app, mouse),
             Modal::Confirm => confirm_mouse(app, mouse),
             Modal::Theme => theme_mouse(app, mouse),
             Modal::ModelPicker => model_picker_mouse(app, mouse),
@@ -264,6 +276,7 @@ impl ModalLayer for Modal {
             Modal::Dialog => dialogs::render_dialog(frame, app),
             Modal::Menu => dialogs::render_menu(frame, app),
             Modal::Stop => dialogs::render_stop_dialog(frame, app),
+            Modal::Delete => dialogs::render_delete_dialog(frame, app),
             Modal::Theme => dialogs::render_theme_modal(frame, app),
             Modal::ModelPicker => {
                 if let Some(state) = &app.model_picker {
@@ -515,6 +528,57 @@ fn stop_mouse(app: &mut App, mouse: MouseEvent) -> Action {
         ChoiceMouse::Click(index) => {
             app.stop.selected = index;
             stop_key(app, bare(KeyCode::Enter))
+        }
+        ChoiceMouse::None => Action::None,
+    }
+}
+
+/// The delete dialog's keys (T7.2): Up/Down move the selection, Enter on
+/// Delete closes and re-checks the pending task before returning the remove
+/// action, Enter on Cancel and Esc close with no effect, and everything else
+/// is swallowed. Ctrl+C is handled before this runs.
+fn delete_key(app: &mut App, key: KeyEvent) -> Action {
+    match choice_key(
+        key.code,
+        false,
+        DELETE_CHOICES.len(),
+        &mut app.delete.selected,
+    ) {
+        ChoiceKey::Close => app.modals.pop(Modal::Delete),
+        ChoiceKey::Enter(index) => {
+            app.modals.pop(Modal::Delete);
+            return match DELETE_CHOICES[index] {
+                DeleteChoice::Delete => app.confirm_delete(),
+                DeleteChoice::Cancel => Action::None,
+            };
+        }
+        ChoiceKey::Swallowed => {}
+    }
+    Action::None
+}
+
+/// The delete dialog's mouse handling (T7.2), the stop dialog's: a footer
+/// button or the close button runs its key through the dialog's key path, a
+/// pointer move over a choice row moves the highlight, and a left click on a
+/// row is that row's Enter. Everything else is swallowed.
+fn delete_mouse(app: &mut App, mouse: MouseEvent) -> Action {
+    let buttons = Modal::Delete.buttons(app);
+    match choice_mouse(
+        &mouse,
+        app.delete.close.get(),
+        app.delete.footer.get(),
+        &buttons,
+        app.delete.body.get(),
+        DELETE_CHOICES.len(),
+    ) {
+        ChoiceMouse::Key(code) => delete_key(app, bare(code)),
+        ChoiceMouse::Hover(index) => {
+            app.delete.selected = index;
+            Action::None
+        }
+        ChoiceMouse::Click(index) => {
+            app.delete.selected = index;
+            delete_key(app, bare(KeyCode::Enter))
         }
         ChoiceMouse::None => Action::None,
     }
@@ -855,11 +919,12 @@ mod tests {
     use patok_core::pipeline::PipelineState;
 
     /// Every modal, in no meaningful order; the stack test matrix iterates it.
-    const ALL_MODALS: [Modal; 9] = [
+    const ALL_MODALS: [Modal; 10] = [
         Modal::Overlay,
         Modal::Dialog,
         Modal::Menu,
         Modal::Stop,
+        Modal::Delete,
         Modal::Confirm,
         Modal::ModelPicker,
         Modal::Theme,
@@ -1140,7 +1205,9 @@ mod tests {
         app.open_theme();
         app.open_menu();
         app.open_stop();
+        app.open_delete("T1.1".into());
         app.open_settings();
+        assert!(app.delete.id.is_empty(), "the refused delete keeps its id");
         assert_eq!(
             before,
             (

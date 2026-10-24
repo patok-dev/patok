@@ -68,10 +68,11 @@ impl App {
         match key.code {
             // The task list's delete key (T4.2): only the focused Tasks frame deletes, and a
             // pending soft stop (whose status line offers `[d] detach`) keeps `d` as detach.
+            // It opens the delete confirmation (T7.2); the dialog's Enter deletes.
             KeyCode::Char('d')
                 if !ctrl && self.focus == FrameFocus::Tasks && !self.run.stopping =>
             {
-                self.change_selected_task(TaskChange::Remove)
+                self.delete_selected_task()
             }
             KeyCode::Char('d') => Action::Detach,
             // The theme picker's key (T43.1): it opens from any state except
@@ -324,10 +325,13 @@ mod tests {
     #[test]
     fn tasks_focus_binds_the_edit_keys() {
         let mut app = tasks_app();
+        assert_eq!(app.on_key(ev('d', KeyModifiers::NONE)), Action::None);
+        assert_eq!(app.modals.top(), Some(crate::modal::Modal::Delete));
         assert_eq!(
-            app.on_key(ev('d', KeyModifiers::NONE)),
+            app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             change(TaskChange::Remove)
         );
+        assert_eq!(app.modals.top(), None);
         assert_eq!(
             app.on_key(ev('k', KeyModifiers::SHIFT)),
             change(TaskChange::MoveUp)
