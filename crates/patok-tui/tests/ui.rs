@@ -4073,33 +4073,34 @@ mod view {
     }
 
     #[test]
-    fn up_down_scroll_only_the_focused_frame() {
+    fn up_down_move_the_task_cursor_or_scroll_the_output() {
         let mut app = long_app();
         draw(&app, 80, 24);
-        // Idle: the task list is focused, so Up and Down move only the task scroll.
-        assert!(app.layout.task_max_scroll.get() > 0);
-        // The auto view starts at the 17th task (the first pending one a third
-        // down of the taller idle task list beside the rail column).
+        // Idle: the task list is focused, so Up and Down move only its cursor.
+        // Until the first press the selection sits on the first pending task.
+        assert_eq!(app.selected_task_index(), Some(20));
         assert!(draw(&app, 80, 24).contains("T9.17"));
         app.on_key(key(KeyCode::Up));
-        assert_eq!((app.task_scroll, app.scroll), (1, 0));
         app.on_key(key(KeyCode::Char('k')));
-        assert_eq!((app.task_scroll, app.scroll), (2, 0));
-        // Scrolled up two rows, the view reaches the 15th task.
-        assert!(draw(&app, 80, 24).contains("T9.15"));
+        assert_eq!(app.selected_task_index(), Some(18));
+        assert_eq!((app.task_scroll, app.scroll), (0, 0));
+        assert!(draw(&app, 80, 24).contains("T9.17"));
         app.on_key(key(KeyCode::Down));
         app.on_key(key(KeyCode::Char('j')));
-        assert_eq!(app.task_scroll, 0);
+        assert_eq!(app.selected_task_index(), Some(20));
 
         // Busy: the output frame is focused; Up and Down move only the output scroll.
-        let task_scroll = app.task_scroll;
+        let cursor = app.task_cursor;
         app.apply(EngineEvent::PhaseChanged {
             phase: Phase::Running,
         });
         draw(&app, 80, 24);
         assert!(app.layout.max_scroll.get() > 0);
         app.on_key(key(KeyCode::Up));
-        assert_eq!((app.scroll, app.task_scroll), (1, task_scroll));
+        assert_eq!(
+            (app.scroll, app.task_scroll, app.task_cursor),
+            (1, 0, cursor)
+        );
         app.on_key(key(KeyCode::Down));
         assert_eq!(app.scroll, 0);
 
@@ -4107,7 +4108,123 @@ mod view {
         app.on_key(key(KeyCode::Tab));
         draw(&app, 80, 24);
         app.on_key(key(KeyCode::Up));
-        assert_eq!((app.task_scroll, app.scroll), (task_scroll + 1, 0));
+        assert_eq!(app.selected_task_index(), Some(19));
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn j_k_move_the_task_cursor_and_the_view_follows() {
+        let mut app = long_app();
+        draw(&app, 80, 24);
+        for _ in 0..15 {
+            app.on_key(key(KeyCode::Down));
+        }
+        assert_eq!(app.selected_task_index(), Some(35));
+        let screen = draw(&app, 80, 24);
+        assert!(screen.contains("T9.36"));
+        assert!(screen.contains("T9.25"));
+        assert!(!screen.contains("T9.24 "));
+        insta::assert_snapshot!(screen);
+
+        for _ in 0..40 {
+            app.on_key(key(KeyCode::Up));
+        }
+        assert_eq!(app.selected_task_index(), Some(0));
+        let screen = draw(&app, 80, 24);
+        assert!(screen.contains("T9.1 "));
+        insta::assert_snapshot!(screen);
+
+        for _ in 0..100 {
+            app.on_key(key(KeyCode::Char('j')));
+        }
+        assert_eq!(app.selected_task_index(), Some(39));
+        assert!(draw(&app, 80, 24).contains("T9.40"));
+
+        // Shifted letters are not the cursor's keys.
+        app.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
+        app.on_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT));
+        assert_eq!(app.selected_task_index(), Some(39));
+    }
+
+    #[test]
+    fn the_selected_row_is_highlighted_only_in_the_focused_tasks_frame() {
+        use ratatui::style::Modifier;
+        let mut app = long_app();
+        let row_style = |app: &App, id: &str| {
+            let buffer = draw_buffer(app);
+            for y in 0..buffer.area.height {
+                let text: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect();
+                if let Some(at) = text.find(id) {
+                    let x = text[..at].chars().count() as u16;
+                    return buffer[(x, y)].style();
+                }
+            }
+            panic!("{id} not on screen");
+        };
+        let highlighted = Some(app.theme().highlighted_text);
+        let style = row_style(&app, "T9.21");
+        assert_eq!(style.fg, highlighted);
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+        assert_ne!(row_style(&app, "T9.22").fg, highlighted);
+
+        app.on_key(key(KeyCode::Tab));
+        assert_ne!(row_style(&app, "T9.21").fg, highlighted);
+    }
+
+    #[test]
+    fn a_wheel_step_scrolls_past_the_cursor_and_the_next_key_snaps_back() {
+        let mut app = long_app();
+        draw(&app, 80, 24);
+        for _ in 0..15 {
+            app.on_key(key(KeyCode::Down));
+        }
+        draw(&app, 80, 24);
+        let tasks = app.layout.tasks_area.get();
+        for _ in 0..3 {
+            app.on_mouse(wheel(MouseEventKind::ScrollUp, tasks.x + 2, tasks.y + 3));
+        }
+        assert_eq!(app.task_scroll, 3);
+        assert_eq!(app.selected_task_index(), Some(35));
+        let screen = draw(&app, 80, 24);
+        assert!(screen.contains("T9.22"));
+        assert!(!screen.contains("T9.21 "));
+        insta::assert_snapshot!(screen);
+
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.task_scroll, 0);
+        assert_eq!(app.selected_task_index(), Some(36));
+        assert!(draw(&app, 80, 24).contains("T9.37"));
+
+        for _ in 0..100 {
+            app.on_mouse(wheel(MouseEventKind::ScrollUp, tasks.x + 2, tasks.y + 3));
+        }
+        assert_eq!(app.task_scroll, app.layout.task_max_scroll.get());
+        for _ in 0..100 {
+            app.on_mouse(wheel(MouseEventKind::ScrollDown, tasks.x + 2, tasks.y + 3));
+        }
+        assert_eq!(app.task_scroll, 0);
+    }
+
+    #[test]
+    fn a_replaced_task_list_clamps_the_cursor() {
+        let mut app = long_app();
+        draw(&app, 80, 24);
+        for _ in 0..100 {
+            app.on_key(key(KeyCode::Down));
+        }
+        assert_eq!(app.selected_task_index(), Some(39));
+        app.apply(EngineEvent::TasksChanged {
+            tasks: patok_core::task::parse("- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n"),
+        });
+        assert_eq!(app.selected_task_index(), Some(2));
+        draw(&app, 80, 24);
+
+        app.apply(EngineEvent::TasksChanged { tasks: Vec::new() });
+        assert_eq!(app.task_cursor, None);
+        assert_eq!(app.selected_task_index(), None);
+        assert!(draw(&app, 80, 24).contains("no tasks in TASKS.md"));
     }
 
     #[test]

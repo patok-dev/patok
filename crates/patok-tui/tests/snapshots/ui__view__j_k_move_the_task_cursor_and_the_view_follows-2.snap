@@ -1,0 +1,28 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: screen
+---
+─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
+┌ Builder ─────────────────────────────────────────────────────────────────────┐
+│output line 26                                                                │
+│output line 27                                                                │
+│output line 28                                                                │
+│output line 29                                                                │
+│output line 30                                                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Tasks | 20/40 - 20 left ─────────────────────────────────────────────────────┐
+│✔ T9.1  done thing 1                                                          │
+│✔ T9.2  done thing 2                                                          │
+│✔ T9.3  done thing 3                                                          │
+│✔ T9.4  done thing 4                                                          │
+│✔ T9.5  done thing 5                                                          │
+│✔ T9.6  done thing 6                                                          │
+│✔ T9.7  done thing 7                                                          │
+│✔ T9.8  done thing 8                                                          │
+│✔ T9.9  done thing 9                                                          │
+│✔ T9.10  done thing 10                                                        │
+│✔ T9.11  done thing 11                                                        │
+│✔ T9.12  done thing 12                                                        │
+│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output           │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                                    [ Enter ] start  [ m ] menu

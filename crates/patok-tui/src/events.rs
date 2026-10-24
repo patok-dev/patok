@@ -84,6 +84,9 @@ impl App {
                     }
                 }
                 self.run.tasks = tasks;
+                // The cursor is an index: clamp it to the new list.
+                let last = self.run.tasks.len().checked_sub(1);
+                self.task_cursor = self.task_cursor.and_then(|c| last.map(|last| c.min(last)));
             }
             EngineEvent::PlanningChanged { planning } => {
                 let was_idle = self.is_idle();

@@ -389,6 +389,9 @@ pub struct LayoutCache {
     pub max_scroll: Cell<usize>,
     /// Largest useful task scroll at the last render.
     pub task_max_scroll: Cell<usize>,
+    /// The follow view's top row at the last render, before any wheel scroll; the
+    /// cursor's view moves from here as little as it can.
+    pub task_follow: Cell<usize>,
     /// The agent output frame's rect at the last render; mouse hit-testing reads it.
     pub output_area: Cell<Rect>,
     /// The task list frame's rect at the last render; mouse hit-testing reads it.
@@ -531,9 +534,14 @@ pub struct App {
     pub status: Option<String>,
     /// Visual lines scrolled up from the bottom; 0 follows the live output.
     pub scroll: usize,
-    /// Task rows scrolled up from the auto-follow view; 0 keeps the first pending
-    /// task a third of the way down.
+    /// Task rows scrolled up from the follow view: the auto view while
+    /// `task_cursor` is `None`, otherwise the view that keeps the cursor in sight;
+    /// 0 follows.
     pub task_scroll: usize,
+    /// The Tasks frame's selected row (T4.1), an index into `run.tasks`; `None`
+    /// until the first j/k/Up/Down press in the focused Tasks frame. Until then
+    /// the selection follows the first pending task.
+    pub task_cursor: Option<usize>,
     /// The engine-reduced run state: the phase, the run flags, the active
     /// agent, provider and model, the task list and the output pane.
     pub run: RunState,
@@ -586,6 +594,7 @@ impl App {
             status: None,
             scroll: 0,
             task_scroll: 0,
+            task_cursor: None,
             run: RunState {
                 phase: snapshot.phase,
                 planning: false,
@@ -668,6 +677,18 @@ impl App {
 
     pub fn is_new_task(&self, id: &str) -> bool {
         self.run.new_tasks.iter().any(|t| t == id)
+    }
+
+    /// The Tasks frame's selected row, an index into `run.tasks`: the cursor
+    /// clamped to the list, or the first pending task (the last row when all are
+    /// done) until the cursor moves; `None` for an empty list. The row the task
+    /// actions (T4.2, T4.3) act on.
+    pub fn selected_task_index(&self) -> Option<usize> {
+        let last = self.run.tasks.len().checked_sub(1)?;
+        Some(match self.task_cursor {
+            Some(c) => c.min(last),
+            None => self.run.tasks.iter().position(|t| !t.done).unwrap_or(last),
+        })
     }
 
     /// The engine-reported run mode shown as the status line's second chip; "sprint"

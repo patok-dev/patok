@@ -6,7 +6,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
-use super::common::{collapsed_title_width, render_collapsed, render_hints_strip, split_hints_row};
+use super::common::{
+    collapsed_title_width, render_collapsed, render_hints_strip, selected_row_style,
+    split_hints_row,
+};
 use crate::app::App;
 use crate::view::FrameFocus;
 
@@ -91,21 +94,39 @@ pub(super) fn render_tasks(frame: &mut Frame, app: &App, area: Rect, collapsed: 
 
     // Keep the first pending task in view, a third of the way down; `task_scroll`
     // rows scrolled up from that auto view (toward earlier tasks).
-    let focus = app
+    let rows = usize::from(content.height);
+    let anchor = app
         .run
         .tasks
         .iter()
         .position(|t| !t.done)
         .unwrap_or(app.run.tasks.len());
-    let auto = focus.saturating_sub(usize::from(content.height) / 3);
-    app.layout.task_max_scroll.set(auto);
-    let offset = auto.saturating_sub(app.task_scroll.min(auto));
+    let auto = anchor.saturating_sub(rows / 3);
+    let selected = app.selected_task_index();
+    // The view follows the moved cursor with as little motion as it can (T4.1).
+    let follow = match (app.task_cursor, selected) {
+        (Some(_), Some(cursor)) => {
+            let prev = app.layout.task_follow.get();
+            if cursor < prev {
+                cursor
+            } else if cursor >= prev + rows.max(1) {
+                cursor + 1 - rows.max(1)
+            } else {
+                prev
+            }
+        }
+        _ => auto,
+    };
+    app.layout.task_follow.set(follow);
+    app.layout.task_max_scroll.set(follow);
+    let offset = follow.saturating_sub(app.task_scroll.min(follow));
     let items: Vec<ListItem> = app
         .run
         .tasks
         .iter()
+        .enumerate()
         .skip(offset)
-        .map(|task| {
+        .map(|(index, task)| {
             let running = app.run.current_task.as_deref() == Some(task.id.as_str());
             let (mark, style) = match (task.done, running) {
                 (true, _) => ("✔", Style::new().fg(theme.muted_text)),
@@ -117,6 +138,8 @@ pub(super) fn render_tasks(frame: &mut Frame, app: &App, area: Rect, collapsed: 
                     .fg(theme.highlighted_text)
                     .bold()
                     .add_modifier(Modifier::REVERSED)
+            } else if app.focus == FrameFocus::Tasks && Some(index) == selected {
+                selected_row_style(theme)
             } else {
                 style
             };
