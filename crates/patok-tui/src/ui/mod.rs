@@ -24,7 +24,8 @@ pub use common::fitted_hints;
 pub(crate) use dialogs::terminal_body;
 #[cfg(any(test, feature = "test-support"))]
 pub use dialogs::{
-    DIALOG_WATERMARK, dialog_area, interactive_picker_area, stop_area, terminal_area, theme_area,
+    AGENT_BUSY_HINT, DIALOG_WATERMARK, dialog_area, interactive_picker_area, stop_area,
+    terminal_area, theme_area,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use output::{format_elapsed, output_title, output_title_parts, output_title_spans};

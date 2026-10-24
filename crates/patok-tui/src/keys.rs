@@ -162,9 +162,9 @@ impl App {
             KeyCode::Char('a') if self.focus == FrameFocus::Tasks => self.open_dialog(),
             // The inject-task modal's key (T76.1): like `a`, it belongs to the
             // task list frame and only that frame's focused state opens the
-            // modal; the agent output frame ignores it. Unlike `a`, no busy
-            // state refuses it -- appending a line is safe in every engine
-            // state, and the engine's task-file poll reconciles it.
+            // modal; the agent output frame ignores it. Like `a` (T5.3), no
+            // busy state refuses it -- appending a line is safe in every
+            // engine state, and the engine's task-file poll reconciles it.
             KeyCode::Char('i') if !ctrl && self.focus == FrameFocus::Tasks => self.open_inject(),
             // The edit key (T4.3): opens the input dialog prefilled with the
             // selected pending task's description.
