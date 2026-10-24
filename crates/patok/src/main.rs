@@ -84,6 +84,13 @@ enum TasksAction {
         /// The id of the task to remove, e.g. T3.1.
         id: String,
     },
+    /// Replace the description of a pending task in the shared task store, keeping its id.
+    Edit {
+        /// The id of the task to edit, e.g. T3.1.
+        id: String,
+        /// The new task text. One line.
+        text: String,
+    },
     /// List every task in the shared task store, one per line, id first.
     List,
 }
@@ -148,6 +155,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Tasks { action } => match action {
             TasksAction::Add { text } => tasks::add(&project, &text),
             TasksAction::Remove { id } => tasks::remove(&project, &id).await,
+            TasksAction::Edit { id, text } => tasks::edit(&project, &id, &text).await,
             TasksAction::List => tasks::list(&project),
         },
         Command::Ps { .. } => unreachable!("handled above"),
