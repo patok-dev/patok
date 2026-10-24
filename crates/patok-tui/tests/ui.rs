@@ -2191,77 +2191,52 @@ mod dialog {
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
     }
 
-    /// T76.1: `i` is the task list frame's inject key -- it opens the
-    /// inject-task modal only while that frame has the focus, from any engine
-    /// state (no busy refusal), and the agent output frame ignores it.
+    /// T5.4: `i` (the former inject key) is unbound: on the focused task
+    /// list it does nothing -- no dialog, no modal, no status message.
     #[test]
-    fn i_opens_the_inject_modal_only_from_the_focused_task_list_frame() {
-        // Idle: the task list frame has the focus, so `i` opens the inject
-        // modal.
+    fn i_is_unbound_in_the_task_list_frame() {
         let mut app = self::app();
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-        assert!(app.dialog_open());
-        assert_eq!(app.dialog.kind, DialogKind::Inject);
-        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
         assert!(!app.dialog_open());
-
-        // A run moves the focus to the agent output frame: the same key is a
-        // strict no-op there -- no modal, no status message.
-        let mut app = self::app();
-        app.apply(EngineEvent::PhaseChanged {
-            phase: Phase::Running,
-        });
-        assert_eq!(app.focus, patok_tui::FrameFocus::Output);
-        assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-        assert!(!app.dialog_open());
-        assert!(app.status.is_none());
-        // Tab back to the task list frame: `i` opens the inject modal even
-        // while the engine is busy -- a plain file append is safe in every
-        // engine state, like `a`'s dialog (T5.3).
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
-        assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
-        assert!(app.dialog_open());
-        assert_eq!(app.dialog.kind, DialogKind::Inject);
         assert!(app.status.is_none());
     }
 
-    /// T76.1: confirming the inject modal returns the typed text as an
-    /// `InjectTask` action -- a plain file append by the driver -- so no
+    /// T5.2: confirming the add dialog with the checkbox unchecked returns the
+    /// typed text as an `InjectTask` action -- a plain file append by the driver -- so no
     /// agent session begins: the returned action is the only non-`None`
     /// effect and is none of the session-starting variants (`SubmitTasks`,
     /// `ResearchQueue`, `StartBuild`, `RunDiscovery`).
     #[test]
-    fn confirming_the_inject_modal_appends_the_typed_line_with_no_agent_run() {
-        // Ctrl+S submits through the same path as the Inject button.
+    fn plain_add_appends_the_typed_line_with_no_agent_run() {
+        // Ctrl+S submits through the same path as the Submit button.
         let mut app = self::app();
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('a'));
         type_text(&mut app, "- [ ] T78.1: Polish the README");
         assert_eq!(
             ctrl(&mut app, 's'),
             Action::InjectTask("- [ ] T78.1: Polish the README".into())
         );
-        // The driver confirmed the append: the modal closes, the input
+        // The driver confirmed the append: the dialog closes, the input
         // clears, and the task list frame keeps the focus (contrast with the
         // add flow's move to the output frame).
-        app.on_task_injected();
+        app.on_task_added();
         assert!(!app.dialog_open());
         assert_eq!(app.dialog.editor.text(), "");
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
 
         // Enter confirms through the same path.
         let mut app = self::app();
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('a'));
         type_text(&mut app, "- [ ] T78.1: Polish the README");
         assert_eq!(
             press(&mut app, KeyCode::Enter),
             Action::InjectTask("- [ ] T78.1: Polish the README".into())
         );
 
-        // A failed append keeps the modal open on the input with the error.
+        // A failed append keeps the dialog open on the input with the error.
         let mut app = self::app();
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('a'));
         type_text(&mut app, "- [ ] T78.1: Polish the README");
         assert_eq!(
             ctrl(&mut app, 's'),
@@ -2275,68 +2250,24 @@ mod dialog {
         );
     }
 
-    /// T76.1: the inject modal's validation and cancel behaviour, and the
-    /// add-task dialog behind it all is unchanged.
-    #[test]
-    fn inject_modal_validation_and_cancel() {
-        // An empty input is refused inline with the inject modal's own
-        // message, by Enter and by the Ctrl+S path alike.
-        let mut app = self::app();
-        press(&mut app, KeyCode::Char('i'));
-        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-        assert!(app.dialog_open());
-        assert_eq!(
-            app.dialog.status.as_deref(),
-            Some("Nothing to inject -- type a task line first.")
-        );
-        assert_eq!(ctrl(&mut app, 's'), Action::None);
-        assert!(app.dialog.status.is_some());
-        // Esc cancels: the modal closes with no effect.
-        assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
-        assert!(!app.dialog_open());
-
-        // The add-task dialog keeps its own flow: `a` pins the kind back to
-        // Add, its empty-input refusal keeps its own message, and its submit
-        // still sends the text to the engine and focuses the output frame.
-        let mut app = self::app();
-        press(&mut app, KeyCode::Char('a'));
-        assert!(app.dialog_open());
-        assert_eq!(app.dialog.kind, DialogKind::Add);
-        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-        assert_eq!(
-            app.dialog.status.as_deref(),
-            Some("Nothing to submit -- type a request first.")
-        );
-        type_text(&mut app, "add a login page");
-        // Tick "Use agent to add": the unchecked submit is a plain append.
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(
-            ctrl(&mut app, 's'),
-            Action::SubmitTasks("add a login page".into())
-        );
-        app.on_tasks_submitted();
-        assert!(!app.dialog_open());
-        assert_eq!(app.focus, patok_tui::FrameFocus::Output);
-    }
-
-    /// T77.1: the inject modal confirms while the loop is running -- no busy
-    /// state refuses the key or the confirm -- and the injected task appears
+    /// T77.1: the add dialog's plain add confirms while the loop is running
+    /// -- no busy state refuses the key or the confirm -- and the new task appears
     /// in the list as soon as the engine's task-list change arrives; at the
     /// engine level (the mid-build engine test) it runs as the next task
     /// once the current one finishes.
     #[test]
-    fn the_inject_modal_confirms_while_the_loop_is_running() {
+    fn plain_add_confirms_while_the_loop_is_running() {
         let mut app = self::app();
         app.apply(EngineEvent::PhaseChanged {
             phase: Phase::Running,
         });
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
-        // The T76.1 pattern: Tab back to the task list frame, press `i`,
-        // type, confirm -- all mid-run, with no busy refusal anywhere.
+        // Tab back to the task list frame, press `a`, type, confirm -- all
+        // mid-run, with no busy refusal anywhere.
         press(&mut app, KeyCode::Tab);
-        assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
+        assert_eq!(press(&mut app, KeyCode::Char('a')), Action::None);
         assert!(app.dialog_open());
-        assert_eq!(app.dialog.kind, DialogKind::Inject);
+        assert_eq!(app.dialog.kind, DialogKind::Add);
         assert!(app.status.is_none(), "no busy refusal blocks the modal");
         type_text(&mut app, "- [ ] T79.1: Polish the inject path");
         assert_eq!(
@@ -2344,9 +2275,9 @@ mod dialog {
             Action::InjectTask("- [ ] T79.1: Polish the inject path".into())
         );
         // The confirm returns success even while a session is active: the
-        // modal closes only once the driver reports the engine's acceptance.
+        // dialog closes only once the driver reports the engine's acceptance.
         assert!(app.dialog_open());
-        app.on_task_injected();
+        app.on_task_added();
         assert!(!app.dialog_open());
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         // The engine's immediate reconcile broadcasts the new line: it
@@ -2355,25 +2286,6 @@ mod dialog {
             tasks: task::parse("- [ ] T79.1: Polish the inject path\n"),
         });
         assert!(app.run.tasks.iter().any(|t| t.id == "T79.1" && !t.done));
-    }
-
-    /// T77.1: the inject modal renders above the running loop -- the same
-    /// modal as while idle, visible mid-build.
-    #[test]
-    fn the_inject_modal_renders_while_the_loop_is_running() {
-        let mut app = self::app();
-        app.apply(EngineEvent::PhaseChanged {
-            phase: Phase::Running,
-        });
-        press(&mut app, KeyCode::Tab);
-        press(&mut app, KeyCode::Char('i'));
-        type_text(&mut app, "- [ ] T79.1: Polish the inject path");
-        let screen = draw(&app, 80, 24);
-        assert!(screen.contains(" Inject a task "), "{screen}");
-        assert!(
-            screen.contains("- [ ] T79.1: Polish the inject path"),
-            "{screen}"
-        );
     }
 
     #[test]
@@ -2462,26 +2374,11 @@ mod dialog {
     }
 
     #[test]
-    fn inject_modal_empty() {
-        let mut app = self::app();
-        press(&mut app, KeyCode::Char('i'));
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
-    #[test]
     fn dialog_with_text() {
         let mut app = open();
         type_text(&mut app, "add a login page");
         app.on_paste("\n");
         type_text(&mut app, "and a logout button");
-        insta::assert_snapshot!(draw(&app, 80, 24));
-    }
-
-    #[test]
-    fn inject_modal_with_text() {
-        let mut app = self::app();
-        press(&mut app, KeyCode::Char('i'));
-        type_text(&mut app, "- [ ] T78.1: Polish the README");
         insta::assert_snapshot!(draw(&app, 80, 24));
     }
 
@@ -3737,50 +3634,32 @@ mod explore {
             );
         }
 
-        // The inject modal with typed text: the Inject button's click is the
-        // Enter key's inject, and the driver's injected cleanup closes both
-        // identically with the task list focused.
+        // The add dialog with typed text and the checkbox unchecked: the
+        // Submit button's click is the Enter key's plain add, and the driver's
+        // added cleanup closes both identically with the task list focused.
         let mut clicked = app_with(TASKS);
         clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
-        clicked.on_key(key(KeyCode::Char('i')));
-        assert!(clicked.dialog_open());
+        open_dialog(&mut clicked);
         type_text(&mut clicked, "- [ ] T78.1: Polish the README");
-        assert_eq!(clicked.primary_label(), "Inject");
+        assert_eq!(clicked.primary_label(), "Submit");
         assert_eq!(
             primary_click(&mut clicked),
             Action::InjectTask("- [ ] T78.1: Polish the README".into())
         );
         let mut keyed = app_with(TASKS);
         keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
-        keyed.on_key(key(KeyCode::Char('i')));
+        open_dialog(&mut keyed);
         type_text(&mut keyed, "- [ ] T78.1: Polish the README");
         assert_eq!(
             keyed.on_key(key(KeyCode::Enter)),
             Action::InjectTask("- [ ] T78.1: Polish the README".into())
         );
-        clicked.on_task_injected();
-        keyed.on_task_injected();
+        clicked.on_task_added();
+        keyed.on_task_added();
         for app in [&mut clicked, &mut keyed] {
             assert!(!app.dialog_open());
             assert_eq!(app.focus, FrameFocus::Tasks);
             assert_eq!(app.dialog.editor.text(), "");
-        }
-
-        // The inject modal with an empty input: the same inline refusal.
-        let mut clicked = app_with(TASKS);
-        clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
-        clicked.on_key(key(KeyCode::Char('i')));
-        assert_eq!(primary_click(&mut clicked), Action::None);
-        let mut keyed = app_with(TASKS);
-        keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
-        keyed.on_key(key(KeyCode::Char('i')));
-        assert_eq!(keyed.on_key(key(KeyCode::Enter)), Action::None);
-        for app in [&mut clicked, &mut keyed] {
-            assert!(app.dialog_open());
-            assert_eq!(
-                app.dialog.status.as_deref(),
-                Some("Nothing to inject -- type a task line first.")
-            );
         }
 
         // EmptyProject with typed text: the brief submit, identical on both
@@ -4677,8 +4556,7 @@ mod hints {
 
     /// The idle task list strip with every hint that fits the 80-column
     /// frame (T75.1 dropped the idle `q quit` entry; T4.4 shortened the labels
-    /// and added the edit, delete, select and move hints, so the trailing
-    /// `i inject` hint drops at 80 columns).
+    /// and added the edit, delete, select and move hints).
     const TASKS_STRIP: &str =
         " a add · e edit · d delete · Enter start · ↑↓ select · HJKL move · Tab output";
     /// The focused output frame's strip with every hint that fits the
@@ -4707,15 +4585,14 @@ mod hints {
             !rendered.contains("quit"),
             "the tasks strip lists no quit label"
         );
-        // The tasks strip advertises the task edit keys (T4.4; the trailing
-        // `i inject` hint drops at 80 columns)...
+        // The tasks strip advertises the task edit keys (T4.4)...
         for hint in ["e edit", "d delete", "HJKL move"] {
             assert!(rendered.contains(hint), "the tasks strip lists {hint}");
         }
-        // ...and the output frame's strip never claims it.
+        // ...and the removed inject key (T5.4) is advertised nowhere.
         assert!(
-            !OUTPUT_STRIP.contains("inject"),
-            "the output strip lists no inject hint"
+            !rendered.contains("inject"),
+            "the tasks strip lists no inject hint"
         );
         assert_eq!(
             OUTPUT_STRIP,
@@ -4828,13 +4705,6 @@ mod hints {
         }
         {
             let mut app = app();
-            assert_eq!(app.on_key(key(KeyCode::Char('i'))), Action::None);
-            assert!(app.dialog_open());
-            app.on_key(key(KeyCode::Esc));
-            assert!(!app.dialog_open());
-        }
-        {
-            let mut app = app();
             assert_eq!(app.on_key(key(KeyCode::Enter)), Action::StartBuild);
         }
         // The edit keys (T4.4): `e` opens the edit dialog on the first pending
@@ -4935,10 +4805,9 @@ mod hints {
             "↑↓ select",
             "HJKL move",
             "Tab output",
-            "i inject",
         ];
         // One leading space plus ` · ` between hints: the cumulative widths
-        // are 6, 15, 26, 40, 52, 64, 77 and 88 columns.
+        // are 6, 15, 26, 40, 52, 64 and 77 columns.
         assert!(fitted_hints(&hints, 0).is_empty());
         assert!(fitted_hints(&hints, 5).is_empty());
         assert_eq!(fitted_hints(&hints, 6), hints[..1]);
@@ -4953,9 +4822,7 @@ mod hints {
         assert_eq!(fitted_hints(&hints, 63), hints[..5]);
         assert_eq!(fitted_hints(&hints, 64), hints[..6]);
         assert_eq!(fitted_hints(&hints, 76), hints[..6]);
-        assert_eq!(fitted_hints(&hints, 77), hints[..7]);
-        assert_eq!(fitted_hints(&hints, 87), hints[..7]);
-        assert_eq!(fitted_hints(&hints, 88), hints);
+        assert_eq!(fitted_hints(&hints, 77), hints);
     }
 
     #[test]
@@ -5526,17 +5393,6 @@ mod modal_footer {
         assert!(!app.dialog.use_agent);
     }
 
-    #[test]
-    fn inject_modal_has_no_use_agent_checkbox() {
-        let mut app = app();
-        press(&mut app, KeyCode::Char('i'));
-        assert!(app.dialog_open());
-        buffer(&app);
-        assert_eq!(app.dialog.agent_toggle.get(), Default::default());
-        press(&mut app, KeyCode::Tab);
-        assert!(!app.dialog.use_agent);
-    }
-
     fn open_stop() -> App {
         let mut app = app();
         app.apply(EngineEvent::PhaseChanged {
@@ -5745,11 +5601,6 @@ mod modal_footer {
             "{screen}"
         );
         assert!(!screen.contains(HINT), "{screen}");
-
-        // The inject modal has no inactive state.
-        let mut app = self::app();
-        press(&mut app, KeyCode::Char('i'));
-        assert!(!text_of(&buffer(&app)).contains(HINT));
     }
 
     #[test]

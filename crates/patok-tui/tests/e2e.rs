@@ -2286,11 +2286,11 @@ async fn inject_task_over_the_wire_mid_build_appends_and_runs_next() {
     server.abort();
 }
 
-/// T77.1: typing plain text into the inject modal and confirming appends a
+/// T77.1: typing plain text into the add dialog (checkbox unchecked) and confirming appends a
 /// well-formed unchecked task line -- the engine adds the checkbox and the
 /// next `T` id -- instead of a bare text line, and no agent session starts.
 #[tokio::test]
-async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
+async fn plain_add_through_the_dialog_appends_a_well_formed_line() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -2318,10 +2318,10 @@ async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
     let (version, snapshot) = snapshot_of(updates.message().await.unwrap().unwrap());
     let mut app = patok_tui::App::new(snapshot, version);
 
-    // Drive the modal exactly as a user would: `i` opens it, the text is
+    // Drive the dialog exactly as a user would: `a` opens it, the text is
     // typed, Enter confirms. The action carries the raw typed text; the
     // normalizing happens engine-side.
-    app.on_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
     assert!(app.dialog_open());
     for c in "polish the readme".chars() {
         app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
@@ -2341,7 +2341,7 @@ async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
         .unwrap()
         .into_inner();
     assert!(response.accepted, "{}", response.error);
-    app.on_task_injected();
+    app.on_task_added();
 
     // Exactly one line was appended, in the full expected form; the
     // existing line is byte-identical.
@@ -2350,7 +2350,7 @@ async fn injecting_plain_text_through_the_modal_appends_a_well_formed_line() {
         file, "- [ ] T1.1: add hello\n- [ ] T2.1: polish the readme\n",
         "{file}"
     );
-    // The inject starts no agent, planner or discovery session.
+    // The plain add starts no agent, planner or discovery session.
     assert!(provider.sessions().is_empty());
 
     // The appended line reaches the shell as a task-list change, and the

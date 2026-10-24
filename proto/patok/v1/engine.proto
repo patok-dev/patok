@@ -240,7 +240,7 @@ message CommandRequest {
     // once the current task ends, and the engine returns to normal RUNNING
     // operation. Rejected with a command error when no soft stop is pending.
     CancelSoftStop cancel_soft_stop = 6;
-    // Inject one task line into TASKS.md verbatim (T76.1's modal, routed
+    // Inject one task line into TASKS.md verbatim (the add dialog's plain add, routed
     // through the engine for T77.1): accepted in every engine state, even
     // mid-build -- the engine appends under its task-file lock (held only for
     // short file operations, never across agent sessions) and reconciles the
@@ -320,7 +320,7 @@ message RunDiscovery {}
 // pending task once the running task finishes.
 message CancelSoftStop {}
 
-// The inject-task modal's confirm (T76.1, routed through the engine for
+// The add dialog's plain add (T76.1, routed through the engine for
 // T77.1): the raw text appended to TASKS.md as the next task line, exactly
 // as typed.
 message InjectTask {

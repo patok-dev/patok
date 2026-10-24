@@ -1,5 +1,5 @@
 //! The submit policy (finding 19, the rest, in
-//! docs/private/structure-review-followup.md): the add-task, inject-task and
+//! docs/private/structure-review-followup.md): the add-task and
 //! edit-task (T4.3) dialog's open, refuse and submit paths and the driver's submit
 //! callbacks, split out of `app`. The editor itself is `dialog_editor`.
 
@@ -58,22 +58,6 @@ impl App {
         Action::None
     }
 
-    /// Opens the inject-task modal (the `i` key, T76.1) from any engine state:
-    /// the shared input box with the inject kind, whose confirm sends the
-    /// text to the engine, which normalizes it into a well-formed unchecked
-    /// task line before appending it. No busy state refuses it -- the append
-    /// is a plain file write, so the engine's task-file poll reconciles the
-    /// line even while a run is active. A refused push (another modal
-    /// already open) is a no-op: the kind and the status are left alone.
-    pub(crate) fn open_inject(&mut self) -> Action {
-        self.status = None;
-        if self.modals.push(Modal::Dialog) {
-            self.dialog.kind = DialogKind::Inject;
-            self.dialog.status = None;
-        }
-        Action::None
-    }
-
     /// The Enter key (T46.1): while the engine is idle it starts the build
     /// loop when pending tasks remain and runs a discovery round when the
     /// queue is complete; a busy engine refuses with the same short message
@@ -96,17 +80,16 @@ impl App {
     }
 
     /// The inline refusal for an empty input on the dialog's primary key:
-    /// kind-dependent (T76.1), because the two modals submit different things.
+    /// kind-dependent, because the add and edit dialogs submit different things.
     pub(crate) fn empty_input_message(&self) -> &'static str {
         match self.dialog.kind {
             DialogKind::Add => "Nothing to submit -- type a request first.",
-            DialogKind::Inject => "Nothing to inject -- type a task line first.",
             DialogKind::Edit => "Nothing to save -- type the task description first.",
         }
     }
 
     /// Whether the dialog's confirm is active: the add dialog's is inactive
-    /// while the text is blank (T5.2); the other kinds refuse inline instead.
+    /// while the text is blank (T5.2); the edit kind refuses inline instead.
     pub(crate) fn confirm_enabled(&self) -> bool {
         !(self.dialog.kind == DialogKind::Add && self.dialog.editor.text().trim().is_empty())
     }
@@ -120,12 +103,6 @@ impl App {
     /// a run or the build loop closes the dialog; one that only writes the spec file
     /// or refuses keeps it open with its message in the status line.
     pub(crate) fn submit_dialog(&mut self) -> Action {
-        // The inject-task modal's submit (T76.1): the typed text goes to the
-        // engine, which normalizes it into a well-formed unchecked task line
-        // and appends it under its task-file lock -- never to an agent
-        // session; the modal closes once the driver confirms the append
-        // (`on_task_injected`). An empty input is refused inline, and the
-        // add-task dialog's whole scenario flow below stays untouched.
         // The edit dialog's submit (T4.3): the trimmed text goes to the engine's
         // edit command, which also rejects multi-line text and busy tasks; the
         // dialog closes once the driver confirms (`on_task_edited`).
@@ -139,13 +116,6 @@ impl App {
                 id: self.dialog.edit_id.clone(),
                 description: text,
             };
-        }
-        if self.dialog.kind == DialogKind::Inject {
-            if self.dialog.editor.text().trim().is_empty() {
-                self.dialog.status = Some(self.empty_input_message().into());
-                return Action::None;
-            }
-            return Action::InjectTask(self.dialog.editor.text().to_owned());
         }
         let empty = self.dialog.editor.text().trim().is_empty();
         if !self.agent_available() {
@@ -199,10 +169,11 @@ impl App {
         self.focus = FrameFocus::Output;
     }
 
-    /// The injected task line was appended to TASKS.md (T76.1): the modal
-    /// closes and the task list frame keeps the focus, where the engine's
-    /// task-file poll brings the new line in as a TasksChanged event.
-    pub fn on_task_injected(&mut self) {
+    /// The add dialog's plain add was appended to TASKS.md (`InjectTask`,
+    /// T5.2; the former inject modal's completion, folded in by T5.4): the
+    /// dialog closes, the input clears and the task list frame keeps the
+    /// focus, where the engine's task-file poll brings the new line in.
+    pub fn on_task_added(&mut self) {
         self.modals.pop(Modal::Dialog);
         self.dialog.editor.clear();
         self.dialog.status = None;
@@ -210,7 +181,7 @@ impl App {
     }
 
     /// Closes the dialog (Esc, the close button), putting back the draft the
-    /// edit dialog parked; the add/inject buffer is otherwise kept.
+    /// edit dialog parked; the add buffer is otherwise kept.
     pub(crate) fn close_dialog(&mut self) {
         self.modals.pop(Modal::Dialog);
         self.restore_parked();
@@ -340,10 +311,6 @@ mod tests {
         app.dialog.editor.clear();
         app.dialog.editor.insert_paste("x");
         assert!(app.confirm_enabled());
-
-        let mut inject = self::app();
-        inject.open_inject();
-        assert!(inject.confirm_enabled());
 
         let mut edit = self::app();
         edit.edit_selected_task();

@@ -92,11 +92,10 @@ impl App {
                 self.open_menu();
                 Action::None
             }
-            // The interactive picker's key (T2.1): Shift+i, distinct from the
-            // task frame's `i` inject key (`shifted_char` turns a kitty
-            // `i`+SHIFT into `I` on every terminal); like `m` it opens from any engine
-            // state, a pending soft stop included, so it sits above the
-            // stopping guard.
+            // The interactive picker's key (T2.1): Shift+i (`shifted_char`
+            // turns a kitty `i`+SHIFT into `I` on every terminal); like `m`
+            // it opens from any engine state, a pending soft stop included,
+            // so it sits above the stopping guard.
             KeyCode::Char('I') if !ctrl => {
                 self.status = None;
                 self.open_interactive();
@@ -160,12 +159,6 @@ impl App {
             // agent output frame ignores it and the key falls through to the
             // no-op arm below, leaving the status line untouched.
             KeyCode::Char('a') if self.focus == FrameFocus::Tasks => self.open_dialog(),
-            // The inject-task modal's key (T76.1): like `a`, it belongs to the
-            // task list frame and only that frame's focused state opens the
-            // modal; the agent output frame ignores it. Like `a` (T5.3), no
-            // busy state refuses it -- appending a line is safe in every
-            // engine state, and the engine's task-file poll reconciles it.
-            KeyCode::Char('i') if !ctrl && self.focus == FrameFocus::Tasks => self.open_inject(),
             // The edit key (T4.3): opens the input dialog prefilled with the
             // selected pending task's description.
             KeyCode::Char('e') if !ctrl && self.focus == FrameFocus::Tasks => {

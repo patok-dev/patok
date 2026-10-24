@@ -39,6 +39,6 @@ expression: "draw(&app, W, H)"
 │    │ ↑↓ move · Enter/Space pick model · ←→ fold/cycle                         [ Esc ] Close │    │
 │    └────────────────────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                                  │
-│ a add · e edit · d delete · Enter start · ↑↓ select · HJKL move · Tab output · i inject          │
+│ a add · e edit · d delete · Enter start · ↑↓ select · HJKL move · Tab output                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                                         [ Enter ] start  [ m ] menu

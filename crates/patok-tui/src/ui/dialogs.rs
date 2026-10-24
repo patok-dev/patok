@@ -1,4 +1,4 @@
-//! The add-task / inject-task dialog, the stop dialog and the theme picker.
+//! The add-task / edit-task dialog, the stop dialog and the theme picker.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -26,11 +26,6 @@ use patok_providers::ProviderKind;
 /// It disappears with the first typed or pasted character and never enters
 /// the input's text or a submitted request.
 pub const DIALOG_WATERMARK: &str = "Press Enter to run Discovery agent";
-
-/// The inject-task modal's empty-input watermark (T76.1), in the place of the
-/// add-task dialog's: it says what the confirm does with the typed text, so
-/// the normalized append is never a surprise.
-pub const INJECT_WATERMARK: &str = "Type the task; it lands as an unchecked task line";
 
 /// The edit-task dialog's empty-input watermark (T4.3); it only shows once the
 /// prefilled description is cleared.
@@ -60,13 +55,12 @@ fn agent_checkbox_label(checked: bool) -> String {
 pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = Modal::Dialog.area(app, frame.area());
-    // The modals share everything but their chrome strings (T76.1): the
+    // The add and edit modals share everything but their chrome strings (T76.1): the
     // title and the empty-input watermark follow the dialog's kind; the
     // primary button's label flows from `App::primary_label`, which branches
     // on the same kind.
     let (title, watermark) = match app.dialog.kind {
         DialogKind::Add => (" What do you want to do? ".to_string(), DIALOG_WATERMARK),
-        DialogKind::Inject => (" Inject a task ".to_string(), INJECT_WATERMARK),
         DialogKind::Edit => (
             format!(" Edit task {} ", app.dialog.edit_id),
             EDIT_WATERMARK,
@@ -76,7 +70,7 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     app.dialog.close.set(chrome.close);
     let inner = chrome.inner;
     // The checkbox row (T5.1) exists for the add kind only; a height-0 row
-    // leaves the inject and edit modals' layout untouched.
+    // leaves the edit modal's layout untouched.
     let [input, agent_row, dialog_status, footer] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(u16::from(app.dialog.kind == DialogKind::Add)),

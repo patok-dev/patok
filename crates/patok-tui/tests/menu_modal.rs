@@ -1034,8 +1034,8 @@ fn the_interactive_entry_runs_the_i_key_action() {
 }
 
 /// T2.1, T2.2: Shift+i opens the interactive picker with or without the
-/// SHIFT modifier, also during a pending soft stop; the lowercase `i` inject
-/// key does not.
+/// SHIFT modifier, also during a pending soft stop; the lowercase `i` (unbound since
+/// T5.4) does not.
 #[test]
 fn the_shift_i_key_runs_the_interactive_action() {
     let mut app = app();

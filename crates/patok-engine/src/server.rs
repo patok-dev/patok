@@ -126,7 +126,7 @@ impl EngineApi for Service {
             // Injects one task line into TASKS.md under the engine's
             // task-file lock (T77.1): the typed text is normalized into a
             // well-formed unchecked task line first, and accepted in every
-            // engine state, so the shell's inject modal confirms even
+            // engine state, so the shell's add dialog confirms even
             // mid-build; the appended line reaches the shell as a task-list
             // change right away.
             Some(command_request::Action::InjectTask(inject)) => {

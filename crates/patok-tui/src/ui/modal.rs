@@ -15,7 +15,7 @@ use crate::hit::{close_button_line, close_button_rect};
 use crate::theme::Theme;
 
 /// A modal title's one spelling (finding 20): left-aligned on the
-/// add-task/inject-task dialog's title row, centred on every other modal's --
+/// add-task dialog's title row, centred on every other modal's --
 /// the two forms the renderers spelled separately before.
 pub(super) enum ModalTitle<'a> {
     /// A left-aligned title on the top border.

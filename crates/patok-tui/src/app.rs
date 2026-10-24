@@ -79,8 +79,9 @@ pub enum Action {
     /// Run one discovery round now: Enter while the engine is idle sends the
     /// `RunDiscovery` command when no uncompleted task remains (T46.1).
     RunDiscovery,
-    /// Inject the inject-task modal's text as the next task line of TASKS.md
-    /// (T76.1): the engine normalizes the confirmed text into a
+    /// Append the add dialog's plain-add text (unchecked "Use agent to add",
+    /// or any busy engine, T5.2/T5.3) as the next task line of TASKS.md:
+    /// the engine normalizes the confirmed text into a
     /// well-formed unchecked task line -- adding the checkbox and the next
     /// `T<N>.1` id when missing, keeping an already formatted line -- and
     /// appends it under its task-file lock, with no agent session, no
@@ -219,7 +220,7 @@ pub fn menu_entries(running: bool) -> Vec<MenuChoice> {
 /// two keys that act on the pending stop.
 pub const SOFT_STOP_PENDING: &str = "Soft stop requested -- the build stops after the current task and the app keeps running; press Esc to cancel the stop or q to cancel the current task now. [d] detach instead";
 
-/// Which modal the shared dialog input drives (T76.1): both modals are the
+/// Which modal the shared dialog input drives: the modals are the
 /// same input box -- same styling, same cursor and multi-line editing, same
 /// cancel behaviour -- they differ only in their title, watermark, primary
 /// label and what confirming does.
@@ -229,10 +230,6 @@ pub enum DialogKind {
     /// sends the text to the engine's planner or discovery flow.
     #[default]
     Add,
-    /// The inject-task modal (`i`): the engine normalizes the text into a
-    /// well-formed unchecked task line before appending it to TASKS.md,
-    /// with no agent session.
-    Inject,
     /// The edit-task dialog (`e`, T4.3): prefilled with the selected pending
     /// task's description; confirming sends it to the engine's edit command.
     Edit,
@@ -529,7 +526,7 @@ pub struct InteractivePickerState {
     pub body: Cell<Rect>,
 }
 
-/// The add-task / inject-task dialog's state (T74.1, T76.1): the shared
+/// The add-task / edit-task dialog's state (T74.1, T4.3): the shared
 /// multi-line editor, which modal the open dialog is, the dialog's status
 /// line, the add dialog's session-lived "Use agent to add" checkbox and the
 /// rects its mouse hit-testing reads. Grouped (finding 19) like
@@ -540,14 +537,14 @@ pub struct DialogState {
     /// the Up/Down goal column and the wrap width the renderer reports
     /// (T154.2). The buffer is kept when the dialog is closed.
     pub editor: DialogEditor,
-    /// Which modal the open dialog is (T76.1): the add-task dialog or the
-    /// inject-task modal. Pinned back to [`DialogKind::Add`] whenever the
-    /// add-task dialog opens, so a reopen never inherits the inject kind.
+    /// Which modal the open dialog is: the add-task or the edit-task
+    /// dialog. Pinned back to [`DialogKind::Add`] whenever the add-task
+    /// dialog opens, so a reopen never inherits the edit kind.
     pub kind: DialogKind,
     /// The id of the task being edited (T4.3); only meaningful while `kind`
     /// is [`DialogKind::Edit`].
     pub edit_id: String,
-    /// The add/inject draft set aside while the edit dialog uses the shared
+    /// The add draft set aside while the edit dialog uses the shared
     /// editor (T4.3); put back when the edit dialog closes.
     pub(crate) parked: Option<DialogEditor>,
     /// A one-line message in the dialog (empty input, command errors).
@@ -611,7 +608,7 @@ pub struct App {
     pub interactive: InteractivePickerState,
     /// The embedded provider terminal, while its modal is open.
     pub(crate) terminal: Option<TerminalState>,
-    /// The add-task / inject-task dialog's state.
+    /// The add-task / edit-task dialog's state.
     pub dialog: DialogState,
     /// The settings overlay's interaction state.
     pub overlay: SettingsOverlay,
@@ -823,14 +820,12 @@ impl App {
         self.dialog.use_agent = !self.dialog.use_agent;
     }
 
-    /// The dialog's primary button label: "Inject"
-    /// for the inject-task modal (T76.1), otherwise "Start" when the queue is
+    /// The dialog's primary button label: "Start" when the queue is
     /// ready and the input is empty, "Scan" when the queue is complete and the
     /// input is empty, "Submit" otherwise (always "Submit" for the add dialog
     /// while the engine is busy, T5.3).
     pub fn primary_label(&self) -> &'static str {
         match self.dialog.kind {
-            DialogKind::Inject => return "Inject",
             DialogKind::Edit => return "Save",
             DialogKind::Add if !self.agent_available() => return "Submit",
             DialogKind::Add => {}
@@ -867,7 +862,7 @@ impl App {
         self.modals.contains(Modal::InteractivePicker)
     }
 
-    /// Whether the add-task / inject-task dialog is open.
+    /// Whether the add-task / edit-task dialog is open.
     #[cfg(any(test, feature = "test-support"))]
     pub fn dialog_open(&self) -> bool {
         self.modals.contains(Modal::Dialog)
