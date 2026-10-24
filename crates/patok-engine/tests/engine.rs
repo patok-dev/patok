@@ -1721,6 +1721,135 @@ async fn move_task_refuses_completed_and_missing_tasks() {
     assert_eq!(fixture.tasks_file(), original);
 }
 
+const GROUPS: &str = "# Tasks\n\n## Phase 1\n- [ ] T1.1: add the greeting file\n\n## Phase 2\n- [ ] T2.1: fix the second task\n- [ ] T2.2: polish the third task\n\n## Phase 3\n- [ ] T3.1: write the fourth task\n";
+
+/// The (id, description) pairs, in order, of the last `TasksChanged` of `events`.
+fn changed_tasks(events: &[EngineEvent]) -> Vec<(String, String)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::TasksChanged { tasks } => Some(tasks),
+            _ => None,
+        })
+        .next_back()
+        .unwrap()
+        .iter()
+        .map(|t| (t.id.clone(), t.description.clone()))
+        .collect()
+}
+
+/// T2.4: mid-build, indent/outdent touching the running group is refused,
+/// others renumber pending tasks and the queue reconciles at once.
+#[tokio::test]
+async fn indent_and_outdent_renumber_pending_tasks_and_refuse_the_running_group_mid_build() {
+    let fixture = Fixture::new(GROUPS);
+    let provider = MockProvider::new(vec![Step::Sleep(Duration::from_secs(60))]);
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TaskStarted { .. })
+    })
+    .await;
+
+    let before = fixture.tasks_file();
+    assert_eq!(
+        engine.indent_task("T2.1").await.unwrap_err(),
+        "task T2.1 cannot be indented: the change would touch the in-progress task or its group"
+    );
+    assert_eq!(fixture.tasks_file(), before);
+    assert_eq!(
+        engine.outdent_task("T2.1").await.unwrap_err(),
+        "task T2.1 is the first task of its group; there is nothing to split off"
+    );
+    assert_eq!(fixture.tasks_file(), before);
+
+    engine.outdent_task("T2.2").await.unwrap();
+    let after = fixture.tasks_file();
+    assert!(after.contains("- [ ] T3.1: polish the third task\n"));
+    assert!(after.contains("- [ ] T4.1: write the fourth task\n"));
+    let events = collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TasksChanged { .. })
+    })
+    .await;
+    let expect = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(i, d)| (i.to_string(), d.to_string()))
+            .collect()
+    };
+    assert_eq!(
+        changed_tasks(&events),
+        expect(&[
+            ("T1.1", "add the greeting file"),
+            ("T2.1", "fix the second task"),
+            ("T3.1", "polish the third task"),
+            ("T4.1", "write the fourth task"),
+        ])
+    );
+
+    engine.indent_task("T4.1").await.unwrap();
+    let after = fixture.tasks_file();
+    assert!(
+        after.contains("- [ ] T3.1: polish the third task\n- [ ] T3.2: write the fourth task\n")
+    );
+    assert!(!after.contains("## Phase 3"));
+    let events = collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TasksChanged { .. })
+    })
+    .await;
+    assert_eq!(
+        changed_tasks(&events),
+        expect(&[
+            ("T1.1", "add the greeting file"),
+            ("T2.1", "fix the second task"),
+            ("T3.1", "polish the third task"),
+            ("T3.2", "write the fourth task"),
+        ])
+    );
+
+    engine.request_stop(true);
+    collect_until(&mut attachment.events, is_phase_startup).await;
+}
+
+#[tokio::test]
+async fn indent_and_outdent_refuse_completed_first_group_missing_and_empty_ids() {
+    let original =
+        "# Tasks\n\n## Phase 1\n- [x] T1.1: a\n- [ ] T1.2: b\n\n## Phase 2\n- [ ] T2.1: c\n";
+    let fixture = Fixture::new(original);
+    let engine = fixture.engine(MockProvider::new(vec![]));
+
+    assert_eq!(
+        engine.indent_task("T1.1").await.unwrap_err(),
+        "task T1.1 cannot be indented: it or a task it would pass is completed"
+    );
+    assert_eq!(
+        engine.outdent_task("T1.1").await.unwrap_err(),
+        "task T1.1 cannot be outdented: it or a task after it is completed"
+    );
+    assert_eq!(
+        engine.indent_task("T1.2").await.unwrap_err(),
+        "task T1.2 has no previous group to join"
+    );
+    assert_eq!(
+        engine.outdent_task("T2.1").await.unwrap_err(),
+        "task T2.1 is the first task of its group; there is nothing to split off"
+    );
+    let missing = format!("no task with id T9.9 in {TASK_FILE}");
+    assert_eq!(engine.indent_task("T9.9").await.unwrap_err(), missing);
+    assert_eq!(engine.outdent_task("T9.9").await.unwrap_err(), missing);
+    assert_eq!(
+        engine.indent_task("").await.unwrap_err(),
+        "the task id is empty"
+    );
+    assert_eq!(
+        engine.outdent_task("").await.unwrap_err(),
+        "the task id is empty"
+    );
+    assert_eq!(fixture.tasks_file(), original);
+}
+
 /// T2.3: a planner run's validator needs the file content untouched, so edits
 /// and moves are refused while it runs and accepted again afterwards.
 #[tokio::test]
@@ -1741,6 +1870,8 @@ async fn edit_and_move_are_refused_during_a_planner_session() {
             .unwrap_err(),
         busy
     );
+    assert_eq!(engine.indent_task("T1.2").await.unwrap_err(), busy);
+    assert_eq!(engine.outdent_task("T1.2").await.unwrap_err(), busy);
     assert_eq!(fixture.tasks_file(), TASKS);
 
     collect_until(&mut attachment.events, planning_finished).await;
@@ -1767,6 +1898,8 @@ async fn edit_and_move_are_refused_during_a_discovery_round() {
             .unwrap_err(),
         busy
     );
+    assert_eq!(engine.indent_task("T1.2").await.unwrap_err(), busy);
+    assert_eq!(engine.outdent_task("T1.2").await.unwrap_err(), busy);
     assert_eq!(fixture.tasks_file(), TASKS);
 
     collect_until(&mut attachment.events, |e| {

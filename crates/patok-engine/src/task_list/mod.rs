@@ -279,6 +279,33 @@ impl TaskList {
         .await
     }
 
+    /// Indents the pending task `id` into the previous group (T2.4), under the file lock, and
+    /// returns its new id. `guard` is as for [`TaskList::edit_task`].
+    pub(crate) async fn indent_task(
+        &self,
+        id: &str,
+        guard: impl FnOnce() -> Result<Option<String>, String>,
+    ) -> Result<String, EditFailure> {
+        self.rewrite(guard, |text, running| {
+            file::indent_task(text, id, running).map(|m| (m.text, m.id))
+        })
+        .await
+    }
+
+    /// Outdents the pending task `id` and the tasks after it in its group into a new group
+    /// (T2.4), under the file lock, and returns its new id. `guard` is as for
+    /// [`TaskList::edit_task`].
+    pub(crate) async fn outdent_task(
+        &self,
+        id: &str,
+        guard: impl FnOnce() -> Result<Option<String>, String>,
+    ) -> Result<String, EditFailure> {
+        self.rewrite(guard, |text, running| {
+            file::outdent_task(text, id, running).map(|m| (m.text, m.id))
+        })
+        .await
+    }
+
     /// Writes the task's five-position progress token into its line, ticking
     /// it when `done` (T77.1), under the file lock. Returns whether the
     /// task's line was found; when none is, nothing is written.
@@ -582,6 +609,30 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "- [ ] T1.1: b\n- [ ] T1.2: a\n"
         );
+    }
+
+    #[tokio::test]
+    async fn indent_and_outdent_task_return_the_new_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        let original = "- [ ] T1.1: a\n- [ ] T2.1: b\n";
+        std::fs::write(&path, original).unwrap();
+        let list = TaskList::new(path.clone());
+        let id = list.indent_task("T2.1", || Ok(None)).await.unwrap();
+        assert_eq!(id, "T1.2");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "- [ ] T1.1: a\n- [ ] T1.2: b\n"
+        );
+        let id = list.outdent_task("T1.2", || Ok(None)).await.unwrap();
+        assert_eq!(id, "T2.1");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let refused = list
+            .indent_task("T2.1", || Err("busy".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, EditFailure::Refused(r) if r == "busy"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     }
 
     #[test]
