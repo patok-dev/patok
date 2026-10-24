@@ -13,9 +13,10 @@ use patok_config::{SettingValue, Theme as ThemeKey};
 use patok_core::event::Snapshot;
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{
-    AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, InjectTask,
-    RunDiscovery, SettingsChange, ShutdownRequest, StartBuild, command_request, engine_update,
-    shutdown_request, shutdown_update,
+    AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, IndentTask, InjectTask,
+    MoveTask, OutdentTask, RemoveTask, RunDiscovery, SettingsChange, ShutdownRequest, StartBuild,
+    command_request, engine_update, move_task::Direction as MoveDirection, shutdown_request,
+    shutdown_update,
 };
 use ratatui::backend::Backend;
 use ratatui::layout::Rect;
@@ -23,7 +24,7 @@ use ratatui::{DefaultTerminal, Terminal};
 use tonic::Streaming;
 use tonic::transport::Channel;
 
-use crate::app::{Action, App, QueueRun};
+use crate::app::{Action, App, QueueRun, TaskChange};
 use crate::driver::CommandCall;
 use crate::driver::Update;
 use crate::interactive::PtyEvent;
@@ -338,6 +339,35 @@ where
     }
 }
 
+/// Sends a task-list change (T4.2) as its engine command; on accept the cursor
+/// follows the changed task, a rejection (the engine's reason) lands in the status bar.
+async fn change_task<Req, Fut>(app: &mut App, id: &str, change: TaskChange, submit: Req)
+where
+    Req: FnOnce(CommandRequest) -> Fut,
+    Fut: std::future::Future<Output = CommandCall>,
+{
+    let id_s = id.to_string();
+    let mv = |direction: MoveDirection| {
+        command_request::Action::MoveTask(MoveTask {
+            id: id_s.clone(),
+            direction: direction as i32,
+        })
+    };
+    let action = match change {
+        TaskChange::Remove => command_request::Action::RemoveTask(RemoveTask { id: id_s.clone() }),
+        TaskChange::MoveUp => mv(MoveDirection::Up),
+        TaskChange::MoveDown => mv(MoveDirection::Down),
+        TaskChange::Indent => command_request::Action::IndentTask(IndentTask { id: id_s.clone() }),
+        TaskChange::Outdent => {
+            command_request::Action::OutdentTask(OutdentTask { id: id_s.clone() })
+        }
+    };
+    match crate::driver::submit(submit, action, "task change failed").await {
+        Ok(()) => app.on_task_changed(id, change),
+        Err(error) => app.status = Some(error),
+    }
+}
+
 /// Runs one submit-family action's dispatch (T144.1): the one dispatch both
 /// the key arm and the mouse arm of [`event_loop`] route `SubmitTasks`,
 /// `ResearchQueue`, `SaveBrief` and `InjectTask` through, so a click on the
@@ -590,6 +620,10 @@ async fn event_loop(
                     // catalog events.
                     Action::DiscoverModels(provider) => {
                         discover_models(app, &provider, |c| client.submit_command(c)).await;
+                    }
+                    // The task list's delete, move and indent keys (T4.2).
+                    Action::ChangeTask { id, change } => {
+                        change_task(app, &id, change, |c| client.submit_command(c)).await;
                     }
                 },
                 Some(Ok(TermEvent::Paste(text))) => app.on_paste(&text),
@@ -971,10 +1005,11 @@ mod tests {
 
     use super::{
         Action, App, CommandCall, Outcome, QueueRun, Schema, SettingsSubmit, ShutdownCall,
-        ShutdownFlow, SubmitFlow, discover_models, interrupt_status, run_shutdown_family,
-        run_submit_family, save_settings,
+        ShutdownFlow, SubmitFlow, change_task, discover_models, interrupt_status,
+        run_shutdown_family, run_submit_family, save_settings,
     };
     use super::{ModifyOtherKeys, shutdown_request};
+    use crate::app::TaskChange;
 
     fn ansi(command: &ModifyOtherKeys) -> String {
         let mut bytes = String::new();
@@ -1257,6 +1292,85 @@ mod tests {
         )
         .await;
         assert_eq!(app.status.as_deref(), Some("no discovery"));
+    }
+
+    fn four_task_app() -> App {
+        let mut app = app();
+        app.run.tasks = task::parse("- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T2.1: c\n- [ ] T2.2: d\n");
+        app.task_cursor = Some(1);
+        app
+    }
+
+    /// Each task change sends its matching proto command, and an accepted one
+    /// moves the cursor onto the task's new row.
+    #[tokio::test]
+    async fn change_task_sends_the_matching_command_and_follows_the_task() {
+        use patok_proto::command_request::Action as Proto;
+        use patok_proto::move_task::Direction;
+        // Indent of T1.2 has no other-group row above it, so the cursor stays.
+        let cases = [
+            (TaskChange::Remove, 1),
+            (TaskChange::MoveUp, 0),
+            (TaskChange::MoveDown, 2),
+            (TaskChange::Indent, 1),
+            (TaskChange::Outdent, 1),
+        ];
+        for (change, cursor) in cases {
+            let mut app = four_task_app();
+            let commands = Arc::new(Mutex::new(Vec::new()));
+            change_task(
+                &mut app,
+                "T1.2",
+                change,
+                recording_submit(&commands, true, ""),
+            )
+            .await;
+            let sent = commands.lock().unwrap();
+            assert_eq!(sent.len(), 1);
+            match (change, sent[0].action.as_ref().unwrap()) {
+                (TaskChange::Remove, Proto::RemoveTask(r)) => assert_eq!(r.id, "T1.2"),
+                (TaskChange::MoveUp, Proto::MoveTask(m)) => {
+                    assert_eq!((m.id.as_str(), m.direction), ("T1.2", Direction::Up as i32));
+                }
+                (TaskChange::MoveDown, Proto::MoveTask(m)) => {
+                    assert_eq!(
+                        (m.id.as_str(), m.direction),
+                        ("T1.2", Direction::Down as i32)
+                    );
+                }
+                (TaskChange::Indent, Proto::IndentTask(i)) => assert_eq!(i.id, "T1.2"),
+                (TaskChange::Outdent, Proto::OutdentTask(o)) => assert_eq!(o.id, "T1.2"),
+                (change, other) => panic!("{change:?} sent {other:?}"),
+            }
+            assert_eq!(app.task_cursor, Some(cursor), "{change:?}");
+            assert_eq!(app.status, None);
+        }
+    }
+
+    /// A rejection shows the engine's reason and leaves the cursor; a transport
+    /// failure gets the prefix.
+    #[tokio::test]
+    async fn change_task_reports_a_rejection_and_a_transport_error() {
+        let mut app = four_task_app();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let reason = "task T1.2 has no task above it to swap with";
+        change_task(
+            &mut app,
+            "T1.2",
+            TaskChange::MoveUp,
+            recording_submit(&commands, false, reason),
+        )
+        .await;
+        assert_eq!(app.status.as_deref(), Some(reason));
+        assert_eq!(app.task_cursor, Some(1));
+        change_task(&mut app, "T1.2", TaskChange::MoveUp, failing_submit("gone")).await;
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap()
+                .starts_with("task change failed: ")
+        );
+        assert_eq!(app.task_cursor, Some(1));
     }
 
     /// Every other action keeps its own arm in the event loop: the shared

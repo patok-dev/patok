@@ -371,6 +371,9 @@ fn the_status_bar_keeps_the_enter_and_menu_hints() {
     assert!(app.theme_open());
     assert_eq!(press(&mut app, KeyCode::Esc), Action::None);
     assert!(!app.theme_open());
+    // With the Tasks frame focused `d` deletes the selected task (T4.2), so
+    // Tab moves the focus to the output frame, where `d` still detaches.
+    assert_eq!(press(&mut app, KeyCode::Tab), Action::None);
     assert_eq!(press(&mut app, KeyCode::Char('d')), Action::Detach);
 
     let mut app = running_app();

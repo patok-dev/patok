@@ -4147,6 +4147,26 @@ mod view {
     }
 
     #[test]
+    fn task_edit_keys_act_on_the_selected_task_and_refuse_done_rows() {
+        use patok_tui::{Action, TaskChange};
+        let mut app = long_app();
+        assert_eq!(
+            app.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT)),
+            Action::ChangeTask {
+                id: "T9.21".into(),
+                change: TaskChange::MoveUp
+            }
+        );
+
+        app.task_cursor = Some(0);
+        assert_eq!(app.on_key(key(KeyCode::Char('K'))), Action::None);
+        assert!(app.status.as_deref().unwrap().contains("completed"));
+
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.on_key(key(KeyCode::Char('d'))), Action::Detach);
+    }
+
+    #[test]
     fn the_selected_row_is_highlighted_only_in_the_focused_tasks_frame() {
         use ratatui::style::Modifier;
         let mut app = long_app();

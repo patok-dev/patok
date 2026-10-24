@@ -7,7 +7,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use patok_core::event::Phase;
 
-use crate::app::{Action, App, SOFT_STOP_PENDING};
+use crate::app::{Action, App, SOFT_STOP_PENDING, TaskChange};
 use crate::modal::{Modal, ModalLayer};
 use crate::view::FrameFocus;
 
@@ -66,6 +66,13 @@ impl App {
             return modal.on_key(self, key, ctrl);
         }
         match key.code {
+            // The task list's delete key (T4.2): only the focused Tasks frame deletes, and a
+            // pending soft stop (whose status line offers `[d] detach`) keeps `d` as detach.
+            KeyCode::Char('d')
+                if !ctrl && self.focus == FrameFocus::Tasks && !self.run.stopping =>
+            {
+                self.change_selected_task(TaskChange::Remove)
+            }
             KeyCode::Char('d') => Action::Detach,
             // The theme picker's key (T43.1): it opens from any state except
             // while another modal has the keyboard (the guards above), and it
@@ -176,6 +183,20 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') if self.focus == FrameFocus::Tasks => {
                 self.move_task_cursor(1)
             }
+            // The task edit keys (T4.2): Shift+k/j swap the selected task with its
+            // neighbour, Shift+l/h indent and outdent it.
+            KeyCode::Char('K') if !ctrl && self.focus == FrameFocus::Tasks => {
+                self.change_selected_task(TaskChange::MoveUp)
+            }
+            KeyCode::Char('J') if !ctrl && self.focus == FrameFocus::Tasks => {
+                self.change_selected_task(TaskChange::MoveDown)
+            }
+            KeyCode::Char('L') if !ctrl && self.focus == FrameFocus::Tasks => {
+                self.change_selected_task(TaskChange::Indent)
+            }
+            KeyCode::Char('H') if !ctrl && self.focus == FrameFocus::Tasks => {
+                self.change_selected_task(TaskChange::Outdent)
+            }
             KeyCode::Up | KeyCode::Char('k') => self.scroll_by(1),
             KeyCode::Down | KeyCode::Char('j') => self.scroll_by(-1),
             KeyCode::PageUp => self.scroll_by(10),
@@ -283,6 +304,83 @@ mod tests {
         assert_eq!(app.scroll, 1);
         app.on_key(ev('j', KeyModifiers::NONE));
         assert_eq!(app.scroll, 0);
+    }
+
+    fn tasks_app() -> App {
+        let mut app = app();
+        app.run.tasks =
+            patok_core::task::parse("- [x] T1.1: a\n- [ ] T1.2: b\n- [ ] T2.1: c\n- [ ] T2.2: d\n");
+        app.focus = FrameFocus::Tasks;
+        app.task_cursor = Some(2);
+        app
+    }
+
+    fn change(change: TaskChange) -> Action {
+        Action::ChangeTask {
+            id: "T2.1".into(),
+            change,
+        }
+    }
+
+    #[test]
+    fn tasks_focus_binds_the_edit_keys() {
+        let mut app = tasks_app();
+        assert_eq!(
+            app.on_key(ev('d', KeyModifiers::NONE)),
+            change(TaskChange::Remove)
+        );
+        assert_eq!(
+            app.on_key(ev('k', KeyModifiers::SHIFT)),
+            change(TaskChange::MoveUp)
+        );
+        assert_eq!(
+            app.on_key(ev('K', KeyModifiers::NONE)),
+            change(TaskChange::MoveUp)
+        );
+        assert_eq!(
+            app.on_key(ev('J', KeyModifiers::SHIFT)),
+            change(TaskChange::MoveDown)
+        );
+        assert_eq!(
+            app.on_key(ev('L', KeyModifiers::NONE)),
+            change(TaskChange::Indent)
+        );
+        assert_eq!(
+            app.on_key(ev('H', KeyModifiers::NONE)),
+            change(TaskChange::Outdent)
+        );
+    }
+
+    #[test]
+    fn output_focus_keeps_detach_and_ignores_the_edit_keys() {
+        let mut app = tasks_app();
+        app.focus = FrameFocus::Output;
+        assert_eq!(app.on_key(ev('d', KeyModifiers::NONE)), Action::Detach);
+        for c in ['K', 'J', 'L', 'H'] {
+            assert_eq!(app.on_key(ev(c, KeyModifiers::NONE)), Action::None);
+        }
+    }
+
+    #[test]
+    fn soft_stop_and_ctrl_keep_detach() {
+        let mut app = tasks_app();
+        assert_eq!(app.on_key(ev('d', KeyModifiers::CONTROL)), Action::Detach);
+        app.run.stopping = true;
+        assert_eq!(app.on_key(ev('d', KeyModifiers::NONE)), Action::Detach);
+        assert_eq!(app.on_key(ev('K', KeyModifiers::NONE)), Action::None);
+    }
+
+    #[test]
+    fn done_and_running_rows_are_refused_with_a_status() {
+        let mut app = tasks_app();
+        app.task_cursor = Some(0);
+        assert_eq!(app.on_key(ev('d', KeyModifiers::NONE)), Action::None);
+        assert!(app.status.as_deref().unwrap().contains("completed"));
+        app.status = None;
+        app.task_cursor = Some(1);
+        app.run.current_task = Some("T1.2".into());
+        assert_eq!(app.on_key(ev('H', KeyModifiers::NONE)), Action::None);
+        assert!(app.status.as_deref().unwrap().contains("in progress"));
     }
 
     #[test]
