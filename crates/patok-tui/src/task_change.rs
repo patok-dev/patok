@@ -1,5 +1,6 @@
-//! The task list's edit actions (T4.2, T4.3): the selected task's delete, move
-//! and indent/outdent keys and the `e` edit dialog. The key side refuses done, running and malformed rows
+//! The task list's edit actions (T4.2, T4.3): the selected task's delete (behind
+//! a confirmation dialog, T7.2), move and indent/outdent keys and the `e` edit
+//! dialog. The key side refuses done, running and malformed rows
 //! with a status message; the driver side moves the cursor after the engine
 //! accepts, using the engine's own placement rules.
 
@@ -27,9 +28,20 @@ impl App {
             self.status = Some("No task to change.".into());
             return None;
         };
+        if let Some(message) = self.refusal(i, verb) {
+            self.status = Some(message);
+            return None;
+        }
+        self.status = None;
+        Some(i)
+    }
+
+    /// Why task `i` cannot be changed (malformed, done or running; `verb`
+    /// names the refused change), or `None` when it can.
+    fn refusal(&self, i: usize, verb: &str) -> Option<String> {
         let task = &self.run.tasks[i];
         let id = &task.id;
-        let refusal = if task.is_malformed() {
+        if task.is_malformed() {
             Some("This task line has no valid id; fix it in TASKS.md first.".to_string())
         } else if task.done {
             Some(format!("Task {id} is completed and cannot be {verb}."))
@@ -37,13 +49,48 @@ impl App {
             Some(format!("Task {id} is in progress and cannot be {verb}."))
         } else {
             None
+        }
+    }
+
+    /// The `d` key (T7.2): opens the delete confirmation for the selected
+    /// task. A refused row (none, malformed, done, running) opens no dialog
+    /// and sets the usual status; the removal itself waits for the dialog.
+    pub(crate) fn delete_selected_task(&mut self) -> Action {
+        let Some(i) = self.changeable_task(TaskChange::Remove.verb()) else {
+            return Action::None;
         };
-        if let Some(message) = refusal {
+        let id = self.run.tasks[i].id.clone();
+        self.open_delete(id);
+        Action::None
+    }
+
+    /// Opens the delete dialog for `id`. A refused push is a no-op that
+    /// leaves the dialog's state alone.
+    pub(crate) fn open_delete(&mut self, id: String) {
+        if self.modals.push(Modal::Delete) {
+            self.delete.id = id;
+            self.delete.selected = 0;
+        }
+    }
+
+    /// The delete dialog's Delete choice (T7.2): the task list may have
+    /// changed while the dialog was open, so the pending id is looked up and
+    /// checked again before the remove action is returned.
+    pub(crate) fn confirm_delete(&mut self) -> Action {
+        let id = std::mem::take(&mut self.delete.id);
+        let Some(i) = self.run.tasks.iter().position(|t| t.id == id) else {
+            self.status = Some(format!("Task {id} no longer exists."));
+            return Action::None;
+        };
+        if let Some(message) = self.refusal(i, TaskChange::Remove.verb()) {
             self.status = Some(message);
-            return None;
+            return Action::None;
         }
         self.status = None;
-        Some(i)
+        Action::ChangeTask {
+            id,
+            change: TaskChange::Remove,
+        }
     }
 
     /// The `e` key (T4.3): opens the shared input dialog as the edit dialog,
@@ -215,5 +262,73 @@ mod tests {
         let mut empty = app_with("");
         assert_eq!(empty.change_selected_task(TaskChange::Remove), Action::None);
         assert_eq!(empty.status.as_deref(), Some("No task to change."));
+    }
+
+    #[test]
+    fn d_style_delete_opens_the_confirmation_not_the_action() {
+        let mut app = app_with(FOUR);
+        app.task_cursor = Some(1);
+        assert_eq!(app.delete_selected_task(), Action::None);
+        assert_eq!(app.modals.top(), Some(Modal::Delete));
+        assert_eq!(app.delete.id, "T1.2");
+        assert_eq!(app.delete.selected, 0);
+    }
+
+    #[test]
+    fn refused_rows_open_no_confirmation() {
+        let mut app = app_with("- [x] T1.1: a\n- [ ] T1.2: b\n- [ ] no id\n");
+        app.task_cursor = Some(0);
+        assert_eq!(app.delete_selected_task(), Action::None);
+        assert_eq!(app.modals.top(), None);
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Task T1.1 is completed and cannot be removed.")
+        );
+        app.task_cursor = Some(1);
+        app.run.current_task = Some("T1.2".into());
+        assert_eq!(app.delete_selected_task(), Action::None);
+        assert_eq!(app.modals.top(), None);
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Task T1.2 is in progress and cannot be removed.")
+        );
+        app.task_cursor = Some(2);
+        assert_eq!(app.delete_selected_task(), Action::None);
+        assert_eq!(app.modals.top(), None);
+        assert_eq!(
+            app.status.as_deref(),
+            Some("This task line has no valid id; fix it in TASKS.md first.")
+        );
+        let mut empty = app_with("");
+        assert_eq!(empty.delete_selected_task(), Action::None);
+        assert_eq!(empty.modals.top(), None);
+        assert_eq!(empty.status.as_deref(), Some("No task to change."));
+    }
+
+    #[test]
+    fn confirm_delete_rechecks_the_task() {
+        let mut app = app_with(FOUR);
+        app.delete.id = "T1.2".into();
+        assert_eq!(
+            app.confirm_delete(),
+            Action::ChangeTask {
+                id: "T1.2".into(),
+                change: TaskChange::Remove
+            }
+        );
+
+        app.delete.id = "T1.2".into();
+        app.run.current_task = Some("T1.2".into());
+        assert_eq!(app.confirm_delete(), Action::None);
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Task T1.2 is in progress and cannot be removed.")
+        );
+
+        app.delete.id = "T1.2".into();
+        app.run.current_task = None;
+        app.run.tasks.retain(|t| t.id != "T1.2");
+        assert_eq!(app.confirm_delete(), Action::None);
+        assert_eq!(app.status.as_deref(), Some("Task T1.2 no longer exists."));
     }
 }

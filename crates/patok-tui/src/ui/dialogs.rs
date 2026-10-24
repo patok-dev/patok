@@ -1,4 +1,4 @@
-//! The add-task / edit-task dialog, the stop dialog and the theme picker.
+//! The add-task / edit-task dialog, the stop and delete dialogs and the theme picker.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -16,7 +16,7 @@ use crate::interactive::{ScreenView, cursor_position};
 use crate::modal::{Modal, ModalLayer};
 use crate::overlay::Entry;
 use crate::theme::theme_modal_groups;
-use crate::view::STOP_CHOICES;
+use crate::view::{DELETE_CHOICES, STOP_CHOICES};
 use patok_config::EnumSpelling;
 use patok_core::event::Phase;
 use patok_providers::ProviderKind;
@@ -206,6 +206,24 @@ pub(crate) fn render_stop_dialog(frame: &mut Frame, app: &App) {
     app.stop.close.set(rects.close);
     app.stop.body.set(rects.body);
     app.stop.footer.set(rects.footer);
+}
+
+/// The delete-task confirmation (T7.2): a centered " Delete task <id> " choice
+/// dialog over the shared renderer; records the rects its mouse hit-testing reads.
+pub(crate) fn render_delete_dialog(frame: &mut Frame, app: &App) {
+    let title = format!(" Delete task {} ", app.delete.id);
+    let rects = super::choice::render_choice_dialog(
+        frame,
+        app.theme(),
+        &title,
+        &DELETE_CHOICES,
+        app.delete.selected,
+        Modal::Delete.area(app, frame.area()),
+        &Modal::Delete.buttons(app),
+    );
+    app.delete.close.set(rects.close);
+    app.delete.body.set(rects.body);
+    app.delete.footer.set(rects.footer);
 }
 
 /// The m menu's rect: a small centered modal, at least 54 columns wide and

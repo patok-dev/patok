@@ -474,6 +474,23 @@ pub struct StopState {
     pub body: Cell<Rect>,
 }
 
+/// The delete-confirmation dialog's state (`d` on a pending task, T7.2): the
+/// pending task id, its selected row and the rects its mouse hit-testing
+/// reads. Whether it is open lives on the modal stack.
+#[derive(Default)]
+pub struct DeleteState {
+    /// The pending task id that Enter on Delete removes.
+    pub id: String,
+    /// The selected row; indexes `DELETE_CHOICES`.
+    pub selected: usize,
+    /// The bottom line rect at the last render; its buttons' mouse hit-testing reads it.
+    pub footer: Cell<Rect>,
+    /// The close button rect at the last render; a click on it runs the Esc key.
+    pub close: Cell<Rect>,
+    /// The body rect at the last render; its rows' mouse hit-testing reads it.
+    pub body: Cell<Rect>,
+}
+
 /// The m menu's state (the `m` key, from any engine state): its selected
 /// row and the rects its mouse hit-testing reads. Grouped (finding 19) like
 /// the modal's own state; whether it is open lives on the modal stack.
@@ -595,6 +612,8 @@ pub struct App {
     pub layout: LayoutCache,
     /// The stop dialog's state.
     pub stop: StopState,
+    /// The delete-confirmation dialog's state (T7.2).
+    pub delete: DeleteState,
     /// The m menu's state.
     pub menu: MenuState,
     /// The interactive provider picker's state.
@@ -659,6 +678,7 @@ impl App {
             clock: SessionClock::new(),
             layout: LayoutCache::default(),
             stop: StopState::default(),
+            delete: DeleteState::default(),
             menu: MenuState::default(),
             interactive: InteractivePickerState {
                 search_path: std::env::var_os("PATH"),
@@ -845,6 +865,12 @@ impl App {
     #[cfg(any(test, feature = "test-support"))]
     pub fn stop_open(&self) -> bool {
         self.modals.contains(Modal::Stop)
+    }
+
+    /// Whether the delete-confirmation dialog is open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn delete_open(&self) -> bool {
+        self.modals.contains(Modal::Delete)
     }
 
     /// Whether the m menu is open.

@@ -1,7 +1,7 @@
 //! The pure core of the shared three-choice dialog component (finding 6 in
-//! docs/private/structure-review.md): the generic choice list behind both
-//! the stop dialog (T46.1, T148.1) and the settings overlay's unsaved-changes
-//! dialog (T146.1) -- the area, the row hit-test, the Up/Down/Enter/Esc key
+//! docs/private/structure-review.md): the generic choice list behind the
+//! stop dialog (T46.1, T148.1), the delete dialog (T7.2) and the settings
+//! overlay's unsaved-changes dialog (T146.1) -- the area, the row hit-test, the Up/Down/Enter/Esc key
 //! handling and the mouse hover and click behaviour live here once, so the
 //! shell's key and mouse dispatch can use them without importing the render
 //! side; the renderer stays in the render-side module `ui::choice`. The

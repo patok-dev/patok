@@ -1,6 +1,6 @@
 //! The interactive shell's shared view vocabulary (finding 19, the rest, in
 //! docs/private/structure-review-followup.md): the merged view's frame focus
-//! and the stop dialog's choices, defined outside the shell state (`app`) so
+//! and the stop and delete dialogs' choices, defined outside the shell state (`app`) so
 //! the state, the hit-tests (`hit`) and the renderers (`ui`) all read them
 //! without importing the state back.
 
@@ -67,3 +67,44 @@ pub const STOP_CHOICES: [StopChoice; 3] = [
     StopChoice::Interrupt,
     StopChoice::Cancel,
 ];
+
+/// The delete dialog's choices (`d` on a pending task, T7.2), in render order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeleteChoice {
+    /// Remove the task from TASKS.md.
+    Delete,
+    /// Close the dialog; the task stays.
+    Cancel,
+}
+
+impl DeleteChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            DeleteChoice::Delete => "Delete",
+            DeleteChoice::Cancel => "Cancel",
+        }
+    }
+
+    /// The one-line explanation rendered after the label.
+    pub fn detail(self) -> &'static str {
+        match self {
+            DeleteChoice::Delete => "remove the task from TASKS.md",
+            DeleteChoice::Cancel => "keep the task",
+        }
+    }
+}
+
+/// The delete dialog's rows through the shared choice-dialog component; the
+/// trait only forwards to the inherent methods above.
+impl Choice for DeleteChoice {
+    fn label(&self) -> &'static str {
+        (*self).label()
+    }
+
+    fn detail(&self) -> &'static str {
+        (*self).detail()
+    }
+}
+
+/// The delete dialog's rows, top to bottom; its selected row (`DeleteState::selected`) indexes this list.
+pub const DELETE_CHOICES: [DeleteChoice; 2] = [DeleteChoice::Delete, DeleteChoice::Cancel];
