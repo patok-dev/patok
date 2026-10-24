@@ -244,7 +244,9 @@ pub async fn move_task(
         {
             Ok(()) => {}
             Err(patok_engine::taskfile::TaskEditOutcome::Completed) => {
-                bail!("task {id} cannot be moved: it or the task it would pass is completed");
+                bail!(
+                    "task {id} cannot be moved: it, the task it would pass, or the group it would join is completed"
+                );
             }
             Err(patok_engine::taskfile::TaskEditOutcome::NotFound) => {
                 bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
@@ -303,7 +305,9 @@ pub async fn indent(project: &Path, id: &str) -> anyhow::Result<()> {
         {
             Ok(()) => {}
             Err(patok_engine::taskfile::TaskEditOutcome::Completed) => {
-                bail!("task {id} cannot be indented: it or a task it would pass is completed");
+                bail!(
+                    "task {id} cannot be indented: it, a task it would pass, or the group it would join is completed"
+                );
             }
             Err(patok_engine::taskfile::TaskEditOutcome::NotFound) => {
                 bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
@@ -714,6 +718,21 @@ mod tests {
         std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
         let error = indent(dir.path(), "T2.2").await.unwrap_err();
         assert!(error.to_string().contains("completed"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn indent_refuses_joining_a_completed_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "- [x] T1.1: done\n- [ ] T2.1: a\n- [ ] T2.2: b\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = indent(dir.path(), "T2.1").await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("the group it would join is completed"),
+            "{error:#}"
+        );
         assert_eq!(read_tasks(dir.path()), text);
     }
 
