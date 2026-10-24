@@ -21,7 +21,7 @@ expression: "draw(&app, 80, 24)"
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │[ ] Use agent to add  Agent add needs an idle engine                  │   │
-│   │Type a task to enable Enter                                           │   │
+│   │                                                                      │   │
 │   │ ↑↓←→ move · Ctrl+U clear             [ Enter ] Submit  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘

@@ -21,7 +21,7 @@ expression: "draw(&open(), 80, 24)"
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │[ ] Use agent to add  Tab toggle                                      │   │
-│   │Type a task to enable Enter                                           │   │
+│   │                                                                      │   │
 │   │ ↑↓←→ move · Ctrl+U clear             [ Enter ] Submit  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘ut │
 └──────────────────────────────────────────────────────────────────────────────┘
