@@ -5,12 +5,13 @@
 //! engine's task-file lock is in-process, but it tolerates external appends
 //! by mtime-polling the file and reconciling, so new unchecked lines merge
 //! into the queue while the running and completed tasks are protected.
-//! The remove and edit instead route through the engine's `RemoveTask` /
-//! `EditTask` commands when an engine runs: in-progress exists only in the
+//! The remove, edit and move instead route through the engine's `RemoveTask` /
+//! `EditTask` / `MoveTask` commands when an engine runs: in-progress exists only in the
 //! engine's memory, and the change then runs under the engine's task-file
 //! lock with an immediate reconcile. With no engine running they fall back to
 //! a direct rewrite of the file -- in-progress cannot exist then, so the file
-//! is the whole truth. Known races, deliberately left alone: with no
+//! is the whole truth. The move then prints the renumbered ids read back from
+//! the file. Known races, deliberately left alone: with no
 //! cross-process lock, an add concurrent with a TUI inject through a running
 //! engine can pick the same number; and an engine can start between the
 //! failed connect and the fallback write, whose mtime poll then reconciles
@@ -24,7 +25,7 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use patok_proto::command_request;
-use patok_proto::{CommandRequest, EditTask, RemoveTask};
+use patok_proto::{CommandRequest, EditTask, MoveTask, RemoveTask};
 
 /// The task file read whole: a missing file reads as empty (the append then
 /// creates it, the list then lists nothing), while any other read failure
@@ -174,6 +175,92 @@ pub async fn edit(project: &Path, id: &str, text: &str) -> anyhow::Result<()> {
         ),
     }
     Ok(())
+}
+
+/// Prints every unchecked task of the file at `path` as `{id} {description}`,
+/// one per line: after a move these are exactly the ids that renumbering
+/// produced. Completed tasks never move or renumber, so they are left out.
+fn print_unchecked(path: &Path) -> anyhow::Result<()> {
+    let file = read_task_file(path)?;
+    for task in patok_core::task::parse(&file) {
+        if !task.done {
+            println!("{} {}", task.id, task.description);
+        }
+    }
+    Ok(())
+}
+
+/// Moves the pending task `id` one place up or down in the project's task
+/// file (T3.2), then prints the ids that result after renumbering, read back
+/// from the file. When an engine runs for the project, the move goes through
+/// its `MoveTask` command -- the engine knows the current (in-progress) task
+/// and refuses moves that touch it or a completed task. With no engine, the
+/// file itself is rewritten directly. If the engine dies mid-call the
+/// transport error propagates rather than falling back, so a move is never
+/// applied twice. The engine's rewrite is atomic and finishes before it
+/// answers, so the read-back sees the renumbered file.
+pub async fn move_task(
+    project: &Path,
+    id: &str,
+    direction: patok_engine::taskfile::MoveDirection,
+) -> anyhow::Result<()> {
+    use patok_engine::taskfile::MoveDirection;
+    let id = id.trim();
+    if id.is_empty() {
+        bail!("the task id is empty");
+    }
+    let (word, side) = match direction {
+        MoveDirection::Up => ("up", "above"),
+        MoveDirection::Down => ("down", "below"),
+    };
+    let path = project.join(patok_engine::TASK_FILE);
+    if let Some(mut client) = crate::daemon::try_connect(project).await {
+        let wire = match direction {
+            MoveDirection::Up => patok_proto::move_task::Direction::Up,
+            MoveDirection::Down => patok_proto::move_task::Direction::Down,
+        };
+        let response = client
+            .submit_command(CommandRequest {
+                action: Some(command_request::Action::MoveTask(MoveTask {
+                    id: id.to_string(),
+                    direction: wire as i32,
+                })),
+            })
+            .await
+            .context("the engine rejected the move request")?
+            .into_inner();
+        if !response.accepted {
+            bail!("{}", response.error);
+        }
+    } else {
+        // No engine is running: in-progress cannot exist, so there is no
+        // running task (`None`) to refuse.
+        match patok_engine::taskfile::rewrite_pending(&path, |file| {
+            patok_engine::taskfile::move_task(file, id, direction, None).map(|m| (m.text, ()))
+        })
+        .with_context(|| format!("cannot update {}", path.display()))?
+        {
+            Ok(()) => {}
+            Err(patok_engine::taskfile::TaskEditOutcome::Completed) => {
+                bail!("task {id} cannot be moved: it or the task it would pass is completed");
+            }
+            Err(patok_engine::taskfile::TaskEditOutcome::NotFound) => {
+                bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
+            }
+            // Unreachable with no running task; kept with the engine's wording.
+            Err(patok_engine::taskfile::TaskEditOutcome::Running) => {
+                bail!(
+                    "task {id} cannot be moved: the move would touch the in-progress task or its group"
+                );
+            }
+            Err(
+                patok_engine::taskfile::TaskEditOutcome::Invalid
+                | patok_engine::taskfile::TaskEditOutcome::Ok,
+            ) => bail!("task {id} has no task {side} it to swap with"),
+        }
+    }
+    println!("Moved task {id} {word}.");
+    print_unchecked(&path)
 }
 
 /// Lists every task in the project's task file, one per line with the id
@@ -367,6 +454,114 @@ mod tests {
     async fn edit_reports_a_missing_file_as_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let error = edit(dir.path(), "T1.1", "x").await.unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert!(!dir.path().join("TASKS.md").exists());
+    }
+
+    const TWO_GROUPS: &str =
+        "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n## P2\n- [ ] T2.1: c\n- [ ] T2.2: d\n";
+
+    #[tokio::test]
+    async fn move_task_swaps_with_its_neighbour() {
+        use patok_engine::taskfile::MoveDirection::{Down, Up};
+        let swapped = "# T\n- [ ] T1.1: b\n- [ ] T1.2: a\n";
+        for (id, direction) in [("T1.2", Up), ("T1.1", Down)] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("TASKS.md"),
+                "# T\n- [ ] T1.1: a\n- [ ] T1.2: b\n",
+            )
+            .unwrap();
+            move_task(dir.path(), id, direction).await.unwrap();
+            assert_eq!(read_tasks(dir.path()), swapped);
+        }
+    }
+
+    #[tokio::test]
+    async fn move_task_across_groups_renumbers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        move_task(
+            dir.path(),
+            "T2.1",
+            patok_engine::taskfile::MoveDirection::Up,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            read_tasks(dir.path()),
+            "## P1\n- [ ] T1.1: a\n- [ ] T1.2: c\n- [ ] T1.3: b\n## P2\n- [ ] T2.1: d\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_task_refuses_without_a_neighbour() {
+        use patok_engine::taskfile::MoveDirection::{Down, Up};
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [ ] T1.1: a\n- [ ] T1.2: b\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = move_task(dir.path(), "T1.1", Up).await.unwrap_err();
+        assert!(error.to_string().contains("no task above"), "{error:#}");
+        let error = move_task(dir.path(), "T1.2", Down).await.unwrap_err();
+        assert!(error.to_string().contains("below"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn move_task_refuses_passing_a_completed_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [x] T1.1: done\n- [ ] T1.2: a\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = move_task(
+            dir.path(),
+            "T1.2",
+            patok_engine::taskfile::MoveDirection::Up,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("completed"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn move_task_reports_an_unknown_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [ ] T1.1: a\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = move_task(
+            dir.path(),
+            "T9.9",
+            patok_engine::taskfile::MoveDirection::Up,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn move_task_rejects_an_empty_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [ ] T1.1: a\n- [ ] T1.2: b\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        assert!(
+            move_task(dir.path(), "  ", patok_engine::taskfile::MoveDirection::Up)
+                .await
+                .is_err()
+        );
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn move_task_reports_a_missing_file_as_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = move_task(
+            dir.path(),
+            "T1.1",
+            patok_engine::taskfile::MoveDirection::Up,
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("no task with id"), "{error:#}");
         assert!(!dir.path().join("TASKS.md").exists());
     }

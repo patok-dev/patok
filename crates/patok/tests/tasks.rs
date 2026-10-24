@@ -133,3 +133,71 @@ fn tasks_list_fails_when_the_store_cannot_be_read() {
     assert!(stderr.starts_with("patok: "), "stderr: {stderr}");
     assert!(stderr.contains("cannot read"), "stderr: {stderr}");
 }
+
+#[test]
+fn tasks_move_prints_the_renumbered_ids_and_exits_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("TASKS.md"),
+        "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n## P2\n- [ ] T2.1: c\n- [ ] T2.2: d\n",
+    )
+    .unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "move", "T2.1", "up"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Moved task T2.1 up.\nT1.1 a\nT1.2 c\nT1.3 b\nT2.1 d\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
+        "## P1\n- [ ] T1.1: a\n- [ ] T1.2: c\n- [ ] T1.3: b\n## P2\n- [ ] T2.1: d\n"
+    );
+}
+
+#[test]
+fn tasks_move_excludes_completed_tasks_from_the_output() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("TASKS.md"),
+        "- [x] T1.1: done\n- [ ] T1.2: a\n- [ ] T1.3: b\n",
+    )
+    .unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "move", "T1.3", "up"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Moved task T1.3 up.\nT1.2 b\nT1.3 a\n"
+    );
+}
+
+#[test]
+fn tasks_move_fails_without_a_neighbour() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "- [ ] T1.1: a\n- [ ] T1.2: b\n";
+    std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "move", "T1.2", "down"]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("patok: "), "stderr: {stderr}");
+    assert!(
+        stderr.contains("has no task below it to swap with"),
+        "stderr: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
+        text
+    );
+}
+
+#[test]
+fn tasks_move_rejects_an_invalid_direction() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "- [ ] T1.1: a\n- [ ] T1.2: b\n";
+    std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "move", "T1.1", "sideways"]);
+    assert!(!out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
+        text
+    );
+}

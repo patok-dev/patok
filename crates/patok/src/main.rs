@@ -91,8 +91,32 @@ enum TasksAction {
         /// The new task text. One line.
         text: String,
     },
+    /// Move a pending task one place up or down in the shared task store, renumbering pending ids.
+    Move {
+        /// The id of the task to move, e.g. T3.1.
+        id: String,
+        /// The direction to move it.
+        #[arg(value_enum)]
+        direction: MoveDirectionArg,
+    },
     /// List every task in the shared task store, one per line, id first.
     List,
+}
+
+/// The direction values of `patok tasks move`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MoveDirectionArg {
+    Up,
+    Down,
+}
+
+impl From<MoveDirectionArg> for patok_engine::taskfile::MoveDirection {
+    fn from(arg: MoveDirectionArg) -> Self {
+        match arg {
+            MoveDirectionArg::Up => Self::Up,
+            MoveDirectionArg::Down => Self::Down,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -156,6 +180,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             TasksAction::Add { text } => tasks::add(&project, &text),
             TasksAction::Remove { id } => tasks::remove(&project, &id).await,
             TasksAction::Edit { id, text } => tasks::edit(&project, &id, &text).await,
+            TasksAction::Move { id, direction } => {
+                tasks::move_task(&project, &id, direction.into()).await
+            }
             TasksAction::List => tasks::list(&project),
         },
         Command::Ps { .. } => unreachable!("handled above"),
