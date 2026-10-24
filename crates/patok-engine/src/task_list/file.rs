@@ -503,13 +503,36 @@ pub fn cleanup_text(text: &str) -> Option<String> {
         deleted[i] = matches!(info[i], Some((group, true))
             if groups[&group] && Some(group) != last_group && !kept_recent.contains(&i));
     }
-    // Heading removal (T79.1): a section header whose section ends up with
-    // no remaining task lines goes too. A heading is literally a line
-    // starting with `## ` (no leading-whitespace trim, unlike task lines);
-    // its section spans to the next heading line or end of file, always in
-    // the original file, so one removal never extends another section.
-    // Task-line detection is independent of ID well-formedness: a malformed
-    // task line is never pruned, so it keeps its heading.
+    prune_empty_headings(&lines, &mut deleted, |_| true);
+    let mut cleaned = String::with_capacity(text.len());
+    let mut removed = false;
+    for (i, line) in lines.iter().enumerate() {
+        if deleted[i] {
+            removed = true;
+        } else {
+            cleaned.push_str(line);
+        }
+    }
+    removed.then_some(cleaned)
+}
+
+/// Heading removal (T79.1): a section header whose section ends up with
+/// no remaining task lines goes too. A heading is literally a line
+/// starting with `## ` (no leading-whitespace trim, unlike task lines);
+/// its section spans to the next heading line or end of file, always in
+/// the original file, so one removal never extends another section.
+/// Task-line detection is independent of ID well-formedness: a malformed
+/// task line is never pruned, so it keeps its heading. `prune` decides which
+/// empty sections may go: the startup cleanup prunes every empty section, a
+/// removal only the sections it emptied. Afterwards a deletion run that
+/// removed a heading must not leave a doubled blank line where the section
+/// was: when the line right before such a run is blank, every blank line
+/// right after the run goes too.
+fn prune_empty_headings(
+    lines: &[&str],
+    deleted: &mut [bool],
+    prune: impl Fn(std::ops::Range<usize>) -> bool,
+) {
     let is_heading = |i: usize| lines[i].starts_with("## ");
     let is_task_line = |i: usize| {
         let trimmed = lines[i].trim_start();
@@ -519,13 +542,10 @@ pub fn cleanup_text(text: &str) -> Option<String> {
     for (pos, &h) in headings.iter().enumerate() {
         let end = headings.get(pos + 1).copied().unwrap_or(lines.len());
         let has_remaining_task = (h + 1..end).any(|i| is_task_line(i) && !deleted[i]);
-        if !has_remaining_task {
+        if !has_remaining_task && prune(h + 1..end) {
             deleted[h] = true;
         }
     }
-    // Blank collapse: a deletion run that removed a heading must not leave
-    // a doubled blank line where the section was. When the line right before
-    // such a run is blank, every blank line right after the run goes too.
     let mut i = 0;
     while i < lines.len() {
         if !deleted[i] {
@@ -544,16 +564,6 @@ pub fn cleanup_text(text: &str) -> Option<String> {
             }
         }
     }
-    let mut cleaned = String::with_capacity(text.len());
-    let mut removed = false;
-    for (i, line) in lines.iter().enumerate() {
-        if deleted[i] {
-            removed = true;
-        } else {
-            cleaned.push_str(line);
-        }
-    }
-    removed.then_some(cleaned)
 }
 
 /// Reads the task file at `path`, runs the startup cleanup and atomically
@@ -585,19 +595,21 @@ pub enum RemoveOutcome {
 }
 
 /// Removes every unchecked task line whose well-formed ID equals `id`
-/// (T98.1), atomically rewriting the file. A matching checked line refuses
-/// the removal ([`RemoveOutcome::Completed`]); no matching line at all is
-/// [`RemoveOutcome::NotFound`] -- both without writing anything, and a
-/// missing file reads as `NotFound` and is not created. Malformed lines
-/// (no well-formed ID) never match, and every other line survives
-/// byte-identical, CRLF and unterminated last lines included, the same
-/// convention as `write_progress`; headings and blank lines are left alone
-/// (dangling-heading cleanup belongs to the startup cleanup).
-pub fn remove_task(path: &Path, id: &str) -> io::Result<RemoveOutcome> {
-    let text = match std::fs::read_to_string(path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(RemoveOutcome::NotFound),
-        other => other?,
-    };
+/// (T98.1), including duplicates. A matching checked line refuses the
+/// removal ([`RemoveOutcome::Completed`]); no matching line at all is
+/// [`RemoveOutcome::NotFound`]. Malformed lines (no well-formed ID) never
+/// match.
+///
+/// A `## ` heading whose section held a removed line and now has no task
+/// line is removed too, with the same blank-line collapse as the startup
+/// cleanup; prose under a pruned heading stays. The remaining pending ids
+/// are re-sequenced with [`renumber_pending`], so ids after the last done or
+/// running task stay contiguous. `running` is passed through so the running
+/// task's id and group number never change. Refusing removal of the running
+/// task itself is the caller's job (`TaskList::remove` does it inside the
+/// file lock). Every line that is neither deleted nor renumbered survives
+/// byte-identical, CRLF and unterminated last lines included.
+pub fn remove_text(text: &str, id: &str, running: Option<&str>) -> Result<String, RemoveOutcome> {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     // Per-line deletion mask. A line matches when, after leading whitespace
     // and the checkbox, its ID is well-formed and equals `id`; a checked
@@ -617,19 +629,39 @@ pub fn remove_task(path: &Path, id: &str) -> io::Result<RemoveOutcome> {
         }
     }
     if completed {
-        return Ok(RemoveOutcome::Completed);
+        return Err(RemoveOutcome::Completed);
     }
     if !matched.iter().any(|&m| m) {
-        return Ok(RemoveOutcome::NotFound);
+        return Err(RemoveOutcome::NotFound);
     }
+    let mut deleted = matched.clone();
+    // Only a section that held a removed line may be pruned; an already
+    // empty heading elsewhere is left for the startup cleanup.
+    prune_empty_headings(&lines, &mut deleted, |r| r.into_iter().any(|i| matched[i]));
     let mut updated = String::with_capacity(text.len());
     for (i, line) in lines.iter().enumerate() {
-        if !matched[i] {
+        if !deleted[i] {
             updated.push_str(line);
         }
     }
-    write_atomic(path, &updated)?;
-    Ok(RemoveOutcome::Removed)
+    Ok(renumber_pending(&updated, running))
+}
+
+/// Applies [`remove_text`] to the file at `path`, atomically rewriting it on
+/// success. Nothing is written for a refusal or a miss, and a missing file
+/// reads as `NotFound` and is not created.
+pub fn remove_task(path: &Path, id: &str, running: Option<&str>) -> io::Result<RemoveOutcome> {
+    let text = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(RemoveOutcome::NotFound),
+        other => other?,
+    };
+    match remove_text(&text, id, running) {
+        Err(outcome) => Ok(outcome),
+        Ok(updated) => {
+            write_atomic(path, &updated)?;
+            Ok(RemoveOutcome::Removed)
+        }
+    }
 }
 
 /// The result of a pending-task edit (T1.1): the shared outcome of edit, remove, move, indent
@@ -1688,7 +1720,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_task_removes_a_pending_line_and_keeps_every_other_byte() {
+    fn remove_task_removes_a_pending_line_renumbers_and_keeps_every_other_byte() {
         // Mixed CRLF and LF, trailing spaces, an indented H line, a heading
         // and no trailing newline on the final line.
         let text = "# T\r\n- [ ] T1.1: gone\n  - [ ] H1.2: stays\nprose  \r\n\
@@ -1696,10 +1728,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("TASKS.md");
         std::fs::write(&path, text).unwrap();
-        assert_eq!(remove_task(&path, "T1.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(
+            remove_task(&path, "T1.1", None).unwrap(),
+            RemoveOutcome::Removed
+        );
+        // Only the id digits of renumbered lines change.
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "# T\r\n  - [ ] H1.2: stays\nprose  \r\n- [ ] T1.3: [--.B-] last"
+            "# T\r\n  - [ ] H1.1: stays\nprose  \r\n- [ ] T1.2: [--.B-] last"
         );
         // No temporary file is left behind.
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
@@ -1712,7 +1748,7 @@ mod tests {
         let text = "# T\n- [x] T1.1: done\n- [ ] T1.2: b\n";
         std::fs::write(&path, text).unwrap();
         assert_eq!(
-            remove_task(&path, "T1.1").unwrap(),
+            remove_task(&path, "T1.1", None).unwrap(),
             RemoveOutcome::Completed
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
@@ -1721,7 +1757,7 @@ mod tests {
         let dup = "# T\n- [ ] T1.1: pending\n- [x] T1.1: done\n";
         std::fs::write(&path, dup).unwrap();
         assert_eq!(
-            remove_task(&path, "T1.1").unwrap(),
+            remove_task(&path, "T1.1", None).unwrap(),
             RemoveOutcome::Completed
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), dup);
@@ -1733,12 +1769,15 @@ mod tests {
         let path = dir.path().join("TASKS.md");
         let text = "# T\n- [ ] T1.1: a\n";
         std::fs::write(&path, text).unwrap();
-        assert_eq!(remove_task(&path, "T9.9").unwrap(), RemoveOutcome::NotFound);
+        assert_eq!(
+            remove_task(&path, "T9.9", None).unwrap(),
+            RemoveOutcome::NotFound
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         // A missing file reads as NotFound and is not created.
         let missing = dir.path().join("none.md");
         assert_eq!(
-            remove_task(&missing, "T1.1").unwrap(),
+            remove_task(&missing, "T1.1", None).unwrap(),
             RemoveOutcome::NotFound
         );
         assert!(!missing.exists());
@@ -1750,10 +1789,13 @@ mod tests {
         let path = dir.path().join("TASKS.md");
         let text = "# T\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.1: dup\n";
         std::fs::write(&path, text).unwrap();
-        assert_eq!(remove_task(&path, "T1.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(
+            remove_task(&path, "T1.1", None).unwrap(),
+            RemoveOutcome::Removed
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "# T\n- [ ] T1.2: b\n"
+            "# T\n- [ ] T1.1: b\n"
         );
     }
 
@@ -1765,15 +1807,130 @@ mod tests {
         // (`- [ ] no id`) is never touched.
         let text = "# T\n  - [ ] H2.1: human\n- [ ] no id\n- [ ] T2.1: t\n";
         std::fs::write(&path, text).unwrap();
-        assert_eq!(remove_task(&path, "H2.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(
+            remove_task(&path, "H2.1", None).unwrap(),
+            RemoveOutcome::Removed
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "# T\n- [ ] no id\n- [ ] T2.1: t\n"
         );
         // A progress token in the line does not block the id match.
         std::fs::write(&path, "- [ ] T3.1: [RP.BA] mid\n").unwrap();
-        assert_eq!(remove_task(&path, "T3.1").unwrap(), RemoveOutcome::Removed);
+        assert_eq!(
+            remove_task(&path, "T3.1", None).unwrap(),
+            RemoveOutcome::Removed
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+    }
+
+    #[test]
+    fn remove_text_prunes_a_heading_left_without_tasks() {
+        let text = "# T\n\n## Phase 1\n- [x] T1.1: a\n\n## Phase 2\n- [ ] T2.1: b\n\n## Phase 3\n- [ ] T3.1: c\n";
+        assert_eq!(
+            remove_text(text, "T2.1", None).unwrap(),
+            "# T\n\n## Phase 1\n- [x] T1.1: a\n\n## Phase 3\n- [ ] T2.1: c\n"
+        );
+    }
+
+    #[test]
+    fn remove_text_keeps_a_heading_whose_section_keeps_a_task() {
+        // A pending sibling keeps the heading.
+        let text = "## A\n- [ ] T1.1: x\n- [ ] T1.2: y\n";
+        assert_eq!(
+            remove_text(text, "T1.1", None).unwrap(),
+            "## A\n- [ ] T1.1: y\n"
+        );
+        // A malformed task line keeps the heading too.
+        let text = "## A\n- [ ] T1.1: x\n- [ ] no id\n";
+        assert_eq!(
+            remove_text(text, "T1.1", None).unwrap(),
+            "## A\n- [ ] no id\n"
+        );
+        // Prose under a pruned heading stays.
+        let text = "## A\nprose\n- [ ] T1.1: x\n## B\n- [ ] T2.1: y\n";
+        assert_eq!(
+            remove_text(text, "T1.1", None).unwrap(),
+            "prose\n## B\n- [ ] T2.1: y\n"
+        );
+    }
+
+    #[test]
+    fn remove_text_leaves_other_empty_headings_alone() {
+        let text = "## A\n\n## B\n- [ ] T1.1: x\n- [ ] T1.2: y\n";
+        assert_eq!(
+            remove_text(text, "T1.2", None).unwrap(),
+            "## A\n\n## B\n- [ ] T1.1: x\n"
+        );
+    }
+
+    #[test]
+    fn remove_text_closes_the_minor_gap_in_the_group() {
+        let text = "- [x] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n- [ ] T2.1: d\n";
+        assert_eq!(
+            remove_text(text, "T1.2", None).unwrap(),
+            "- [x] T1.1: a\n- [ ] T1.2: c\n- [ ] T2.1: d\n"
+        );
+    }
+
+    #[test]
+    fn remove_text_shifts_later_groups_when_a_group_disappears() {
+        let text = "- [x] T1.1: a\n- [ ] T2.1: b\n- [ ] T3.1: c\n- [ ] T3.2: [RP.BR!] d\n";
+        assert_eq!(
+            remove_text(text, "T2.1", None).unwrap(),
+            "- [x] T1.1: a\n- [ ] T2.1: c\n- [ ] T2.2: [RP.BR!] d\n"
+        );
+    }
+
+    #[test]
+    fn remove_text_never_renumbers_the_running_task() {
+        let text = "- [ ] T2.3: run\n- [ ] T2.4: x\n- [ ] T2.6: y\n";
+        assert_eq!(
+            remove_text(text, "T2.4", Some("T2.3")).unwrap(),
+            "- [ ] T2.3: run\n- [ ] T2.4: y\n"
+        );
+        // Without the running id, nothing is frozen and T2.3 would move.
+        assert_eq!(
+            remove_text(text, "T2.4", None).unwrap(),
+            "- [ ] T2.1: run\n- [ ] T2.2: y\n"
+        );
+    }
+
+    #[test]
+    fn remove_text_refusals_leave_text_untouched() {
+        let text = "- [x] T1.1: a\n- [ ] T1.2: b\n";
+        assert_eq!(
+            remove_text(text, "T1.1", None),
+            Err(RemoveOutcome::Completed)
+        );
+        assert_eq!(
+            remove_text(text, "T9.9", None),
+            Err(RemoveOutcome::NotFound)
+        );
+        assert_eq!(
+            remove_text(text, "nope", None),
+            Err(RemoveOutcome::NotFound)
+        );
+    }
+
+    #[test]
+    fn remove_task_prunes_and_renumbers_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        std::fs::write(
+            &path,
+            "## A\r\n- [x] T1.1: a\r\n## B\r\n- [ ] T2.1: b\r\n## C\r\n- [ ] T3.1: c\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            remove_task(&path, "T2.1", None).unwrap(),
+            RemoveOutcome::Removed
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "## A\r\n- [x] T1.1: a\r\n## C\r\n- [ ] T2.1: c\r\n"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]
