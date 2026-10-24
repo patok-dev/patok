@@ -110,6 +110,35 @@ pub enum Action {
     /// for a provider whose catalog is absent, not discovered or failed. The open
     /// picker updates from the resulting catalog events.
     DiscoverModels(String),
+    /// A structural change to the selected task line (T4.2): the driver sends
+    /// the matching engine command for the task `id`, and on accept the cursor
+    /// follows the task.
+    ChangeTask {
+        id: String,
+        change: TaskChange,
+    },
+}
+
+/// A structural change to one task line (T4.2), sent as the matching engine command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskChange {
+    Remove,
+    MoveUp,
+    MoveDown,
+    Indent,
+    Outdent,
+}
+
+impl TaskChange {
+    /// The past participle the refusal messages use.
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            TaskChange::Remove => "removed",
+            TaskChange::MoveUp | TaskChange::MoveDown => "moved",
+            TaskChange::Indent => "indented",
+            TaskChange::Outdent => "outdented",
+        }
+    }
 }
 
 /// The m menu's choices (the `m` key, which replaced the status bar's
