@@ -32,9 +32,6 @@ pub const DIALOG_WATERMARK: &str = "Describe a task to add";
 /// prefilled description is cleared.
 pub const EDIT_WATERMARK: &str = "Type the new description; the id and checkbox stay";
 
-/// The add dialog's hint while its confirm is inactive (T5.2).
-pub const ADD_CONFIRM_HINT: &str = "Type a task to enable Enter";
-
 /// The add dialog's hint beside the disabled agent checkbox while the engine
 /// is busy (T5.3).
 pub const AGENT_BUSY_HINT: &str = "  Agent add needs an idle engine";
@@ -109,14 +106,6 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
             Paragraph::new(Line::styled(
                 message.clone(),
                 Style::new().fg(theme.highlighted_text),
-            )),
-            dialog_status,
-        );
-    } else if !app.confirm_enabled() {
-        frame.render_widget(
-            Paragraph::new(Line::styled(
-                ADD_CONFIRM_HINT,
-                Style::new().fg(theme.muted_text),
             )),
             dialog_status,
         );

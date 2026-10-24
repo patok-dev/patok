@@ -5534,7 +5534,7 @@ mod modal_footer {
     }
 
     #[test]
-    fn dialog_inactive_confirm_is_dimmed_with_hint() {
+    fn dialog_inactive_confirm_is_dimmed_without_hint() {
         const HINT: &str = "Type a task to enable Enter";
         let text_of = |buf: &ratatui::buffer::Buffer| -> String {
             (0..buf.area.height)
@@ -5549,7 +5549,8 @@ mod modal_footer {
         let theme = Theme::DARK;
         let mut app = open_dialog();
         let screen = text_of(&buffer(&app));
-        assert!(screen.contains(HINT), "{screen}");
+        // The inactive confirm is signalled only by the dimmed button (T6.1).
+        assert!(!screen.contains(HINT), "{screen}");
         let buf = buffer_wide(&app);
         let rects = footer_button_rects(
             app.dialog.footer.get(),
@@ -5567,7 +5568,7 @@ mod modal_footer {
         let buf = buffer_wide(&app);
         assert_eq!(buf[(rects[0].x + 2, rects[0].y)].fg, theme.highlighted_text);
 
-        // A refused Enter shows the refusal in place of the hint.
+        // A refused Enter still shows the refusal in the status row.
         let mut app = open_dialog();
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
         let screen = text_of(&buffer(&app));
