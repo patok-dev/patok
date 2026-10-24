@@ -758,6 +758,156 @@ pub fn edit_task(
     Ok(updated)
 }
 
+/// Direction of a [`move_task`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveDirection {
+    Up,
+    Down,
+}
+
+/// The result of a successful [`move_task`]: the rewritten text and the moved task's new id.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MovedTask {
+    pub text: String,
+    pub id: String,
+}
+
+/// Moves the pending task `id` one place up or down (T1.4) by swapping it with its neighbour.
+/// The neighbour is the nearest numbered task line (see [`renumber_pending`]) above (`Up`) or
+/// below (`Down`); headings, prose and malformed task lines in between are skipped and stay where
+/// they are. The task is taken out and put back directly on the far side of the neighbour (just
+/// before it for `Up`, just after it for `Down`), so it ends up on the neighbour's side of any
+/// `## ` heading between them.
+///
+/// When the neighbour belongs to another group (a different major), the moved line takes over
+/// the neighbour's `major.minor` digits and so joins the neighbour's group; [`renumber_pending`]
+/// then makes all ids contiguous, shifting later groups down when the old group became empty. A
+/// `## ` heading left without task lines by the move is pruned like `remove_text` does.
+///
+/// Refusals, checked in this order: the target's own state from [`find_pending`]; no neighbour in
+/// that direction is [`TaskEditOutcome::Invalid`]; a checked neighbour is `Completed` and the
+/// running one is `Running`; a target before the frozen boundary (the last checked or running
+/// task, whose ids renumbering never touches) is `Completed` or `Running` after the boundary
+/// task; a move across groups while the running task's group is the moved line's or the
+/// neighbour's is `Running`. Swapping two pending tasks inside the running group, after the
+/// running task, is allowed.
+///
+/// Every line that is not moved, renumbered or pruned stays byte-identical, CRLF included, and
+/// an unterminated last line stays unterminated. The function never touches the file: the caller
+/// reads and writes it under the task-file lock.
+pub fn move_task(
+    text: &str,
+    id: &str,
+    direction: MoveDirection,
+    running: Option<&str>,
+) -> Result<MovedTask, TaskEditOutcome> {
+    let index = find_pending(text, id, running)?;
+    // Work on a text whose last line is terminated, so no line is glued to the next one.
+    let unterminated = !text.ends_with('\n');
+    let mut ending = "\n";
+    let mut work = text.to_string();
+    if unterminated {
+        let originals: Vec<&str> = text.split_inclusive('\n').collect();
+        if originals.len() >= 2 {
+            ending = line_line_ending(originals[originals.len() - 2]).1;
+        }
+        work.push_str(ending);
+    }
+    let lines: Vec<&str> = work.split_inclusive('\n').collect();
+    let parsed: Vec<Option<Numbered>> = lines
+        .iter()
+        .map(|line| parse_numbered(line, running))
+        .collect();
+    let moved = parsed[index].as_ref().ok_or(TaskEditOutcome::Invalid)?;
+    let neighbour_index = match direction {
+        MoveDirection::Up => (0..index).rev().find(|&i| parsed[i].is_some()),
+        MoveDirection::Down => (index + 1..lines.len()).find(|&i| parsed[i].is_some()),
+    };
+    let j = neighbour_index.ok_or(TaskEditOutcome::Invalid)?;
+    let neighbour = parsed[j].as_ref().ok_or(TaskEditOutcome::Invalid)?;
+    if neighbour.done {
+        return Err(TaskEditOutcome::Completed);
+    }
+    if neighbour.id_is_running {
+        return Err(TaskEditOutcome::Running);
+    }
+    let boundary = parsed
+        .iter()
+        .rposition(|n| n.as_ref().is_some_and(|n| n.done || n.id_is_running));
+    if let Some(b) = boundary
+        && index < b
+    {
+        let done = parsed[b].as_ref().is_some_and(|n| n.done);
+        return Err(if done {
+            TaskEditOutcome::Completed
+        } else {
+            TaskEditOutcome::Running
+        });
+    }
+    let crossing = moved.major != neighbour.major;
+    if crossing {
+        let running_major = parsed
+            .iter()
+            .flatten()
+            .find(|n| !n.done && n.id_is_running)
+            .map(|n| n.major);
+        if running_major.is_some_and(|m| m == moved.major || m == neighbour.major) {
+            return Err(TaskEditOutcome::Running);
+        }
+    }
+
+    let original = lines[index];
+    let piece = if crossing {
+        format!(
+            "{}{}.{}{}",
+            &original[..moved.start],
+            neighbour.major,
+            neighbour.minor,
+            &original[moved.end..]
+        )
+    } else {
+        original.to_string()
+    };
+    let mut deleted = vec![false; lines.len()];
+    deleted[index] = true;
+    prune_empty_headings(&lines, &mut deleted, |r| r.contains(&index));
+
+    let mut built = String::with_capacity(work.len() + 8);
+    let mut count = 0usize;
+    let mut moved_out = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if i == j && direction == MoveDirection::Up {
+            moved_out = count;
+            built.push_str(&piece);
+            count += 1;
+        }
+        if !deleted[i] {
+            built.push_str(line);
+            count += 1;
+        }
+        if i == j && direction == MoveDirection::Down {
+            moved_out = count;
+            built.push_str(&piece);
+            count += 1;
+        }
+    }
+    let mut out = renumber_pending(&built, running);
+    let new_id = out
+        .split_inclusive('\n')
+        .nth(moved_out)
+        .and_then(task::split_checkbox)
+        .and_then(|(_, rest)| split_id(rest))
+        .map(|(found, _, _)| found.to_string())
+        .ok_or(TaskEditOutcome::Invalid)?;
+    if unterminated && out.ends_with(ending) {
+        out.truncate(out.len() - ending.len());
+    }
+    Ok(MovedTask {
+        text: out,
+        id: new_id,
+    })
+}
+
 /// A well-formed numbered task line: where its id digits sit and what they say.
 struct Numbered {
     done: bool,
@@ -2144,5 +2294,235 @@ mod tests {
         assert_eq!(tasks[0].description, "new text");
         assert_eq!(tasks[0].id, "T1.2");
         assert!(!tasks[0].done);
+    }
+
+    fn moved(text: &str, id: &str, dir: MoveDirection, running: Option<&str>) -> (String, String) {
+        let m = move_task(text, id, dir, running).unwrap();
+        (m.text, m.id)
+    }
+
+    const TWO_GROUPS: &str =
+        "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n## P2\n- [ ] T2.1: c\n- [ ] T2.2: d\n";
+
+    #[test]
+    fn move_task_swaps_with_the_neighbour_inside_a_group() {
+        let text = "- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n";
+        assert_eq!(
+            moved(text, "T1.2", MoveDirection::Up, None),
+            (
+                "- [ ] T1.1: b\n- [ ] T1.2: a\n- [ ] T1.3: c\n".to_string(),
+                "T1.1".to_string()
+            )
+        );
+        assert_eq!(
+            moved(text, "T1.2", MoveDirection::Down, None),
+            (
+                "- [ ] T1.1: a\n- [ ] T1.2: c\n- [ ] T1.3: b\n".to_string(),
+                "T1.3".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_up_across_a_group_boundary_joins_the_previous_group() {
+        assert_eq!(
+            moved(TWO_GROUPS, "T2.1", MoveDirection::Up, None),
+            (
+                "## P1\n- [ ] T1.1: a\n- [ ] T1.2: c\n- [ ] T1.3: b\n## P2\n- [ ] T2.1: d\n"
+                    .to_string(),
+                "T1.2".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_down_across_a_group_boundary_joins_the_next_group() {
+        assert_eq!(
+            moved(TWO_GROUPS, "T1.2", MoveDirection::Down, None),
+            (
+                "## P1\n- [ ] T1.1: a\n## P2\n- [ ] T2.1: c\n- [ ] T2.2: b\n- [ ] T2.3: d\n"
+                    .to_string(),
+                "T2.2".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_emptying_a_group_prunes_its_heading_and_renumbers_later_groups() {
+        let text = "## P1\n- [ ] T1.1: a\n\n## P2\n- [ ] T2.1: b\n\n## P3\n- [ ] T3.1: c\n";
+        assert_eq!(
+            moved(text, "T2.1", MoveDirection::Up, None),
+            (
+                "## P1\n- [ ] T1.1: b\n- [ ] T1.2: a\n\n## P3\n- [ ] T2.1: c\n".to_string(),
+                "T1.1".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_skips_invisible_lines_and_keeps_prefixes_and_tokens() {
+        let text = "- [ ] T1.1: [RP.B-] a\n  prose\n- [ ] no id\n- [ ] H1.2: b\n";
+        assert_eq!(
+            moved(text, "H1.2", MoveDirection::Up, None),
+            (
+                "- [ ] H1.1: b\n- [ ] T1.2: [RP.B-] a\n  prose\n- [ ] no id\n".to_string(),
+                "H1.1".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_refuses_when_there_is_no_neighbour() {
+        let text = "- [ ] T1.1: a\n- [ ] T1.2: b\n";
+        assert_eq!(
+            move_task(text, "T1.1", MoveDirection::Up, None),
+            Err(TaskEditOutcome::Invalid)
+        );
+        assert_eq!(
+            move_task(text, "T1.2", MoveDirection::Down, None),
+            Err(TaskEditOutcome::Invalid)
+        );
+    }
+
+    #[test]
+    fn move_task_refuses_to_cross_done_and_running_tasks() {
+        assert_eq!(
+            move_task(
+                "- [x] T1.1: d\n- [ ] T1.2: a\n",
+                "T1.2",
+                MoveDirection::Up,
+                None
+            ),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            move_task(
+                "- [ ] T1.1: r\n- [ ] T1.2: a\n",
+                "T1.2",
+                MoveDirection::Up,
+                Some("T1.1")
+            ),
+            Err(TaskEditOutcome::Running)
+        );
+        let text = "- [ ] T1.1: a\n- [ ] T1.2: b\n- [x] T1.3: c\n";
+        assert_eq!(
+            move_task(text, "T1.2", MoveDirection::Up, None),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            move_task(text, "T1.2", MoveDirection::Down, None),
+            Err(TaskEditOutcome::Completed)
+        );
+    }
+
+    #[test]
+    fn move_task_refuses_to_change_the_running_tasks_group() {
+        let text = "- [ ] T1.1: r\n- [ ] T1.2: a\n- [ ] T2.1: b\n";
+        assert_eq!(
+            move_task(text, "T2.1", MoveDirection::Up, Some("T1.1")),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            move_task(text, "T1.2", MoveDirection::Down, Some("T1.1")),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            moved(
+                "- [ ] T2.1: r\n- [ ] T2.2: a\n- [ ] T2.3: b\n",
+                "T2.3",
+                MoveDirection::Up,
+                Some("T2.1")
+            ),
+            (
+                "- [ ] T2.1: r\n- [ ] T2.2: b\n- [ ] T2.3: a\n".to_string(),
+                "T2.2".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_reports_the_targets_own_refusals() {
+        let text = "- [x] T1.1: d\n- [ ] T1.2: r\n- [ ] T1.3: a\n- [ ] no id\n";
+        assert_eq!(
+            move_task(text, "T1.1", MoveDirection::Down, Some("T1.2")),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            move_task(text, "T1.2", MoveDirection::Down, Some("T1.2")),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            move_task(text, "T9.9", MoveDirection::Up, None),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert_eq!(
+            move_task(text, "no id", MoveDirection::Up, None),
+            Err(TaskEditOutcome::NotFound)
+        );
+    }
+
+    #[test]
+    fn move_task_preserves_crlf_and_an_unterminated_last_line() {
+        assert_eq!(
+            moved(
+                "- [ ] T1.1: a\r\n- [ ] T1.2: b",
+                "T1.2",
+                MoveDirection::Up,
+                None
+            ),
+            (
+                "- [ ] T1.1: b\r\n- [ ] T1.2: a".to_string(),
+                "T1.1".to_string()
+            )
+        );
+        assert_eq!(
+            moved(
+                "- [ ] T1.1: a\n- [ ] T1.2: b",
+                "T1.1",
+                MoveDirection::Down,
+                None
+            ),
+            (
+                "- [ ] T1.1: b\n- [ ] T1.2: a".to_string(),
+                "T1.2".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_keeps_done_ids_and_continues_their_group() {
+        assert_eq!(
+            moved(
+                "- [x] T1.1: d\n- [ ] T1.2: a\n- [ ] T2.1: b\n",
+                "T2.1",
+                MoveDirection::Up,
+                None
+            ),
+            (
+                "- [x] T1.1: d\n- [ ] T1.2: b\n- [ ] T1.3: a\n".to_string(),
+                "T1.2".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn move_task_round_trips_and_the_result_parses_back() {
+        let (up, up_id) = moved(TWO_GROUPS, "T2.1", MoveDirection::Up, None);
+        assert_eq!(up_id, "T1.2");
+        let tasks = task::parse(&up);
+        let got: Vec<(&str, &str)> = tasks
+            .iter()
+            .map(|t| (t.id.as_str(), t.description.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [("T1.1", "a"), ("T1.2", "c"), ("T1.3", "b"), ("T2.1", "d")]
+        );
+        let (back, back_id) = moved(&up, &up_id, MoveDirection::Down, None);
+        assert_eq!(back_id, "T1.3");
+        assert_eq!(
+            back,
+            "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n## P2\n- [ ] T2.1: d\n"
+        );
     }
 }
