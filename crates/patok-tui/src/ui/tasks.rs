@@ -20,7 +20,8 @@ use crate::view::FrameFocus;
 /// `a` opens the add-task dialog (T74.1), `e` edits the selected pending task
 /// (T4.3), `d` deletes the selected task (T4.2) -- except during a pending
 /// soft stop, where `d` detaches, so the hint is left out --, Enter starts the
-/// build loop or runs a discovery round while the engine is idle, the arrow
+/// build loop, bootstraps the queue (NeedsQueue) or runs a discovery round
+/// while the engine is idle, the arrow
 /// keys (and `j`/`k`) move the selection (T4.1), Shift+H/J/K/L move, indent or
 /// outdent the selected task (T4.2), Tab moves the keys to the other frame.
 pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
@@ -29,10 +30,10 @@ pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
         hints.push("d delete");
     }
     if app.is_idle() {
-        hints.push(if app.run.tasks.iter().any(|t| !t.done) {
-            "Enter start"
-        } else {
-            "Enter run discovery"
+        hints.push(match app.enter_label() {
+            "start" => "Enter start",
+            "create queue" => "Enter create queue",
+            _ => "Enter run discovery",
         });
     }
     hints.push("↑↓ select");

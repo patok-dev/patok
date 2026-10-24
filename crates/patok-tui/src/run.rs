@@ -29,9 +29,9 @@ use crate::driver::CommandCall;
 use crate::driver::Update;
 use crate::interactive::PtyEvent;
 use crate::overlay::Schema;
-use crate::project;
 use crate::settings::{ShellSettings, to_proto};
 use crate::ui;
+use crate::view::FrameFocus;
 
 const TICK: Duration = Duration::from_millis(100);
 /// Config files are polled every ~20 ticks, about 2 seconds, like the task file
@@ -370,17 +370,13 @@ where
 
 /// Runs one submit-family action's dispatch (T144.1): the one dispatch both
 /// the key arm and the mouse arm of [`event_loop`] route `SubmitTasks`,
-/// `ResearchQueue`, `SaveBrief`, `InjectTask` and `EditTask` through, so a click on the
-/// add-task dialog's primary footer button runs
-/// exactly its Enter key's flow. `submit` is the submit RPC, a generic
+/// `InjectTask` and `EditTask` through, so a click on the add-task dialog's
+/// primary footer button runs exactly its Enter key's flow. `ResearchQueue`
+/// left the family in T5.5 (it now comes from main-screen Enter, not the
+/// dialog; see [`research_queue`]) and `SaveBrief` was removed. `submit` is the submit RPC, a generic
 /// function instead of a concrete `EngineClient`, so tests pass fakes (the
 /// Ok paths are unit-testable here: `CommandResponse` is a plain message).
-async fn run_submit_family<Req, Fut>(
-    app: &mut App,
-    project_dir: &std::path::Path,
-    action: &Action,
-    submit: Req,
-) -> SubmitFlow
+async fn run_submit_family<Req, Fut>(app: &mut App, action: &Action, submit: Req) -> SubmitFlow
 where
     Req: FnOnce(CommandRequest) -> Fut,
     Fut: std::future::Future<Output = CommandCall>,
@@ -390,38 +386,6 @@ where
         // user's request into appended T tasks.
         Action::SubmitTasks(request) => {
             add_tasks(app, submit, request.clone(), AddTasksKind::AddTasksPlanner).await;
-        }
-        // The research queue-creation runs (T69.1): the Research agent
-        // investigates the project and appends the tasks.
-        Action::ResearchQueue(run) => {
-            let kind = match run {
-                QueueRun::Bootstrap => AddTasksKind::AddTasksBootstrap,
-                QueueRun::Scan => AddTasksKind::AddTasksScan,
-            };
-            add_tasks(app, submit, run.request().to_string(), kind).await;
-        }
-        // The brief is written by the shell itself (like its config files);
-        // the dialog stays open with the created message and the re-scanned
-        // facts re-detect the scenario as NeedsQueue.
-        Action::SaveBrief(text) => {
-            let path = project_dir.join(patok_core::scenario::SPEC_FILE);
-            let contents = project::brief_content(text);
-            let write = tokio::task::spawn_blocking(move || {
-                std::fs::write(&path, contents).map_err(|e| e.to_string())
-            })
-            .await;
-            match write {
-                Ok(Ok(())) => {
-                    app.project_status = probe_status(project_dir).await;
-                    app.on_brief_saved();
-                }
-                Ok(Err(error)) => {
-                    app.on_submit_failed(format!("could not write SPEC.md: {error}"));
-                }
-                Err(_) => {
-                    app.on_submit_failed("the SPEC.md write did not finish".into());
-                }
-            }
         }
         // The add dialog's plain add (T5.2, routed through the engine): the
         // engine normalizes the typed text into a
@@ -471,10 +435,10 @@ where
     SubmitFlow::Handled
 }
 
-/// Sends the add-tasks command with the run's `kind`: the planner for a user
-/// request, the research agent for the queue-creation runs (T69.1). The
-/// submit RPC is a generic function instead of a concrete `EngineClient`, so
-/// the dispatch tests pass fakes.
+/// Sends the add-tasks command with the run's `kind` (the planner for a user
+/// request; the queue-creation run is [`research_queue`]). The submit RPC is
+/// a generic function instead of a concrete `EngineClient`, so the dispatch
+/// tests pass fakes.
 async fn add_tasks<Req, Fut>(app: &mut App, submit: Req, request: String, kind: AddTasksKind)
 where
     Req: FnOnce(CommandRequest) -> Fut,
@@ -492,6 +456,38 @@ where
     {
         Ok(()) => app.on_tasks_submitted(),
         Err(error) => app.on_submit_failed(error),
+    }
+}
+
+/// Starts the research agent's queue-creation run (T69.1) from main-screen
+/// Enter in the NeedsQueue scenario (moved from the add dialog's empty
+/// submit, T5.5): the run streams into the output frame, which takes the
+/// focus; a rejection lands in the status bar like Enter's other actions.
+/// It does not go through `on_tasks_submitted`, which would clear the add
+/// dialog's saved draft.
+async fn research_queue<Req, Fut>(app: &mut App, submit: Req, run: QueueRun)
+where
+    Req: FnOnce(CommandRequest) -> Fut,
+    Fut: std::future::Future<Output = CommandCall>,
+{
+    let kind = match run {
+        QueueRun::Bootstrap => AddTasksKind::AddTasksBootstrap,
+    };
+    match crate::driver::submit(
+        submit,
+        command_request::Action::AddTasks(AddTasks {
+            request: run.request().to_string(),
+            kind: kind as i32,
+        }),
+        "add failed",
+    )
+    .await
+    {
+        Ok(()) => {
+            app.status = None;
+            app.focus = FrameFocus::Output;
+        }
+        Err(error) => app.status = Some(error),
     }
 }
 
@@ -563,6 +559,11 @@ async fn event_loop(
                     Action::None => {}
                     Action::StartBuild => start_build(client, app).await,
                     Action::RunDiscovery => run_discovery(client, app).await,
+                    // The NeedsQueue bootstrap (T5.5): main-screen Enter, no
+                    // longer a dialog submit.
+                    Action::ResearchQueue(run) => {
+                        research_queue(app, |command| client.submit_command(command), run).await
+                    }
                     // Esc while a soft stop is pending: the engine clears the
                     // stop, so the loop continues with the next task; the
                     // pending SOFT shutdown stream delivers the cancelled
@@ -573,11 +574,9 @@ async fn event_loop(
                     // path that runs that key, the primary footer button's
                     // click -- go through the one shared dispatch.
                     action @ (Action::SubmitTasks(_)
-                    | Action::ResearchQueue(_)
-                    | Action::SaveBrief(_)
                     | Action::InjectTask(_)
                     | Action::EditTask { .. }) => {
-                        run_submit_family(app, project_dir, &action, |command| {
+                        run_submit_family(app, &action, |command| {
                             client.submit_command(command)
                         })
                         .await;
@@ -663,13 +662,16 @@ async fn event_loop(
                     Action::None => {}
                     Action::StartBuild => start_build(client, app).await,
                     Action::RunDiscovery => run_discovery(client, app).await,
+                    // The NeedsQueue bootstrap (T5.5): main-screen Enter, no
+                    // longer a dialog submit.
+                    Action::ResearchQueue(run) => {
+                        research_queue(app, |command| client.submit_command(command), run).await
+                    }
                     Action::SaveTheme(theme) => save_theme(&mut shell_settings, app, theme),
                     action @ (Action::SubmitTasks(_)
-                    | Action::ResearchQueue(_)
-                    | Action::SaveBrief(_)
                     | Action::InjectTask(_)
                     | Action::EditTask { .. }) => {
-                        run_submit_family(app, project_dir, &action, |command| {
+                        run_submit_family(app, &action, |command| {
                             client.submit_command(command)
                         })
                         .await;
@@ -1012,7 +1014,6 @@ mod tests {
     use patok_config::{ConfigFiles, SettingValue, Theme as ThemeKey};
     use patok_core::event::{EngineEvent, Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
-    use patok_core::scenario::{SPEC_FILE, SpecState};
     use patok_core::task;
     use patok_core::update::UpdateChannel;
     use patok_proto::{
@@ -1023,12 +1024,11 @@ mod tests {
 
     use crate::overlay::StatusLevel;
     use crate::settings::ShellSettings;
-    use crate::view::FrameFocus;
 
     use super::{
-        Action, App, CommandCall, Outcome, QueueRun, Schema, SettingsSubmit, ShutdownCall,
-        ShutdownFlow, SubmitFlow, change_task, discover_models, interrupt_status,
-        run_shutdown_family, run_submit_family, save_settings,
+        Action, App, CommandCall, FrameFocus, Outcome, QueueRun, Schema, SettingsSubmit,
+        ShutdownCall, ShutdownFlow, SubmitFlow, change_task, discover_models, interrupt_status,
+        research_queue, run_shutdown_family, run_submit_family, save_settings,
     };
     use super::{ModifyOtherKeys, shutdown_request};
     use crate::app::TaskChange;
@@ -1426,7 +1426,6 @@ mod tests {
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut app,
-            std::path::Path::new("/home/user/demo"),
             &Action::SubmitTasks("add a login page".into()),
             recording_submit(&commands, true, ""),
         )
@@ -1446,34 +1445,43 @@ mod tests {
         assert_eq!(app.dialog.editor.text(), "");
     }
 
-    /// The research queue-creation runs (T69.1) send the AddTasks command
-    /// with their run's kind and their request text.
+    /// Main-screen Enter's NeedsQueue bootstrap (T5.5) sends the bootstrap
+    /// kind with its request text, hands the focus to the output frame and
+    /// leaves the add dialog's saved draft alone.
     #[tokio::test]
-    async fn research_queue_sends_each_run_s_kind_with_its_request_text() {
-        for (run, kind) in [
-            (QueueRun::Bootstrap, AddTasksKind::AddTasksBootstrap),
-            (QueueRun::Scan, AddTasksKind::AddTasksScan),
-        ] {
-            let mut app = app();
-            let commands = Arc::new(Mutex::new(Vec::new()));
-            let flow = run_submit_family(
-                &mut app,
-                std::path::Path::new("/home/user/demo"),
-                &Action::ResearchQueue(run),
-                recording_submit(&commands, true, ""),
-            )
-            .await;
-            assert!(matches!(flow, SubmitFlow::Handled), "{run:?}");
-            let commands = commands.lock().unwrap();
-            match &commands[0].action {
-                Some(command_request::Action::AddTasks(add)) => {
-                    assert_eq!(add.request, run.request(), "{run:?}");
-                    assert_eq!(add.kind, kind as i32, "{run:?}");
-                }
-                other => panic!("expected an AddTasks command, got {other:?}"),
+    async fn research_queue_sends_the_bootstrap_kind_and_focuses_the_output() {
+        let mut app = app();
+        app.open_dialog();
+        app.dialog.editor.set_text("a draft");
+        app.close_dialog();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        research_queue(
+            &mut app,
+            recording_submit(&commands, true, ""),
+            QueueRun::Bootstrap,
+        )
+        .await;
+        let commands = commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        match &commands[0].action {
+            Some(command_request::Action::AddTasks(add)) => {
+                assert_eq!(add.request, QueueRun::Bootstrap.request());
+                assert_eq!(add.kind, AddTasksKind::AddTasksBootstrap as i32);
             }
-            assert!(!app.dialog_open(), "{run:?}");
+            other => panic!("expected an AddTasks command, got {other:?}"),
         }
+        assert_eq!(app.focus, FrameFocus::Output);
+        assert_eq!(app.dialog.editor.text(), "a draft");
+        assert_eq!(app.status, None);
+    }
+
+    /// A failed bootstrap reports in the status bar, not in the dialog.
+    #[tokio::test]
+    async fn a_failed_research_queue_reports_in_the_status_bar() {
+        let mut app = app();
+        research_queue(&mut app, failing_submit("nope"), QueueRun::Bootstrap).await;
+        assert_eq!(app.status.as_deref(), Some("add failed: nope"));
+        assert_ne!(app.focus, FrameFocus::Output);
     }
 
     /// A rejected or failed add keeps the dialog open on the input with its
@@ -1486,7 +1494,6 @@ mod tests {
         app.dialog.editor.set_text("add a login page");
         run_submit_family(
             &mut app,
-            std::path::Path::new("/home/user/demo"),
             &Action::SubmitTasks("add a login page".into()),
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "planner busy"),
         )
@@ -1498,7 +1505,6 @@ mod tests {
         // The transport failed: the add's failure message lands instead.
         run_submit_family(
             &mut app,
-            std::path::Path::new("/home/user/demo"),
             &Action::SubmitTasks("add a login page".into()),
             failing_submit("nope"),
         )
@@ -1518,7 +1524,6 @@ mod tests {
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut accepted,
-            std::path::Path::new("/home/user/demo"),
             &Action::InjectTask("- [ ] T78.1: Polish the README".into()),
             recording_submit(&commands, true, ""),
         )
@@ -1540,7 +1545,6 @@ mod tests {
         rejected.open_dialog();
         run_submit_family(
             &mut rejected,
-            std::path::Path::new("/home/user/demo"),
             &Action::InjectTask("- [ ] T78.1: Polish the README".into()),
             recording_submit(&Arc::new(Mutex::new(Vec::new())), false, "empty text"),
         )
@@ -1554,7 +1558,6 @@ mod tests {
         // A failed append keeps the modal open with the transport's error.
         run_submit_family(
             &mut rejected,
-            std::path::Path::new("/home/user/demo"),
             &Action::InjectTask("- [ ] T78.1: Polish the README".into()),
             failing_submit("nope"),
         )
@@ -1583,7 +1586,6 @@ mod tests {
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut accepted,
-            std::path::Path::new("/home/user/demo"),
             &action,
             recording_submit(&commands, true, ""),
         )
@@ -1607,7 +1609,6 @@ mod tests {
         rejected.edit_selected_task();
         run_submit_family(
             &mut rejected,
-            std::path::Path::new("/home/user/demo"),
             &action,
             recording_submit(
                 &Arc::new(Mutex::new(Vec::new())),
@@ -1621,70 +1622,10 @@ mod tests {
             rejected.dialog.status.as_deref(),
             Some("could not edit task T1.2: task T1.2 is completed and cannot be edited")
         );
-        run_submit_family(
-            &mut rejected,
-            std::path::Path::new("/home/user/demo"),
-            &action,
-            failing_submit("nope"),
-        )
-        .await;
+        run_submit_family(&mut rejected, &action, failing_submit("nope")).await;
         assert_eq!(
             rejected.dialog.status.as_deref(),
             Some("could not edit task T1.2: edit failed: nope")
-        );
-    }
-
-    /// The empty project's brief submit writes SPEC.md with the brief content
-    /// (no engine round trip), reports the created message on the still-open
-    /// dialog, and the re-scan updates the project facts.
-    #[tokio::test]
-    async fn save_brief_writes_the_spec_file_and_reports_the_created_status() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let mut app = app();
-        app.open_dialog();
-        let flow = run_submit_family(
-            &mut app,
-            temp.path(),
-            &Action::SaveBrief("A web service for recipes.".into()),
-            unused_submit(),
-        )
-        .await;
-        assert!(matches!(flow, SubmitFlow::Handled));
-        let contents = std::fs::read_to_string(temp.path().join(SPEC_FILE)).unwrap();
-        assert_eq!(
-            contents,
-            crate::project::brief_content("A web service for recipes.")
-        );
-        assert!(app.dialog_open());
-        assert_eq!(
-            app.dialog.status.as_deref(),
-            Some("SPEC.md created -- review it, then press Enter to start.")
-        );
-        assert_eq!(app.project_status.spec, SpecState::Content);
-    }
-
-    /// A failed brief write keeps the dialog open with the write's error.
-    #[tokio::test]
-    async fn a_failed_brief_write_keeps_the_dialog_open_with_the_error() {
-        let temp = tempfile::TempDir::new().unwrap();
-        // A directory at the SPEC.md path makes the write fail.
-        std::fs::create_dir(temp.path().join(SPEC_FILE)).unwrap();
-        let mut app = app();
-        app.open_dialog();
-        run_submit_family(
-            &mut app,
-            temp.path(),
-            &Action::SaveBrief("A web service for recipes.".into()),
-            unused_submit(),
-        )
-        .await;
-        assert!(app.dialog_open());
-        assert!(
-            app.dialog
-                .status
-                .as_deref()
-                .unwrap_or_default()
-                .starts_with("could not write SPEC.md: ")
         );
     }
 
@@ -1701,13 +1642,7 @@ mod tests {
         ] {
             let mut app = app();
             app.open_dialog();
-            let flow = run_submit_family(
-                &mut app,
-                std::path::Path::new("/home/user/demo"),
-                &action,
-                unused_submit(),
-            )
-            .await;
+            let flow = run_submit_family(&mut app, &action, unused_submit()).await;
             assert!(matches!(flow, SubmitFlow::Keep), "{action:?}");
             assert!(app.dialog_open(), "{action:?}");
             assert_eq!(app.dialog.status, None, "{action:?}");

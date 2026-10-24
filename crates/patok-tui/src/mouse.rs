@@ -56,7 +56,8 @@ impl App {
     /// Mouse events on the merged view: a click inside one of the two frames
     /// focuses it; a click on the status bar's interactive chips runs the
     /// action its key triggers -- the m menu chip opens the m menu (T133.1),
-    /// the idle Enter chip starts the build loop or runs a discovery round,
+    /// the idle Enter chip starts the build loop, bootstraps the queue (NeedsQueue)
+    /// or runs a discovery round,
     /// and the running Esc stop chip opens the stop dialog (T134.1) -- and a
     /// wheel step scrolls the frame the pointer is over, one line per step,
     /// without moving the focus. Events outside both frames and open modals
@@ -92,8 +93,8 @@ impl App {
                     Action::None
                 } else if chip_clicked(&mouse, self.layout.enter_chip.get()) {
                     // The Enter chip is the Enter key's mouse alias
-                    // (T134.1): start the build loop or run a discovery
-                    // round, exactly the key's action -- `enter_key` carries
+                    // (T134.1): start the build loop, bootstrap the queue
+                    // (NeedsQueue) or run a discovery round, exactly the key's action -- `enter_key` carries
                     // the key's busy guard too.
                     self.enter_key()
                 } else if chip_clicked(&mouse, self.layout.stop_chip.get())

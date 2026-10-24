@@ -185,7 +185,8 @@ pub(crate) trait ModalLayer: Copy {
     fn area(self, app: &App, screen: Rect) -> Rect;
     /// The modal footer's buttons: the pairs the renderer draws and the
     /// mouse hit-test reads, agreeing by construction. The dialog's primary
-    /// label follows the scenario ([`App::primary_label`]), so it is the one
+    /// label is computed from the dialog kind ([`App::primary_label`], no longer
+    /// from the scenario since T5.5), so it is the one
     /// modal whose buttons are computed rather than a table entry.
     fn buttons(self, app: &App) -> Cow<'static, [(&'static str, &'static str)]>;
     /// One key aimed at the modal; every other key is swallowed.
@@ -709,11 +710,11 @@ fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
         KeyCode::Char('s') if ctrl => return app.submit_dialog(),
         KeyCode::Char('u') if ctrl => app.dialog.editor.clear(),
         // Enter, with or without Shift, Ctrl or Alt, submits through the same
-        // path as the Submit button; an empty input is refused inline (the add
-        // dialog draws its confirm inactive then, T5.2; Ctrl+S above still
-        // takes the scenario path until T5.5). A
-        // submit that launches a run closes the dialog; a command error keeps
-        // it open.
+        // path as the Submit button and Ctrl+S: all go through `submit_dialog`,
+        // and blank text is refused inline (for Ctrl+S inside `submit_dialog`;
+        // T5.5 removed the scenario path Ctrl+S used to take). The add dialog
+        // draws its confirm inactive then (T5.2). A command error keeps the
+        // dialog open.
         KeyCode::Enter => {
             if app.dialog.editor.text().trim().is_empty() {
                 app.dialog.status = Some(app.empty_input_message().into());

@@ -2206,7 +2206,7 @@ mod dialog {
     /// typed text as an `InjectTask` action -- a plain file append by the driver -- so no
     /// agent session begins: the returned action is the only non-`None`
     /// effect and is none of the session-starting variants (`SubmitTasks`,
-    /// `ResearchQueue`, `StartBuild`, `RunDiscovery`).
+    /// `StartBuild`, `RunDiscovery`).
     #[test]
     fn plain_add_appends_the_typed_line_with_no_agent_run() {
         // Ctrl+S submits through the same path as the Submit button.
@@ -2527,21 +2527,21 @@ mod dialog {
         let mut app = open();
         assert!(app.dialog.editor.text().is_empty());
         assert!(
-            draw(&app, 80, 24).contains("Press Enter to run Discovery agent"),
+            draw(&app, 80, 24).contains(patok_tui::DIALOG_WATERMARK),
             "the empty input shows the watermark"
         );
         // Typing replaces it; the typed text carries no watermark.
         type_text(&mut app, "hi");
         assert_eq!(app.dialog.editor.text(), "hi");
         assert!(
-            !draw(&app, 80, 24).contains("Press Enter to run Discovery agent"),
+            !draw(&app, 80, 24).contains(patok_tui::DIALOG_WATERMARK),
             "the watermark is gone once text is typed"
         );
         // Clearing the input brings it back.
         ctrl(&mut app, 'u');
         assert!(app.dialog.editor.text().is_empty());
         assert!(
-            draw(&app, 80, 24).contains("Press Enter to run Discovery agent"),
+            draw(&app, 80, 24).contains(patok_tui::DIALOG_WATERMARK),
             "the watermark returns on the cleared input"
         );
     }
@@ -3022,9 +3022,9 @@ mod dialog {
     /// line (T44.1).
     #[test]
     fn submit_button_hint_shows_enter_and_no_ctrl_s() {
-        // Empty input: the primary label is Start.
+        // Empty input: the primary label is Submit.
         let screen = draw(&open(), 80, 24);
-        assert!(screen.contains("[ Enter ] Start"), "{screen}");
+        assert!(screen.contains("[ Enter ] Submit"), "{screen}");
         assert!(screen.contains("[ Esc ] Close"), "{screen}");
         assert!(!screen.contains("Ctrl+S"), "{screen}");
 
@@ -3041,13 +3041,6 @@ mod dialog {
         let screen = draw(&app, 80, 24);
         assert!(screen.contains("Nothing to submit"), "{screen}");
         assert!(!screen.contains("Ctrl+S"), "{screen}");
-
-        // The brief-saved status line points at Enter too.
-        let mut app = open();
-        app.on_brief_saved();
-        let status = app.dialog.status.as_deref().unwrap_or_default();
-        assert!(status.contains("Enter"), "{status}");
-        assert!(!status.contains("Ctrl+S"), "{status}");
     }
 
     /// The dialog's buttons are the settings overlay's button widget (T44.1):
@@ -3371,12 +3364,19 @@ mod explore {
         assert!(strip.contains(" run discovery "), "{strip}");
         assert!(!strip.contains(" start "), "{strip}");
 
-        // An empty task list is complete too: Enter runs a discovery round.
+        // An empty task list with project code needs a queue (T5.5): Enter
+        // creates it; an empty project still runs a discovery round.
         let mut empty = app_with("");
         empty.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         let screen = draw(&empty, 80, 14);
         let strip = screen.lines().last().unwrap();
         assert!(strip.contains(" Enter "), "{strip}");
+        assert!(strip.contains(" create queue "), "{strip}");
+        assert!(!strip.contains(" run discovery "), "{strip}");
+        let mut blank = app_with("");
+        blank.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
+        let screen = draw(&blank, 80, 14);
+        let strip = screen.lines().last().unwrap();
         assert!(strip.contains(" run discovery "), "{strip}");
 
         // The leading Enter hint stays while the engine is idle, whatever frame is
@@ -3414,8 +3414,10 @@ mod explore {
         assert!(!draw(&app, 80, 14).contains("Work is ready to continue."));
     }
 
+    /// T5.5: the add dialog's primary label is "Submit" in every scenario,
+    /// blank or typed; the scenario-driven Start/Scan labels are gone.
     #[test]
-    fn the_primary_button_label_follows_the_scenario() {
+    fn the_add_dialog_primary_label_is_always_submit() {
         let with_label = |tasks: &str, text: &str| {
             let mut app = app_with(tasks);
             app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
@@ -3423,87 +3425,87 @@ mod explore {
             type_text(&mut app, text);
             app.primary_label()
         };
-        // A ready queue with an empty input offers to start.
-        assert_eq!(with_label(TASKS, ""), "Start");
-        // A complete queue with an empty input offers to scan.
-        assert_eq!(with_label("- [x] T1.1: done\n", ""), "Scan");
-        // Any text, and every other scenario, submit.
-        assert_eq!(with_label(TASKS, "add a login page"), "Submit");
-        assert_eq!(with_label("", ""), "Submit");
-        assert_eq!(with_label("- [x] T1.1: done\n", "more work"), "Submit");
+        for tasks in ["", TASKS, "- [x] T1.1: done\n"] {
+            assert_eq!(with_label(tasks, ""), "Submit", "{tasks:?}");
+            assert_eq!(with_label(tasks, "add a login page"), "Submit", "{tasks:?}");
+        }
     }
 
     #[test]
-    fn dialog_shows_the_start_button_when_the_queue_is_ready() {
+    fn dialog_shows_the_submit_button_and_no_start_when_the_queue_is_ready() {
         let mut app = app_with(TASKS);
         app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         open_dialog(&mut app);
         let screen = draw(&app, 80, 24);
-        assert!(screen.contains("Start"), "{screen}");
+        assert!(screen.contains("Submit"), "{screen}");
+        assert!(!screen.contains("Start"), "{screen}");
     }
 
+    /// T5.5: Ctrl+S on blank text is refused inline in every scenario; the
+    /// scenario-driven empty submit (brief, bootstrap, start, scan) is gone.
     #[test]
-    fn empty_project_saves_the_brief_and_keeps_the_dialog_open() {
-        let mut app = app_with("");
-        app.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
-        open_dialog(&mut app);
-        type_text(&mut app, "A web service for recipes.");
-        assert_eq!(
-            submit(&mut app),
-            Action::SaveBrief("A web service for recipes.".into())
-        );
-        assert!(app.dialog_open(), "the dialog stays open with its message");
-        // An empty input is refused: an empty project needs direction.
-        app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
-        assert_eq!(app.dialog.editor.text(), "");
-        assert_eq!(submit(&mut app), Action::None);
-        assert_eq!(
-            app.dialog.status.as_deref(),
-            Some("Describe what you want to build -- an empty project needs direction.")
-        );
+    fn ctrl_s_with_an_empty_input_is_refused_in_every_scenario() {
+        let cases = [
+            (
+                "",
+                status(false, TaskFileState::Missing, SpecState::Missing),
+            ),
+            ("", status(true, TaskFileState::Missing, SpecState::Content)),
+            (TASKS, status(true, TaskFileState::Ok, SpecState::Content)),
+            (
+                "- [x] T1.1: done\n",
+                status(true, TaskFileState::Ok, SpecState::Content),
+            ),
+        ];
+        for (tasks, project) in cases {
+            let mut app = app_with(tasks);
+            app.project_status = project;
+            open_dialog(&mut app);
+            assert_eq!(submit(&mut app), Action::None, "tasks: {tasks:?}");
+            assert!(app.dialog_open(), "tasks: {tasks:?}");
+            assert_eq!(
+                app.dialog.status.as_deref(),
+                Some("Nothing to submit -- type a request first."),
+                "tasks: {tasks:?}"
+            );
+        }
     }
 
+    /// T5.5: the NeedsQueue bootstrap is main-screen Enter, by key and by the
+    /// Enter chip, and the hint strip says "create queue".
     #[test]
-    fn needs_queue_with_an_empty_input_bootstraps_only_with_spec_content() {
+    fn enter_on_the_main_screen_bootstraps_a_needs_queue_project() {
         let mut app = app_with("");
         app.project_status = status(true, TaskFileState::Missing, SpecState::Content);
-        open_dialog(&mut app);
-        // The empty submit starts the research agent's bootstrap queue-creation
-        // run (T69.1): it investigates the project and creates the queue.
-        assert_eq!(submit(&mut app), Action::ResearchQueue(QueueRun::Bootstrap));
-        // Without non-heading spec content the bootstrap run is refused.
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Action::ResearchQueue(QueueRun::Bootstrap)
+        );
+        assert!(!app.dialog_open());
+
+        // The chip is the key's mouse alias.
+        let screen = draw(&app, 80, 14);
+        let strip = screen.lines().last().unwrap();
+        assert!(strip.contains(" create queue "), "{strip}");
+        assert!(!strip.contains(" run discovery "), "{strip}");
+        let chip = app.layout.enter_chip.get();
+        let clicked = app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: chip.x + 1,
+            row: chip.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(clicked, Action::ResearchQueue(QueueRun::Bootstrap));
+
+        // Without spec content the key refuses in the status bar.
         let mut app = app_with("");
         app.project_status = status(true, TaskFileState::Missing, SpecState::Empty);
-        open_dialog(&mut app);
-        assert_eq!(submit(&mut app), Action::None);
+        assert_eq!(app.on_key(key(KeyCode::Enter)), Action::None);
+        assert!(!app.dialog_open());
         assert_eq!(
-            app.dialog.status.as_deref(),
+            app.status.as_deref(),
             Some("SPEC.md is empty -- describe what you want to build first.")
         );
-    }
-
-    #[test]
-    fn queue_ready_with_an_empty_input_starts_the_build_loop() {
-        let mut app = app_with(TASKS);
-        app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
-        open_dialog(&mut app);
-        assert_eq!(submit(&mut app), Action::StartBuild);
-        assert!(!app.dialog_open(), "starting closes the modal");
-        assert_eq!(
-            app.focus,
-            FrameFocus::Output,
-            "starting focuses the output frame"
-        );
-    }
-
-    #[test]
-    fn queue_complete_with_an_empty_input_starts_a_scan_run() {
-        let mut app = app_with("- [x] T1.1: done\n");
-        app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
-        open_dialog(&mut app);
-        // The empty submit starts the research agent's gap-scan queue-creation
-        // run (T69.1).
-        assert_eq!(submit(&mut app), Action::ResearchQueue(QueueRun::Scan));
     }
 
     #[test]
@@ -3535,29 +3537,6 @@ mod explore {
                 "tasks: {tasks:?}"
             );
         }
-    }
-
-    #[test]
-    fn a_saved_brief_re_detects_as_needs_queue() {
-        let mut app = app_with("");
-        app.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
-        open_dialog(&mut app);
-        type_text(&mut app, "A web service for recipes.");
-        assert!(matches!(submit(&mut app), Action::SaveBrief(_)));
-        // The driver writes SPEC.md and re-probes before the dialog learns the outcome.
-        app.project_status = status(true, TaskFileState::Missing, SpecState::Content);
-        app.on_brief_saved();
-        assert_eq!(app.scenario(), Scenario::NeedsQueue);
-        assert!(app.dialog_open());
-        assert_eq!(app.dialog.editor.text(), "");
-        assert_eq!(
-            app.dialog.status.as_deref(),
-            Some("SPEC.md created -- review it, then press Enter to start.")
-        );
-        // The next empty submit takes the NeedsQueue bootstrap path; the label stays
-        // "Submit".
-        assert_eq!(app.primary_label(), "Submit");
-        assert_eq!(submit(&mut app), Action::ResearchQueue(QueueRun::Bootstrap));
     }
 
     /// Draws (recording the footer rect), then clicks inside the primary
@@ -3613,14 +3592,13 @@ mod explore {
         }
 
         // The add dialog with an empty input, queue ready (the label renders
-        // "Start"): the Enter key refuses an empty input before the scenario
-        // dispatch, so the click does too -- the queue-ready StartBuild run
-        // stays on the Ctrl+S path, and this parity is the controlling
-        // requirement ("exactly like pressing Enter").
+        // "Submit"): the Enter key refuses an empty input, so the click does
+        // too -- this parity is the controlling requirement ("exactly like
+        // pressing Enter").
         let mut clicked = app_with(TASKS);
         clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         open_dialog(&mut clicked);
-        assert_eq!(clicked.primary_label(), "Start");
+        assert_eq!(clicked.primary_label(), "Submit");
         assert_eq!(primary_click(&mut clicked), Action::None);
         let mut keyed = app_with(TASKS);
         keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
@@ -3662,15 +3640,15 @@ mod explore {
             assert_eq!(app.dialog.editor.text(), "");
         }
 
-        // EmptyProject with typed text: the brief submit, identical on both
-        // paths (the driver's brief write keeps the dialog open).
+        // EmptyProject with typed text: the plain add (the brief submit is
+        // gone, T5.5), identical on both paths.
         let mut clicked = app_with("");
         clicked.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
         open_dialog(&mut clicked);
         type_text(&mut clicked, "A web service for recipes.");
         assert_eq!(
             primary_click(&mut clicked),
-            Action::SaveBrief("A web service for recipes.".into())
+            Action::InjectTask("A web service for recipes.".into())
         );
         let mut keyed = app_with("");
         keyed.project_status = status(false, TaskFileState::Missing, SpecState::Missing);
@@ -3678,14 +3656,11 @@ mod explore {
         type_text(&mut keyed, "A web service for recipes.");
         assert_eq!(
             keyed.on_key(key(KeyCode::Enter)),
-            Action::SaveBrief("A web service for recipes.".into())
+            Action::InjectTask("A web service for recipes.".into())
         );
-        assert!(clicked.dialog_open());
-        assert!(keyed.dialog_open());
 
-        // NeedsQueue with an empty input: the [Enter] click cannot bootstrap
-        // -- the plain Enter refuses an empty input first; the driver-side
-        // ResearchQueue mapping is pinned by the run.rs dispatch tests.
+        // NeedsQueue with an empty input: the dialog's click refuses like its
+        // Enter; the bootstrap is main-screen Enter now (T5.5).
         let mut clicked = app_with("");
         clicked.project_status = status(true, TaskFileState::Missing, SpecState::Content);
         open_dialog(&mut clicked);
@@ -3702,12 +3677,12 @@ mod explore {
             );
         }
 
-        // QueueComplete with an empty input (the label renders "Scan"): the
+        // QueueComplete with an empty input (the label renders "Submit"): the
         // same inline refusal, click and key alike.
         let mut clicked = app_with("- [x] T1.1: done\n");
         clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         open_dialog(&mut clicked);
-        assert_eq!(clicked.primary_label(), "Scan");
+        assert_eq!(clicked.primary_label(), "Submit");
         assert_eq!(primary_click(&mut clicked), Action::None);
         let mut keyed = app_with("- [x] T1.1: done\n");
         keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
@@ -5628,7 +5603,7 @@ mod modal_footer {
         buffer(&app);
         let rects = footer_button_rects(
             app.dialog.footer.get(),
-            &[("Enter", "Start"), ("Esc", "Close")],
+            &[("Enter", "Submit"), ("Esc", "Close")],
         );
         assert_eq!(
             app.on_mouse(click(rects[0].x + 5, rects[0].y)),
