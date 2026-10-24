@@ -53,6 +53,11 @@ enum Command {
         action: Option<DaemonAction>,
     },
     /// Manage tasks in the shared task store.
+    ///
+    /// Only pending tasks can be removed, edited, moved, indented or outdented; completed
+    /// tasks and the in-progress task are never changed. Move, indent and outdent renumber
+    /// the pending ids and print the resulting pending tasks. When an engine runs for the
+    /// project, changes go through it; otherwise the task file is edited directly.
     Tasks {
         #[command(subcommand)]
         action: TasksAction,
@@ -91,7 +96,8 @@ enum TasksAction {
         /// The new task text. One line.
         text: String,
     },
-    /// Move a pending task one place up or down in the shared task store, renumbering pending ids.
+    /// Move a pending task one place up or down in the shared task store, renumbering pending
+    /// ids.
     Move {
         /// The id of the task to move, e.g. T3.1.
         id: String,
@@ -99,12 +105,14 @@ enum TasksAction {
         #[arg(value_enum)]
         direction: MoveDirectionArg,
     },
-    /// Indent a pending task: move it to the end of the previous group in the shared task store, renumbering pending ids.
+    /// Indent a pending task: move it to the end of the previous group in the shared task
+    /// store, renumbering pending ids.
     Indent {
         /// The id of the task to indent, e.g. T3.1.
         id: String,
     },
-    /// Outdent a pending task: split it and the tasks after it in its group off into a new group, renumbering pending ids.
+    /// Outdent a pending task: split it and the tasks after it in its group off into a new
+    /// group, renumbering pending ids.
     Outdent {
         /// The id of the task to outdent, e.g. T3.1.
         id: String,

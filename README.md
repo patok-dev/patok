@@ -118,6 +118,44 @@ The script downloads the latest release archive, verifies its SHA-256 against
 the release `checksums`, and installs the `patok` binary to `~/.local/bin`.
 Make sure that directory is on your `PATH`.
 
+## Manage tasks
+
+`patok tasks` changes the project's `TASKS.md` from the command line. `-d/--dir`
+picks the project (default: the current directory).
+
+```sh
+patok tasks add "Write the release notes"
+patok tasks remove T3.1
+patok tasks edit T3.1 "New description"
+patok tasks move T3.1 up      # or down
+patok tasks indent T3.1
+patok tasks outdent T3.1
+patok tasks list
+```
+
+`add` appends a task at the end with a generated id (`T<N>.1`) and prints it.
+`list` prints every task, id first.
+
+`remove` and `edit` work on pending tasks only; `edit` keeps the id.
+
+`move`, `indent` and `outdent` reorganise pending tasks. `move` swaps the task
+with its pending neighbour and joins that neighbour's group when it crosses a
+group boundary. `indent` moves the task to the end of the previous group.
+`outdent` splits the task, and the tasks after it in its group, off into a new
+group. All three renumber the pending ids and print the resulting pending tasks:
+
+```
+Moved task T3.1 up.
+T1.1 one
+T2.1 three
+T2.2 two
+```
+
+Completed tasks and the in-progress task are never changed; a command that
+would touch them fails with an error. When an engine runs for the project,
+changes go through it, so they are applied under its lock and are refused while
+a planner run is active. Otherwise the file is edited directly.
+
 ## List running daemons
 
 `patok ps` lists every patok engine daemon running on this machine for the

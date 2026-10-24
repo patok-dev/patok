@@ -11,12 +11,13 @@
 //! engine's memory, and the change then runs under the engine's task-file
 //! lock with an immediate reconcile. With no engine running they fall back to
 //! a direct rewrite of the file -- in-progress cannot exist then, so the file
-//! is the whole truth. The move, indent and outdent then print the renumbered ids read back from
-//! the file. Known races, deliberately left alone: with no
-//! cross-process lock, an add concurrent with a TUI inject through a running
-//! engine can pick the same number; and an engine can start between the
-//! failed connect and the fallback write, whose mtime poll then reconciles
-//! the already-removed (or edited) line. The list reads the file directly too, so it works while an
+//! is the whole truth. Either way, the move, indent and outdent then print
+//! the renumbered pending ids read back from the file. Known races,
+//! deliberately left alone: with no cross-process lock, an add concurrent
+//! with a TUI inject through a running engine can pick the same number; and
+//! an engine can start between the failed connect and the fallback write,
+//! whose mtime poll then reconciles the already-rewritten lines. The list
+//! reads the file directly too, so it works while an
 //! engine runs: the file is the complete record -- pending, in-progress
 //! and completed tasks all have a line -- and the engine's rewrites are
 //! atomic, so a read concurrent with a rewrite sees either the old or

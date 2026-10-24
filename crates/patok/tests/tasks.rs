@@ -63,6 +63,21 @@ fn run_tasks(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn tasks_help_lists_every_subcommand() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "--help"]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for name in ["add", "remove", "edit", "move", "indent", "outdent", "list"] {
+        assert!(
+            stdout.lines().any(|l| l.trim_start().starts_with(name)),
+            "missing {name} in: {stdout}"
+        );
+    }
+    assert!(stdout.contains("pending"), "stdout: {stdout}");
+}
+
+#[test]
 fn tasks_list_prints_added_tasks_one_per_line_id_first() {
     let dir = tempfile::tempdir().unwrap();
     for text in ["first task", "second task", "third task"] {
