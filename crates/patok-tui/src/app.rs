@@ -531,7 +531,8 @@ pub struct InteractivePickerState {
 
 /// The add-task / inject-task dialog's state (T74.1, T76.1): the shared
 /// multi-line editor, which modal the open dialog is, the dialog's status
-/// line and the rects its mouse hit-testing reads. Grouped (finding 19) like
+/// line, the add dialog's session-lived "Use agent to add" checkbox and the
+/// rects its mouse hit-testing reads. Grouped (finding 19) like
 /// the other modals' state; whether it is open lives on the modal stack.
 #[derive(Default)]
 pub struct DialogState {
@@ -557,6 +558,14 @@ pub struct DialogState {
     /// The dialog's close button rect at the last render (T66.1); a click on
     /// it runs the dialog's Esc key.
     pub close: Cell<Rect>,
+    /// The add dialog's "Use agent to add" checkbox (T5.1): unchecked by
+    /// default and kept in memory for the TUI session only -- never reset on
+    /// open, close or submit, and never persisted.
+    pub use_agent: bool,
+    /// The checkbox row's rect at the last render (T5.1); a left click on it
+    /// toggles `use_agent`. The zero rect while the open dialog is not the
+    /// add kind.
+    pub agent_toggle: Cell<Rect>,
 }
 
 pub struct App {
@@ -674,6 +683,8 @@ impl App {
                 status: None,
                 footer: Cell::new(Rect::default()),
                 close: Cell::new(Rect::default()),
+                use_agent: false,
+                agent_toggle: Cell::new(Rect::default()),
             },
             overlay: SettingsOverlay::default(),
             theme_modal: ThemeModal::default(),
@@ -801,6 +812,11 @@ impl App {
             pending,
             self.run.tasks.len(),
         )
+    }
+
+    /// Flips the add dialog's "Use agent to add" checkbox (T5.1).
+    pub(crate) fn toggle_use_agent(&mut self) {
+        self.dialog.use_agent = !self.dialog.use_agent;
     }
 
     /// The dialog's primary button label: "Inject"

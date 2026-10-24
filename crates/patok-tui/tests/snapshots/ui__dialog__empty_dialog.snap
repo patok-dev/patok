@@ -20,7 +20,7 @@ expression: "draw(&open(), 80, 24)"
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
-│   │                                                                      │   │
+│   │[ ] Use agent to add  Tab toggle                                      │   │
 │   │                                                                      │   │
 │   │ ↑↓←→ move · Ctrl+U clear              [ Enter ] Start  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘ut │

@@ -20,7 +20,7 @@ expression: "draw(&app, 80, 24)"
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
-│   │                                                                      │   │
+│   │[ ] Use agent to add  Tab toggle                                      │   │
 │   │Nothing to submit -- type a request first.                            │   │
 │   │ ↑↓←→ move · Ctrl+U clear              [ Enter ] Start  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘ut │

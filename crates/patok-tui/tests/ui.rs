@@ -2378,6 +2378,42 @@ mod dialog {
     }
 
     #[test]
+    fn use_agent_defaults_unchecked() {
+        assert!(!open().dialog.use_agent);
+    }
+
+    #[test]
+    fn tab_toggles_use_agent_and_session_remembers_it() {
+        let mut app = open();
+        type_text(&mut app, "abc");
+        press(&mut app, KeyCode::Tab);
+        assert!(app.dialog.use_agent);
+        assert_eq!(app.dialog.editor.text(), "abc");
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.dialog_open());
+        assert!(app.dialog.use_agent);
+        press(&mut app, KeyCode::Tab);
+        assert!(!app.dialog.use_agent);
+    }
+
+    #[test]
+    fn shift_tab_toggles_use_agent() {
+        let mut app = open();
+        press(&mut app, KeyCode::BackTab);
+        assert!(app.dialog.use_agent);
+        app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
+        assert!(!app.dialog.use_agent);
+    }
+
+    #[test]
+    fn dialog_use_agent_checked() {
+        let mut app = open();
+        press(&mut app, KeyCode::Tab);
+        insta::assert_snapshot!(draw(&app, 80, 24));
+    }
+
+    #[test]
     fn inject_modal_empty() {
         let mut app = self::app();
         press(&mut app, KeyCode::Char('i'));
@@ -5360,6 +5396,31 @@ mod modal_footer {
         press(&mut app, KeyCode::Char('a'));
         assert!(app.dialog_open());
         app
+    }
+
+    #[test]
+    fn use_agent_checkbox_answers_clicks() {
+        let mut app = open_dialog();
+        buffer(&app);
+        let r = app.dialog.agent_toggle.get();
+        assert_eq!(r.height, 1);
+        assert_eq!(app.on_mouse(click(r.x + 1, r.y)), Action::None);
+        assert!(app.dialog.use_agent);
+        assert_eq!(app.on_mouse(click(r.x + 1, r.y)), Action::None);
+        assert!(!app.dialog.use_agent);
+        app.on_mouse(click(r.x + 1, r.y - 1));
+        assert!(!app.dialog.use_agent);
+    }
+
+    #[test]
+    fn inject_modal_has_no_use_agent_checkbox() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('i'));
+        assert!(app.dialog_open());
+        buffer(&app);
+        assert_eq!(app.dialog.agent_toggle.get(), Default::default());
+        press(&mut app, KeyCode::Tab);
+        assert!(!app.dialog.use_agent);
     }
 
     fn open_stop() -> App {

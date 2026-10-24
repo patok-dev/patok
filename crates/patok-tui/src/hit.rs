@@ -116,11 +116,16 @@ pub fn footer_button_rects(footer: Rect, buttons: &[(&str, &str)]) -> Vec<Rect> 
 /// a too-narrow modal records contains no real position, so the click misses
 /// there naturally. Every other mouse event misses too.
 pub(crate) fn close_clicked(mouse: &MouseEvent, close: Rect) -> bool {
+    left_click_in(mouse, close)
+}
+
+/// Whether the event is a left-button press inside `rect`. A zero rect
+/// contains no position, so it never matches.
+pub(crate) fn left_click_in(mouse: &MouseEvent, rect: Rect) -> bool {
     if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
         return false;
     }
-    let position = Position::new(mouse.column, mouse.row);
-    close.contains(position)
+    rect.contains(Position::new(mouse.column, mouse.row))
 }
 
 /// The key a left click on a modal's bottom-line button stands for (T59.1):
