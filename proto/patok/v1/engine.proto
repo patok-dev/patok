@@ -272,6 +272,20 @@ message CommandRequest {
     // and completed tasks, moves across them, unknown ids and a missing
     // direction. Runs under the task-file lock and reconciles immediately.
     MoveTask move_task = 11;
+    // The tasks-indent action: move one pending task to the end of the
+    // previous group and renumber the ids contiguously. Rejected for the
+    // engine's current (in-progress) and completed tasks, unknown ids, a task
+    // with no previous group, a move across a checked or running task, and
+    // changes to the running task's group. Runs under the task-file lock and
+    // reconciles immediately.
+    IndentTask indent_task = 12;
+    // The tasks-outdent action: split one pending task and the tasks after it
+    // in its group off into a new group directly after it, shifting later
+    // group numbers up. Rejected for the running and completed tasks, unknown
+    // ids, the first task of a group, a checked or running task after it, and
+    // splitting the running task's group. Runs under the task-file lock and
+    // reconciles immediately.
+    OutdentTask outdent_task = 13;
   }
 }
 
@@ -341,6 +355,18 @@ message MoveTask {
     DIRECTION_UP = 1;
     DIRECTION_DOWN = 2;
   }
+}
+
+// The tasks-indent action's payload: the id of the pending task to move
+// into the previous group, e.g. "T3.1".
+message IndentTask {
+  string id = 1;
+}
+
+// The tasks-outdent action's payload: the id of the pending task that
+// starts the new group, e.g. "T3.2".
+message OutdentTask {
+  string id = 1;
 }
 
 // The settings overlay's model picker opened for a provider with no

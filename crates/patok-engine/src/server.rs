@@ -152,6 +152,18 @@ impl EngineApi for Service {
                 Some(direction) => outcome(self.engine.move_task(&mv.id, direction).await),
                 None => rejected("the move direction is missing".into()),
             },
+            // Indents one pending task into the previous group under the
+            // task-file lock, refusing changes to the running task's group;
+            // the queue reconciles immediately.
+            Some(command_request::Action::IndentTask(indent)) => {
+                outcome(self.engine.indent_task(&indent.id).await)
+            }
+            // Outdents one pending task and its later siblings into a new
+            // group under the task-file lock; the queue reconciles
+            // immediately.
+            Some(command_request::Action::OutdentTask(outdent)) => {
+                outcome(self.engine.outdent_task(&outdent.id).await)
+            }
             // One daemon-schema field change: validated,
             // persisted to the resolved layer and merged into the engine's central
             // config; the new value reaches the shell as a ConfigChanged event.

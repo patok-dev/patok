@@ -591,7 +591,7 @@ pub fn discover_models_from_proto(command: &DiscoverModels) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patok_proto::{CommandRequest, EditTask, MoveTask, move_task};
+    use patok_proto::{CommandRequest, EditTask, IndentTask, MoveTask, OutdentTask, move_task};
     use prost::Message;
 
     fn round_trip(action: command_request::Action) -> command_request::Action {
@@ -637,6 +637,27 @@ mod tests {
             panic!("not a MoveTask action");
         };
         assert_eq!(mv.direction(), move_task::Direction::Unspecified);
+    }
+
+    #[test]
+    fn task_indent_and_outdent_round_trip_the_wire() {
+        let command_request::Action::IndentTask(indent) =
+            round_trip(command_request::Action::IndentTask(IndentTask {
+                id: "T3.1".into(),
+            }))
+        else {
+            panic!("not an IndentTask action");
+        };
+        assert_eq!(indent.id, "T3.1");
+
+        let command_request::Action::OutdentTask(outdent) =
+            round_trip(command_request::Action::OutdentTask(OutdentTask {
+                id: "T3.2".into(),
+            }))
+        else {
+            panic!("not an OutdentTask action");
+        };
+        assert_eq!(outdent.id, "T3.2");
     }
 
     #[test]
