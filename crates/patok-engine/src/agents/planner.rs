@@ -100,6 +100,8 @@ You turn a short user request into task lines appended to the project's task lis
 You may only read, edit and write files; you have no shell. \
 Never modify, reorder, check off or delete existing tasks or any other existing text: only append new lines at the end of the task list.";
 
+/// The append-tasks planner prompt (T5.6): the agent inspects the last task
+/// group itself and decides whether to join it or open a new group.
 fn planner(request: &str, last: Option<&LastGroup>) -> String {
     format!(
         "Expand the request below into one or a few comprehensive tasks and append them to {TASK_FILE}.\n\n\
@@ -107,8 +109,9 @@ fn planner(request: &str, last: Option<&LastGroup>) -> String {
          Current task groups:\n{state}\n\n\
          Steps:\n\
          1. If {SPEC_FILE} exists in the project root, read it for context.\n\
-         2. Read the last 20 lines of {TASK_FILE} to see the most recent tasks and confirm the group state above.\n\
-         3. Append the new task lines at the end of {TASK_FILE}. Do not change anything above them.\n\n\
+         2. Read the last 20 lines of {TASK_FILE} and inspect the last existing task group yourself: check that its tasks and their checkboxes match the group state above, and work out what concern the group covers.\n\
+         3. Decide whether to join that group or open a new one: join it only if it still has pending work and the request belongs to the same concern; otherwise open a new group. Use the IDs given above for your choice.\n\
+         4. Append the new task lines at the end of {TASK_FILE}. Do not change anything above them.\n\n\
          Guidelines:\n{guidelines}",
         state = last_group_block(last),
         guidelines = planner_guidelines(),
@@ -161,7 +164,7 @@ fn planner_guidelines() -> String {
         "request",
         PLANNER_ID_RULE,
         None,
-        "Finish with a one-line summary of the tasks you added.",
+        "Finish with a one-line summary of the tasks you added, saying whether they joined the last group or opened a new one.",
     )
 }
 
@@ -281,7 +284,7 @@ impl Agent for AppendPlannerAgent {
 mod tests {
     use super::*;
     use crate::agents::test_task;
-    use crate::task_list::file::last_group;
+    use crate::task_list::file::{last_group, validate_append};
 
     #[test]
     fn a_valid_plan_is_accepted() {
@@ -390,6 +393,11 @@ Update src/lib.rs to declare the module.";
         assert!(p.contains("add a login page"));
         assert!(p.contains(TASK_FILE) && p.contains(SPEC_FILE));
         assert!(p.contains("last 20 lines"));
+        assert!(p.contains("inspect the last existing task group"));
+        assert!(p.contains("Decide whether to join"));
+        assert!(p.find("inspect the last existing task group") < p.find("Decide whether to join"));
+        assert!(p.find("Decide whether to join") < p.find("Append the new task lines"));
+        assert!(p.contains("joined the last group or opened a new one"));
         assert!(p.contains("- [ ] T<N>.<M+1>: <description>"));
         assert!(p.contains("- [ ] T<N+1>.1: <description>"));
         assert!(p.contains("T1.1"));
@@ -421,6 +429,59 @@ Update src/lib.rs to declare the module.";
         assert!(p.contains("T4.1"));
         assert!(p.contains("never join"));
         assert!(!p.contains("T3.3"));
+    }
+
+    /// The task IDs the prompt offers ("your first task is T3.3.",
+    /// "starting at T4.1.", "open the first group at T1.1.").
+    fn offered_ids(prompt: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for marker in [
+            "your first task is ",
+            "starting at ",
+            "open the first group at ",
+        ] {
+            for (at, _) in prompt.match_indices(marker) {
+                let id: String = prompt[at + marker.len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '.')
+                    .collect();
+                found.push(id.trim_end_matches('.').to_string());
+            }
+        }
+        found.sort();
+        found
+    }
+
+    /// T5.6: every ID the prompt offers for joining or opening a group is one
+    /// the append validator accepts, and an ID the prompt does not offer
+    /// (a skipped group) is rejected.
+    #[test]
+    fn planner_prompt_offers_only_ids_the_validator_accepts() {
+        let accepts =
+            |before: &str, id: &str| validate_append(before, &format!("{before}- [ ] {id}: c\n"));
+
+        let partly = "# T\n- [x] T3.1: a\n- [ ] T3.2: b\n";
+        let group = last_group(partly).unwrap();
+        let ids = offered_ids(&planner("x", Some(&group)));
+        assert_eq!(ids, ["T3.3", "T4.1"]);
+        for id in &ids {
+            assert_eq!(accepts(partly, id), Ok(1), "{id}");
+        }
+        assert!(!ids.contains(&"T5.1".to_string()));
+        let err = accepts(partly, "T5.1").unwrap_err();
+        assert!(err.contains("skipped"), "{err}");
+
+        // The validator would also accept T3.3 here (see file.rs T2.1); only
+        // the prompt keeps a fully done group closed.
+        let done = "# T\n- [x] T3.1: a\n- [x] T3.2: b\n";
+        let group = last_group(done).unwrap();
+        let ids = offered_ids(&planner("x", Some(&group)));
+        assert_eq!(ids, ["T4.1"]);
+        assert_eq!(accepts(done, "T4.1"), Ok(1));
+
+        let ids = offered_ids(&planner("x", None));
+        assert_eq!(ids, ["T1.1"]);
+        assert_eq!(accepts("", "T1.1"), Ok(1));
     }
 
     #[test]
