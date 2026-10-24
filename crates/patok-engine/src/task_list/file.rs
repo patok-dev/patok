@@ -632,6 +632,187 @@ pub fn remove_task(path: &Path, id: &str) -> io::Result<RemoveOutcome> {
     Ok(RemoveOutcome::Removed)
 }
 
+/// The result of a pending-task edit (T1.1): the shared outcome of edit, remove, move, indent
+/// and outdent. Only pending tasks may change; done tasks and the running task are protected
+/// because the build loop, the open-group record and reconcile identify them by id.
+///
+/// The pure text operations return `Result<String, TaskEditOutcome>` (the error is never
+/// [`TaskEditOutcome::Ok`]); the path or engine wrappers report [`TaskEditOutcome::Ok`] on
+/// success.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskEditOutcome {
+    /// The edit was applied.
+    Ok,
+    /// No well-formed task line carries the id.
+    NotFound,
+    /// The task, or a task the edit would cross or renumber, is checked.
+    Completed,
+    /// The task is the running one, or the edit would change the running task's group.
+    Running,
+    /// The edit is malformed or impossible (empty/multi-line text, no neighbour to move to, ...).
+    Invalid,
+}
+
+/// The `split_inclusive('\n')` line index of the unchecked line of `id` (T1.1), shared by the
+/// pending-task edits. Checked in this order: any checked well-formed line with that id is
+/// [`TaskEditOutcome::Completed`] (the same rule `remove_task` applies to checked duplicates);
+/// an unchecked match while `running == Some(id)` is [`TaskEditOutcome::Running`]; otherwise the
+/// first unchecked well-formed match is `Ok(index)`; no match is
+/// [`TaskEditOutcome::NotFound`]. Malformed lines never match.
+pub fn find_pending(text: &str, id: &str, running: Option<&str>) -> Result<usize, TaskEditOutcome> {
+    let mut first = None;
+    for (i, line) in text.split_inclusive('\n').enumerate() {
+        let Some((checked, rest)) = task::split_checkbox(line) else {
+            continue;
+        };
+        if split_id(rest).is_none_or(|(found, _, _)| found != id) {
+            continue;
+        }
+        if checked {
+            return Err(TaskEditOutcome::Completed);
+        }
+        first.get_or_insert(i);
+    }
+    match first {
+        None => Err(TaskEditOutcome::NotFound),
+        Some(_) if running == Some(id) => Err(TaskEditOutcome::Running),
+        Some(i) => Ok(i),
+    }
+}
+
+/// A well-formed numbered task line: where its id digits sit and what they say.
+struct Numbered {
+    done: bool,
+    /// Byte range of the `major.minor` digits inside the line; a letter prefix (`T`, `H`, `D`)
+    /// lies before `start` and is kept as found.
+    start: usize,
+    end: usize,
+    id_is_running: bool,
+    major: u64,
+    minor: u64,
+}
+
+fn parse_numbered(line: &str, running: Option<&str>) -> Option<Numbered> {
+    let (done, rest) = task::split_checkbox(line)?;
+    let (id, _, _) = split_id(rest)?;
+    let letter = id.chars().next().filter(|c| !c.is_ascii_digit());
+    let digits = if letter.is_some() { &id[1..] } else { id };
+    let (major, minor) = digits.split_once('.')?;
+    // Ids whose digits overflow `u64` are invisible to the numbering.
+    let major = major.parse().ok()?;
+    let minor = minor.parse().ok()?;
+    let id_start = line.len() - rest.len();
+    let start = id_start + usize::from(letter.is_some());
+    Some(Numbered {
+        done,
+        start,
+        end: id_start + id.len(),
+        id_is_running: running == Some(id),
+        major,
+        minor,
+    })
+}
+
+/// Re-sequences the pending task ids so they are contiguous after the last done or running
+/// task (T1.1). Callers (T1.3-T1.6) reorder or delete lines, or set a line's major (indent takes
+/// the previous group's major; outdent shifts later majors up first), then call this to make the
+/// ids contiguous again. Majors are shifted by rewriting the id digits.
+///
+/// Rules:
+/// - A numbered task line is one with a checkbox and a well-formed id whose digits fit `u64`.
+///   Every other line (headings, prose, blank lines, `- [X]` lines, malformed task lines) stays
+///   byte-identical and is invisible to the numbering.
+/// - Frozen boundary: the last numbered line that is checked or whose id equals `running`, and
+///   every line before it, is never touched, even pending lines ahead of a done one. Done and
+///   running ids are referenced by history, the open-group record and reconcile, which match by
+///   id.
+/// - Pending numbered lines after the boundary form group runs: maximal sequences of
+///   consecutive pending lines (non-task lines between them do not count) sharing the same
+///   original major. The first run continues the boundary task's group (minors from 1 + the
+///   highest frozen minor of that major) when its original major equals the boundary's major, so
+///   the running task's group keeps its number; otherwise it gets 1 + the highest frozen major,
+///   with minors from 1. Each later run gets the previous run's major + 1, minors from 1.
+/// - With no frozen task at all, the first run keeps its own original major (a file whose old
+///   groups were pruned is not renumbered down to 1), minors from 1.
+/// - Only the `major.minor` digits change; the letter prefix, indentation, checkbox, progress
+///   token, description and line ending are kept. Lines whose number is unchanged are copied
+///   verbatim, so contiguous text comes back identical.
+/// - Duplicate pending ids are numbered one after the other, which leaves them distinct.
+pub fn renumber_pending(text: &str, running: Option<&str>) -> String {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let parsed: Vec<Option<Numbered>> = lines
+        .iter()
+        .map(|line| parse_numbered(line, running))
+        .collect();
+    let boundary = parsed
+        .iter()
+        .rposition(|n| n.as_ref().is_some_and(|n| n.done || n.id_is_running));
+
+    let mut anchor: Option<(u64, u64)> = None; // (major, next minor)
+    let mut next_group: Option<u64> = None;
+    if let Some(b) = boundary {
+        let frozen = || parsed[..=b].iter().flatten();
+        let anchor_major = parsed[b].as_ref().map_or(0, |n| n.major);
+        let next_minor = frozen()
+            .filter(|n| n.major == anchor_major)
+            .map(|n| n.minor)
+            .max()
+            .map_or(1, |m| m.saturating_add(1));
+        anchor = Some((anchor_major, next_minor));
+        next_group = Some(
+            frozen()
+                .map(|n| n.major)
+                .max()
+                .map_or(1, |m| m.saturating_add(1)),
+        );
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let start = boundary.map_or(0, |b| b + 1);
+    for line in &lines[..start] {
+        out.push_str(line);
+    }
+    let mut run_original: Option<u64> = None;
+    let mut run_major = 0u64;
+    let mut run_minor = 0u64;
+    let mut first_run = true;
+    for (i, line) in lines.iter().enumerate().skip(start) {
+        let Some(n) = parsed[i].as_ref() else {
+            out.push_str(line);
+            continue;
+        };
+        if run_original != Some(n.major) {
+            run_original = Some(n.major);
+            if first_run {
+                (run_major, run_minor) = match (anchor, next_group) {
+                    (Some((am, next_minor)), Some(group)) => {
+                        if n.major == am {
+                            (am, next_minor)
+                        } else {
+                            (group, 1)
+                        }
+                    }
+                    _ => (n.major, 1),
+                };
+                first_run = false;
+            } else {
+                run_major = run_major.saturating_add(1);
+                run_minor = 1;
+            }
+        } else {
+            run_minor = run_minor.saturating_add(1);
+        }
+        if (run_major, run_minor) == (n.major, n.minor) {
+            out.push_str(line);
+        } else {
+            out.push_str(&line[..n.start]);
+            out.push_str(&format!("{run_major}.{run_minor}"));
+            out.push_str(&line[n.end..]);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1547,5 +1728,99 @@ mod tests {
         std::fs::write(&path, "- [ ] T3.1: [RP.BA] mid\n").unwrap();
         assert_eq!(remove_task(&path, "T3.1").unwrap(), RemoveOutcome::Removed);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+    }
+
+    #[test]
+    fn renumber_pending_closes_a_minor_gap_after_the_last_done_task() {
+        let text = "- [x] T1.1: a\n- [ ] T1.3: b\n- [ ] T1.4: c\n";
+        assert_eq!(
+            renumber_pending(text, None),
+            "- [x] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n"
+        );
+    }
+
+    #[test]
+    fn renumber_pending_makes_group_numbers_contiguous() {
+        let text = "- [x] T1.1: a\n- [ ] T3.1: b\n- [ ] T3.2: c\n- [ ] T5.1: d\n";
+        assert_eq!(
+            renumber_pending(text, None),
+            "- [x] T1.1: a\n- [ ] T2.1: b\n- [ ] T2.2: c\n- [ ] T3.1: d\n"
+        );
+    }
+
+    #[test]
+    fn renumber_pending_continues_the_running_task_group() {
+        let text = "- [x] T1.1: a\n- [ ] T2.2: run\n- [ ] T2.5: b\n- [ ] T4.1: c\n";
+        assert_eq!(
+            renumber_pending(text, Some("T2.2")),
+            "- [x] T1.1: a\n- [ ] T2.2: run\n- [ ] T2.3: b\n- [ ] T3.1: c\n"
+        );
+    }
+
+    #[test]
+    fn renumber_pending_never_touches_lines_up_to_the_last_done_or_running_task() {
+        let text = "- [ ] T1.5: p\n- [x] T1.2: d\n- [ ] T1.7: q\n- [ ] T2.4: r\n";
+        assert_eq!(
+            renumber_pending(text, None),
+            "- [ ] T1.5: p\n- [x] T1.2: d\n- [ ] T1.6: q\n- [ ] T2.1: r\n"
+        );
+    }
+
+    #[test]
+    fn renumber_pending_keeps_progress_tokens_headings_prose_and_malformed_lines() {
+        let text = "# T\r\n- [x] T1.1: a\r\n## Phase 2\n- [ ] T3.2: [RP.BR!] b\r\nprose\n- [ ] no id\n- [X] T9.9: up\n\n## Phase 4\n  - [ ] H5.4: [RP.BR!] human\n- [ ] 5.9: last";
+        let want = "# T\r\n- [x] T1.1: a\r\n## Phase 2\n- [ ] T2.1: [RP.BR!] b\r\nprose\n- [ ] no id\n- [X] T9.9: up\n\n## Phase 4\n  - [ ] H3.1: [RP.BR!] human\n- [ ] 3.2: last";
+        assert_eq!(renumber_pending(text, None), want);
+    }
+
+    #[test]
+    fn renumber_pending_returns_contiguous_text_unchanged() {
+        assert_eq!(renumber_pending(BASE, None), BASE);
+        let text = "- [x] T1.1: a\n- [ ] T1.2: b";
+        assert_eq!(renumber_pending(text, None), text);
+    }
+
+    #[test]
+    fn renumber_pending_without_frozen_tasks_keeps_the_first_group_number() {
+        let text = "- [ ] T4.2: a\n- [ ] T4.3: b\n- [ ] T6.1: c\n";
+        assert_eq!(
+            renumber_pending(text, None),
+            "- [ ] T4.1: a\n- [ ] T4.2: b\n- [ ] T5.1: c\n"
+        );
+        assert_eq!(renumber_pending("", None), "");
+        assert_eq!(renumber_pending("# T\nprose\n", None), "# T\nprose\n");
+    }
+
+    #[test]
+    fn renumber_pending_separates_duplicate_pending_ids() {
+        let text = "- [x] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.2: c\n";
+        assert_eq!(
+            renumber_pending(text, None),
+            "- [x] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n"
+        );
+    }
+
+    #[test]
+    fn find_pending_classifies_completed_running_missing_and_pending_ids() {
+        let text =
+            "## H\n- [ ] T1.2: a\n- [x] T1.1: d\n- [ ] T1.1: dup\n- [ ] no id\n- [ ] T2.1: b\n";
+        assert_eq!(
+            find_pending(text, "T1.1", None),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            find_pending(text, "T2.1", Some("T2.1")),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            find_pending(text, "T9.9", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert_eq!(
+            find_pending(text, "no id", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert_eq!(find_pending(text, "T1.2", None), Ok(1));
+        assert_eq!(find_pending(text, "T2.1", None), Ok(5));
     }
 }
