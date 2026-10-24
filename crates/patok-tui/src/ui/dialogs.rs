@@ -67,12 +67,13 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     let chrome = render_modal_frame(frame, theme, area, ModalTitle::Left(&title));
     app.dialog.close.set(chrome.close);
     let inner = chrome.inner;
-    // The checkbox row (T5.1) exists for the add kind only; a height-0 row
-    // leaves the edit modal's layout untouched.
+    // The checkbox row (T5.1) exists for the add kind only, and the status row
+    // only while a message shows (T7.1), so with no message the checkbox sits
+    // directly above the footer; a height-0 row takes no space.
     let [input, agent_row, dialog_status, footer] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(u16::from(app.dialog.kind == DialogKind::Add)),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(app.dialog.status.is_some())),
         Constraint::Length(1),
     ])
     .areas(inner);
