@@ -505,4 +505,30 @@ impl Engine {
             "moving task {id} is not supported by this engine yet"
         ))
     }
+
+    /// Serves the `IndentTask` command: moves a pending task into the
+    /// previous group. The rejection is a placeholder until the locked file
+    /// operation arrives with the `TaskList` method (T2.4). Errors are
+    /// user-facing rejection reasons.
+    pub async fn indent_task(&self, id: &str) -> Result<(), String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("the task id is empty".into());
+        }
+        Err(format!(
+            "indenting task {id} is not supported by this engine yet"
+        ))
+    }
+
+    /// Serves the `OutdentTask` command: splits a pending task and the tasks
+    /// after it into a new group. Placeholder until T2.4, as above.
+    pub async fn outdent_task(&self, id: &str) -> Result<(), String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("the task id is empty".into());
+        }
+        Err(format!(
+            "outdenting task {id} is not supported by this engine yet"
+        ))
+    }
 }
