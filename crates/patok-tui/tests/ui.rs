@@ -5353,6 +5353,23 @@ mod modal_footer {
     }
 
     #[test]
+    fn use_agent_checkbox_sits_directly_above_the_footer() {
+        let mut app = open_dialog();
+        buffer(&app);
+        assert_eq!(
+            app.dialog.agent_toggle.get().y + 1,
+            app.dialog.footer.get().y
+        );
+        press(&mut app, KeyCode::Enter);
+        assert!(app.dialog.status.is_some());
+        buffer(&app);
+        assert_eq!(
+            app.dialog.agent_toggle.get().y + 2,
+            app.dialog.footer.get().y
+        );
+    }
+
+    #[test]
     fn use_agent_checkbox_ignores_clicks_while_busy() {
         let mut app = self::app();
         app.apply(EngineEvent::PhaseChanged {
