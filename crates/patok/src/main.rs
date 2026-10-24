@@ -99,6 +99,16 @@ enum TasksAction {
         #[arg(value_enum)]
         direction: MoveDirectionArg,
     },
+    /// Indent a pending task: move it to the end of the previous group in the shared task store, renumbering pending ids.
+    Indent {
+        /// The id of the task to indent, e.g. T3.1.
+        id: String,
+    },
+    /// Outdent a pending task: split it and the tasks after it in its group off into a new group, renumbering pending ids.
+    Outdent {
+        /// The id of the task to outdent, e.g. T3.1.
+        id: String,
+    },
     /// List every task in the shared task store, one per line, id first.
     List,
 }
@@ -183,6 +193,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             TasksAction::Move { id, direction } => {
                 tasks::move_task(&project, &id, direction.into()).await
             }
+            TasksAction::Indent { id } => tasks::indent(&project, &id).await,
+            TasksAction::Outdent { id } => tasks::outdent(&project, &id).await,
             TasksAction::List => tasks::list(&project),
         },
         Command::Ps { .. } => unreachable!("handled above"),

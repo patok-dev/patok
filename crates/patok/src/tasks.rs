@@ -5,12 +5,13 @@
 //! engine's task-file lock is in-process, but it tolerates external appends
 //! by mtime-polling the file and reconciling, so new unchecked lines merge
 //! into the queue while the running and completed tasks are protected.
-//! The remove, edit and move instead route through the engine's `RemoveTask` /
-//! `EditTask` / `MoveTask` commands when an engine runs: in-progress exists only in the
+//! The remove, edit, move, indent and outdent instead route through the engine's
+//! `RemoveTask` / `EditTask` / `MoveTask` / `IndentTask` / `OutdentTask`
+//! commands when an engine runs: in-progress exists only in the
 //! engine's memory, and the change then runs under the engine's task-file
 //! lock with an immediate reconcile. With no engine running they fall back to
 //! a direct rewrite of the file -- in-progress cannot exist then, so the file
-//! is the whole truth. The move then prints the renumbered ids read back from
+//! is the whole truth. The move, indent and outdent then print the renumbered ids read back from
 //! the file. Known races, deliberately left alone: with no
 //! cross-process lock, an add concurrent with a TUI inject through a running
 //! engine can pick the same number; and an engine can start between the
@@ -25,7 +26,7 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use patok_proto::command_request;
-use patok_proto::{CommandRequest, EditTask, MoveTask, RemoveTask};
+use patok_proto::{CommandRequest, EditTask, IndentTask, MoveTask, OutdentTask, RemoveTask};
 
 /// The task file read whole: a missing file reads as empty (the append then
 /// creates it, the list then lists nothing), while any other read failure
@@ -178,7 +179,7 @@ pub async fn edit(project: &Path, id: &str, text: &str) -> anyhow::Result<()> {
 }
 
 /// Prints every unchecked task of the file at `path` as `{id} {description}`,
-/// one per line: after a move these are exactly the ids that renumbering
+/// one per line: after a move, indent or outdent these are exactly the ids that renumbering
 /// produced. Completed tasks never move or renumber, so they are left out.
 fn print_unchecked(path: &Path) -> anyhow::Result<()> {
     let file = read_task_file(path)?;
@@ -260,6 +261,125 @@ pub async fn move_task(
         }
     }
     println!("Moved task {id} {word}.");
+    print_unchecked(&path)
+}
+
+/// Indents the pending task `id` (T3.3): it moves to the end of the previous
+/// group and the pending ids are renumbered, then prints the ids that result,
+/// read back from the file. When an engine runs for the project, the indent
+/// goes through its `IndentTask` command -- the engine knows the current
+/// (in-progress) task and refuses changes that touch it or a completed task.
+/// With no engine, the file itself is rewritten directly. If the engine dies
+/// mid-call the transport error propagates rather than falling back, so an
+/// indent is never applied twice. The engine's rewrite is atomic and finishes
+/// before it answers, so the read-back sees the renumbered file.
+pub async fn indent(project: &Path, id: &str) -> anyhow::Result<()> {
+    let id = id.trim();
+    if id.is_empty() {
+        bail!("the task id is empty");
+    }
+    let path = project.join(patok_engine::TASK_FILE);
+    if let Some(mut client) = crate::daemon::try_connect(project).await {
+        let response = client
+            .submit_command(CommandRequest {
+                action: Some(command_request::Action::IndentTask(IndentTask {
+                    id: id.to_string(),
+                })),
+            })
+            .await
+            .context("the engine rejected the indent request")?
+            .into_inner();
+        if !response.accepted {
+            bail!("{}", response.error);
+        }
+    } else {
+        // No engine is running: in-progress cannot exist, so there is no
+        // running task (`None`) to refuse.
+        match patok_engine::taskfile::rewrite_pending(&path, |file| {
+            patok_engine::taskfile::indent_task(file, id, None).map(|m| (m.text, ()))
+        })
+        .with_context(|| format!("cannot update {}", path.display()))?
+        {
+            Ok(()) => {}
+            Err(patok_engine::taskfile::TaskEditOutcome::Completed) => {
+                bail!("task {id} cannot be indented: it or a task it would pass is completed");
+            }
+            Err(patok_engine::taskfile::TaskEditOutcome::NotFound) => {
+                bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
+            }
+            // Unreachable with no running task; kept with the engine's wording.
+            Err(patok_engine::taskfile::TaskEditOutcome::Running) => {
+                bail!(
+                    "task {id} cannot be indented: the change would touch the in-progress task or its group"
+                );
+            }
+            Err(
+                patok_engine::taskfile::TaskEditOutcome::Invalid
+                | patok_engine::taskfile::TaskEditOutcome::Ok,
+            ) => bail!("task {id} has no previous group to join"),
+        }
+    }
+    println!("Indented task {id}.");
+    print_unchecked(&path)
+}
+
+/// Outdents the pending task `id` (T3.3): it and the tasks after it in its
+/// group split off into a new group directly after, later groups shift up,
+/// and the pending ids are renumbered, then prints the ids that result, read
+/// back from the file. When an engine runs for the project, the outdent goes
+/// through its `OutdentTask` command -- the engine knows the current
+/// (in-progress) task and refuses changes that touch it or a completed task.
+/// With no engine, the file itself is rewritten directly. If the engine dies
+/// mid-call the transport error propagates rather than falling back, so an
+/// outdent is never applied twice. The engine's rewrite is atomic and
+/// finishes before it answers, so the read-back sees the renumbered file.
+pub async fn outdent(project: &Path, id: &str) -> anyhow::Result<()> {
+    let id = id.trim();
+    if id.is_empty() {
+        bail!("the task id is empty");
+    }
+    let path = project.join(patok_engine::TASK_FILE);
+    if let Some(mut client) = crate::daemon::try_connect(project).await {
+        let response = client
+            .submit_command(CommandRequest {
+                action: Some(command_request::Action::OutdentTask(OutdentTask {
+                    id: id.to_string(),
+                })),
+            })
+            .await
+            .context("the engine rejected the outdent request")?
+            .into_inner();
+        if !response.accepted {
+            bail!("{}", response.error);
+        }
+    } else {
+        // No engine is running: in-progress cannot exist, so there is no
+        // running task (`None`) to refuse.
+        match patok_engine::taskfile::rewrite_pending(&path, |file| {
+            patok_engine::taskfile::outdent_task(file, id, None).map(|m| (m.text, ()))
+        })
+        .with_context(|| format!("cannot update {}", path.display()))?
+        {
+            Ok(()) => {}
+            Err(patok_engine::taskfile::TaskEditOutcome::Completed) => {
+                bail!("task {id} cannot be outdented: it or a task after it is completed");
+            }
+            Err(patok_engine::taskfile::TaskEditOutcome::NotFound) => {
+                bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
+            }
+            // Unreachable with no running task; kept with the engine's wording.
+            Err(patok_engine::taskfile::TaskEditOutcome::Running) => {
+                bail!(
+                    "task {id} cannot be outdented: the change would touch the in-progress task or its group"
+                );
+            }
+            Err(
+                patok_engine::taskfile::TaskEditOutcome::Invalid
+                | patok_engine::taskfile::TaskEditOutcome::Ok,
+            ) => bail!("task {id} is the first task of its group; there is nothing to split off"),
+        }
+    }
+    println!("Outdented task {id}.");
     print_unchecked(&path)
 }
 
@@ -562,6 +682,119 @@ mod tests {
         )
         .await
         .unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert!(!dir.path().join("TASKS.md").exists());
+    }
+
+    #[tokio::test]
+    async fn indent_joins_the_previous_group_and_renumbers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        indent(dir.path(), "T2.1").await.unwrap();
+        assert_eq!(
+            read_tasks(dir.path()),
+            "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n## P2\n- [ ] T2.1: d\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn indent_refuses_the_first_group() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        let error = indent(dir.path(), "T1.2").await.unwrap_err();
+        assert!(error.to_string().contains("no previous group"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), TWO_GROUPS);
+    }
+
+    #[tokio::test]
+    async fn indent_refuses_passing_a_completed_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "- [ ] T1.1: a\n- [x] T2.1: done\n- [ ] T2.2: b\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = indent(dir.path(), "T2.2").await.unwrap_err();
+        assert!(error.to_string().contains("completed"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn indent_reports_an_unknown_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        let error = indent(dir.path(), "T9.9").await.unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), TWO_GROUPS);
+    }
+
+    #[tokio::test]
+    async fn indent_rejects_an_empty_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        assert!(indent(dir.path(), "  ").await.is_err());
+        assert_eq!(read_tasks(dir.path()), TWO_GROUPS);
+    }
+
+    #[tokio::test]
+    async fn indent_reports_a_missing_file_as_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = indent(dir.path(), "T1.1").await.unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert!(!dir.path().join("TASKS.md").exists());
+    }
+
+    #[tokio::test]
+    async fn outdent_splits_off_a_new_group_and_shifts_later_groups() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        outdent(dir.path(), "T1.2").await.unwrap();
+        assert_eq!(
+            read_tasks(dir.path()),
+            "## P1\n- [ ] T1.1: a\n- [ ] T2.1: b\n## P2\n- [ ] T3.1: c\n- [ ] T3.2: d\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn outdent_refuses_the_first_task_of_a_group() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        let error = outdent(dir.path(), "T2.1").await.unwrap_err();
+        assert!(
+            error.to_string().contains("first task of its group"),
+            "{error:#}"
+        );
+        assert_eq!(read_tasks(dir.path()), TWO_GROUPS);
+    }
+
+    #[tokio::test]
+    async fn outdent_refuses_a_completed_task_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "- [ ] T1.1: a\n- [ ] T1.2: b\n- [x] T1.3: done\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = outdent(dir.path(), "T1.2").await.unwrap_err();
+        assert!(error.to_string().contains("completed"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn outdent_reports_an_unknown_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        let error = outdent(dir.path(), "T9.9").await.unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), TWO_GROUPS);
+    }
+
+    #[tokio::test]
+    async fn outdent_rejects_an_empty_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+        assert!(outdent(dir.path(), "  ").await.is_err());
+        assert_eq!(read_tasks(dir.path()), TWO_GROUPS);
+    }
+
+    #[tokio::test]
+    async fn outdent_reports_a_missing_file_as_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = outdent(dir.path(), "T1.1").await.unwrap_err();
         assert!(error.to_string().contains("no task with id"), "{error:#}");
         assert!(!dir.path().join("TASKS.md").exists());
     }

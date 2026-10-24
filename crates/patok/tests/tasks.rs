@@ -189,6 +189,91 @@ fn tasks_move_fails_without_a_neighbour() {
     );
 }
 
+const TWO_GROUPS: &str =
+    "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n## P2\n- [ ] T2.1: c\n- [ ] T2.2: d\n";
+
+#[test]
+fn tasks_indent_prints_the_renumbered_ids_and_exits_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "indent", "T2.1"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Indented task T2.1.\nT1.1 a\nT1.2 b\nT1.3 c\nT2.1 d\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
+        "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n## P2\n- [ ] T2.1: d\n"
+    );
+}
+
+#[test]
+fn tasks_indent_fails_without_a_previous_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "- [ ] T1.1: a\n- [ ] T1.2: b\n";
+    std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "indent", "T1.2"]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("patok: "), "stderr: {stderr}");
+    assert!(
+        stderr.contains("has no previous group to join"),
+        "stderr: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
+        text
+    );
+}
+
+#[test]
+fn tasks_outdent_prints_the_renumbered_ids_and_exits_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "outdent", "T1.2"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Outdented task T1.2.\nT1.1 a\nT2.1 b\nT3.1 c\nT3.2 d\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
+        "## P1\n- [ ] T1.1: a\n- [ ] T2.1: b\n## P2\n- [ ] T3.1: c\n- [ ] T3.2: d\n"
+    );
+}
+
+#[test]
+fn tasks_outdent_excludes_completed_tasks_from_the_output() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("TASKS.md"),
+        "- [x] T1.1: done\n- [ ] T1.2: a\n- [ ] T1.3: b\n",
+    )
+    .unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "outdent", "T1.3"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Outdented task T1.3.\nT1.2 a\nT2.1 b\n"
+    );
+}
+
+#[test]
+fn tasks_outdent_fails_on_the_first_task_of_a_group() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("TASKS.md"), TWO_GROUPS).unwrap();
+    let out = run_tasks(dir.path(), &["tasks", "outdent", "T1.1"]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("patok: "), "stderr: {stderr}");
+    assert!(stderr.contains("nothing to split off"), "stderr: {stderr}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
+        TWO_GROUPS
+    );
+}
+
 #[test]
 fn tasks_move_rejects_an_invalid_direction() {
     let dir = tempfile::tempdir().unwrap();
