@@ -1,6 +1,6 @@
 //! The submit policy (finding 19, the rest, in
-//! docs/private/structure-review-followup.md): the add-task and inject-task
-//! dialog's open, refuse and submit paths and the driver's submit
+//! docs/private/structure-review-followup.md): the add-task, inject-task and
+//! edit-task (T4.3) dialog's open, refuse and submit paths and the driver's submit
 //! callbacks, split out of `app`. The editor itself is `dialog_editor`.
 
 use patok_core::event::Phase;
@@ -84,6 +84,7 @@ impl App {
         match self.dialog.kind {
             DialogKind::Add => "Nothing to submit -- type a request first.",
             DialogKind::Inject => "Nothing to inject -- type a task line first.",
+            DialogKind::Edit => "Nothing to save -- type the task description first.",
         }
     }
 
@@ -98,6 +99,20 @@ impl App {
         // session; the modal closes once the driver confirms the append
         // (`on_task_injected`). An empty input is refused inline, and the
         // add-task dialog's whole scenario flow below stays untouched.
+        // The edit dialog's submit (T4.3): the trimmed text goes to the engine's
+        // edit command, which also rejects multi-line text and busy tasks; the
+        // dialog closes once the driver confirms (`on_task_edited`).
+        if self.dialog.kind == DialogKind::Edit {
+            let text = self.dialog.editor.text().trim().to_owned();
+            if text.is_empty() {
+                self.dialog.status = Some(self.empty_input_message().into());
+                return Action::None;
+            }
+            return Action::EditTask {
+                id: self.dialog.edit_id.clone(),
+                description: text,
+            };
+        }
         if self.dialog.kind == DialogKind::Inject {
             if self.dialog.editor.text().trim().is_empty() {
                 self.dialog.status = Some(self.empty_input_message().into());
@@ -150,6 +165,28 @@ impl App {
     pub fn on_task_injected(&mut self) {
         self.modals.pop(Modal::Dialog);
         self.dialog.editor.clear();
+        self.dialog.status = None;
+        self.focus = FrameFocus::Tasks;
+    }
+
+    /// Closes the dialog (Esc, the close button), putting back the draft the
+    /// edit dialog parked; the add/inject buffer is otherwise kept.
+    pub(crate) fn close_dialog(&mut self) {
+        self.modals.pop(Modal::Dialog);
+        self.restore_parked();
+    }
+
+    fn restore_parked(&mut self) {
+        if let Some(editor) = self.dialog.parked.take() {
+            self.dialog.editor = editor;
+        }
+    }
+
+    /// The edit was applied (T4.3): the dialog closes, the parked draft comes
+    /// back and the task list frame keeps the focus.
+    pub fn on_task_edited(&mut self) {
+        self.modals.pop(Modal::Dialog);
+        self.restore_parked();
         self.dialog.status = None;
         self.focus = FrameFocus::Tasks;
     }

@@ -31,6 +31,10 @@ pub const DIALOG_WATERMARK: &str = "Press Enter to run Discovery agent";
 /// the normalized append is never a surprise.
 pub const INJECT_WATERMARK: &str = "Type the task; it lands as an unchecked task line";
 
+/// The edit-task dialog's empty-input watermark (T4.3); it only shows once the
+/// prefilled description is cleared.
+pub const EDIT_WATERMARK: &str = "Type the new description; the id and checkbox stay";
+
 /// The add-task dialog rect: about 90% of the width and 80% of the height, at least
 /// 60x20, clamped to the screen and centered.
 pub fn dialog_area(screen: Rect) -> Rect {
@@ -42,15 +46,19 @@ pub fn dialog_area(screen: Rect) -> Rect {
 pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = Modal::Dialog.area(app, frame.area());
-    // The two modals share everything but their chrome strings (T76.1): the
+    // The modals share everything but their chrome strings (T76.1): the
     // title and the empty-input watermark follow the dialog's kind; the
     // primary button's label flows from `App::primary_label`, which branches
     // on the same kind.
     let (title, watermark) = match app.dialog.kind {
-        DialogKind::Add => (" What do you want to do? ", DIALOG_WATERMARK),
-        DialogKind::Inject => (" Inject a task ", INJECT_WATERMARK),
+        DialogKind::Add => (" What do you want to do? ".to_string(), DIALOG_WATERMARK),
+        DialogKind::Inject => (" Inject a task ".to_string(), INJECT_WATERMARK),
+        DialogKind::Edit => (
+            format!(" Edit task {} ", app.dialog.edit_id),
+            EDIT_WATERMARK,
+        ),
     };
-    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Left(title));
+    let chrome = render_modal_frame(frame, theme, area, ModalTitle::Left(&title));
     app.dialog.close.set(chrome.close);
     let inner = chrome.inner;
     let [input, dialog_status, footer] = Layout::vertical([
