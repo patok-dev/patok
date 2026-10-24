@@ -7,7 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::common::{
-    ENTRY_INDENT, base_style, group_header_line, render_modal_footer, selected_row_style,
+    ENTRY_INDENT, base_style, group_header_line, render_modal_footer,
+    render_modal_footer_with_inactive, selected_row_style,
 };
 use super::modal::{ModalTitle, render_modal_frame};
 use crate::app::{App, DialogKind, menu_entries};
@@ -34,6 +35,9 @@ pub const INJECT_WATERMARK: &str = "Type the task; it lands as an unchecked task
 /// The edit-task dialog's empty-input watermark (T4.3); it only shows once the
 /// prefilled description is cleared.
 pub const EDIT_WATERMARK: &str = "Type the new description; the id and checkbox stay";
+
+/// The add dialog's hint while its confirm is inactive (T5.2).
+pub const ADD_CONFIRM_HINT: &str = "Type a task to enable Enter";
 
 /// The add-task dialog rect: about 90% of the width and 80% of the height, at least
 /// 60x20, clamped to the screen and centered.
@@ -103,6 +107,14 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
             )),
             dialog_status,
         );
+    } else if !app.confirm_enabled() {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                ADD_CONFIRM_HINT,
+                Style::new().fg(theme.muted_text),
+            )),
+            dialog_status,
+        );
     }
 
     let width = usize::from(input.width.max(2)) - 1;
@@ -159,14 +171,15 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     // The bottom line's two zones (T59.1): the input's key hints on the left,
     // the primary-action and Close buttons on the right, all through the
     // shared footer renderer. The primary button's label follows the scenario
-    //.
+    // and dims while the add dialog's text is blank (T5.2).
     app.dialog.footer.set(footer);
     let buttons = Modal::Dialog.buttons(app);
-    render_modal_footer(
+    render_modal_footer_with_inactive(
         frame,
         footer,
         &["↑↓←→ move", "Ctrl+U clear"],
         &buttons,
+        (!app.confirm_enabled()).then_some(0),
         theme,
     );
 }

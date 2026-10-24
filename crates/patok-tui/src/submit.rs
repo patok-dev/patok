@@ -10,6 +10,16 @@ use crate::app::{Action, App, DialogKind, QueueRun};
 use crate::modal::Modal;
 use crate::view::FrameFocus;
 
+/// The add dialog's plain-add text (T5.2): every line trimmed, blank lines
+/// dropped, the rest joined with one space -- a task line is single-line.
+pub(crate) fn collapse_lines(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl App {
     /// The short inline refusal for a busy engine, shared by every key that
     /// starts something (Enter, `a`): `None` while the engine is idle.
@@ -88,8 +98,17 @@ impl App {
         }
     }
 
+    /// Whether the dialog's confirm is active: the add dialog's is inactive
+    /// while the text is blank (T5.2); the other kinds refuse inline instead.
+    pub(crate) fn confirm_enabled(&self) -> bool {
+        !(self.dialog.kind == DialogKind::Add && self.dialog.editor.text().trim().is_empty())
+    }
+
     /// The scenario-driven submit: what submitting does depends
-    /// on the project scenario and whether the input is empty. A submit that launches
+    /// on the project scenario and whether the input is empty. Non-empty text
+    /// is a plain append (`InjectTask`, lines collapsed into one) while the
+    /// "Use agent to add" box is unchecked and goes verbatim to the planner
+    /// (`SubmitTasks`) when checked. A submit that launches
     /// a run or the build loop closes the dialog; one that only writes the spec file
     /// or refuses keeps it open with its message in the status line.
     pub(crate) fn submit_dialog(&mut self) -> Action {
@@ -146,7 +165,10 @@ impl App {
                 Action::StartBuild
             }
             (Scenario::QueueComplete, true) => Action::ResearchQueue(QueueRun::Scan),
-            (_, false) => Action::SubmitTasks(self.dialog.editor.text().to_owned()),
+            (_, false) if self.dialog.use_agent => {
+                Action::SubmitTasks(self.dialog.editor.text().to_owned())
+            }
+            (_, false) => Action::InjectTask(collapse_lines(self.dialog.editor.text())),
         }
     }
 
@@ -212,6 +234,118 @@ impl App {
             self.terminal_paste(text);
         } else if self.modals.contains(Modal::Dialog) {
             self.dialog.editor.insert_paste(text);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use patok_core::event::{Phase, Snapshot};
+    use patok_core::pipeline::PipelineState;
+
+    use super::*;
+
+    /// An idle app with one pending task, so the scenario is `QueueReady` and
+    /// a non-empty submit reaches the plain-add / agent routing.
+    fn app() -> App {
+        let mut app = App::new(
+            Snapshot {
+                project_dir: "/home/user/demo".into(),
+                phase: Phase::Startup,
+                tasks: vec![],
+                current_task: None,
+                planning: false,
+                discovering: false,
+                provider: "claude".into(),
+                model: String::new(),
+                settings: BTreeMap::new(),
+                pipeline: PipelineState::today(),
+                model_catalog: Vec::new(),
+                recent: vec![],
+            },
+            "0.1.0".into(),
+        );
+        app.run.tasks = patok_core::task::parse("- [ ] T1.1: x\n");
+        app
+    }
+
+    fn enter(app: &mut App) -> Action {
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn collapse_lines_joins_trimmed_non_blank_lines() {
+        assert_eq!(collapse_lines("  a \n\n b\t\n"), "a b");
+        assert_eq!(collapse_lines("single"), "single");
+        assert_eq!(collapse_lines("x  y"), "x  y");
+        assert_eq!(collapse_lines("\n \n"), "");
+    }
+
+    #[test]
+    fn unchecked_submit_sends_inject_task_collapsed() {
+        let mut app = app();
+        app.open_dialog();
+        app.dialog
+            .editor
+            .insert_paste("first line\n\n  second line ");
+        app.dialog.use_agent = false;
+        assert_eq!(
+            app.submit_dialog(),
+            Action::InjectTask("first line second line".into())
+        );
+    }
+
+    #[test]
+    fn checked_submit_sends_submit_tasks_verbatim() {
+        let mut app = app();
+        app.open_dialog();
+        app.dialog
+            .editor
+            .insert_paste("first line\n\n  second line ");
+        app.dialog.use_agent = true;
+        assert_eq!(
+            app.submit_dialog(),
+            Action::SubmitTasks("first line\n\n  second line ".into())
+        );
+    }
+
+    #[test]
+    fn confirm_enabled_tracks_blank_text_for_add_only() {
+        let mut app = app();
+        app.open_dialog();
+        assert!(!app.confirm_enabled());
+        app.dialog.editor.insert_paste("  \n ");
+        assert!(!app.confirm_enabled());
+        app.dialog.editor.clear();
+        app.dialog.editor.insert_paste("x");
+        assert!(app.confirm_enabled());
+
+        let mut inject = self::app();
+        inject.open_inject();
+        assert!(inject.confirm_enabled());
+
+        let mut edit = self::app();
+        edit.edit_selected_task();
+        edit.dialog.editor.clear();
+        assert_eq!(edit.dialog.kind, DialogKind::Edit);
+        assert!(edit.confirm_enabled());
+    }
+
+    #[test]
+    fn enter_on_blank_add_is_refused_whatever_the_checkbox() {
+        for use_agent in [false, true] {
+            let mut app = app();
+            app.open_dialog();
+            app.dialog.use_agent = use_agent;
+            assert_eq!(enter(&mut app), Action::None);
+            assert!(app.modals.contains(Modal::Dialog));
+            assert_eq!(
+                app.dialog.status.as_deref(),
+                Some(app.empty_input_message())
+            );
         }
     }
 }

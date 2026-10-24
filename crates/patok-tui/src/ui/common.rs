@@ -9,7 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::hit::{button_line, footer_button_rects};
+use crate::hit::{button_line, footer_button_rects, inactive_button_line};
 use crate::theme::Theme;
 
 /// Entry rows indent this many spaces past the focus marker, nesting them under
@@ -173,6 +173,19 @@ pub(super) fn render_modal_footer(
     buttons: &[(&str, &str)],
     theme: Theme,
 ) {
+    render_modal_footer_with_inactive(frame, footer, hints, buttons, None, theme);
+}
+
+/// [`render_modal_footer`] with one button (by index) drawn inactive, in the
+/// muted colour (T5.2); its rectangle is unchanged.
+pub(super) fn render_modal_footer_with_inactive(
+    frame: &mut Frame,
+    footer: Rect,
+    hints: &[&str],
+    buttons: &[(&str, &str)],
+    inactive: Option<usize>,
+    theme: Theme,
+) {
     let rects = footer_button_rects(footer, buttons);
     let used: u16 = rects.iter().map(|rect| rect.width).sum();
     // The hint zone gives up its width first: it clips at two columns short of
@@ -182,8 +195,13 @@ pub(super) fn render_modal_footer(
         Paragraph::new(hint_line(hints, theme.muted_text)),
         hint_zone,
     );
-    for ((key, label), rect) in buttons.iter().zip(&rects) {
-        frame.render_widget(Paragraph::new(button_line(key, label, theme)), *rect);
+    for (i, ((key, label), rect)) in buttons.iter().zip(&rects).enumerate() {
+        let line = if Some(i) == inactive {
+            inactive_button_line(key, label, theme)
+        } else {
+            button_line(key, label, theme)
+        };
+        frame.render_widget(Paragraph::new(line), *rect);
     }
 }
 

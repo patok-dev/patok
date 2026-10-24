@@ -61,6 +61,16 @@ pub(crate) fn button_line(key: &str, label: &str, theme: Theme) -> Line<'static>
     Line::from(spans)
 }
 
+/// An inactive button (T5.2): the same text in the low-emphasis colour.
+pub(crate) fn inactive_button_line(key: &str, label: &str, theme: Theme) -> Line<'static> {
+    let style = Style::new().fg(theme.muted_text);
+    let mut spans = vec![Span::styled(format!(" [ {key} ] "), style)];
+    if !label.is_empty() {
+        spans.push(Span::styled(format!("{label} "), style));
+    }
+    Line::from(spans)
+}
+
 /// A modal's top-right close button (T66.1): the bracketed ` [ x ] ` in the
 /// theme's button accent colour, foreground only -- drawn through the shared
 /// [`button_line`] on every modal's title row, so it recolours with the
