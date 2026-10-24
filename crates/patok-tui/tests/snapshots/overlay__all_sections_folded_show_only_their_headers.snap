@@ -39,6 +39,6 @@ expression: screen
 │    │ ↑↓ move · Enter/Space edit · ←→ fold/cycle                               [ Esc ] Close │    │
 │    └────────────────────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                                  │
-│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output                               │
+│ a add · e edit · d delete · Enter start · ↑↓ select · HJKL move · Tab output · i inject          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                                         [ Enter ] start  [ m ] menu

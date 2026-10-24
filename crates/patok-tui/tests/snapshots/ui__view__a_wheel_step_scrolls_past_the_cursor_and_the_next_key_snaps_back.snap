@@ -23,6 +23,6 @@ expression: screen
 │○ T9.31  later thing 31                                                       │
 │○ T9.32  later thing 32                                                       │
 │○ T9.33  later thing 33                                                       │
-│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output           │
+│ a add · e edit · d delete · Enter start · ↑↓ select · HJKL move · Tab output │
 └──────────────────────────────────────────────────────────────────────────────┘
                                                     [ Enter ] start  [ m ] menu
