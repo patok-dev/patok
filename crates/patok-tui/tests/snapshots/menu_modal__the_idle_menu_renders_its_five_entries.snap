@@ -13,6 +13,6 @@ expression: screen
 │            │  Quit -- stop the app                              │            │
 │            │ ↑↓ move           [ Enter ] Confirm  [ Esc ] Close │            │
 │            └────────────────────────────────────────────────────┘            │
-│ a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output           │
+│ a add · e edit · d delete · Enter start · ↑↓ select · HJKL move · Tab output │
 └──────────────────────────────────────────────────────────────────────────────┘
                                                     [ Enter ] start  [ m ] menu

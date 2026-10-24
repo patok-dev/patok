@@ -9,6 +9,6 @@ expression: "draw(&app, 26, 10)"
 │○ T1.2  add the parser f│
 │○ T1.3  wire the engine │
 │                        │
-│ a add tasks            │
+│ a add · e edit         │
 └────────────────────────┘
           [ Enter ] start

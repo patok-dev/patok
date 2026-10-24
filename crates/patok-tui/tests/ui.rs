@@ -1577,7 +1577,7 @@ fn the_status_bar_advertises_the_menu_key_in_every_engine_state() {
     // still work through the menu's entries.
     for app in [&idle, &running, &planning, &discovering] {
         let strip = strip(app);
-        assert!(!strip.contains(" add tasks "), "{strip}");
+        assert!(!strip.contains(" a add "), "{strip}");
         assert!(!strip.contains(" scroll "), "{strip}");
         assert!(!strip.contains(" Tab "), "{strip}");
         assert!(!strip.contains(" settings "), "{strip}");
@@ -2592,7 +2592,7 @@ mod dialog {
         let screen = draw(&app, 80, 24);
         assert!(screen.contains("2 tasks added."), "{screen}");
         let bottom = screen.lines().last().unwrap();
-        assert!(!bottom.contains(" add tasks "), "{screen}");
+        assert!(!bottom.contains(" a add "), "{screen}");
         assert!(bottom.contains(" menu"), "{screen}");
         // The add-tasks chip is gone from the strip (T73.1); the shorter
         // strip fits an 80-column line whole, through the menu chip.
@@ -2614,7 +2614,7 @@ mod dialog {
         assert!(screen.contains("planner result rejected"), "{screen}");
         let bottom = screen.lines().last().unwrap();
         assert!(bottom.contains(" menu"), "{screen}");
-        assert!(!bottom.contains(" add tasks "), "{screen}");
+        assert!(!bottom.contains(" a add "), "{screen}");
         assert!(!bottom.contains("planner result rejected"), "{screen}");
         insta::assert_snapshot!(screen);
     }
@@ -2646,7 +2646,7 @@ mod dialog {
         let screen = draw(&app, 80, 24);
         let bottom = screen.lines().last().unwrap();
         assert!(bottom.contains(" menu"), "{screen}");
-        assert!(!bottom.contains(" add tasks "), "{screen}");
+        assert!(!bottom.contains(" a add "), "{screen}");
         assert!(!bottom.contains("1 task added."), "{screen}");
         // The quit message still lands on the last line (a quit from idle uses
         // the NOW scope: the engine stops and the app exits).
@@ -3360,7 +3360,7 @@ mod explore {
         // The add-task chip left the status line with T73.1; the `a` key
         // keeps opening the dialog and the pane hints strip advertises it.
         assert!(!strip.contains(" a "), "{strip}");
-        assert!(!strip.contains(" add tasks "), "{strip}");
+        assert!(!strip.contains(" a add "), "{strip}");
 
         // A complete queue flips the label: Enter runs a discovery round.
         let mut complete = app_with("- [x] T1.1: first done\n- [x] T1.2: second done\n");
@@ -4477,7 +4477,7 @@ mod hints {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use patok_config::Theme as ThemeKey;
-    use patok_tui::{Action, FrameFocus, Theme, fitted_hints};
+    use patok_tui::{Action, FrameFocus, TaskChange, Theme, fitted_hints};
     use ratatui::layout::Rect;
 
     const W: u16 = 80;
@@ -4542,9 +4542,11 @@ mod hints {
     }
 
     /// The idle task list strip with every hint that fits the 80-column
-    /// frame (T75.1 dropped the idle `q quit` entry; T76.1 added the `i
-    /// inject task` entry). The frame spans the whole width, so all of them fit.
-    const TASKS_STRIP: &str = " a add tasks · i inject task · Enter start · ↑↓ scroll · Tab output";
+    /// frame (T75.1 dropped the idle `q quit` entry; T4.4 shortened the labels
+    /// and added the edit, delete, select and move hints, so the trailing
+    /// `i inject` hint drops at 80 columns).
+    const TASKS_STRIP: &str =
+        " a add · e edit · d delete · Enter start · ↑↓ select · HJKL move · Tab output";
     /// The focused output frame's strip with every hint that fits the
     /// 80-column frame (T124.1 dropped the leading `v rail view` entry,
     /// which makes the trailing `Tab tasks` hint fit; T125.1 removed the
@@ -4571,11 +4573,11 @@ mod hints {
             !rendered.contains("quit"),
             "the tasks strip lists no quit label"
         );
-        // The tasks strip advertises the inject key (T76.1)...
-        assert!(
-            rendered.contains("i inject task"),
-            "the tasks strip lists the inject hint"
-        );
+        // The tasks strip advertises the task edit keys (T4.4; the trailing
+        // `i inject` hint drops at 80 columns)...
+        for hint in ["e edit", "d delete", "HJKL move"] {
+            assert!(rendered.contains(hint), "the tasks strip lists {hint}");
+        }
         // ...and the output frame's strip never claims it.
         assert!(
             !OUTPUT_STRIP.contains("inject"),
@@ -4701,6 +4703,37 @@ mod hints {
             let mut app = app();
             assert_eq!(app.on_key(key(KeyCode::Enter)), Action::StartBuild);
         }
+        // The edit keys (T4.4): `e` opens the edit dialog on the first pending
+        // task, the arrows move the selection, Shift+HJKL and `d` change it.
+        {
+            let mut app = app();
+            assert_eq!(app.on_key(key(KeyCode::Char('e'))), Action::None);
+            assert!(app.dialog_open());
+        }
+        {
+            let mut app = app();
+            assert_eq!(app.selected_task_index(), Some(1));
+            assert_eq!(app.on_key(key(KeyCode::Down)), Action::None);
+            assert_eq!(app.selected_task_index(), Some(2));
+            assert_eq!(app.on_key(key(KeyCode::Char('k'))), Action::None);
+            assert_eq!(app.selected_task_index(), Some(1));
+        }
+        for (c, change) in [
+            ('d', TaskChange::Remove),
+            ('K', TaskChange::MoveUp),
+            ('J', TaskChange::MoveDown),
+            ('L', TaskChange::Indent),
+            ('H', TaskChange::Outdent),
+        ] {
+            let mut app = app();
+            assert_eq!(
+                app.on_key(key(KeyCode::Char(c))),
+                Action::ChangeTask {
+                    id: "T1.2".into(),
+                    change
+                }
+            );
+        }
         // A complete queue points Enter at a discovery round instead.
         {
             let mut complete = app();
@@ -4743,45 +4776,58 @@ mod hints {
     }
 
     #[test]
+    fn a_pending_soft_stop_drops_the_delete_hint() {
+        let mut app = running();
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, FrameFocus::Tasks);
+        assert_eq!(app.on_key(key(KeyCode::Char('q'))), Action::Quit);
+        assert!(app.run.stopping);
+        let buffer = buffer(&app);
+        let rendered = row_text(&buffer, bottom_row(app.layout.tasks_area.get()));
+        assert!(!rendered.contains("d delete"), "{rendered}");
+        assert!(
+            rendered.starts_with(" a add · e edit · ↑↓ select"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn fitted_hints_keep_the_leading_hints_that_fit() {
         let hints = [
-            "a add tasks",
-            "i inject task",
+            "a add",
+            "e edit",
+            "d delete",
             "Enter start",
-            "↑↓ scroll",
+            "↑↓ select",
+            "HJKL move",
             "Tab output",
+            "i inject",
         ];
         // One leading space plus ` · ` between hints: the cumulative widths
-        // are 12, 28, 42, 54 and 67 columns.
+        // are 6, 15, 26, 40, 52, 64, 77 and 88 columns.
         assert!(fitted_hints(&hints, 0).is_empty());
-        assert!(fitted_hints(&hints, 11).is_empty());
-        assert_eq!(fitted_hints(&hints, 12), ["a add tasks"]);
-        assert_eq!(fitted_hints(&hints, 27), ["a add tasks"]);
-        assert_eq!(fitted_hints(&hints, 28), ["a add tasks", "i inject task"]);
-        assert_eq!(fitted_hints(&hints, 41), ["a add tasks", "i inject task"]);
-        assert_eq!(
-            fitted_hints(&hints, 42),
-            ["a add tasks", "i inject task", "Enter start"]
-        );
-        assert_eq!(
-            fitted_hints(&hints, 53),
-            ["a add tasks", "i inject task", "Enter start"]
-        );
-        assert_eq!(
-            fitted_hints(&hints, 54),
-            ["a add tasks", "i inject task", "Enter start", "↑↓ scroll"]
-        );
-        assert_eq!(
-            fitted_hints(&hints, 66),
-            ["a add tasks", "i inject task", "Enter start", "↑↓ scroll"]
-        );
-        assert_eq!(fitted_hints(&hints, 67), hints);
+        assert!(fitted_hints(&hints, 5).is_empty());
+        assert_eq!(fitted_hints(&hints, 6), hints[..1]);
+        assert_eq!(fitted_hints(&hints, 14), hints[..1]);
+        assert_eq!(fitted_hints(&hints, 15), hints[..2]);
+        assert_eq!(fitted_hints(&hints, 25), hints[..2]);
+        assert_eq!(fitted_hints(&hints, 26), hints[..3]);
+        assert_eq!(fitted_hints(&hints, 39), hints[..3]);
+        assert_eq!(fitted_hints(&hints, 40), hints[..4]);
+        assert_eq!(fitted_hints(&hints, 51), hints[..4]);
+        assert_eq!(fitted_hints(&hints, 52), hints[..5]);
+        assert_eq!(fitted_hints(&hints, 63), hints[..5]);
+        assert_eq!(fitted_hints(&hints, 64), hints[..6]);
+        assert_eq!(fitted_hints(&hints, 76), hints[..6]);
+        assert_eq!(fitted_hints(&hints, 77), hints[..7]);
+        assert_eq!(fitted_hints(&hints, 87), hints[..7]);
+        assert_eq!(fitted_hints(&hints, 88), hints);
     }
 
     #[test]
     fn a_narrow_frame_drops_trailing_hints_inside_its_borders() {
         // 50 columns leave the focused task list 48 inner columns: the first
-        // three hints fit and everything from `↑↓ scroll` drops.
+        // four hints fit and everything from `↑↓ select` drops.
         let app = app();
         let mut terminal = Terminal::new(TestBackend::new(50, H)).unwrap();
         terminal.draw(|frame| render(frame, &app)).unwrap();
@@ -4791,7 +4837,7 @@ mod hints {
         let rendered = row_text(buffer, row);
         assert_eq!(
             rendered.trim_end(),
-            " a add tasks · i inject task · Enter start"
+            " a add · e edit · d delete · Enter start"
         );
         // The strip never reaches the frame's borders.
         assert_eq!(buffer[(tasks.x, row.y)].symbol(), "│");

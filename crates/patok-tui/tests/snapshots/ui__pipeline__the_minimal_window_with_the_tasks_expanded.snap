@@ -9,6 +9,6 @@ expression: screen
 │▶ T1.2  add the parser for task files    │
 │○ T1.3  wire the engine to the shell     │
 │                                         │
-│ a add tasks · i inject task · ↑↓ scroll │
+│ a add · e edit · d delete · ↑↓ select   │
 └─────────────────────────────────────────┘
                   [ Esc ] stop  [ m ] menu

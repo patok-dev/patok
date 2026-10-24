@@ -13,16 +13,22 @@ use super::common::{
 use crate::app::App;
 use crate::view::FrameFocus;
 
-/// The task list frame's key hints (T71.1): the keys its focused state owns,
-/// the most important leading so the trailing hints drop first on a narrow
-/// frame. Every label matches what `App::on_key` does with the key while no
-/// modal holds the keyboard and the task list frame has the focus: `a` opens
-/// the add-task dialog (T74.1) and `i` the inject-task modal (T76.1), both
-/// from the focused task list frame, Enter starts the build loop or runs a
-/// discovery round while the engine is idle, the scroll keys move the task
-/// list, and Tab moves the keys to the other frame.
+/// The task list frame's key hints (T71.1, T4.4): the keys its focused state
+/// owns, the most important leading so the trailing hints drop first on a
+/// narrow frame. Every label matches what `App::on_key` does with the key
+/// while no modal holds the keyboard and the task list frame has the focus:
+/// `a` opens the add-task dialog (T74.1), `e` edits the selected pending task
+/// (T4.3), `d` deletes the selected task (T4.2) -- except during a pending
+/// soft stop, where `d` detaches, so the hint is left out --, Enter starts the
+/// build loop or runs a discovery round while the engine is idle, the arrow
+/// keys (and `j`/`k`) move the selection (T4.1), Shift+H/J/K/L move, indent or
+/// outdent the selected task (T4.2), Tab moves the keys to the other frame and
+/// `i` opens the inject-task modal (T76.1; T5.4 removes it).
 pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
-    let mut hints = vec!["a add tasks", "i inject task"];
+    let mut hints = vec!["a add", "e edit"];
+    if !app.run.stopping {
+        hints.push("d delete");
+    }
     if app.is_idle() {
         hints.push(if app.run.tasks.iter().any(|t| !t.done) {
             "Enter start"
@@ -30,8 +36,10 @@ pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
             "Enter run discovery"
         });
     }
-    hints.push("↑↓ scroll");
+    hints.push("↑↓ select");
+    hints.push("HJKL move");
     hints.push("Tab output");
+    hints.push("i inject");
     hints
 }
 

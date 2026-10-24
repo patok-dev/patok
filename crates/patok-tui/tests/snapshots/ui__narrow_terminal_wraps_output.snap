@@ -11,6 +11,6 @@ expression: "draw(&app, 40, 12)"
 │                                      │
 │                                      │
 │                                      │
-│ a add tasks · i inject task          │
+│ a add · e edit · d delete            │
 └──────────────────────────────────────┘
             [ Enter ] start  [ m ] menu
