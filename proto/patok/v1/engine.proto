@@ -260,6 +260,18 @@ message CommandRequest {
     // the same claim rule as a saved provider change. Rejected for unknown
     // slugs and providers without model selection.
     DiscoverModels discover_models = 9;
+    // The tasks-edit action: replace one pending task's description in
+    // TASKS.md, keeping its id, checkbox and progress token. Rejected for
+    // the engine's current (in-progress) task, completed tasks, unknown ids
+    // and an empty or multi-line description. Runs under the engine's
+    // task-file lock and the queue reconciles immediately.
+    EditTask edit_task = 10;
+    // The tasks-move action: swap one pending task with its pending
+    // neighbour above or below and renumber the affected ids; crossing a
+    // group boundary joins the neighbour's group. Rejected for the running
+    // and completed tasks, moves across them, unknown ids and a missing
+    // direction. Runs under the task-file lock and reconciles immediately.
+    MoveTask move_task = 11;
   }
 }
 
@@ -305,6 +317,30 @@ message InjectTask {
 // to remove from TASKS.md, e.g. "T3.1".
 message RemoveTask {
   string id = 1;
+}
+
+// The tasks-edit action's payload: the id of the pending task line to
+// change, e.g. "T3.1", and its new single-line description (without id or
+// progress token).
+message EditTask {
+  string id = 1;
+  string description = 2;
+}
+
+// The tasks-move action's payload: the id of the pending task to move and
+// the direction.
+message MoveTask {
+  string id = 1;
+  Direction direction = 2;
+
+  // DIRECTION_UNSPECIFIED is the wire default and is rejected: if the zero
+  // value meant a real direction, a request with the field missing would
+  // silently move the task.
+  enum Direction {
+    DIRECTION_UNSPECIFIED = 0;
+    DIRECTION_UP = 1;
+    DIRECTION_DOWN = 2;
+  }
 }
 
 // The settings overlay's model picker opened for a provider with no

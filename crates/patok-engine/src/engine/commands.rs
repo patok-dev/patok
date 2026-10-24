@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use super::state::State;
 use super::{AttachError, Attachment, Engine};
 use crate::session::{Session, SessionKind};
-use crate::taskfile::RemoveOutcome;
+use crate::taskfile::{MoveDirection, RemoveOutcome};
 use crate::{QueueCreation, TASK_FILE};
 
 /// Which `start_*` command is asking: the four entry points share one guard
@@ -469,5 +469,40 @@ impl Engine {
         }
         self.reconcile();
         Ok(())
+    }
+
+    /// Serves the `EditTask` command: replaces a pending task's description.
+    /// Only the input validation is real so far; the rejection that follows
+    /// is a placeholder until the locked file operation arrives with the
+    /// `TaskList` method (T2.3). Errors are user-facing rejection reasons.
+    pub async fn edit_task(&self, id: &str, description: &str) -> Result<(), String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("the task id is empty".into());
+        }
+        let description = description.trim();
+        if description.is_empty() {
+            return Err("the task description is empty".into());
+        }
+        if description.contains('\n') {
+            return Err("the task description must be a single line".into());
+        }
+        Err(format!(
+            "editing task {id} is not supported by this engine yet"
+        ))
+    }
+
+    /// Serves the `MoveTask` command: moves a pending task up or down. The
+    /// rejection is a placeholder until the locked file operation arrives
+    /// with the `TaskList` method (T2.3). Errors are user-facing rejection
+    /// reasons.
+    pub async fn move_task(&self, id: &str, _direction: MoveDirection) -> Result<(), String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("the task id is empty".into());
+        }
+        Err(format!(
+            "moving task {id} is not supported by this engine yet"
+        ))
     }
 }

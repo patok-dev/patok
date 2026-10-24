@@ -591,8 +591,53 @@ pub fn discover_models_from_proto(command: &DiscoverModels) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patok_proto::CommandRequest;
+    use patok_proto::{CommandRequest, EditTask, MoveTask, move_task};
     use prost::Message;
+
+    fn round_trip(action: command_request::Action) -> command_request::Action {
+        let request = CommandRequest {
+            action: Some(action),
+        };
+        CommandRequest::decode(request.encode_to_vec().as_slice())
+            .unwrap()
+            .action
+            .unwrap()
+    }
+
+    #[test]
+    fn task_edit_and_move_round_trip_the_wire() {
+        let command_request::Action::EditTask(edit) =
+            round_trip(command_request::Action::EditTask(EditTask {
+                id: "T3.1".into(),
+                description: "new text".into(),
+            }))
+        else {
+            panic!("not an EditTask action");
+        };
+        assert_eq!(edit.id, "T3.1");
+        assert_eq!(edit.description, "new text");
+
+        let command_request::Action::MoveTask(mv) =
+            round_trip(command_request::Action::MoveTask(MoveTask {
+                id: "T2.1".into(),
+                direction: move_task::Direction::Down as i32,
+            }))
+        else {
+            panic!("not a MoveTask action");
+        };
+        assert_eq!(mv.id, "T2.1");
+        assert_eq!(mv.direction(), move_task::Direction::Down);
+
+        let command_request::Action::MoveTask(mv) =
+            round_trip(command_request::Action::MoveTask(MoveTask {
+                id: "T2.1".into(),
+                direction: 0,
+            }))
+        else {
+            panic!("not a MoveTask action");
+        };
+        assert_eq!(mv.direction(), move_task::Direction::Unspecified);
+    }
 
     #[test]
     fn discover_models_round_trips_the_wire() {
