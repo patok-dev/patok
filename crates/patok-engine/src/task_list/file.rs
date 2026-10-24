@@ -765,7 +765,7 @@ pub enum MoveDirection {
     Down,
 }
 
-/// The result of a successful [`move_task`] or [`indent_task`]: the rewritten text and the moved
+/// The result of a successful [`move_task`], [`indent_task`] or [`outdent_task`]: the rewritten text and the moved
 /// task's new id.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MovedTask {
@@ -1016,6 +1016,92 @@ pub fn indent_task(
     if unterminated && out.ends_with(ending) {
         out.truncate(out.len() - ending.len());
     }
+    Ok(MovedTask {
+        text: out,
+        id: new_id,
+    })
+}
+
+/// Outdents the pending task `id` (T1.6): the task and the tasks after it in its group become a
+/// new group directly after the old one. The task becomes that group's `.1`, its former later
+/// siblings follow in order, and every later group number shifts up by one.
+///
+/// A group is the leading id number, so this is pure renumbering: every numbered task line from
+/// the task onward gets its major plus one (the tail of the old group becomes the new group, each
+/// later group moves up), then [`renumber_pending`] makes the ids contiguous, which numbers the
+/// new group from `.1`. Lines never move: headings, prose and blank lines stay byte-identical,
+/// the new group gets no `## ` heading of its own, and the heading of the next group stays in
+/// front of that group.
+///
+/// Refusals, checked in this order: the target's own state from [`find_pending`]; the task being
+/// the first of its group (the nearest numbered line above is missing or has another major) is
+/// [`TaskEditOutcome::Invalid`], since there is nothing to split off; a checked or running task
+/// after the target (a sibling in the tail or any later group, whose id would have to change) is
+/// `Completed` or `Running`; the running task's group being the task's own is `Running`, because
+/// that group would lose tasks; a major that would overflow is `Invalid`. Splitting a group after
+/// a checked task, or outdenting from a group after the running task's, is allowed.
+///
+/// Every line that is not renumbered stays byte-identical, CRLF included, and an unterminated last
+/// line stays unterminated. The function never touches the file: the caller reads and writes it
+/// under the task-file lock.
+pub fn outdent_task(
+    text: &str,
+    id: &str,
+    running: Option<&str>,
+) -> Result<MovedTask, TaskEditOutcome> {
+    let index = find_pending(text, id, running)?;
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let parsed: Vec<Option<Numbered>> = lines
+        .iter()
+        .map(|line| parse_numbered(line, running))
+        .collect();
+    let moved = parsed[index].as_ref().ok_or(TaskEditOutcome::Invalid)?;
+    let above = parsed[..index].iter().rev().flatten().next();
+    if above.is_none_or(|n| n.major != moved.major) {
+        return Err(TaskEditOutcome::Invalid);
+    }
+    let boundary = parsed
+        .iter()
+        .rposition(|n| n.as_ref().is_some_and(|n| n.done || n.id_is_running));
+    if let Some(b) = boundary
+        && b > index
+    {
+        let done = parsed[b].as_ref().is_some_and(|n| n.done);
+        return Err(if done {
+            TaskEditOutcome::Completed
+        } else {
+            TaskEditOutcome::Running
+        });
+    }
+    let running_major = parsed
+        .iter()
+        .flatten()
+        .find(|n| !n.done && n.id_is_running)
+        .map(|n| n.major);
+    if running_major == Some(moved.major) {
+        return Err(TaskEditOutcome::Running);
+    }
+
+    let mut shifted = String::with_capacity(text.len() + 8);
+    for (i, line) in lines.iter().enumerate() {
+        match parsed[i].as_ref().filter(|_| i >= index) {
+            Some(n) => {
+                let major = n.major.checked_add(1).ok_or(TaskEditOutcome::Invalid)?;
+                shifted.push_str(&line[..n.start]);
+                shifted.push_str(&format!("{major}.{}", n.minor));
+                shifted.push_str(&line[n.end..]);
+            }
+            None => shifted.push_str(line),
+        }
+    }
+    let out = renumber_pending(&shifted, running);
+    let new_id = out
+        .split_inclusive('\n')
+        .nth(index)
+        .and_then(task::split_checkbox)
+        .and_then(|(_, rest)| split_id(rest))
+        .map(|(found, _, _)| found.to_string())
+        .ok_or(TaskEditOutcome::Invalid)?;
     Ok(MovedTask {
         text: out,
         id: new_id,
@@ -2823,5 +2909,213 @@ mod tests {
             got,
             [("T1.1", "a"), ("T1.2", "b"), ("T1.3", "c"), ("T2.1", "d")]
         );
+    }
+
+    fn outdented(text: &str, id: &str, running: Option<&str>) -> (String, String) {
+        let m = outdent_task(text, id, running).unwrap();
+        (m.text, m.id)
+    }
+
+    #[test]
+    fn outdent_task_middle_task_starts_a_new_group_and_shifts_later_groups() {
+        assert_eq!(
+            outdented(TWO_GROUPS, "T1.2", None),
+            pair(
+                "## P1\n- [ ] T1.1: a\n- [ ] T2.1: b\n## P2\n- [ ] T3.1: c\n- [ ] T3.2: d\n",
+                "T2.1"
+            )
+        );
+    }
+
+    #[test]
+    fn outdent_task_takes_the_later_siblings_along() {
+        assert_eq!(
+            outdented(
+                "- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n- [ ] T2.1: d\n",
+                "T1.2",
+                None
+            ),
+            pair(
+                "- [ ] T1.1: a\n- [ ] T2.1: b\n- [ ] T2.2: c\n- [ ] T3.1: d\n",
+                "T2.1"
+            )
+        );
+    }
+
+    #[test]
+    fn outdent_task_last_task_of_a_group() {
+        assert_eq!(
+            outdented(
+                "- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n- [ ] T2.1: d\n",
+                "T1.3",
+                None
+            ),
+            pair(
+                "- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T2.1: c\n- [ ] T3.1: d\n",
+                "T2.1"
+            )
+        );
+        assert_eq!(
+            outdented(TWO_GROUPS, "T2.2", None),
+            pair(
+                "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n## P2\n- [ ] T2.1: c\n- [ ] T3.1: d\n",
+                "T3.1"
+            )
+        );
+    }
+
+    #[test]
+    fn outdent_task_refuses_the_first_or_only_task_of_a_group() {
+        assert_eq!(
+            outdent_task(TWO_GROUPS, "T1.1", None),
+            Err(TaskEditOutcome::Invalid)
+        );
+        assert_eq!(
+            outdent_task(TWO_GROUPS, "T2.1", None),
+            Err(TaskEditOutcome::Invalid)
+        );
+        assert_eq!(
+            outdent_task("- [ ] T1.1: a\n", "T1.1", None),
+            Err(TaskEditOutcome::Invalid)
+        );
+    }
+
+    #[test]
+    fn outdent_task_skips_invisible_lines_and_keeps_prefixes_tokens_and_headings() {
+        assert_eq!(
+            outdented(
+                "- [ ] T1.1: a\n  prose\n- [ ] no id\n- [ ] H1.2: [RP.B-] b\n## P2\n- [ ] T2.1: c\n",
+                "H1.2",
+                None
+            ),
+            pair(
+                "- [ ] T1.1: a\n  prose\n- [ ] no id\n- [ ] H2.1: [RP.B-] b\n## P2\n- [ ] T3.1: c\n",
+                "H2.1"
+            )
+        );
+    }
+
+    #[test]
+    fn outdent_task_splits_a_group_after_a_done_task() {
+        assert_eq!(
+            outdented(
+                "- [x] T1.1: d\n- [ ] T1.2: a\n- [ ] T1.3: b\n- [ ] T2.1: c\n",
+                "T1.2",
+                None
+            ),
+            pair(
+                "- [x] T1.1: d\n- [ ] T2.1: a\n- [ ] T2.2: b\n- [ ] T3.1: c\n",
+                "T2.1"
+            )
+        );
+    }
+
+    #[test]
+    fn outdent_task_refuses_to_cross_done_and_running_tasks() {
+        assert_eq!(
+            outdent_task(
+                "- [ ] T1.1: a\n- [ ] T1.2: b\n- [x] T1.3: d\n",
+                "T1.2",
+                None
+            ),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            outdent_task(
+                "- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T2.1: c\n- [x] T2.2: d\n",
+                "T1.2",
+                None
+            ),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            outdent_task(
+                "- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T2.1: r\n",
+                "T1.2",
+                Some("T2.1")
+            ),
+            Err(TaskEditOutcome::Running)
+        );
+    }
+
+    #[test]
+    fn outdent_task_refuses_to_change_the_running_tasks_group() {
+        assert_eq!(
+            outdent_task(
+                "- [ ] T1.1: r\n- [ ] T1.2: a\n- [ ] T1.3: b\n",
+                "T1.3",
+                Some("T1.1")
+            ),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            outdented(
+                "- [ ] T1.1: r\n- [ ] T2.1: a\n- [ ] T2.2: b\n",
+                "T2.2",
+                Some("T1.1")
+            ),
+            pair("- [ ] T1.1: r\n- [ ] T2.1: a\n- [ ] T3.1: b\n", "T3.1")
+        );
+    }
+
+    #[test]
+    fn outdent_task_reports_the_targets_own_refusals() {
+        let text = "- [x] T1.1: d\n- [ ] T1.2: r\n- [ ] T1.3: a\n- [ ] no id\n";
+        assert_eq!(
+            outdent_task(text, "T1.1", Some("T1.2")),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            outdent_task(text, "T1.2", Some("T1.2")),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            outdent_task(text, "T9.9", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert_eq!(
+            outdent_task(text, "no id", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+    }
+
+    #[test]
+    fn outdent_task_preserves_crlf_and_an_unterminated_last_line() {
+        assert_eq!(
+            outdented("- [ ] T1.1: a\r\n- [ ] T1.2: b", "T1.2", None),
+            pair("- [ ] T1.1: a\r\n- [ ] T2.1: b", "T2.1")
+        );
+        assert_eq!(
+            outdented("- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T2.1: c", "T1.2", None),
+            pair("- [ ] T1.1: a\n- [ ] T2.1: b\n- [ ] T3.1: c", "T2.1")
+        );
+    }
+
+    #[test]
+    fn outdent_task_refuses_a_major_overflow() {
+        assert_eq!(
+            outdent_task(
+                "- [ ] T18446744073709551615.1: a\n- [ ] T18446744073709551615.2: b\n",
+                "T18446744073709551615.2",
+                None
+            ),
+            Err(TaskEditOutcome::Invalid)
+        );
+    }
+
+    #[test]
+    fn outdent_task_round_trips_with_indent_and_parses_back() {
+        let (text, id) = outdented(TWO_GROUPS, "T1.2", None);
+        assert_eq!(id, "T2.1");
+        let tasks = task::parse(&text);
+        let got: Vec<(&str, &str)> = tasks
+            .iter()
+            .map(|t| (t.id.as_str(), t.description.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [("T1.1", "a"), ("T2.1", "b"), ("T3.1", "c"), ("T3.2", "d")]
+        );
+        assert_eq!(indented(&text, "T2.1", None), pair(TWO_GROUPS, "T1.2"));
     }
 }
