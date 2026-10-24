@@ -590,29 +590,86 @@ impl Engine {
         Ok(())
     }
 
-    /// Serves the `IndentTask` command: moves a pending task into the
-    /// previous group. The rejection is a placeholder until the locked file
-    /// operation arrives with the `TaskList` method (T2.4). Errors are
+    /// Serves the `IndentTask` command: moves a pending task to the end of
+    /// the previous group. Locking, refusals, atomic write and reconcile are
+    /// as for `edit_task`. Pending ids are renumbered. The in-progress task,
+    /// its group and completed tasks are never touched. Errors are
     /// user-facing rejection reasons.
     pub async fn indent_task(&self, id: &str) -> Result<(), String> {
         let id = id.trim();
         if id.is_empty() {
             return Err("the task id is empty".into());
         }
-        Err(format!(
-            "indenting task {id} is not supported by this engine yet"
-        ))
+        let path = self.inner.task_list.path();
+        let guard = || self.edit_guard();
+        match self.inner.task_list.indent_task(id, guard).await {
+            Ok(new_id) => tracing::debug!("indented task {id} to {new_id}"),
+            Err(EditFailure::Refused(reason)) => return Err(reason),
+            Err(EditFailure::Outcome(TaskEditOutcome::Running)) => {
+                return Err(format!(
+                    "task {id} cannot be indented: the change would touch the in-progress task or its group"
+                ));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::Completed)) => {
+                return Err(format!(
+                    "task {id} cannot be indented: it or a task it would pass is completed"
+                ));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::NotFound)) => {
+                return Err(format!("no task with id {id} in {TASK_FILE}"));
+            }
+            // `Ok` is never returned as an error.
+            Err(EditFailure::Outcome(TaskEditOutcome::Invalid | TaskEditOutcome::Ok)) => {
+                return Err(format!("task {id} has no previous group to join"));
+            }
+            Err(EditFailure::Io(e)) => {
+                return Err(format!("cannot update {}: {e}", path.display()));
+            }
+        }
+        self.reconcile();
+        Ok(())
     }
 
     /// Serves the `OutdentTask` command: splits a pending task and the tasks
-    /// after it into a new group. Placeholder until T2.4, as above.
+    /// after it in its group into a new group directly after it; later groups
+    /// shift up. Locking, refusals, atomic write and reconcile are as for
+    /// `edit_task`. The in-progress task, its group and completed tasks are
+    /// never touched. Errors are user-facing rejection reasons.
     pub async fn outdent_task(&self, id: &str) -> Result<(), String> {
         let id = id.trim();
         if id.is_empty() {
             return Err("the task id is empty".into());
         }
-        Err(format!(
-            "outdenting task {id} is not supported by this engine yet"
-        ))
+        let path = self.inner.task_list.path();
+        let guard = || self.edit_guard();
+        match self.inner.task_list.outdent_task(id, guard).await {
+            Ok(new_id) => tracing::debug!("outdented task {id} to {new_id}"),
+            Err(EditFailure::Refused(reason)) => return Err(reason),
+            Err(EditFailure::Outcome(TaskEditOutcome::Running)) => {
+                return Err(format!(
+                    "task {id} cannot be outdented: the change would touch the in-progress task or its group"
+                ));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::Completed)) => {
+                return Err(format!(
+                    "task {id} cannot be outdented: it or a task after it is completed"
+                ));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::NotFound)) => {
+                return Err(format!("no task with id {id} in {TASK_FILE}"));
+            }
+            // `Ok` is never returned as an error. A `u64` major overflow also
+            // maps here but cannot happen in practice.
+            Err(EditFailure::Outcome(TaskEditOutcome::Invalid | TaskEditOutcome::Ok)) => {
+                return Err(format!(
+                    "task {id} is the first task of its group; there is nothing to split off"
+                ));
+            }
+            Err(EditFailure::Io(e)) => {
+                return Err(format!("cannot update {}: {e}", path.display()));
+            }
+        }
+        self.reconcile();
+        Ok(())
     }
 }
