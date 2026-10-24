@@ -1541,6 +1541,240 @@ async fn remove_task_refuses_the_running_task_and_removes_a_pending_one_mid_buil
     );
 }
 
+const THREE_TASKS: &str = "# Tasks\n\n## Phase 1\n- [ ] T1.1: add the greeting file\n- [ ] T1.2: fix the second task\n- [ ] T1.3: polish the third task\n";
+
+/// The description of task `id` in the last `TasksChanged` of `events`.
+fn changed_description(events: &[EngineEvent], id: &str) -> String {
+    let tasks = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::TasksChanged { tasks } => Some(tasks),
+            _ => None,
+        })
+        .next_back()
+        .unwrap();
+    tasks
+        .iter()
+        .find(|t| t.id == id)
+        .unwrap_or_else(|| panic!("{id} missing from {tasks:#?}"))
+        .description
+        .clone()
+}
+
+/// T2.3: while a build runs, editing the running task is refused, while a
+/// pending task is rewritten (trimmed) and the queue reconciles at once.
+#[tokio::test]
+async fn edit_task_rewrites_a_pending_task_and_reconciles_mid_build() {
+    let fixture = Fixture::new(TASKS);
+    let provider = MockProvider::new(vec![Step::Sleep(Duration::from_secs(60))]);
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TaskStarted { .. })
+    })
+    .await;
+
+    assert_eq!(
+        engine.edit_task("T1.1", "x").await.unwrap_err(),
+        "task T1.1 is in progress; wait for it to finish before editing it"
+    );
+    assert!(fixture.tasks_file().contains("add the greeting file"));
+
+    engine
+        .edit_task("T1.2", "  rename the second task  ")
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .tasks_file()
+            .contains("- [ ] T1.2: rename the second task\n")
+    );
+    let events = collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TasksChanged { .. })
+    })
+    .await;
+    assert_eq!(
+        changed_description(&events, "T1.2"),
+        "rename the second task"
+    );
+
+    engine.request_stop(true);
+    collect_until(&mut attachment.events, is_phase_startup).await;
+}
+
+#[tokio::test]
+async fn edit_task_refuses_completed_missing_and_invalid_tasks() {
+    let original = TASKS.replace("[ ] T1.1", "[x] T1.1");
+    let fixture = Fixture::new(&original);
+    let engine = fixture.engine(MockProvider::new(vec![]));
+
+    assert_eq!(
+        engine.edit_task("T1.1", "x").await.unwrap_err(),
+        "task T1.1 is completed and cannot be edited"
+    );
+    assert_eq!(
+        engine.edit_task("T9.9", "x").await.unwrap_err(),
+        format!("no task with id T9.9 in {TASK_FILE}")
+    );
+    assert_eq!(
+        engine.edit_task("", "x").await.unwrap_err(),
+        "the task id is empty"
+    );
+    assert_eq!(
+        engine.edit_task("T1.2", "  ").await.unwrap_err(),
+        "the task description is empty"
+    );
+    assert_eq!(
+        engine.edit_task("T1.2", "a\nb").await.unwrap_err(),
+        "the task description must be a single line"
+    );
+    assert_eq!(
+        engine.edit_task("T1.2", "[RP.B-] x").await.unwrap_err(),
+        "the task description must be a single line and must not start with a progress token"
+    );
+    assert_eq!(fixture.tasks_file(), original);
+}
+
+/// T2.3: mid-build, a move touching the running task is refused, a move
+/// between pending tasks swaps them and the queue reconciles at once.
+#[tokio::test]
+async fn move_task_swaps_pending_tasks_and_refuses_the_running_one_mid_build() {
+    let fixture = Fixture::new(THREE_TASKS);
+    let provider = MockProvider::new(vec![Step::Sleep(Duration::from_secs(60))]);
+    let engine = fixture.engine(provider.clone());
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_build().unwrap();
+    collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TaskStarted { .. })
+    })
+    .await;
+
+    let before = fixture.tasks_file();
+    assert_eq!(
+        engine
+            .move_task("T1.2", patok_engine::taskfile::MoveDirection::Up)
+            .await
+            .unwrap_err(),
+        "task T1.2 cannot be moved: the move would touch the in-progress task or its group"
+    );
+    assert_eq!(fixture.tasks_file(), before);
+    assert_eq!(
+        engine
+            .move_task("T1.3", patok_engine::taskfile::MoveDirection::Down)
+            .await
+            .unwrap_err(),
+        "task T1.3 has no task below it to swap with"
+    );
+    assert_eq!(fixture.tasks_file(), before);
+
+    engine
+        .move_task("T1.3", patok_engine::taskfile::MoveDirection::Up)
+        .await
+        .unwrap();
+    let after = fixture.tasks_file();
+    assert!(after.contains("- [ ] T1.2: polish the third task\n- [ ] T1.3: fix the second task\n"));
+    assert!(after.contains("- [ ] T1.1: add the greeting file\n"));
+    let events = collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::TasksChanged { .. })
+    })
+    .await;
+    assert_eq!(
+        changed_description(&events, "T1.2"),
+        "polish the third task"
+    );
+
+    engine.request_stop(true);
+    collect_until(&mut attachment.events, is_phase_startup).await;
+}
+
+#[tokio::test]
+async fn move_task_refuses_completed_and_missing_tasks() {
+    let original = THREE_TASKS.replace("[ ] T1.1", "[x] T1.1");
+    let fixture = Fixture::new(&original);
+    let engine = fixture.engine(MockProvider::new(vec![]));
+    let up = patok_engine::taskfile::MoveDirection::Up;
+    let completed =
+        |id: &str| format!("task {id} cannot be moved: it or the task it would pass is completed");
+
+    assert_eq!(
+        engine.move_task("T1.2", up).await.unwrap_err(),
+        completed("T1.2")
+    );
+    assert_eq!(
+        engine
+            .move_task("T1.1", patok_engine::taskfile::MoveDirection::Down)
+            .await
+            .unwrap_err(),
+        completed("T1.1")
+    );
+    assert_eq!(
+        engine.move_task("T9.9", up).await.unwrap_err(),
+        format!("no task with id T9.9 in {TASK_FILE}")
+    );
+    assert_eq!(
+        engine.move_task("", up).await.unwrap_err(),
+        "the task id is empty"
+    );
+    assert_eq!(fixture.tasks_file(), original);
+}
+
+/// T2.3: a planner run's validator needs the file content untouched, so edits
+/// and moves are refused while it runs and accepted again afterwards.
+#[tokio::test]
+async fn edit_and_move_are_refused_during_a_planner_session() {
+    let fixture = Fixture::new(TASKS);
+    let engine = fixture.engine(MockProvider::new(vec![Step::Sleep(Duration::from_millis(
+        300,
+    ))]));
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_add_tasks("plan more tasks").unwrap();
+    let busy = "tasks are being planned; wait for the planner to finish";
+    assert_eq!(engine.edit_task("T1.2", "x").await.unwrap_err(), busy);
+    assert_eq!(
+        engine
+            .move_task("T1.2", patok_engine::taskfile::MoveDirection::Up)
+            .await
+            .unwrap_err(),
+        busy
+    );
+    assert_eq!(fixture.tasks_file(), TASKS);
+
+    collect_until(&mut attachment.events, planning_finished).await;
+    engine.edit_task("T1.2", "after planning").await.unwrap();
+    assert!(fixture.tasks_file().contains("T1.2: after planning"));
+}
+
+/// T2.3: same refusal while a discovery round runs.
+#[tokio::test]
+async fn edit_and_move_are_refused_during_a_discovery_round() {
+    let fixture = Fixture::new(TASKS);
+    let engine = fixture.engine(MockProvider::new(vec![Step::Sleep(Duration::from_millis(
+        300,
+    ))]));
+    let mut attachment = engine.attach().unwrap();
+
+    engine.start_discovery().unwrap();
+    let busy = "a discovery round is running; wait for it to finish";
+    assert_eq!(engine.edit_task("T1.2", "x").await.unwrap_err(), busy);
+    assert_eq!(
+        engine
+            .move_task("T1.2", patok_engine::taskfile::MoveDirection::Up)
+            .await
+            .unwrap_err(),
+        busy
+    );
+    assert_eq!(fixture.tasks_file(), TASKS);
+
+    collect_until(&mut attachment.events, |e| {
+        matches!(e, EngineEvent::DiscoveryChanged { discovering: false })
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn stop_now_cancels_the_agent_without_committing() {
     let fixture = Fixture::new(TASKS);

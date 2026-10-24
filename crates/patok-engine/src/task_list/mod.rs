@@ -17,7 +17,7 @@ use patok_core::utils::atomic_write;
 
 pub mod file;
 
-use file::RemoveOutcome;
+use file::{MoveDirection, RemoveOutcome, TaskEditOutcome};
 
 /// Which validator an append-style run uses: the planner and queue-creation
 /// runs check `T`-prefixed appends, the discovery round `D`-prefixed ones.
@@ -34,6 +34,18 @@ pub(crate) enum AppendMode {
 pub(crate) struct AppendRejection {
     pub(crate) reason: String,
     pub(crate) restored: bool,
+}
+
+/// Why an engine-side pending-task edit (T2.3) wrote nothing. The caller words it.
+#[derive(Debug)]
+pub(crate) enum EditFailure {
+    /// The guard refused before the file was read (a planner or discovery run is active);
+    /// the reason is user-facing.
+    Refused(String),
+    /// The text operation refused.
+    Outcome(TaskEditOutcome),
+    /// Reading or writing the task file failed.
+    Io(io::Error),
 }
 
 /// The queue, the injected chunks and the UI-added IDs under one guard, held
@@ -215,6 +227,56 @@ impl TaskList {
             return Ok(None);
         }
         file::remove_task(&self.path, id, running.as_deref()).map(Some)
+    }
+
+    /// One locked read-modify-write of the task file for a pending-task edit: `guard` runs inside
+    /// the file lock (it may take the engine state lock, see [`TaskList::remove`]) and returns the
+    /// running id or a refusal; `op` rewrites the text; the result is written atomically. A
+    /// missing file is `NotFound` and is not created; nothing is written on any refusal.
+    async fn rewrite<T>(
+        &self,
+        guard: impl FnOnce() -> Result<Option<String>, String>,
+        op: impl FnOnce(&str, Option<&str>) -> Result<(String, T), TaskEditOutcome>,
+    ) -> Result<T, EditFailure> {
+        let _lock = self.lock.lock().await;
+        let running = guard().map_err(EditFailure::Refused)?;
+        let text = match std::fs::read_to_string(&self.path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(EditFailure::Outcome(TaskEditOutcome::NotFound));
+            }
+            other => other.map_err(EditFailure::Io)?,
+        };
+        let (updated, value) = op(&text, running.as_deref()).map_err(EditFailure::Outcome)?;
+        atomic_write::write_atomic(&self.path, &updated).map_err(EditFailure::Io)?;
+        Ok(value)
+    }
+
+    /// Replaces the description of the pending task `id` (T2.3), under the file lock. `guard`
+    /// runs inside the lock before the file is read and returns the running task id or a refusal.
+    pub(crate) async fn edit_task(
+        &self,
+        id: &str,
+        description: &str,
+        guard: impl FnOnce() -> Result<Option<String>, String>,
+    ) -> Result<(), EditFailure> {
+        self.rewrite(guard, |text, running| {
+            file::edit_task(text, id, description, running).map(|t| (t, ()))
+        })
+        .await
+    }
+
+    /// Moves the pending task `id` one place up or down (T2.3), under the file lock, and returns
+    /// its new id. `guard` is as for [`TaskList::edit_task`].
+    pub(crate) async fn move_task(
+        &self,
+        id: &str,
+        direction: MoveDirection,
+        guard: impl FnOnce() -> Result<Option<String>, String>,
+    ) -> Result<String, EditFailure> {
+        self.rewrite(guard, |text, running| {
+            file::move_task(text, id, direction, running).map(|m| (m.text, m.id))
+        })
+        .await
     }
 
     /// Writes the task's five-position progress token into its line, ticking
@@ -471,6 +533,54 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "- [ ] T1.1: a\n- [ ] T1.2: b\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_task_rewrites_the_file_and_refuses_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        let original = "- [ ] T1.1: a\n- [ ] T1.2: b\n";
+        std::fs::write(&path, original).unwrap();
+        let list = TaskList::new(path.clone());
+        let refused = list.edit_task("T1.2", "x", || Err("busy".into())).await;
+        assert!(matches!(refused, Err(EditFailure::Refused(ref r)) if r == "busy"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let running = list
+            .edit_task("T1.2", "x", || Ok(Some("T1.2".to_string())))
+            .await;
+        assert!(matches!(
+            running,
+            Err(EditFailure::Outcome(TaskEditOutcome::Running))
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        list.edit_task("T1.2", "x", || Ok(None)).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "- [ ] T1.1: a\n- [ ] T1.2: x\n"
+        );
+        let missing = TaskList::new(dir.path().join("NOPE.md"));
+        assert!(matches!(
+            missing.edit_task("T1.1", "x", || Ok(None)).await,
+            Err(EditFailure::Outcome(TaskEditOutcome::NotFound))
+        ));
+        assert!(!dir.path().join("NOPE.md").exists());
+    }
+
+    #[tokio::test]
+    async fn move_task_returns_the_new_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        std::fs::write(&path, "- [ ] T1.1: a\n- [ ] T1.2: b\n").unwrap();
+        let list = TaskList::new(path.clone());
+        let id = list
+            .move_task("T1.2", MoveDirection::Up, || Ok(None))
+            .await
+            .unwrap();
+        assert_eq!(id, "T1.1");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "- [ ] T1.1: b\n- [ ] T1.2: a\n"
         );
     }
 
