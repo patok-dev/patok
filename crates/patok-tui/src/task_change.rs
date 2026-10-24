@@ -47,7 +47,7 @@ impl App {
     }
 
     /// The `e` key (T4.3): opens the shared input dialog as the edit dialog,
-    /// prefilled with the selected pending task's description. The add/inject
+    /// prefilled with the selected pending task's description. The add
     /// draft is parked until the dialog closes. A refused row or a refused
     /// modal push leaves the dialog untouched.
     pub(crate) fn edit_selected_task(&mut self) -> Action {

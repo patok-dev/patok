@@ -32,7 +32,7 @@ use crate::view::{STOP_CHOICES, StopChoice};
 pub enum Modal {
     /// The settings overlay.
     Overlay,
-    /// The add-task / inject-task dialog.
+    /// The add-task / edit-task dialog.
     Dialog,
     /// The m menu.
     Menu,
@@ -63,7 +63,7 @@ pub enum Modal {
 /// model picker, opened by Enter, Space or a click on a `*_model` row and
 /// popped by its own Esc, Select or Custom (T4.4). Every other modal is opened only
 /// with an empty stack: an open modal swallows every key and mouse event, so
-/// the direct keys (`t`, `m`, `?`, `a`, `i` and Esc while a run is active)
+/// the direct keys (`t`, `m`, `?`, `a` and Esc while a run is active)
 /// and the three status-bar chips never run while another modal is open.
 /// The m menu's Enter entries are replacements, not stacks -- the menu
 /// closes first, then the target opens -- and a click on the menu chip while
@@ -722,8 +722,8 @@ fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
             }
         }
         // Tab / Shift+Tab flip the add dialog's "Use agent to add" checkbox
-        // (T5.1); the inject and edit modals have no checkbox, so Tab stays a
-        // no-op there.
+        // (T5.1); the edit modal has no checkbox, so Tab stays a no-op
+        // there.
         KeyCode::Tab | KeyCode::BackTab if app.dialog.kind == DialogKind::Add => {
             app.toggle_use_agent()
         }
@@ -905,20 +905,13 @@ mod tests {
     }
 
     #[test]
-    fn shift_letters_type_capitals_in_the_add_and_inject_dialogs() {
+    fn shift_letters_type_capitals_in_the_add_and_edit_dialogs() {
         for upper in [false, true] {
-            for kind in [
-                crate::app::DialogKind::Add,
-                crate::app::DialogKind::Inject,
-                crate::app::DialogKind::Edit,
-            ] {
+            for kind in [crate::app::DialogKind::Add, crate::app::DialogKind::Edit] {
                 let mut app = app();
                 match kind {
                     crate::app::DialogKind::Add => {
                         app.open_dialog();
-                    }
-                    crate::app::DialogKind::Inject => {
-                        app.open_inject();
                     }
                     crate::app::DialogKind::Edit => {
                         app.run.tasks = patok_core::task::parse("- [ ] T1.1: x\n");
@@ -936,14 +929,11 @@ mod tests {
 
     #[test]
     fn tab_toggles_the_checkbox_in_the_add_dialog_only() {
-        for kind in [DialogKind::Add, DialogKind::Inject, DialogKind::Edit] {
+        for kind in [DialogKind::Add, DialogKind::Edit] {
             let mut app = app();
             match kind {
                 DialogKind::Add => {
                     app.open_dialog();
-                }
-                DialogKind::Inject => {
-                    app.open_inject();
                 }
                 DialogKind::Edit => {
                     app.run.tasks = patok_core::task::parse("- [ ] T1.1: x\n");
@@ -960,14 +950,10 @@ mod tests {
         }
     }
 
-    /// Opens the add (`inject == false`) or inject dialog on a fresh app.
-    fn dialog_app(inject: bool) -> App {
+    /// Opens the add dialog on a fresh app.
+    fn dialog_app() -> App {
         let mut app = app();
-        if inject {
-            app.open_inject();
-        } else {
-            app.open_dialog();
-        }
+        app.open_dialog();
         assert_eq!(app.modals.top(), Some(Modal::Dialog));
         app
     }
@@ -981,79 +967,71 @@ mod tests {
     }
 
     #[test]
-    fn modified_enter_submits_like_plain_enter_in_the_add_and_inject_dialogs() {
-        for inject in [false, true] {
-            for k in modified_enters() {
-                let mut app = dialog_app(inject);
-                press(&mut app, KeyCode::Char('a'));
-                let got = app.on_key(k);
-                let mut expected_app = dialog_app(inject);
-                press(&mut expected_app, KeyCode::Char('a'));
-                assert_eq!(got, expected_app.submit_dialog(), "{k:?}");
-                assert_ne!(got, Action::None, "{k:?}");
-                assert!(!format!("{got:?}").contains('\n'), "{k:?}");
-            }
+    fn modified_enter_submits_like_plain_enter_in_the_add_dialog() {
+        for k in modified_enters() {
+            let mut app = dialog_app();
+            press(&mut app, KeyCode::Char('a'));
+            let got = app.on_key(k);
+            let mut expected_app = dialog_app();
+            press(&mut expected_app, KeyCode::Char('a'));
+            assert_eq!(got, expected_app.submit_dialog(), "{k:?}");
+            assert_ne!(got, Action::None, "{k:?}");
+            assert!(!format!("{got:?}").contains('\n'), "{k:?}");
         }
     }
 
     #[test]
     fn modified_enter_on_empty_input_shows_the_refusal() {
-        for inject in [false, true] {
-            for k in modified_enters() {
-                let mut app = dialog_app(inject);
-                assert_eq!(app.on_key(k), Action::None, "{k:?}");
-                assert_eq!(app.modals.top(), Some(Modal::Dialog), "{k:?}");
-                assert_eq!(
-                    app.dialog.status,
-                    Some(app.empty_input_message().into()),
-                    "{k:?}"
-                );
-            }
+        for k in modified_enters() {
+            let mut app = dialog_app();
+            assert_eq!(app.on_key(k), Action::None, "{k:?}");
+            assert_eq!(app.modals.top(), Some(Modal::Dialog), "{k:?}");
+            assert_eq!(
+                app.dialog.status,
+                Some(app.empty_input_message().into()),
+                "{k:?}"
+            );
         }
     }
 
     #[test]
-    fn ctrl_j_is_a_no_op_in_the_add_and_inject_dialogs() {
+    fn ctrl_j_is_a_no_op_in_the_add_dialog() {
         let keys = [
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
             KeyEvent::new(KeyCode::Char('\n'), KeyModifiers::NONE),
             KeyEvent::new(KeyCode::Char('\n'), KeyModifiers::CONTROL),
         ];
-        for inject in [false, true] {
-            for cj in keys {
-                let mut app = dialog_app(inject);
-                press(&mut app, KeyCode::Char('a'));
-                assert_eq!(app.on_key(cj), Action::None, "{cj:?}");
-                press(&mut app, KeyCode::Char('b'));
-                assert_eq!(app.modals.top(), Some(Modal::Dialog), "{cj:?}");
-                assert_eq!(app.dialog.editor.text(), "ab", "{cj:?}");
-                assert_eq!(app.dialog.status, None, "{cj:?}");
-            }
+        for cj in keys {
+            let mut app = dialog_app();
+            press(&mut app, KeyCode::Char('a'));
+            assert_eq!(app.on_key(cj), Action::None, "{cj:?}");
+            press(&mut app, KeyCode::Char('b'));
+            assert_eq!(app.modals.top(), Some(Modal::Dialog), "{cj:?}");
+            assert_eq!(app.dialog.editor.text(), "ab", "{cj:?}");
+            assert_eq!(app.dialog.status, None, "{cj:?}");
         }
     }
 
     #[test]
     fn plain_enter_still_submits_and_refuses_empty_input() {
-        for inject in [false, true] {
-            let mut app = dialog_app(inject);
-            assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
-            assert_eq!(app.modals.top(), Some(Modal::Dialog));
-            assert_eq!(app.dialog.status, Some(app.empty_input_message().into()));
+        let mut app = dialog_app();
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        assert_eq!(app.modals.top(), Some(Modal::Dialog));
+        assert_eq!(app.dialog.status, Some(app.empty_input_message().into()));
 
-            let mut app = dialog_app(inject);
-            press(&mut app, KeyCode::Char('x'));
-            let got = press(&mut app, KeyCode::Enter);
-            let mut expected_app = dialog_app(inject);
-            press(&mut expected_app, KeyCode::Char('x'));
-            assert_eq!(got, expected_app.submit_dialog());
-            assert_ne!(got, Action::None);
-        }
+        let mut app = dialog_app();
+        press(&mut app, KeyCode::Char('x'));
+        let got = press(&mut app, KeyCode::Enter);
+        let mut expected_app = dialog_app();
+        press(&mut expected_app, KeyCode::Char('x'));
+        assert_eq!(got, expected_app.submit_dialog());
+        assert_ne!(got, Action::None);
     }
 
     #[test]
     fn shift_on_an_already_shifted_char_inserts_it_unchanged() {
         let mut app = app();
-        app.open_inject();
+        app.open_dialog();
         for c in ['A', '!', ':'] {
             shift(&mut app, c);
         }
@@ -1162,7 +1140,6 @@ mod tests {
         app.open_menu();
         app.open_stop();
         app.open_settings();
-        app.open_inject();
         assert_eq!(
             before,
             (

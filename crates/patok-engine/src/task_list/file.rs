@@ -218,7 +218,7 @@ fn t_id_numbers(id: &str) -> Option<(usize, usize)> {
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
-/// Normalizes the inject modal's confirmed input (T77.1) into a
+/// Normalizes the add dialog's confirmed plain-add input (T77.1) into a
 /// well-formed unchecked task line: the trimmed text gains the
 /// `- [ ] ` checkbox when it does not already start with it, and a fresh
 /// `T<N>.1: ` id -- with `N` from [`next_task_number`] over `file` -- when

@@ -22,8 +22,7 @@ use crate::view::FrameFocus;
 /// soft stop, where `d` detaches, so the hint is left out --, Enter starts the
 /// build loop or runs a discovery round while the engine is idle, the arrow
 /// keys (and `j`/`k`) move the selection (T4.1), Shift+H/J/K/L move, indent or
-/// outdent the selected task (T4.2), Tab moves the keys to the other frame and
-/// `i` opens the inject-task modal (T76.1; T5.4 removes it).
+/// outdent the selected task (T4.2), Tab moves the keys to the other frame.
 pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
     let mut hints = vec!["a add", "e edit"];
     if !app.run.stopping {
@@ -39,7 +38,6 @@ pub(super) fn task_hints(app: &App) -> Vec<&'static str> {
     hints.push("↑↓ select");
     hints.push("HJKL move");
     hints.push("Tab output");
-    hints.push("i inject");
     hints
 }
 

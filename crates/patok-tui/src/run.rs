@@ -371,7 +371,7 @@ where
 /// Runs one submit-family action's dispatch (T144.1): the one dispatch both
 /// the key arm and the mouse arm of [`event_loop`] route `SubmitTasks`,
 /// `ResearchQueue`, `SaveBrief`, `InjectTask` and `EditTask` through, so a click on the
-/// add-task dialog's or the inject-task modal's primary footer button runs
+/// add-task dialog's primary footer button runs
 /// exactly its Enter key's flow. `submit` is the submit RPC, a generic
 /// function instead of a concrete `EngineClient`, so tests pass fakes (the
 /// Ok paths are unit-testable here: `CommandResponse` is a plain message).
@@ -423,14 +423,14 @@ where
                 }
             }
         }
-        // The inject-task modal's confirm (T76.1, routed through the engine
-        // for T77.1): the engine normalizes the typed text into a
+        // The add dialog's plain add (T5.2, routed through the engine): the
+        // engine normalizes the typed text into a
         // well-formed unchecked task line -- adding the checkbox and the
         // next `T<N>.1` id when missing -- and appends it to TASKS.md under
         // its task-file lock, so the append never interleaves with the
         // engine's own rewrites and the engine reconciles the queue right
         // away -- even mid-build, since the lock is never held across an
-        // agent session. The modal closes with the focus back on the task
+        // agent session. The dialog closes with the focus back on the task
         // list; a rejection keeps it open on the input with the error.
         Action::InjectTask(text) => {
             match crate::driver::submit(
@@ -440,7 +440,7 @@ where
             )
             .await
             {
-                Ok(()) => app.on_task_injected(),
+                Ok(()) => app.on_task_added(),
                 Err(error) => {
                     app.on_submit_failed(format!("could not append to TASKS.md: {error}"));
                 }
@@ -568,8 +568,8 @@ async fn event_loop(
                     // pending SOFT shutdown stream delivers the cancelled
                     // Complete update that follows.
                     Action::CancelSoftStop => cancel_soft_stop(client, app).await,
-                    // The submit family (T144.1): the add-task dialog's and
-                    // the inject-task modal's Enter keys -- and every mouse
+                    // The submit family (T144.1): the add-task dialog's
+                    // Enter key -- and every mouse
                     // path that runs that key, the primary footer button's
                     // click -- go through the one shared dispatch.
                     action @ (Action::SubmitTasks(_)
@@ -653,8 +653,8 @@ async fn event_loop(
                 // status bar's chips run their keys' actions (T134.1); the m
                 // menu's Detach and Quit row clicks run their keys' shutdown
                 // flows through the same shared dispatch the key arm takes
-                // (T143.1); a click on the add-task dialog's or the
-                // inject-task modal's primary footer button runs its Enter
+                // (T143.1); a click on the add-task dialog's
+                // primary footer button runs its Enter
                 // key's submit flow through the same shared dispatch the key
                 // arm takes (T144.1); the unsaved-changes dialog's Save row
                 // click runs its Enter key's apply-and-persist flow through
@@ -1508,13 +1508,13 @@ mod tests {
         assert_eq!(app.dialog.status.as_deref(), Some("add failed: nope"));
     }
 
-    /// The inject-task modal's confirm (T76.1) sends the InjectTask command
-    /// and closes the modal with the task list focused on accept; a
-    /// rejection or transport failure keeps it open with the error.
+    /// The add dialog's plain add (T5.2) sends the InjectTask command and
+    /// closes the dialog with the task list focused on accept; a rejection
+    /// or transport failure keeps it open with the error.
     #[tokio::test]
-    async fn inject_sends_the_inject_command_and_closes_the_modal_on_accept() {
+    async fn plain_add_sends_the_inject_command_and_closes_the_dialog_on_accept() {
         let mut accepted = app();
-        accepted.open_inject();
+        accepted.open_dialog();
         let commands = Arc::new(Mutex::new(Vec::new()));
         let flow = run_submit_family(
             &mut accepted,
@@ -1537,7 +1537,7 @@ mod tests {
         assert_eq!(accepted.focus, FrameFocus::Tasks);
         // A rejected append keeps the modal open with the engine's reason.
         let mut rejected = app();
-        rejected.open_inject();
+        rejected.open_dialog();
         run_submit_family(
             &mut rejected,
             std::path::Path::new("/home/user/demo"),
