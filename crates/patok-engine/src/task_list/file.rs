@@ -765,7 +765,8 @@ pub enum MoveDirection {
     Down,
 }
 
-/// The result of a successful [`move_task`]: the rewritten text and the moved task's new id.
+/// The result of a successful [`move_task`] or [`indent_task`]: the rewritten text and the moved
+/// task's new id.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MovedTask {
     pub text: String,
@@ -886,6 +887,119 @@ pub fn move_task(
             count += 1;
         }
         if i == j && direction == MoveDirection::Down {
+            moved_out = count;
+            built.push_str(&piece);
+            count += 1;
+        }
+    }
+    let mut out = renumber_pending(&built, running);
+    let new_id = out
+        .split_inclusive('\n')
+        .nth(moved_out)
+        .and_then(task::split_checkbox)
+        .and_then(|(_, rest)| split_id(rest))
+        .map(|(found, _, _)| found.to_string())
+        .ok_or(TaskEditOutcome::Invalid)?;
+    if unterminated && out.ends_with(ending) {
+        out.truncate(out.len() - ending.len());
+    }
+    Ok(MovedTask {
+        text: out,
+        id: new_id,
+    })
+}
+
+/// Indents the pending task `id` (T1.5): it moves to the end of the previous group and takes
+/// that group's number with the next sequence. The previous group is the nearest group above the
+/// task's own: walking up over numbered task lines, the first one with a different major is the
+/// group's last task `p`. So the first task of a group joins the group right before it, and a
+/// later task of a group leaves its siblings behind and joins that same previous group.
+///
+/// The task is taken out and put back directly after `p`; headings, prose and blank lines in
+/// between stay where they are, so the task lands above the `## ` heading of its old group. A
+/// `## ` heading left without task lines is pruned like `remove_text` does.
+/// [`renumber_pending`] then makes all ids contiguous, shifting later groups down.
+///
+/// Refusals, checked in this order: the target's own state from [`find_pending`]; no previous
+/// group (the task is in the first group, or alone) is [`TaskEditOutcome::Invalid`]; a checked or
+/// running task after `p` (a target before the frozen boundary, or a sibling the task would jump
+/// over) is `Completed` or `Running`; the running task's group being the task's or `p`'s is
+/// `Running`. Joining a group that ends in a checked task is allowed.
+///
+/// Every line that is not moved, renumbered or pruned stays byte-identical, CRLF included, and
+/// an unterminated last line stays unterminated. The function never touches the file: the caller
+/// reads and writes it under the task-file lock.
+pub fn indent_task(
+    text: &str,
+    id: &str,
+    running: Option<&str>,
+) -> Result<MovedTask, TaskEditOutcome> {
+    let index = find_pending(text, id, running)?;
+    // Work on a text whose last line is terminated, so no line is glued to the next one.
+    let unterminated = !text.ends_with('\n');
+    let mut ending = "\n";
+    let mut work = text.to_string();
+    if unterminated {
+        let originals: Vec<&str> = text.split_inclusive('\n').collect();
+        if originals.len() >= 2 {
+            ending = line_line_ending(originals[originals.len() - 2]).1;
+        }
+        work.push_str(ending);
+    }
+    let lines: Vec<&str> = work.split_inclusive('\n').collect();
+    let parsed: Vec<Option<Numbered>> = lines
+        .iter()
+        .map(|line| parse_numbered(line, running))
+        .collect();
+    let moved = parsed[index].as_ref().ok_or(TaskEditOutcome::Invalid)?;
+    let p = (0..index)
+        .rev()
+        .find(|&i| parsed[i].as_ref().is_some_and(|n| n.major != moved.major))
+        .ok_or(TaskEditOutcome::Invalid)?;
+    let prev = parsed[p].as_ref().ok_or(TaskEditOutcome::Invalid)?;
+    let boundary = parsed
+        .iter()
+        .rposition(|n| n.as_ref().is_some_and(|n| n.done || n.id_is_running));
+    if let Some(b) = boundary
+        && b > p
+    {
+        let done = parsed[b].as_ref().is_some_and(|n| n.done);
+        return Err(if done {
+            TaskEditOutcome::Completed
+        } else {
+            TaskEditOutcome::Running
+        });
+    }
+    let running_major = parsed
+        .iter()
+        .flatten()
+        .find(|n| !n.done && n.id_is_running)
+        .map(|n| n.major);
+    if running_major.is_some_and(|m| m == moved.major || m == prev.major) {
+        return Err(TaskEditOutcome::Running);
+    }
+
+    let original = lines[index];
+    let piece = format!(
+        "{}{}.{}{}",
+        &original[..moved.start],
+        prev.major,
+        prev.minor.saturating_add(1),
+        &original[moved.end..]
+    );
+    let mut deleted = vec![false; lines.len()];
+    deleted[index] = true;
+    prune_empty_headings(&lines, &mut deleted, |r| r.contains(&index));
+
+    let mut built = String::with_capacity(work.len() + 8);
+    let mut count = 0usize;
+    let mut moved_out = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if !deleted[i] {
+            built.push_str(line);
+            count += 1;
+        }
+        if i == p {
             moved_out = count;
             built.push_str(&piece);
             count += 1;
@@ -2523,6 +2637,191 @@ mod tests {
         assert_eq!(
             back,
             "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n## P2\n- [ ] T2.1: d\n"
+        );
+    }
+
+    fn indented(text: &str, id: &str, running: Option<&str>) -> (String, String) {
+        let m = indent_task(text, id, running).unwrap();
+        (m.text, m.id)
+    }
+
+    fn pair(text: &str, id: &str) -> (String, String) {
+        (text.to_string(), id.to_string())
+    }
+
+    #[test]
+    fn indent_task_first_task_of_a_group_joins_the_end_of_the_previous_group() {
+        assert_eq!(
+            indented(TWO_GROUPS, "T2.1", None),
+            pair(
+                "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n## P2\n- [ ] T2.1: d\n",
+                "T1.3"
+            )
+        );
+    }
+
+    #[test]
+    fn indent_task_last_task_moves_above_its_old_siblings() {
+        assert_eq!(
+            indented(TWO_GROUPS, "T2.2", None),
+            pair(
+                "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: d\n## P2\n- [ ] T2.1: c\n",
+                "T1.3"
+            )
+        );
+    }
+
+    #[test]
+    fn indent_task_only_task_of_a_group_prunes_its_heading_and_shifts_later_groups() {
+        assert_eq!(
+            indented(
+                "## P1\n- [ ] T1.1: a\n\n## P2\n- [ ] T2.1: b\n\n## P3\n- [ ] T3.1: c\n",
+                "T2.1",
+                None
+            ),
+            pair(
+                "## P1\n- [ ] T1.1: a\n- [ ] T1.2: b\n\n## P3\n- [ ] T2.1: c\n",
+                "T1.2"
+            )
+        );
+    }
+
+    #[test]
+    fn indent_task_refuses_the_first_group() {
+        assert_eq!(
+            indent_task(TWO_GROUPS, "T1.1", None),
+            Err(TaskEditOutcome::Invalid)
+        );
+        assert_eq!(
+            indent_task(TWO_GROUPS, "T1.2", None),
+            Err(TaskEditOutcome::Invalid)
+        );
+        assert_eq!(
+            indent_task("- [ ] T1.1: a\n", "T1.1", None),
+            Err(TaskEditOutcome::Invalid)
+        );
+    }
+
+    #[test]
+    fn indent_task_skips_invisible_lines_and_keeps_prefixes_and_tokens() {
+        assert_eq!(
+            indented(
+                "- [ ] T1.1: a\n  prose\n## P2\n- [ ] no id\n- [ ] H2.1: [RP.B-] b\n",
+                "H2.1",
+                None
+            ),
+            pair(
+                "- [ ] T1.1: a\n- [ ] H1.2: [RP.B-] b\n  prose\n## P2\n- [ ] no id\n",
+                "H1.2"
+            )
+        );
+    }
+
+    #[test]
+    fn indent_task_continues_a_group_ending_in_a_done_task() {
+        assert_eq!(
+            indented(
+                "- [x] T1.1: d\n- [ ] T2.1: a\n- [ ] T2.2: b\n",
+                "T2.2",
+                None
+            ),
+            pair("- [x] T1.1: d\n- [ ] T1.2: b\n- [ ] T2.1: a\n", "T1.2")
+        );
+    }
+
+    #[test]
+    fn indent_task_refuses_to_cross_done_and_running_tasks() {
+        assert_eq!(
+            indent_task(
+                "- [ ] T1.1: a\n- [x] T2.1: d\n- [ ] T2.2: b\n",
+                "T2.2",
+                None
+            ),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            indent_task(
+                "- [ ] T1.1: a\n- [ ] T2.1: b\n- [x] T3.1: d\n",
+                "T2.1",
+                None
+            ),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            indent_task(
+                "- [ ] T1.1: a\n- [ ] T2.1: r\n- [ ] T2.2: b\n",
+                "T2.2",
+                Some("T2.1")
+            ),
+            Err(TaskEditOutcome::Running)
+        );
+    }
+
+    #[test]
+    fn indent_task_refuses_to_change_the_running_tasks_group() {
+        assert_eq!(
+            indent_task(
+                "- [ ] T1.1: r\n- [ ] T1.2: a\n- [ ] T2.1: b\n",
+                "T2.1",
+                Some("T1.1")
+            ),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            indented(
+                "- [ ] T1.1: r\n- [ ] T2.1: a\n- [ ] T3.1: b\n",
+                "T3.1",
+                Some("T1.1")
+            ),
+            pair("- [ ] T1.1: r\n- [ ] T2.1: a\n- [ ] T2.2: b\n", "T2.2")
+        );
+    }
+
+    #[test]
+    fn indent_task_reports_the_targets_own_refusals() {
+        let text = "- [x] T1.1: d\n- [ ] T1.2: r\n- [ ] T1.3: a\n- [ ] no id\n";
+        assert_eq!(
+            indent_task(text, "T1.1", Some("T1.2")),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            indent_task(text, "T1.2", Some("T1.2")),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            indent_task(text, "T9.9", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert_eq!(
+            indent_task(text, "no id", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+    }
+
+    #[test]
+    fn indent_task_preserves_crlf_and_an_unterminated_last_line() {
+        assert_eq!(
+            indented("- [ ] T1.1: a\r\n- [ ] T2.1: b", "T2.1", None),
+            pair("- [ ] T1.1: a\r\n- [ ] T1.2: b", "T1.2")
+        );
+        assert_eq!(
+            indented("- [ ] T1.1: a\n- [ ] T2.1: b\n- [ ] T2.2: c", "T2.2", None),
+            pair("- [ ] T1.1: a\n- [ ] T1.2: c\n- [ ] T2.1: b", "T1.2")
+        );
+    }
+
+    #[test]
+    fn indent_task_result_parses_back() {
+        let (text, id) = indented(TWO_GROUPS, "T2.1", None);
+        assert_eq!(id, "T1.3");
+        let tasks = task::parse(&text);
+        let got: Vec<(&str, &str)> = tasks
+            .iter()
+            .map(|t| (t.id.as_str(), t.description.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [("T1.1", "a"), ("T1.2", "b"), ("T1.3", "c"), ("T2.1", "d")]
         );
     }
 }
