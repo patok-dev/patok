@@ -1,0 +1,28 @@
+---
+source: crates/patok-tui/tests/ui.rs
+expression: "draw(&app, 80, 24)"
+---
+─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
+┌ Builder ────────────────────────────────────────────────────────────── 00:00 ┐
+│no ┌ What do you want to do? ────────────────────────────────────── [ x ] ┐   │
+│   │Press Enter to run Discovery agent                                    │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+└───│                                                                      │───┘
+┌ Ta│                                                                      │───┐
+│✔ T│                                                                      │   │
+│○ T│                                                                      │   │
+│○ T│                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │[ ] Use agent to add  Agent add needs an idle engine                  │   │
+│   │Type a task to enable Enter                                           │   │
+│   │ ↑↓←→ move · Ctrl+U clear             [ Enter ] Submit  [ Esc ] Close │   │
+│ a └──────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                                       [ Esc ] stop  [ m ] menu

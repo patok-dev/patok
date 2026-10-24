@@ -70,7 +70,7 @@ pub use settings::{ShellSettings, to_proto};
 pub use theme::{Theme, theme_modal_groups};
 #[cfg(any(test, feature = "test-support"))]
 pub use ui::{
-    DIALOG_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
+    AGENT_BUSY_HINT, DIALOG_WATERMARK, SETTINGS_HELP_BESIDE_WIDTH, SETTINGS_HELP_PANEL_HEIGHT,
     SETTINGS_HELP_PANEL_WIDTH, collapses_to_line, dialog_area, fitted_hints, format_elapsed,
     frame_constraints, interactive_picker_area, output_title, output_title_parts,
     output_title_spans, render, settings_area, settings_body_areas, settings_confirm_area,

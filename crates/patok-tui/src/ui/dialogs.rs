@@ -39,6 +39,10 @@ pub const EDIT_WATERMARK: &str = "Type the new description; the id and checkbox 
 /// The add dialog's hint while its confirm is inactive (T5.2).
 pub const ADD_CONFIRM_HINT: &str = "Type a task to enable Enter";
 
+/// The add dialog's hint beside the disabled agent checkbox while the engine
+/// is busy (T5.3).
+pub const AGENT_BUSY_HINT: &str = "  Agent add needs an idle engine";
+
 /// The add-task dialog rect: about 90% of the width and 80% of the height, at least
 /// 60x20, clamped to the screen and centered.
 pub fn dialog_area(screen: Rect) -> Rect {
@@ -82,19 +86,25 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     .areas(inner);
 
     if app.dialog.kind == DialogKind::Add {
-        let label = agent_checkbox_label(app.dialog.use_agent);
+        let busy = !app.agent_available();
+        let label = agent_checkbox_label(app.effective_use_agent());
         let label_width = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
         app.dialog.agent_toggle.set(Rect {
             width: label_width.min(agent_row.width),
             ..agent_row
         });
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::raw(label),
-                Span::styled("  Tab toggle", Style::new().fg(theme.muted_text)),
-            ])),
-            agent_row,
-        );
+        let muted = Style::new().fg(theme.muted_text);
+        // Busy (T5.3): the box is drawn dimmed with the reason in place of the
+        // toggle hint; idle renders as before.
+        let spans = if busy {
+            vec![
+                Span::styled(label, muted),
+                Span::styled(AGENT_BUSY_HINT, muted),
+            ]
+        } else {
+            vec![Span::raw(label), Span::styled("  Tab toggle", muted)]
+        };
+        frame.render_widget(Paragraph::new(Line::from(spans)), agent_row);
     } else {
         app.dialog.agent_toggle.set(Rect::default());
     }

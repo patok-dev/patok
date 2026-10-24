@@ -1967,16 +1967,15 @@ fn discovery_blocks_keys_and_its_tasks_reuse_the_new_task_highlight() {
         app.status.as_deref(),
         Some("A discovery round is running; wait for it to finish.")
     );
-    // `a` shows the same refusal, but only from the focused task list frame
-    // (T74.1); the discovery run moved the focus to the agent output frame,
-    // so Tab puts it back on the task list first.
+    // `a` opens the dialog even now (T5.3), but only from the focused task
+    // list frame (T74.1); the discovery run moved the focus to the agent
+    // output frame, so Tab puts it back on the task list first.
     app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(app.on_key(key('a')), Action::None);
+    assert!(app.dialog_open());
+    assert!(app.status.is_none());
+    app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(!app.dialog_open());
-    assert_eq!(
-        app.status.as_deref(),
-        Some("A discovery round is running; wait for it to finish.")
-    );
 
     // The round's task lands in the list with the same highlight a planner-added task gets.
     app.apply(EngineEvent::TasksChanged {
@@ -2164,16 +2163,15 @@ mod dialog {
         assert!(!app.dialog_open());
         assert!(app.status.is_none());
         // The ignored key does not swallow pane focus toggling: Tab still
-        // flips the focus, and from the focused task list frame the busy run
-        // refuses the dialog with its inline message.
+        // flips the focus, and from the focused task list frame `a` opens the
+        // dialog even though the run is busy (T5.3), with no status message.
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         press(&mut app, KeyCode::Char('a'));
+        assert!(app.dialog_open());
+        assert!(app.status.is_none());
+        press(&mut app, KeyCode::Esc);
         assert!(!app.dialog_open());
-        assert_eq!(
-            app.status.as_deref(),
-            Some("A build is running; wait for it to finish.")
-        );
 
         // End to end from the focused task list frame: typing, validation,
         // and the submit flow are unchanged behind the new gate.
@@ -2220,7 +2218,7 @@ mod dialog {
         assert!(app.status.is_none());
         // Tab back to the task list frame: `i` opens the inject modal even
         // while the engine is busy -- a plain file append is safe in every
-        // engine state, unlike `a`'s dialog, which a busy run refuses.
+        // engine state, like `a`'s dialog (T5.3).
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.focus, patok_tui::FrameFocus::Tasks);
         assert_eq!(press(&mut app, KeyCode::Char('i')), Action::None);
@@ -2410,6 +2408,50 @@ mod dialog {
         assert!(app.dialog.use_agent);
         app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
         assert!(!app.dialog.use_agent);
+    }
+
+    #[test]
+    fn busy_dialog_forces_agent_unchecked() {
+        let mut app = open();
+        press(&mut app, KeyCode::Tab);
+        assert!(app.dialog.use_agent);
+        press(&mut app, KeyCode::Esc);
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.dialog_open());
+        let text = draw(&app, 80, 24);
+        assert!(text.contains("[ ] Use agent to add"), "{text}");
+        assert!(text.contains(patok_tui::AGENT_BUSY_HINT.trim()), "{text}");
+        assert!(app.dialog.use_agent, "the stored preference is kept");
+        type_text(&mut app, "busy add");
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Action::InjectTask("busy add".into())
+        );
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Startup,
+        });
+        let text = draw(&app, 80, 24);
+        assert!(text.contains("[x] Use agent to add"), "{text}");
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Action::SubmitTasks("busy add".into())
+        );
+    }
+
+    #[test]
+    fn dialog_busy_agent_disabled() {
+        let mut app = self::app();
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.dialog_open());
+        insta::assert_snapshot!(draw(&app, 80, 24));
     }
 
     #[test]
@@ -3025,7 +3067,7 @@ mod dialog {
     }
 
     #[test]
-    fn dialog_is_blocked_while_building_or_planning() {
+    fn dialog_opens_while_busy_with_agent_disabled() {
         let mut app = app();
         app.apply(EngineEvent::PhaseChanged {
             phase: Phase::Running,
@@ -3035,14 +3077,14 @@ mod dialog {
         press(&mut app, KeyCode::Char('a'));
         assert!(!app.dialog_open());
         assert!(app.status.is_none());
-        // From the focused task list frame the busy run refuses the dialog.
+        // From the focused task list frame the dialog opens despite the busy
+        // run (T5.3); the agent checkbox ignores Tab.
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('a'));
-        assert!(!app.dialog_open());
-        assert_eq!(
-            app.status.as_deref(),
-            Some("A build is running; wait for it to finish.")
-        );
+        assert!(app.dialog_open());
+        assert!(app.status.is_none());
+        press(&mut app, KeyCode::Tab);
+        assert!(!app.dialog.use_agent);
 
         let mut app = self::app();
         app.apply(EngineEvent::PlanningChanged { planning: true });
@@ -3054,7 +3096,11 @@ mod dialog {
         assert_eq!(app.status, None);
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('a'));
-        assert!(!app.dialog_open());
+        assert!(app.dialog_open());
+        assert_eq!(app.status, None);
+        // Enter inside the dialog goes to the dialog, so close it first; on
+        // the main screen Enter keeps its busy refusal.
+        press(&mut app, KeyCode::Esc);
         assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
         assert_eq!(
             app.status.as_deref(),
@@ -3815,7 +3861,7 @@ mod explore {
         app.on_key(key(KeyCode::Esc));
         assert!(!app.dialog_open());
 
-        // While busy, Enter refuses with the same messages as the `a` path; each busy
+        // While busy, Enter refuses with the busy messages; each busy
         // case is checked on its own, from an idle app.
         for (apply, reset, message) in [
             (
@@ -3845,13 +3891,26 @@ mod explore {
                 "Enter while busy must not open the dialog"
             );
             assert_eq!(app.status.as_deref(), Some(message));
-            // `a` shows the same refusal while busy, but only from the
+            // `a` opens the dialog while busy (T5.3), but only from the
             // focused task list frame (T74.1); the run moved the focus to
-            // the agent output frame, so Tab puts it back first.
+            // the agent output frame, so Tab puts it back first. The agent
+            // checkbox ignores Tab; Enter is a plain add.
             app.on_key(key(KeyCode::Tab));
             app.on_key(key(KeyCode::Char('a')));
+            assert!(app.dialog_open());
+            assert!(app.status.is_none());
+            for c in "busy add".chars() {
+                app.on_key(key(KeyCode::Char(c)));
+            }
+            app.on_key(key(KeyCode::Tab));
+            assert!(!app.dialog.use_agent);
+            assert_eq!(
+                app.on_key(key(KeyCode::Enter)),
+                Action::InjectTask("busy add".into())
+            );
+            app.on_key(key(KeyCode::Esc));
             assert!(!app.dialog_open());
-            assert_eq!(app.status.as_deref(), Some(message));
+            app.dialog.editor.clear();
             // Back to idle, so the next case starts from an idle app.
             app.apply(reset);
             assert!(app.is_idle());
@@ -5448,6 +5507,22 @@ mod modal_footer {
         assert_eq!(app.on_mouse(click(r.x + 1, r.y)), Action::None);
         assert!(!app.dialog.use_agent);
         app.on_mouse(click(r.x + 1, r.y - 1));
+        assert!(!app.dialog.use_agent);
+    }
+
+    #[test]
+    fn use_agent_checkbox_ignores_clicks_while_busy() {
+        let mut app = self::app();
+        app.apply(EngineEvent::PhaseChanged {
+            phase: Phase::Running,
+        });
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.dialog_open());
+        buffer(&app);
+        let r = app.dialog.agent_toggle.get();
+        assert_eq!(r.height, 1);
+        app.on_mouse(click(r.x + 1, r.y));
         assert!(!app.dialog.use_agent);
     }
 

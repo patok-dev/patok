@@ -814,19 +814,25 @@ impl App {
         )
     }
 
-    /// Flips the add dialog's "Use agent to add" checkbox (T5.1).
+    /// Flips the add dialog's "Use agent to add" checkbox (T5.1); ignored while
+    /// the engine is busy (T5.3), when the box is disabled.
     pub(crate) fn toggle_use_agent(&mut self) {
+        if !self.agent_available() {
+            return;
+        }
         self.dialog.use_agent = !self.dialog.use_agent;
     }
 
     /// The dialog's primary button label: "Inject"
     /// for the inject-task modal (T76.1), otherwise "Start" when the queue is
     /// ready and the input is empty, "Scan" when the queue is complete and the
-    /// input is empty, "Submit" otherwise.
+    /// input is empty, "Submit" otherwise (always "Submit" for the add dialog
+    /// while the engine is busy, T5.3).
     pub fn primary_label(&self) -> &'static str {
         match self.dialog.kind {
             DialogKind::Inject => return "Inject",
             DialogKind::Edit => return "Save",
+            DialogKind::Add if !self.agent_available() => return "Submit",
             DialogKind::Add => {}
         }
         let empty = self.dialog.editor.text().trim().is_empty();

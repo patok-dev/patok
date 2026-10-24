@@ -21,8 +21,8 @@ pub(crate) fn collapse_lines(text: &str) -> String {
 }
 
 impl App {
-    /// The short inline refusal for a busy engine, shared by every key that
-    /// starts something (Enter, `a`): `None` while the engine is idle.
+    /// The short inline refusal for a busy engine, shared by Enter and the add
+    /// dialog's agent gate (`agent_available`): `None` while the engine is idle.
     pub(crate) fn busy_status(&self) -> Option<&'static str> {
         if self.run.phase == Phase::Running {
             Some("A build is running; wait for it to finish.")
@@ -35,18 +35,25 @@ impl App {
         }
     }
 
-    /// Opens the add-task dialog when the engine is idle; a busy engine refuses with a
-    /// short inline message (the same message the Enter key shows).
+    /// The add dialog's agent path is idle-only (T5.3): while the engine is busy
+    /// the "Use agent to add" box is forced unchecked and disabled.
+    pub(crate) fn agent_available(&self) -> bool {
+        self.busy_status().is_none()
+    }
+
+    /// The checkbox state submit and render act on: the stored choice, forced
+    /// off while the engine is busy.
+    pub(crate) fn effective_use_agent(&self) -> bool {
+        self.dialog.use_agent && self.agent_available()
+    }
+
+    /// Opens the add-task dialog in any engine state; a busy engine only
+    /// disables the "Use agent to add" checkbox (T5.3).
     pub(crate) fn open_dialog(&mut self) -> Action {
         self.status = None;
         self.dialog.kind = DialogKind::Add;
-        match self.busy_status() {
-            Some(message) => self.status = Some(message.into()),
-            None => {
-                if self.modals.push(Modal::Dialog) {
-                    self.dialog.status = None;
-                }
-            }
+        if self.modals.push(Modal::Dialog) {
+            self.dialog.status = None;
         }
         Action::None
     }
@@ -108,7 +115,8 @@ impl App {
     /// on the project scenario and whether the input is empty. Non-empty text
     /// is a plain append (`InjectTask`, lines collapsed into one) while the
     /// "Use agent to add" box is unchecked and goes verbatim to the planner
-    /// (`SubmitTasks`) when checked. A submit that launches
+    /// (`SubmitTasks`) when checked. A busy engine (T5.3) offers only the plain
+    /// append: the scenario flows are skipped and blank text is refused. A submit that launches
     /// a run or the build loop closes the dialog; one that only writes the spec file
     /// or refuses keeps it open with its message in the status line.
     pub(crate) fn submit_dialog(&mut self) -> Action {
@@ -140,6 +148,16 @@ impl App {
             return Action::InjectTask(self.dialog.editor.text().to_owned());
         }
         let empty = self.dialog.editor.text().trim().is_empty();
+        if !self.agent_available() {
+            // A busy engine (T5.3): only the plain append is offered. The
+            // scenario flows below (brief, bootstrap, start, scan) all start
+            // something, so they are skipped; blank text is refused inline.
+            if empty {
+                self.dialog.status = Some(self.empty_input_message().into());
+                return Action::None;
+            }
+            return Action::InjectTask(collapse_lines(self.dialog.editor.text()));
+        }
         match (self.scenario(), empty) {
             (Scenario::EmptyProject, false) => {
                 Action::SaveBrief(self.dialog.editor.text().to_owned())
@@ -165,7 +183,7 @@ impl App {
                 Action::StartBuild
             }
             (Scenario::QueueComplete, true) => Action::ResearchQueue(QueueRun::Scan),
-            (_, false) if self.dialog.use_agent => {
+            (_, false) if self.effective_use_agent() => {
                 Action::SubmitTasks(self.dialog.editor.text().to_owned())
             }
             (_, false) => Action::InjectTask(collapse_lines(self.dialog.editor.text())),
@@ -347,5 +365,88 @@ mod tests {
                 Some(app.empty_input_message())
             );
         }
+    }
+
+    /// Runs `check` over a fresh app in each busy engine state (T5.3).
+    fn busy(check: impl Fn(&mut App)) {
+        let setups: [fn(&mut App); 3] = [
+            |a| a.run.phase = Phase::Running,
+            |a| a.run.planning = true,
+            |a| a.run.discovering = true,
+        ];
+        for setup in setups {
+            let mut app = app();
+            setup(&mut app);
+            check(&mut app);
+        }
+    }
+
+    #[test]
+    fn open_dialog_opens_while_busy() {
+        busy(|app| {
+            app.open_dialog();
+            assert!(app.modals.contains(Modal::Dialog));
+            assert!(app.status.is_none());
+            assert_eq!(app.dialog.kind, DialogKind::Add);
+        });
+    }
+
+    #[test]
+    fn busy_submit_is_plain_add_even_when_checked() {
+        busy(|app| {
+            app.open_dialog();
+            app.dialog.use_agent = true;
+            app.dialog.editor.insert_paste("first\n\n second ");
+            assert_eq!(
+                app.submit_dialog(),
+                Action::InjectTask("first second".into())
+            );
+            assert!(!app.effective_use_agent());
+            assert!(app.dialog.use_agent, "the preference is kept");
+        });
+    }
+
+    #[test]
+    fn busy_blank_submit_is_refused_not_scenario() {
+        busy(|app| {
+            app.open_dialog();
+            assert_eq!(app.submit_dialog(), Action::None);
+            assert_eq!(
+                app.dialog.status.as_deref(),
+                Some(app.empty_input_message())
+            );
+            assert!(app.modals.contains(Modal::Dialog));
+        });
+    }
+
+    #[test]
+    fn toggle_is_ignored_while_busy() {
+        busy(|app| {
+            app.open_dialog();
+            app.toggle_use_agent();
+            assert!(!app.dialog.use_agent);
+            app.dialog.use_agent = true;
+            app.toggle_use_agent();
+            assert!(app.dialog.use_agent);
+        });
+    }
+
+    #[test]
+    fn agent_path_returns_when_idle() {
+        let mut app = app();
+        app.run.planning = true;
+        app.open_dialog();
+        app.dialog.use_agent = true;
+        app.dialog.editor.insert_paste("plan this");
+        app.run.planning = false;
+        assert_eq!(app.submit_dialog(), Action::SubmitTasks("plan this".into()));
+    }
+
+    #[test]
+    fn primary_label_is_submit_while_busy() {
+        busy(|app| {
+            app.open_dialog();
+            assert_eq!(app.primary_label(), "Submit");
+        });
     }
 }
