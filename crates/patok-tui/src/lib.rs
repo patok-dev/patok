@@ -18,7 +18,6 @@ mod monitor;
 mod mouse;
 mod overlay;
 mod pipeline;
-mod project;
 mod run;
 mod settings;
 mod status;

@@ -24,8 +24,9 @@ use patok_providers::ProviderKind;
 /// The placeholder hint rendered in the empty input area of the add-task dialog
 /// (T41.1): a low-emphasis watermark that reads as a hint, not typed content.
 /// It disappears with the first typed or pasted character and never enters
-/// the input's text or a submitted request.
-pub const DIALOG_WATERMARK: &str = "Press Enter to run Discovery agent";
+/// the input's text or a submitted request (T5.5: the discovery wording left
+/// with the scenario-driven empty submit).
+pub const DIALOG_WATERMARK: &str = "Describe a task to add";
 
 /// The edit-task dialog's empty-input watermark (T4.3); it only shows once the
 /// prefilled description is cleared.
@@ -57,8 +58,8 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     let area = Modal::Dialog.area(app, frame.area());
     // The add and edit modals share everything but their chrome strings (T76.1): the
     // title and the empty-input watermark follow the dialog's kind; the
-    // primary button's label flows from `App::primary_label`, which branches
-    // on the same kind.
+    // primary button's label flows from `App::primary_label`, which follows
+    // only the dialog kind.
     let (title, watermark) = match app.dialog.kind {
         DialogKind::Add => (" What do you want to do? ".to_string(), DIALOG_WATERMARK),
         DialogKind::Edit => (
@@ -174,7 +175,7 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
 
     // The bottom line's two zones (T59.1): the input's key hints on the left,
     // the primary-action and Close buttons on the right, all through the
-    // shared footer renderer. The primary button's label follows the scenario
+    // shared footer renderer. The primary button's label follows only the dialog kind
     // and dims while the add dialog's text is blank (T5.2).
     app.dialog.footer.set(footer);
     let buttons = Modal::Dialog.buttons(app);

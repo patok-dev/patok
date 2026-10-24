@@ -24,17 +24,15 @@ use crate::terminal::TerminalState;
 use crate::theme::{Theme, theme_modal_groups};
 use crate::view::FrameFocus;
 
-/// The two research queue-creation runs (T69.1): the Research agent's second
-/// duty besides investigating a task is creating the project's initial task
-/// queue.
+/// The research agent's queue-creation run that the TUI sends (T69.1): the
+/// NeedsQueue bootstrap from main-screen Enter (T5.5). The engine's gap scan
+/// (`AddTasksScan`) is no longer sent by the shell since T5.5 removed the
+/// dialog's QueueComplete empty submit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueRun {
-    /// The NeedsQueue scenario's empty submit: the research agent creates the
-    /// initial queue from the spec.
+    /// Main-screen Enter in the NeedsQueue scenario sends it: the research
+    /// agent creates the initial queue from the spec.
     Bootstrap,
-    /// The QueueComplete scenario's empty submit: the research agent scans
-    /// for gaps and worthwhile follow-up work.
-    Scan,
 }
 
 impl QueueRun {
@@ -43,9 +41,6 @@ impl QueueRun {
     pub fn request(self) -> &'static str {
         match self {
             Self::Bootstrap => "Scan the project and create an initial task queue",
-            Self::Scan => {
-                "Scan the project for gaps and worthwhile follow-up work, and add tasks for what you find"
-            }
         }
     }
 }
@@ -72,9 +67,10 @@ pub enum Action {
     Restart,
     /// Send the add-task dialog's text to the engine as an `AddTasks` command.
     SubmitTasks(String),
-    /// Start a research queue-creation run (T69.1): the NeedsQueue and
-    /// QueueComplete scenarios' empty submits send the Research agent, which
-    /// investigates the project and appends the resulting tasks.
+    /// Start a research queue-creation run (T69.1): main-screen Enter (and
+    /// its chip) in the NeedsQueue scenario sends the Research agent, which
+    /// investigates the project and appends the resulting tasks. It is no
+    /// longer a dialog submit (T5.5).
     ResearchQueue(QueueRun),
     /// Run one discovery round now: Enter while the engine is idle sends the
     /// `RunDiscovery` command when no uncompleted task remains (T46.1).
@@ -95,9 +91,6 @@ pub enum Action {
         id: String,
         description: String,
     },
-    /// Save the dialog's text as the project brief into SPEC.md (EmptyProject submit);
-    /// the dialog stays open with the created message.
-    SaveBrief(String),
     /// The settings overlay closed with nothing left to apply (a clean close or a
     /// discard).
     CloseSettings,
@@ -820,21 +813,25 @@ impl App {
         self.dialog.use_agent = !self.dialog.use_agent;
     }
 
-    /// The dialog's primary button label: "Start" when the queue is
-    /// ready and the input is empty, "Scan" when the queue is complete and the
-    /// input is empty, "Submit" otherwise (always "Submit" for the add dialog
-    /// while the engine is busy, T5.3).
+    /// The dialog's primary button label: "Save" for the edit dialog, always
+    /// "Submit" for the add dialog since T5.5 removed the scenario-driven
+    /// Start/Scan labels.
     pub fn primary_label(&self) -> &'static str {
         match self.dialog.kind {
-            DialogKind::Edit => return "Save",
-            DialogKind::Add if !self.agent_available() => return "Submit",
-            DialogKind::Add => {}
+            DialogKind::Edit => "Save",
+            DialogKind::Add => "Submit",
         }
-        let empty = self.dialog.editor.text().trim().is_empty();
-        match (self.scenario(), empty) {
-            (Scenario::QueueReady, true) => "Start",
-            (Scenario::QueueComplete, true) => "Scan",
-            _ => "Submit",
+    }
+
+    /// The label for main-screen Enter's action, shared by the Tasks frame
+    /// hints and the status-bar chip so both match `enter_key`.
+    pub(crate) fn enter_label(&self) -> &'static str {
+        if self.run.tasks.iter().any(|t| !t.done) {
+            "start"
+        } else if self.scenario() == Scenario::NeedsQueue {
+            "create queue"
+        } else {
+            "run discovery"
         }
     }
 

@@ -59,9 +59,13 @@ impl App {
     }
 
     /// The Enter key (T46.1): while the engine is idle it starts the build
-    /// loop when pending tasks remain and runs a discovery round when the
-    /// queue is complete; a busy engine refuses with the same short message
-    /// as the other keys.
+    /// loop when pending tasks remain; in the NeedsQueue scenario it
+    /// bootstraps the queue through the research agent (moved here from the
+    /// add dialog's empty submit, T5.5; it still requires spec content);
+    /// otherwise it runs a discovery round. The add dialog's former Start and
+    /// Scan empty submits are covered by the StartBuild and RunDiscovery arms
+    /// (T5.5). A busy engine refuses with the same short message as the other
+    /// keys.
     pub(crate) fn enter_key(&mut self) -> Action {
         self.status = None;
         match self.busy_status() {
@@ -72,6 +76,15 @@ impl App {
             None => {
                 if self.run.tasks.iter().any(|t| !t.done) {
                     Action::StartBuild
+                } else if self.scenario() == Scenario::NeedsQueue {
+                    if self.project_status.spec == SpecState::Content {
+                        Action::ResearchQueue(QueueRun::Bootstrap)
+                    } else {
+                        self.status = Some(
+                            "SPEC.md is empty -- describe what you want to build first.".into(),
+                        );
+                        Action::None
+                    }
                 } else {
                     Action::RunDiscovery
                 }
@@ -94,14 +107,15 @@ impl App {
         !(self.dialog.kind == DialogKind::Add && self.dialog.editor.text().trim().is_empty())
     }
 
-    /// The scenario-driven submit: what submitting does depends
-    /// on the project scenario and whether the input is empty. Non-empty text
-    /// is a plain append (`InjectTask`, lines collapsed into one) while the
-    /// "Use agent to add" box is unchecked and goes verbatim to the planner
-    /// (`SubmitTasks`) when checked. A busy engine (T5.3) offers only the plain
-    /// append: the scenario flows are skipped and blank text is refused. A submit that launches
-    /// a run or the build loop closes the dialog; one that only writes the spec file
-    /// or refuses keeps it open with its message in the status line.
+    /// The add dialog only adds tasks: unchecked or busy -> `InjectTask`
+    /// (lines collapsed into one), checked and idle -> `SubmitTasks`
+    /// (verbatim to the planner). Blank text is refused for Enter, Ctrl+S and
+    /// the button alike. The scenario-driven empty submit was removed in T5.5:
+    /// start and discovery are main-screen Enter (`enter_key`), the NeedsQueue
+    /// bootstrap moved there too, the QueueComplete gap scan was dropped in
+    /// favour of Enter's discovery round, and the EmptyProject brief
+    /// (`SaveBrief`) is gone -- SPEC.md is written by hand or through the
+    /// agent add.
     pub(crate) fn submit_dialog(&mut self) -> Action {
         // The edit dialog's submit (T4.3): the trimmed text goes to the engine's
         // edit command, which also rejects multi-line text and busy tasks; the
@@ -117,46 +131,15 @@ impl App {
                 description: text,
             };
         }
-        let empty = self.dialog.editor.text().trim().is_empty();
-        if !self.agent_available() {
-            // A busy engine (T5.3): only the plain append is offered. The
-            // scenario flows below (brief, bootstrap, start, scan) all start
-            // something, so they are skipped; blank text is refused inline.
-            if empty {
-                self.dialog.status = Some(self.empty_input_message().into());
-                return Action::None;
-            }
-            return Action::InjectTask(collapse_lines(self.dialog.editor.text()));
+        let text = self.dialog.editor.text();
+        if text.trim().is_empty() {
+            self.dialog.status = Some(self.empty_input_message().into());
+            return Action::None;
         }
-        match (self.scenario(), empty) {
-            (Scenario::EmptyProject, false) => {
-                Action::SaveBrief(self.dialog.editor.text().to_owned())
-            }
-            (Scenario::EmptyProject, true) => {
-                self.dialog.status = Some(
-                    "Describe what you want to build -- an empty project needs direction.".into(),
-                );
-                Action::None
-            }
-            (Scenario::NeedsQueue, true) => {
-                if self.project_status.spec == SpecState::Content {
-                    Action::ResearchQueue(QueueRun::Bootstrap)
-                } else {
-                    self.dialog.status =
-                        Some("SPEC.md is empty -- describe what you want to build first.".into());
-                    Action::None
-                }
-            }
-            (Scenario::QueueReady, true) => {
-                self.modals.pop(Modal::Dialog);
-                self.focus = FrameFocus::Output;
-                Action::StartBuild
-            }
-            (Scenario::QueueComplete, true) => Action::ResearchQueue(QueueRun::Scan),
-            (_, false) if self.effective_use_agent() => {
-                Action::SubmitTasks(self.dialog.editor.text().to_owned())
-            }
-            (_, false) => Action::InjectTask(collapse_lines(self.dialog.editor.text())),
+        if self.effective_use_agent() {
+            Action::SubmitTasks(text.to_owned())
+        } else {
+            Action::InjectTask(collapse_lines(text))
         }
     }
 
@@ -207,15 +190,6 @@ impl App {
         self.dialog.status = Some(error);
     }
 
-    /// The brief was written to SPEC.md (EmptyProject submit): the text moved into the
-    /// file, so the input clears and the dialog stays open with the created message;
-    /// with the spec file now present the scenario re-detects as NeedsQueue.
-    pub fn on_brief_saved(&mut self) {
-        self.dialog.editor.clear();
-        self.dialog.status =
-            Some("SPEC.md created -- review it, then press Enter to start.".into());
-    }
-
     /// Pasted text goes to the terminal when it is the top modal, else appends
     /// to the dialog's input; ignored while neither is open.
     pub fn on_paste(&mut self, text: &str) {
@@ -234,6 +208,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use patok_core::event::{Phase, Snapshot};
     use patok_core::pipeline::PipelineState;
+    use patok_core::scenario::{ProjectScan, TaskFileState};
 
     use super::*;
 
@@ -374,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn busy_blank_submit_is_refused_not_scenario() {
+    fn busy_blank_submit_is_refused() {
         busy(|app| {
             app.open_dialog();
             assert_eq!(app.submit_dialog(), Action::None);
@@ -415,5 +390,78 @@ mod tests {
             app.open_dialog();
             assert_eq!(app.primary_label(), "Submit");
         });
+    }
+
+    fn scan(has_code: bool, task_file: TaskFileState, spec: SpecState) -> ProjectScan {
+        ProjectScan {
+            has_code,
+            task_file,
+            spec,
+        }
+    }
+
+    #[test]
+    fn ctrl_s_on_blank_add_is_refused_in_every_scenario() {
+        let cases = [
+            (
+                vec![],
+                scan(false, TaskFileState::Missing, SpecState::Missing),
+            ),
+            (
+                vec![],
+                scan(true, TaskFileState::Missing, SpecState::Content),
+            ),
+            (
+                patok_core::task::parse("- [ ] T1.1: x\n"),
+                scan(true, TaskFileState::Ok, SpecState::Content),
+            ),
+            (
+                patok_core::task::parse("- [x] T1.1: x\n"),
+                scan(true, TaskFileState::Ok, SpecState::Content),
+            ),
+        ];
+        for (tasks, status) in cases {
+            let mut app = app();
+            app.run.tasks = tasks;
+            app.project_status = status;
+            app.open_dialog();
+            let action = app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+            assert_eq!(action, Action::None);
+            assert!(app.modals.contains(Modal::Dialog));
+            assert_eq!(
+                app.dialog.status.as_deref(),
+                Some(app.empty_input_message())
+            );
+        }
+    }
+
+    #[test]
+    fn enter_key_bootstraps_a_needs_queue_project_with_spec_content() {
+        let mut app = app();
+        app.run.tasks = vec![];
+        app.project_status = scan(true, TaskFileState::Missing, SpecState::Content);
+        assert_eq!(app.enter_key(), Action::ResearchQueue(QueueRun::Bootstrap));
+        assert!(app.status.is_none());
+        for spec in [SpecState::Empty, SpecState::Missing] {
+            app.project_status = scan(true, TaskFileState::Missing, spec);
+            assert_eq!(app.enter_key(), Action::None);
+            assert_eq!(
+                app.status.as_deref(),
+                Some("SPEC.md is empty -- describe what you want to build first.")
+            );
+        }
+    }
+
+    #[test]
+    fn enter_key_keeps_start_and_discovery_outside_needs_queue() {
+        let mut app = app();
+        app.project_status = scan(true, TaskFileState::Missing, SpecState::Content);
+        assert_eq!(app.enter_key(), Action::StartBuild);
+        app.run.tasks = patok_core::task::parse("- [x] T1.1: x\n");
+        app.project_status = scan(true, TaskFileState::Ok, SpecState::Content);
+        assert_eq!(app.enter_key(), Action::RunDiscovery);
+        app.run.tasks = vec![];
+        app.project_status = ProjectScan::default();
+        assert_eq!(app.enter_key(), Action::RunDiscovery);
     }
 }

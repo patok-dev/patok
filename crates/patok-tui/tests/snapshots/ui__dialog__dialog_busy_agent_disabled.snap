@@ -5,7 +5,7 @@ expression: "draw(&app, 80, 24)"
 ─ Running ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ─────────── 00:00 ─
 ┌ Builder ────────────────────────────────────────────────────────────── 00:00 ┐
 │no ┌ What do you want to do? ────────────────────────────────────── [ x ] ┐   │
-│   │Press Enter to run Discovery agent                                    │   │
+│   │Describe a task to add                                                │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │

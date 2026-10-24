@@ -14,11 +14,12 @@ use crate::task_list::AppendMode;
 /// queue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueCreation {
-    /// The NeedsQueue scenario's empty submit: create the initial queue from
-    /// the spec.
+    /// The shell's main-screen Enter in the NeedsQueue scenario (T5.5):
+    /// create the initial queue from the spec.
     Bootstrap,
-    /// The QueueComplete scenario's empty submit: a gap scan for worthwhile
-    /// follow-up work.
+    /// The `AddTasksScan` kind: a gap scan for worthwhile follow-up work. The
+    /// shell no longer sends it since T5.5 dropped the add dialog's
+    /// QueueComplete empty submit, but it stays part of the protocol.
     Scan,
 }
 

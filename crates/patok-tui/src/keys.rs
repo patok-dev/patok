@@ -165,8 +165,8 @@ impl App {
                 self.edit_selected_task()
             }
             // Enter is the primary action while the engine is idle (T46.1):
-            // it starts the build loop while pending tasks remain and runs a
-            // discovery round once the queue is complete.
+            // it starts the build loop while pending tasks remain, bootstraps
+            // the queue in NeedsQueue (T5.5) and runs a discovery round otherwise.
             KeyCode::Enter if !ctrl => self.enter_key(),
             KeyCode::Char('?') if !ctrl => {
                 self.status = None;

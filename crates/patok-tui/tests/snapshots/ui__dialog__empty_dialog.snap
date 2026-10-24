@@ -5,7 +5,7 @@ expression: "draw(&open(), 80, 24)"
 ─ Stopped ─ sprint ─── [ R ] > [ P ] > [ B ] > [ R ]   [ D ] ───────────────────
 ┌ Builder ─────────────────────────────────────────────────────────────────────┐
 │no ┌ What do you want to do? ────────────────────────────────────── [ x ] ┐   │
-│   │Press Enter to run Discovery agent                                    │   │
+│   │Describe a task to add                                                │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
@@ -22,7 +22,7 @@ expression: "draw(&open(), 80, 24)"
 │   │                                                                      │   │
 │   │[ ] Use agent to add  Tab toggle                                      │   │
 │   │Type a task to enable Enter                                           │   │
-│   │ ↑↓←→ move · Ctrl+U clear              [ Enter ] Start  [ Esc ] Close │   │
+│   │ ↑↓←→ move · Ctrl+U clear             [ Enter ] Submit  [ Esc ] Close │   │
 │ a └──────────────────────────────────────────────────────────────────────┘ut │
 └──────────────────────────────────────────────────────────────────────────────┘
                                                     [ Enter ] start  [ m ] menu

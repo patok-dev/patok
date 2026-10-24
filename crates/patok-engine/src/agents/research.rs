@@ -59,7 +59,8 @@ fn queue_guidelines() -> String {
     )
 }
 
-/// The NeedsQueue scenario's empty submit (T69.1): the Research agent reads the
+/// The shell's main-screen Enter in the NeedsQueue scenario (T5.5, T69.1):
+/// the Research agent reads the
 /// spec and creates the project's initial task queue.
 fn research_queue_bootstrap() -> String {
     format!(
@@ -74,7 +75,9 @@ fn research_queue_bootstrap() -> String {
     )
 }
 
-/// The QueueComplete scenario's empty submit (T69.1): the Research agent scans
+/// The `AddTasksScan` kind (T69.1; the shell no longer sends it since T5.5
+/// dropped the add dialog's QueueComplete empty submit, but it stays part of
+/// the protocol): the Research agent scans
 /// for gaps and worthwhile follow-up work and appends it as tasks.
 fn research_queue_scan() -> String {
     format!(
@@ -140,7 +143,7 @@ pub(crate) struct ResearchQueueAgent {
 }
 
 impl ResearchQueueAgent {
-    /// The NeedsQueue scenario's queue-creation run.
+    /// The NeedsQueue bootstrap run (the shell's main-screen Enter, T5.5).
     pub(crate) fn bootstrap() -> Self {
         Self { bootstrap: true }
     }

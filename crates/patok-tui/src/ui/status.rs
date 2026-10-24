@@ -52,17 +52,11 @@ pub(super) fn status_widget(app: &App, area: Rect) -> Paragraph<'static> {
         None => {
             let mut keys = Vec::new();
             // The primary-action hint leads while the engine is idle: Enter
-            // starts the build loop while pending tasks remain and runs a
-            // discovery round once the queue is complete (T46.1).
+            // starts the build loop while pending tasks remain, creates the
+            // queue in NeedsQueue (T5.5) and runs a discovery round otherwise
+            // (T46.1); the label comes from `App::enter_label`.
             if app.is_idle() {
-                keys.push((
-                    "Enter",
-                    if app.run.tasks.iter().any(|t| !t.done) {
-                        "start"
-                    } else {
-                        "run discovery"
-                    },
-                ));
+                keys.push(("Enter", app.enter_label()));
             }
             // The Esc stop chip (T134.1): the Esc binding's scope while a run
             // is active -- a build, a planner run or a discovery run -- a
