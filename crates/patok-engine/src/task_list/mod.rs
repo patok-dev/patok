@@ -197,22 +197,24 @@ impl TaskList {
     }
 
     /// Removes the task line with the given id from the file (T98.1), under
-    /// the file lock. `in_progress` runs inside the same lock hold, before
+    /// the file lock. `running` runs inside the same lock hold, before
     /// the file is touched, which shrinks the race window against the
-    /// session's next-task pick; when it reports the task as the running
-    /// one, nothing is removed and `None` is returned. It may take the
+    /// session's next-task pick; it returns the running task id. A match
+    /// with `id` refuses the removal and `None` is returned; otherwise the
+    /// id is passed down so renumbering leaves the running task alone. It may take the
     /// engine state lock: the only path that takes the file lock under the
     /// state lock, [`TaskList::snapshot_before`], only tries it.
     pub(crate) async fn remove(
         &self,
         id: &str,
-        in_progress: impl FnOnce() -> bool,
+        running: impl FnOnce() -> Option<String>,
     ) -> io::Result<Option<RemoveOutcome>> {
         let _guard = self.lock.lock().await;
-        if in_progress() {
+        let running = running();
+        if running.as_deref() == Some(id) {
             return Ok(None);
         }
-        file::remove_task(&self.path, id).map(Some)
+        file::remove_task(&self.path, id, running.as_deref()).map(Some)
     }
 
     /// Writes the task's five-position progress token into its line, ticking
@@ -443,16 +445,33 @@ mod tests {
         std::fs::write(&path, "- [ ] T1.1: a\n- [ ] T1.2: b\n").unwrap();
         let list = TaskList::new(path.clone());
         // The in-progress check refuses: the file is left alone.
-        assert!(list.remove("T1.1", || true).await.unwrap().is_none());
+        assert!(
+            list.remove("T1.1", || Some("T1.1".to_string()))
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "- [ ] T1.1: a\n- [ ] T1.2: b\n"
         );
         assert!(matches!(
-            list.remove("T1.1", || false).await.unwrap(),
+            list.remove("T1.1", || None).await.unwrap(),
             Some(RemoveOutcome::Removed)
         ));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "- [ ] T1.2: b\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "- [ ] T1.1: b\n");
+        // A different running task is passed down and never renumbered.
+        std::fs::write(&path, "- [ ] T1.1: a\n- [ ] T1.2: b\n- [ ] T1.3: c\n").unwrap();
+        assert!(matches!(
+            list.remove("T1.3", || Some("T1.2".to_string()))
+                .await
+                .unwrap(),
+            Some(RemoveOutcome::Removed)
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "- [ ] T1.1: a\n- [ ] T1.2: b\n"
+        );
     }
 
     #[test]

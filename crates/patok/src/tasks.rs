@@ -94,9 +94,10 @@ pub async fn remove(project: &Path, id: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     // No engine is running: in-progress cannot exist, so the file itself is
-    // the whole truth.
+    // the whole truth. With no running task (`None`), renumbering can't
+    // touch one.
     let path = project.join(patok_engine::TASK_FILE);
-    match patok_engine::taskfile::remove_task(&path, id)
+    match patok_engine::taskfile::remove_task(&path, id, None)
         .with_context(|| format!("cannot update {}", path.display()))?
     {
         patok_engine::taskfile::RemoveOutcome::Removed => println!("Removed task {id}."),
@@ -170,7 +171,7 @@ mod tests {
     // No engine runs for a tempdir project, so these exercise the
     // stopped-engine fallback path directly against the file.
     #[tokio::test]
-    async fn remove_deletes_a_pending_task_and_keeps_the_rest() {
+    async fn remove_deletes_a_pending_task_and_renumbers_the_rest() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("TASKS.md"),
@@ -180,7 +181,7 @@ mod tests {
         remove(dir.path(), "T1.1").await.unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.path().join("TASKS.md")).unwrap(),
-            "# T\n- [ ] T1.2: b\n"
+            "# T\n- [ ] T1.1: b\n"
         );
     }
 

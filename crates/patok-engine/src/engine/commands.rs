@@ -437,7 +437,9 @@ impl Engine {
     /// next-task pick loads the file without the lock, so a start concurrent with a
     /// removal can still pick the removed task; the consequence is the
     /// session's commit step `write_progress` reporting a missing line, a
-    /// documented no-op warning. Errors are user-facing rejection reasons.
+    /// documented no-op warning. Other pending tasks may be renumbered and a
+    /// `## ` heading left empty is pruned; the reconcile that follows picks
+    /// up the new ids. Errors are user-facing rejection reasons.
     pub async fn remove_task(&self, id: &str) -> Result<(), String> {
         let id = id.trim();
         if id.is_empty() {
@@ -445,9 +447,10 @@ impl Engine {
         }
         let path = self.inner.task_list.path();
         // `current_task` is read under the task-file lock, which shrinks the
-        // race window against the Session's next-task pick (see above).
-        let in_progress = || self.state().current_task.as_deref() == Some(id);
-        match self.inner.task_list.remove(id, in_progress).await {
+        // race window against the Session's next-task pick (see above); it
+        // also keeps the running task out of the renumbering.
+        let running = || self.state().current_task.clone();
+        match self.inner.task_list.remove(id, running).await {
             Ok(None) => {
                 return Err(format!(
                     "task {id} is in progress; wait for it to finish before removing it"
