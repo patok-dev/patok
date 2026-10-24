@@ -680,6 +680,52 @@ pub fn find_pending(text: &str, id: &str, running: Option<&str>) -> Result<usize
     }
 }
 
+/// Replaces the description of the pending task `id` in place (T1.2), keeping its indentation,
+/// checkbox, id and progress token. The new text is trimmed and must be a single non-empty line
+/// that does not start with something the parser would read as a progress token, else
+/// [`TaskEditOutcome::Invalid`]. Refusals (`Completed`, `Running`, `NotFound`) come from
+/// [`find_pending`].
+///
+/// Only the target line changes; every other line stays byte-identical, including CRLF endings
+/// and an unterminated last line. On the target line the whitespace around the token and the
+/// description is normalised to the `ID: TOKEN description` shape, and its line ending is kept.
+/// The function never touches the file: the caller reads and writes it under the task-file lock.
+pub fn edit_task(
+    text: &str,
+    id: &str,
+    description: &str,
+    running: Option<&str>,
+) -> Result<String, TaskEditOutcome> {
+    let new = description.trim();
+    if new.is_empty() || new.contains(['\n', '\r']) || strip_progress_token(new) != new {
+        return Err(TaskEditOutcome::Invalid);
+    }
+    let index = find_pending(text, id, running)?;
+    let mut updated = String::with_capacity(text.len() + new.len());
+    for (i, piece) in text.split_inclusive('\n').enumerate() {
+        if i != index {
+            updated.push_str(piece);
+            continue;
+        }
+        let (content, ending) = line_line_ending(piece);
+        let (_, rest) =
+            task::split_checkbox(content).expect("find_pending matched a well-formed line");
+        let (_, _, after) = split_id(rest).expect("find_pending matched a well-formed line");
+        let head = &content[..content.len() - after.len()];
+        let trimmed = after.trim_start();
+        let without_token = strip_progress_token(trimmed);
+        updated.push_str(head);
+        updated.push(' ');
+        if without_token.len() < trimmed.len() {
+            updated.push_str(trimmed[..trimmed.len() - without_token.len()].trim_end());
+            updated.push(' ');
+        }
+        updated.push_str(new);
+        updated.push_str(ending);
+    }
+    Ok(updated)
+}
+
 /// A well-formed numbered task line: where its id digits sit and what they say.
 struct Numbered {
     done: bool,
@@ -1822,5 +1868,124 @@ mod tests {
         );
         assert_eq!(find_pending(text, "T1.2", None), Ok(1));
         assert_eq!(find_pending(text, "T2.1", None), Ok(5));
+    }
+
+    #[test]
+    fn edit_task_replaces_the_description_and_keeps_id_checkbox_and_token() {
+        assert_eq!(
+            edit_task("- [ ] T1.2: [RP.B-] old text\n", "T1.2", "new text", None),
+            Ok("- [ ] T1.2: [RP.B-] new text\n".to_string())
+        );
+        assert_eq!(
+            edit_task("- [ ] T1.2: old\n", "T1.2", "new", None),
+            Ok("- [ ] T1.2: new\n".to_string())
+        );
+        assert_eq!(
+            edit_task("- [ ] T1.2: [RP.B-]\n", "T1.2", "new", None),
+            Ok("- [ ] T1.2: [RP.B-] new\n".to_string())
+        );
+        assert_eq!(
+            edit_task("- [ ] T1.2: [RP.BR!] old\n", "T1.2", "new", None),
+            Ok("- [ ] T1.2: [RP.BR!] new\n".to_string())
+        );
+    }
+
+    #[test]
+    fn edit_task_keeps_every_other_line_byte_identical() {
+        let text = "## Head\r\nprose  \r\n- [ ] T1.1: a\r\n- [x] T1.2: done\n  - [ ] H3.1: x\n- [ ] T2.1: last";
+        assert_eq!(
+            edit_task(text, "T1.1", "b", None),
+            Ok(
+                "## Head\r\nprose  \r\n- [ ] T1.1: b\r\n- [x] T1.2: done\n  - [ ] H3.1: x\n- [ ] T2.1: last"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            edit_task(text, "H3.1", "y", None),
+            Ok(
+                "## Head\r\nprose  \r\n- [ ] T1.1: a\r\n- [x] T1.2: done\n  - [ ] H3.1: y\n- [ ] T2.1: last"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            edit_task(text, "T2.1", "z", None),
+            Ok(
+                "## Head\r\nprose  \r\n- [ ] T1.1: a\r\n- [x] T1.2: done\n  - [ ] H3.1: x\n- [ ] T2.1: z"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn edit_task_trims_the_new_description() {
+        assert_eq!(
+            edit_task("- [ ] T1.2: old\n", "T1.2", "  new  ", None),
+            Ok("- [ ] T1.2: new\n".to_string())
+        );
+    }
+
+    #[test]
+    fn edit_task_rejects_empty_and_multi_line_text() {
+        for bad in ["", "   ", "a\nb", "a\r\nb", "a\rb"] {
+            assert_eq!(
+                edit_task("- [ ] T1.2: old\n", "T1.2", bad, None),
+                Err(TaskEditOutcome::Invalid),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn edit_task_rejects_text_that_reads_as_a_progress_token() {
+        for bad in ["[RP.B-] x", "[RP.B-]"] {
+            assert_eq!(
+                edit_task("- [ ] T1.2: old\n", "T1.2", bad, None),
+                Err(TaskEditOutcome::Invalid),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            edit_task("- [ ] T1.2: old\n", "T1.2", "[note] x", None),
+            Ok("- [ ] T1.2: [note] x\n".to_string())
+        );
+    }
+
+    #[test]
+    fn edit_task_refuses_completed_running_and_missing_tasks() {
+        let text = "- [x] T1.1: d\n- [ ] T1.2: a\n- [ ] no id\n";
+        assert_eq!(
+            edit_task(text, "T1.1", "n", None),
+            Err(TaskEditOutcome::Completed)
+        );
+        assert_eq!(
+            edit_task(text, "T1.2", "n", Some("T1.2")),
+            Err(TaskEditOutcome::Running)
+        );
+        assert_eq!(
+            edit_task(text, "T9.9", "n", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert_eq!(
+            edit_task(text, "no id", "n", None),
+            Err(TaskEditOutcome::NotFound)
+        );
+    }
+
+    #[test]
+    fn edit_task_edits_only_the_first_pending_duplicate() {
+        assert_eq!(
+            edit_task("- [ ] T1.2: a\n- [ ] T1.2: b\n", "T1.2", "n", None),
+            Ok("- [ ] T1.2: n\n- [ ] T1.2: b\n".to_string())
+        );
+    }
+
+    #[test]
+    fn edit_task_result_parses_back_to_the_new_description() {
+        let out = edit_task("- [ ] T1.2: [RP.B-] old\n", "T1.2", "new text", None).unwrap();
+        let tasks = task::parse(&out);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].description, "new text");
+        assert_eq!(tasks[0].id, "T1.2");
+        assert!(!tasks[0].done);
     }
 }
