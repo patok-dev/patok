@@ -3,10 +3,11 @@ use patok_core::event::{AgentRole, EngineEvent, Snapshot};
 use patok_providers::ProviderKind;
 use tokio_util::sync::CancellationToken;
 
-use super::state::State;
+use super::state::{RunState, State};
 use super::{AttachError, Attachment, Engine};
 use crate::session::{Session, SessionKind};
-use crate::taskfile::{MoveDirection, RemoveOutcome};
+use crate::task_list::EditFailure;
+use crate::taskfile::{MoveDirection, RemoveOutcome, TaskEditOutcome};
 use crate::{QueueCreation, TASK_FILE};
 
 /// Which `start_*` command is asking: the four entry points share one guard
@@ -471,10 +472,36 @@ impl Engine {
         Ok(())
     }
 
+    /// The guard of a pending-task edit (T2.3), run inside the task-file lock:
+    /// refuses while a planner or discovery run is active -- their validators
+    /// require the existing file content byte-identical and a rejection
+    /// restores the old file, undoing the edit -- else returns the running
+    /// task id. Takes the state lock under the file lock, like `remove_task`'s
+    /// closure.
+    fn edit_guard(&self) -> Result<Option<String>, String> {
+        let state = self.state();
+        match state.run {
+            RunState::Planning => {
+                Err("tasks are being planned; wait for the planner to finish".into())
+            }
+            RunState::Discovering | RunState::SessionDiscovery => {
+                Err("a discovery round is running; wait for it to finish".into())
+            }
+            RunState::Idle | RunState::Running => Ok(state.current_task.clone()),
+        }
+    }
+
     /// Serves the `EditTask` command: replaces a pending task's description.
-    /// Only the input validation is real so far; the rejection that follows
-    /// is a placeholder until the locked file operation arrives with the
-    /// `TaskList` method (T2.3). Errors are user-facing rejection reasons.
+    /// Runs under the task-file lock with the running-task and
+    /// planner/discovery checks inside the lock; the running and completed
+    /// tasks are refused, the write is atomic and an immediate reconcile
+    /// follows, so `TasksChanged` reaches the shells. Refused while a planner
+    /// or discovery run is active (a rejected run would restore the old file
+    /// and undo the edit); accepted while a build runs. Known races, same
+    /// class as `remove_task`: the Session's next-task pick loads the file
+    /// without the lock, and a gap discovery round reads its baseline just
+    /// before it enters its state, so an edit in that window is not refused.
+    /// Errors are user-facing rejection reasons.
     pub async fn edit_task(&self, id: &str, description: &str) -> Result<(), String> {
         let id = id.trim();
         if id.is_empty() {
@@ -487,23 +514,80 @@ impl Engine {
         if description.contains('\n') {
             return Err("the task description must be a single line".into());
         }
-        Err(format!(
-            "editing task {id} is not supported by this engine yet"
-        ))
+        let path = self.inner.task_list.path();
+        let guard = || self.edit_guard();
+        match self.inner.task_list.edit_task(id, description, guard).await {
+            Ok(()) => {}
+            Err(EditFailure::Refused(reason)) => return Err(reason),
+            Err(EditFailure::Outcome(TaskEditOutcome::Running)) => {
+                return Err(format!(
+                    "task {id} is in progress; wait for it to finish before editing it"
+                ));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::Completed)) => {
+                return Err(format!("task {id} is completed and cannot be edited"));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::NotFound)) => {
+                return Err(format!("no task with id {id} in {TASK_FILE}"));
+            }
+            // `Ok` is never returned as an error; folding it in keeps the match exhaustive.
+            Err(EditFailure::Outcome(TaskEditOutcome::Invalid | TaskEditOutcome::Ok)) => {
+                return Err(
+                    "the task description must be a single line and must not start \
+                            with a progress token"
+                        .into(),
+                );
+            }
+            Err(EditFailure::Io(e)) => {
+                return Err(format!("cannot update {}: {e}", path.display()));
+            }
+        }
+        self.reconcile();
+        Ok(())
     }
 
-    /// Serves the `MoveTask` command: moves a pending task up or down. The
-    /// rejection is a placeholder until the locked file operation arrives
-    /// with the `TaskList` method (T2.3). Errors are user-facing rejection
-    /// reasons.
-    pub async fn move_task(&self, id: &str, _direction: MoveDirection) -> Result<(), String> {
+    /// Serves the `MoveTask` command: moves a pending task up or down by
+    /// swapping it with its neighbour. Locking, refusals, atomic write and
+    /// reconcile are as for `edit_task`. Pending ids are renumbered, and a
+    /// move across a group boundary joins the neighbour's group. The
+    /// in-progress task, or its group, and completed tasks are never
+    /// touched. Errors are user-facing rejection reasons.
+    pub async fn move_task(&self, id: &str, direction: MoveDirection) -> Result<(), String> {
         let id = id.trim();
         if id.is_empty() {
             return Err("the task id is empty".into());
         }
-        Err(format!(
-            "moving task {id} is not supported by this engine yet"
-        ))
+        let path = self.inner.task_list.path();
+        let guard = || self.edit_guard();
+        match self.inner.task_list.move_task(id, direction, guard).await {
+            Ok(new_id) => tracing::debug!("moved task {id} {direction:?} to {new_id}"),
+            Err(EditFailure::Refused(reason)) => return Err(reason),
+            Err(EditFailure::Outcome(TaskEditOutcome::Running)) => {
+                return Err(format!(
+                    "task {id} cannot be moved: the move would touch the in-progress task or its group"
+                ));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::Completed)) => {
+                return Err(format!(
+                    "task {id} cannot be moved: it or the task it would pass is completed"
+                ));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::NotFound)) => {
+                return Err(format!("no task with id {id} in {TASK_FILE}"));
+            }
+            Err(EditFailure::Outcome(TaskEditOutcome::Invalid | TaskEditOutcome::Ok)) => {
+                let side = match direction {
+                    MoveDirection::Up => "above",
+                    MoveDirection::Down => "below",
+                };
+                return Err(format!("task {id} has no task {side} it to swap with"));
+            }
+            Err(EditFailure::Io(e)) => {
+                return Err(format!("cannot update {}: {e}", path.display()));
+            }
+        }
+        self.reconcile();
+        Ok(())
     }
 
     /// Serves the `IndentTask` command: moves a pending task into the
