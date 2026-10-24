@@ -1395,6 +1395,34 @@ mod tests {
         assert_eq!(app.task_cursor, Some(1));
     }
 
+    /// An indent the engine refuses as joining a completed group shows as an
+    /// error status and leaves the cursor and the task list as they were.
+    #[tokio::test]
+    async fn change_task_shows_an_indent_refusal_without_changing_the_list() {
+        use patok_proto::command_request::Action as Proto;
+        let mut app = four_task_app();
+        app.task_cursor = Some(2);
+        let before = app.run.tasks.clone();
+        let reason = "task T2.1 cannot be indented: it, a task it would pass, or the group it would join is completed";
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        change_task(
+            &mut app,
+            "T2.1",
+            TaskChange::Indent,
+            recording_submit(&commands, false, reason),
+        )
+        .await;
+        assert_eq!(app.status.as_deref(), Some(reason));
+        assert_eq!(app.task_cursor, Some(2));
+        assert_eq!(app.run.tasks, before);
+        let sent = commands.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert!(matches!(
+            sent[0].action.as_ref().unwrap(),
+            Proto::IndentTask(i) if i.id == "T2.1"
+        ));
+    }
+
     /// Every other action keeps its own arm in the event loop: the shared
     /// dispatch returns `Keep` for them without a request, so the mouse
     /// arm's StartBuild/RunDiscovery/SaveTheme handling and the wildcard are

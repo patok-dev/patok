@@ -944,10 +944,13 @@ pub fn move_task(
 /// [`renumber_pending`] then makes all ids contiguous, shifting later groups down.
 ///
 /// Refusals, checked in this order: the target's own state from [`find_pending`]; no previous
-/// group (the task is in the first group, or alone) is [`TaskEditOutcome::Invalid`]; a checked or
-/// running task after `p` (a target before the frozen boundary, or a sibling the task would jump
-/// over) is `Completed` or `Running`; the running task's group being the task's or `p`'s is
-/// `Running`. Joining a group that ends in a checked task is allowed.
+/// group (the task is in the first group, or alone) is [`TaskEditOutcome::Invalid`]; a previous
+/// group whose numbered task lines are all checked is `Completed`, because a completed group is
+/// closed and batch review and the open-group record must not see new work appear in it; a
+/// checked or running task after `p` (a target before the frozen boundary, or a sibling the task
+/// would jump over) is `Completed` or `Running`; the running task's group being the task's or
+/// `p`'s is `Running`. Joining a group that still has a pending task is allowed, even when it
+/// ends in a checked task.
 ///
 /// Every line that is not moved, renumbered or pruned stays byte-identical, CRLF included, and
 /// an unterminated last line stays unterminated. The function never touches the file: the caller
@@ -980,6 +983,16 @@ pub fn indent_task(
         .find(|&i| parsed[i].as_ref().is_some_and(|n| n.major != moved.major))
         .ok_or(TaskEditOutcome::Invalid)?;
     let prev = parsed[p].as_ref().ok_or(TaskEditOutcome::Invalid)?;
+    // A completed group is closed: batch review and the open-group record must not see new work
+    // appear in it.
+    if parsed
+        .iter()
+        .flatten()
+        .filter(|n| n.major == prev.major)
+        .all(|n| n.done)
+    {
+        return Err(TaskEditOutcome::Completed);
+    }
     let boundary = parsed
         .iter()
         .rposition(|n| n.as_ref().is_some_and(|n| n.done || n.id_is_running));
@@ -2850,15 +2863,42 @@ mod tests {
     }
 
     #[test]
-    fn indent_task_continues_a_group_ending_in_a_done_task() {
+    fn indent_task_refuses_joining_a_fully_done_group() {
+        let text = "- [x] T1.1: d\n- [ ] T2.1: a\n- [ ] T2.2: b\n";
+        for id in ["T2.1", "T2.2"] {
+            assert_eq!(indent_task(text, id, None), Err(TaskEditOutcome::Completed));
+        }
+        assert_eq!(
+            indent_task(
+                "- [x] T1.1: d\n- [x] T1.2: e\n- [ ] T2.1: a\n",
+                "T2.1",
+                None
+            ),
+            Err(TaskEditOutcome::Completed)
+        );
+    }
+
+    #[test]
+    fn indent_task_joins_a_partly_done_group() {
         assert_eq!(
             indented(
-                "- [x] T1.1: d\n- [ ] T2.1: a\n- [ ] T2.2: b\n",
+                "- [x] T1.1: d\n- [ ] T1.2: e\n- [ ] T2.1: a\n- [ ] T2.2: b\n",
                 "T2.2",
                 None
             ),
-            pair("- [x] T1.1: d\n- [ ] T1.2: b\n- [ ] T2.1: a\n", "T1.2")
+            pair(
+                "- [x] T1.1: d\n- [ ] T1.2: e\n- [ ] T1.3: b\n- [ ] T2.1: a\n",
+                "T1.3"
+            )
         );
+    }
+
+    #[test]
+    fn indent_task_refuses_a_fully_done_group_across_a_heading() {
+        let text = "## P1\n- [x] T1.1: d\n- [x] T1.2: e\n\n## P2\n- [ ] T2.1: a\n- [ ] T2.2: b\n";
+        for id in ["T2.1", "T2.2"] {
+            assert_eq!(indent_task(text, id, None), Err(TaskEditOutcome::Completed));
+        }
     }
 
     #[test]

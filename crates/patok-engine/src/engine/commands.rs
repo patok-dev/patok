@@ -569,7 +569,7 @@ impl Engine {
             }
             Err(EditFailure::Outcome(TaskEditOutcome::Completed)) => {
                 return Err(format!(
-                    "task {id} cannot be moved: it or the task it would pass is completed"
+                    "task {id} cannot be moved: it, the task it would pass, or the group it would join is completed"
                 ));
             }
             Err(EditFailure::Outcome(TaskEditOutcome::NotFound)) => {
@@ -612,7 +612,7 @@ impl Engine {
             }
             Err(EditFailure::Outcome(TaskEditOutcome::Completed)) => {
                 return Err(format!(
-                    "task {id} cannot be indented: it or a task it would pass is completed"
+                    "task {id} cannot be indented: it, a task it would pass, or the group it would join is completed"
                 ));
             }
             Err(EditFailure::Outcome(TaskEditOutcome::NotFound)) => {

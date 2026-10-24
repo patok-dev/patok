@@ -1696,8 +1696,11 @@ async fn move_task_refuses_completed_and_missing_tasks() {
     let fixture = Fixture::new(&original);
     let engine = fixture.engine(MockProvider::new(vec![]));
     let up = patok_engine::taskfile::MoveDirection::Up;
-    let completed =
-        |id: &str| format!("task {id} cannot be moved: it or the task it would pass is completed");
+    let completed = |id: &str| {
+        format!(
+            "task {id} cannot be moved: it, the task it would pass, or the group it would join is completed"
+        )
+    };
 
     assert_eq!(
         engine.move_task("T1.2", up).await.unwrap_err(),
@@ -1822,7 +1825,7 @@ async fn indent_and_outdent_refuse_completed_first_group_missing_and_empty_ids()
 
     assert_eq!(
         engine.indent_task("T1.1").await.unwrap_err(),
-        "task T1.1 cannot be indented: it or a task it would pass is completed"
+        "task T1.1 cannot be indented: it, a task it would pass, or the group it would join is completed"
     );
     assert_eq!(
         engine.outdent_task("T1.1").await.unwrap_err(),
@@ -1846,6 +1849,20 @@ async fn indent_and_outdent_refuse_completed_first_group_missing_and_empty_ids()
     assert_eq!(
         engine.outdent_task("").await.unwrap_err(),
         "the task id is empty"
+    );
+    assert_eq!(fixture.tasks_file(), original);
+}
+
+#[tokio::test]
+async fn indent_task_refuses_joining_a_completed_group() {
+    let original =
+        "# Tasks\n\n## Phase 1\n- [x] T1.1: a\n\n## Phase 2\n- [ ] T2.1: b\n- [ ] T2.2: c\n";
+    let fixture = Fixture::new(original);
+    let engine = fixture.engine(MockProvider::new(vec![]));
+
+    assert_eq!(
+        engine.indent_task("T2.1").await.unwrap_err(),
+        "task T2.1 cannot be indented: it, a task it would pass, or the group it would join is completed"
     );
     assert_eq!(fixture.tasks_file(), original);
 }
