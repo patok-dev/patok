@@ -758,6 +758,29 @@ pub fn edit_task(
     Ok(updated)
 }
 
+/// Applies a pending-task text edit (`op`, e.g. a closure over [`edit_task`]) to the file at
+/// `path` with no running task, atomically rewriting it on success (T3.1): the no-engine
+/// fallback of `patok tasks`. Nothing is written on a refusal, and a missing file reads as
+/// [`TaskEditOutcome::NotFound`] and is not created, like [`remove_task`].
+pub fn rewrite_pending<T>(
+    path: &Path,
+    op: impl FnOnce(&str) -> Result<(String, T), TaskEditOutcome>,
+) -> io::Result<Result<T, TaskEditOutcome>> {
+    let text = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Ok(Err(TaskEditOutcome::NotFound));
+        }
+        other => other?,
+    };
+    match op(&text) {
+        Err(outcome) => Ok(Err(outcome)),
+        Ok((updated, value)) => {
+            write_atomic(path, &updated)?;
+            Ok(Ok(value))
+        }
+    }
+}
+
 /// Direction of a [`move_task`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveDirection {
@@ -1968,6 +1991,29 @@ mod tests {
         assert_eq!(last_group(""), None);
         assert_eq!(last_group("# Tasks\n\nSome prose.\n"), None);
         assert_eq!(last_group("- [ ] D9.1: x\n- [x] H2.1: y\n"), None);
+    }
+
+    #[test]
+    fn rewrite_pending_writes_the_edit_and_reports_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TASKS.md");
+        let edit = |t: &str, id: &str| edit_task(t, id, "b", None).map(|s| (s, ()));
+
+        assert_eq!(
+            rewrite_pending(&path, |t| edit(t, "T1.1")).unwrap(),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert!(!path.exists());
+
+        std::fs::write(&path, "- [ ] T1.1: a\n").unwrap();
+        assert_eq!(
+            rewrite_pending(&path, |t| edit(t, "T9.9")).unwrap(),
+            Err(TaskEditOutcome::NotFound)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "- [ ] T1.1: a\n");
+
+        assert_eq!(rewrite_pending(&path, |t| edit(t, "T1.1")).unwrap(), Ok(()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "- [ ] T1.1: b\n");
     }
 
     /// T77.1: `write_progress` is byte-exact -- a CRLF file keeps every `\r`

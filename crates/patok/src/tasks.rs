@@ -5,16 +5,16 @@
 //! engine's task-file lock is in-process, but it tolerates external appends
 //! by mtime-polling the file and reconciling, so new unchecked lines merge
 //! into the queue while the running and completed tasks are protected.
-//! The remove instead routes through the engine's `RemoveTask` command when
-//! an engine runs: in-progress exists only in the engine's memory, and the
-//! removal then runs under the engine's task-file lock with an immediate
-//! reconcile. With no engine running it falls back to a direct rewrite of
-//! the file -- in-progress cannot exist then, so the file is the whole
-//! truth. Known races, deliberately left alone: with no cross-process lock,
-//! an add concurrent with a TUI inject through a running engine can pick the
-//! same number; and an engine can start between the failed connect and the
-//! fallback write, whose mtime poll then reconciles the already-removed
-//! line. The list reads the file directly too, so it works while an
+//! The remove and edit instead route through the engine's `RemoveTask` /
+//! `EditTask` commands when an engine runs: in-progress exists only in the
+//! engine's memory, and the change then runs under the engine's task-file
+//! lock with an immediate reconcile. With no engine running they fall back to
+//! a direct rewrite of the file -- in-progress cannot exist then, so the file
+//! is the whole truth. Known races, deliberately left alone: with no
+//! cross-process lock, an add concurrent with a TUI inject through a running
+//! engine can pick the same number; and an engine can start between the
+//! failed connect and the fallback write, whose mtime poll then reconciles
+//! the already-removed (or edited) line. The list reads the file directly too, so it works while an
 //! engine runs: the file is the complete record -- pending, in-progress
 //! and completed tasks all have a line -- and the engine's rewrites are
 //! atomic, so a read concurrent with a rewrite sees either the old or
@@ -24,7 +24,7 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use patok_proto::command_request;
-use patok_proto::{CommandRequest, RemoveTask};
+use patok_proto::{CommandRequest, EditTask, RemoveTask};
 
 /// The task file read whole: a missing file reads as empty (the append then
 /// creates it, the list then lists nothing), while any other read failure
@@ -107,6 +107,71 @@ pub async fn remove(project: &Path, id: &str) -> anyhow::Result<()> {
         patok_engine::taskfile::RemoveOutcome::NotFound => {
             bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
         }
+    }
+    Ok(())
+}
+
+/// Replaces the description of the pending task `id` in the project's task
+/// file (T3.1), keeping its id, and prints the resulting id. When an engine
+/// runs for the project, the edit goes through its `EditTask` command -- the
+/// engine knows the current (in-progress) task and refuses it and completed
+/// tasks. With no engine, the file itself is rewritten directly. If the
+/// engine dies mid-call the transport error propagates rather than falling
+/// back, so an edit is never applied twice.
+pub async fn edit(project: &Path, id: &str, text: &str) -> anyhow::Result<()> {
+    let id = id.trim();
+    if id.is_empty() {
+        bail!("the task id is empty");
+    }
+    let description = text.trim();
+    if description.is_empty() {
+        bail!("the task description is empty");
+    }
+    if description.contains('\n') {
+        bail!("the task description must be a single line");
+    }
+    if let Some(mut client) = crate::daemon::try_connect(project).await {
+        let response = client
+            .submit_command(CommandRequest {
+                action: Some(command_request::Action::EditTask(EditTask {
+                    id: id.to_string(),
+                    description: description.to_string(),
+                })),
+            })
+            .await
+            .context("the engine rejected the edit request")?
+            .into_inner();
+        if !response.accepted {
+            bail!("{}", response.error);
+        }
+        println!("Edited task {id}: {description}.");
+        return Ok(());
+    }
+    // No engine is running: in-progress cannot exist, so there is no running
+    // task (`None`) to refuse.
+    let path = project.join(patok_engine::TASK_FILE);
+    match patok_engine::taskfile::rewrite_pending(&path, |file| {
+        patok_engine::taskfile::edit_task(file, id, description, None).map(|updated| (updated, ()))
+    })
+    .with_context(|| format!("cannot update {}", path.display()))?
+    {
+        Ok(()) => println!("Edited task {id}: {description}."),
+        Err(patok_engine::taskfile::TaskEditOutcome::Completed) => {
+            bail!("task {id} is completed and cannot be edited");
+        }
+        Err(patok_engine::taskfile::TaskEditOutcome::NotFound) => {
+            bail!("no task with id {id} in {}", patok_engine::TASK_FILE);
+        }
+        // Unreachable with no running task; kept with the engine's wording.
+        Err(patok_engine::taskfile::TaskEditOutcome::Running) => {
+            bail!("task {id} is in progress; wait for it to finish before editing it");
+        }
+        Err(
+            patok_engine::taskfile::TaskEditOutcome::Invalid
+            | patok_engine::taskfile::TaskEditOutcome::Ok,
+        ) => bail!(
+            "the task description must be a single line and must not start with a progress token"
+        ),
     }
     Ok(())
 }
@@ -226,6 +291,82 @@ mod tests {
     async fn remove_reports_a_missing_file_as_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let error = remove(dir.path(), "T1.1").await.unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert!(!dir.path().join("TASKS.md").exists());
+    }
+
+    fn read_tasks(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("TASKS.md")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn edit_replaces_a_pending_description_keeping_its_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("TASKS.md"),
+            "# T\n- [ ] T1.1: a\n- [ ] T1.2: b\n",
+        )
+        .unwrap();
+        edit(dir.path(), "T1.2", "  new text  ").await.unwrap();
+        assert_eq!(
+            read_tasks(dir.path()),
+            "# T\n- [ ] T1.1: a\n- [ ] T1.2: new text\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_keeps_the_progress_token() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("TASKS.md"), "- [ ] T1.1: [RP.B-] old\n").unwrap();
+        edit(dir.path(), "T1.1", "new").await.unwrap();
+        assert_eq!(read_tasks(dir.path()), "- [ ] T1.1: [RP.B-] new\n");
+    }
+
+    #[tokio::test]
+    async fn edit_refuses_a_completed_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [x] T1.1: done\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = edit(dir.path(), "T1.1", "x").await.unwrap_err();
+        assert!(error.to_string().contains("completed"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn edit_reports_an_unknown_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [ ] T1.1: a\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        let error = edit(dir.path(), "T9.9", "x").await.unwrap_err();
+        assert!(error.to_string().contains("no task with id"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn edit_rejects_an_empty_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [ ] T1.1: a\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        assert!(edit(dir.path(), "  ", "x").await.is_err());
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn edit_rejects_empty_multi_line_and_token_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# T\n- [ ] T1.1: a\n";
+        std::fs::write(dir.path().join("TASKS.md"), text).unwrap();
+        assert!(edit(dir.path(), "T1.1", "  ").await.is_err());
+        assert!(edit(dir.path(), "T1.1", "a\nb").await.is_err());
+        let error = edit(dir.path(), "T1.1", "[RP.B-] x").await.unwrap_err();
+        assert!(error.to_string().contains("progress token"), "{error:#}");
+        assert_eq!(read_tasks(dir.path()), text);
+    }
+
+    #[tokio::test]
+    async fn edit_reports_a_missing_file_as_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = edit(dir.path(), "T1.1", "x").await.unwrap_err();
         assert!(error.to_string().contains("no task with id"), "{error:#}");
         assert!(!dir.path().join("TASKS.md").exists());
     }
