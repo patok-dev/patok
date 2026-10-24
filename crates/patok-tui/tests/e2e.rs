@@ -955,6 +955,8 @@ async fn adding_tasks_through_the_dialog_shows_planner_output_and_the_new_tasks(
     for c in "write greeting tests".chars() {
         press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
     }
+    // Tick "Use agent to add": the unchecked submit is a plain append.
+    press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     action = match press(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL) {
         Action::None => action,
         other => other,

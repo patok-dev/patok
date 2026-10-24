@@ -2097,6 +2097,8 @@ mod dialog {
     fn planner_running() -> App {
         let mut app = open();
         type_text(&mut app, "add a login page");
+        // Tick "Use agent to add": the unchecked submit is a plain append.
+        press(&mut app, KeyCode::Tab);
         assert_eq!(
             ctrl(&mut app, 's'),
             Action::SubmitTasks("add a login page".into())
@@ -2180,6 +2182,8 @@ mod dialog {
         press(&mut app, KeyCode::Char('a'));
         assert!(app.dialog_open());
         type_text(&mut app, "add a login page");
+        // Tick "Use agent to add": the unchecked submit is a plain append.
+        press(&mut app, KeyCode::Tab);
         assert_eq!(
             ctrl(&mut app, 's'),
             Action::SubmitTasks("add a login page".into())
@@ -2306,6 +2310,8 @@ mod dialog {
             Some("Nothing to submit -- type a request first.")
         );
         type_text(&mut app, "add a login page");
+        // Tick "Use agent to add": the unchecked submit is a plain append.
+        press(&mut app, KeyCode::Tab);
         assert_eq!(
             ctrl(&mut app, 's'),
             Action::SubmitTasks("add a login page".into())
@@ -2459,6 +2465,8 @@ mod dialog {
     fn accepted_submit_closes_the_dialog_and_focuses_the_output_frame() {
         let mut app = open();
         type_text(&mut app, "add a login page");
+        // Tick "Use agent to add": the unchecked submit is a plain append.
+        press(&mut app, KeyCode::Tab);
         assert_eq!(
             ctrl(&mut app, 's'),
             Action::SubmitTasks("add a login page".into())
@@ -2470,11 +2478,14 @@ mod dialog {
     }
 
     /// Enter submits the dialog through the same path as the Submit button
-    /// (T41.1): the typed text goes out as an `AddTasks` command.
+    /// (T41.1): with the agent box checked the typed text goes out as an
+    /// `AddTasks` command; unchecked (T5.2) it is a plain inject with the lines
+    /// collapsed into one.
     #[test]
     fn enter_submits_non_empty_input_through_addtasks() {
         let mut app = open();
         type_text(&mut app, "add a login page");
+        press(&mut app, KeyCode::Tab);
         assert_eq!(
             press(&mut app, KeyCode::Enter),
             Action::SubmitTasks("add a login page".into())
@@ -2484,11 +2495,17 @@ mod dialog {
         assert_eq!(app.focus, patok_tui::FrameFocus::Output);
         assert_eq!(app.dialog.editor.text(), "");
 
-        // A multi-line input submits every line, not just the cursor's.
+        // A multi-line input submits every line, not just the cursor's:
+        // collapsed into one unchecked, verbatim to the planner checked.
         let mut app = open();
         type_text(&mut app, "first line");
         app.on_paste("\n");
         type_text(&mut app, "second line");
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Action::InjectTask("first line second line".into())
+        );
+        press(&mut app, KeyCode::Tab);
         assert_eq!(
             press(&mut app, KeyCode::Enter),
             Action::SubmitTasks("first line\nsecond line".into())
@@ -2702,6 +2719,7 @@ mod dialog {
     fn command_error_keeps_the_input() {
         let mut app = open();
         type_text(&mut app, "do it");
+        press(&mut app, KeyCode::Tab);
         assert!(matches!(ctrl(&mut app, 's'), Action::SubmitTasks(_)));
         app.on_submit_failed("a build is running".into());
         assert_eq!(app.dialog.editor.text(), "do it");
@@ -3131,7 +3149,10 @@ mod dialog {
         let reference = close[0];
 
         // The dialog's buttons wear exactly that style, cell for cell.
-        let buffer = draw_buffer(&open());
+        // (Typed text makes the Enter button active; blank, it is dimmed.)
+        let mut dialog = open();
+        type_text(&mut dialog, "x");
+        let buffer = draw_buffer(&dialog);
         for style in styles(&buffer, "[ Enter ]") {
             assert_eq!(style, reference);
         }
@@ -3543,7 +3564,23 @@ mod explore {
     }
 
     #[test]
-    fn any_non_empty_input_appends_tasks_in_every_scenario() {
+    fn any_non_empty_input_appends_tasks_in_every_scenario_with_the_agent_checked() {
+        for tasks in ["", TASKS, "- [x] T1.1: done\n"] {
+            let mut app = app_with(tasks);
+            app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
+            open_dialog(&mut app);
+            type_text(&mut app, "add a login page");
+            app.on_key(key(KeyCode::Tab));
+            assert_eq!(
+                submit(&mut app),
+                Action::SubmitTasks("add a login page".into()),
+                "tasks: {tasks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn any_non_empty_input_injects_one_line_in_every_scenario_unchecked() {
         for tasks in ["", TASKS, "- [x] T1.1: done\n"] {
             let mut app = app_with(tasks);
             app.project_status = status(true, TaskFileState::Ok, SpecState::Content);
@@ -3551,7 +3588,7 @@ mod explore {
             type_text(&mut app, "add a login page");
             assert_eq!(
                 submit(&mut app),
-                Action::SubmitTasks("add a login page".into()),
+                Action::InjectTask("add a login page".into()),
                 "tasks: {tasks:?}"
             );
         }
@@ -3609,6 +3646,7 @@ mod explore {
         clicked.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         open_dialog(&mut clicked);
         type_text(&mut clicked, "add a login page");
+        clicked.on_key(key(KeyCode::Tab));
         assert_eq!(clicked.primary_label(), "Submit");
         assert_eq!(
             primary_click(&mut clicked),
@@ -3618,6 +3656,7 @@ mod explore {
         keyed.project_status = status(true, TaskFileState::Ok, SpecState::Content);
         open_dialog(&mut keyed);
         type_text(&mut keyed, "add a login page");
+        keyed.on_key(key(KeyCode::Tab));
         assert_eq!(
             keyed.on_key(key(KeyCode::Enter)),
             Action::SubmitTasks("add a login page".into())
@@ -5555,7 +5594,9 @@ mod modal_footer {
 
     #[test]
     fn dialog_bottom_line_two_zones() {
-        let app = open_dialog();
+        let mut app = open_dialog();
+        // Typed text makes the confirm active (a blank one is dimmed, T5.2).
+        type_text(&mut app, "x");
         let buffer = buffer_wide(&app);
         assert_two_zones(
             &buffer,
@@ -5564,14 +5605,15 @@ mod modal_footer {
             &[("Enter", app.primary_label()), ("Esc", "Close")],
             &app.theme(),
         );
-        // The queue holds pending tasks and the input is empty: Start.
-        assert_eq!(app.primary_label(), "Start");
+        // The queue holds pending tasks and the input is non-empty: Submit.
+        assert_eq!(app.primary_label(), "Submit");
     }
 
     #[test]
     fn dialog_bottom_line_two_zones_in_a_palette_theme() {
         let mut app = themed(app(), ThemeKey::TokyoNightDark);
         press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "x");
         let buffer = buffer_wide(&app);
         let theme = Theme::resolve(ThemeKey::TokyoNightDark, Some(true));
         assert_two_zones(
@@ -5586,10 +5628,61 @@ mod modal_footer {
     }
 
     #[test]
+    fn dialog_inactive_confirm_is_dimmed_with_hint() {
+        const HINT: &str = "Type a task to enable Enter";
+        let text_of = |buf: &ratatui::buffer::Buffer| -> String {
+            (0..buf.area.height)
+                .map(|y| {
+                    (0..buf.area.width)
+                        .map(|x| buf[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let theme = Theme::DARK;
+        let mut app = open_dialog();
+        let screen = text_of(&buffer(&app));
+        assert!(screen.contains(HINT), "{screen}");
+        let buf = buffer_wide(&app);
+        let rects = footer_button_rects(
+            app.dialog.footer.get(),
+            &[("Enter", app.primary_label()), ("Esc", "Close")],
+        );
+        for x in rects[0].x..rects[0].right() {
+            assert_eq!(buf[(x, rects[0].y)].fg, theme.muted_text, "x={x}");
+        }
+        // The Esc button's bracketed key keeps the accent colour.
+        assert_eq!(buf[(rects[1].x + 2, rects[1].y)].fg, theme.highlighted_text);
+
+        type_text(&mut app, "x");
+        let screen = text_of(&buffer(&app));
+        assert!(!screen.contains(HINT), "{screen}");
+        let buf = buffer_wide(&app);
+        assert_eq!(buf[(rects[0].x + 2, rects[0].y)].fg, theme.highlighted_text);
+
+        // A refused Enter shows the refusal in place of the hint.
+        let mut app = open_dialog();
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+        let screen = text_of(&buffer(&app));
+        assert!(
+            screen.contains("Nothing to submit -- type a request first."),
+            "{screen}"
+        );
+        assert!(!screen.contains(HINT), "{screen}");
+
+        // The inject modal has no inactive state.
+        let mut app = self::app();
+        press(&mut app, KeyCode::Char('i'));
+        assert!(!text_of(&buffer(&app)).contains(HINT));
+    }
+
+    #[test]
     fn dialog_bottom_line_buttons_answer_clicks() {
         // Enter with text submits and closes the dialog.
         let mut app = open_dialog();
         type_text(&mut app, "add a login page");
+        press(&mut app, KeyCode::Tab);
         buffer(&app);
         let rects = footer_button_rects(
             app.dialog.footer.get(),

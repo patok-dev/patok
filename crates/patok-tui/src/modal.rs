@@ -709,7 +709,9 @@ fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
         KeyCode::Char('s') if ctrl => return app.submit_dialog(),
         KeyCode::Char('u') if ctrl => app.dialog.editor.clear(),
         // Enter, with or without Shift, Ctrl or Alt, submits through the same
-        // path as the Submit button; an empty input is refused inline. A
+        // path as the Submit button; an empty input is refused inline (the add
+        // dialog draws its confirm inactive then, T5.2; Ctrl+S above still
+        // takes the scenario path until T5.5). A
         // submit that launches a run closes the dialog; a command error keeps
         // it open.
         KeyCode::Enter => {
