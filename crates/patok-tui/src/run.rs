@@ -13,10 +13,10 @@ use patok_config::{SettingValue, Theme as ThemeKey};
 use patok_core::event::Snapshot;
 use patok_proto::engine_client::EngineClient;
 use patok_proto::{
-    AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, IndentTask, InjectTask,
-    MoveTask, OutdentTask, RemoveTask, RunDiscovery, SettingsChange, ShutdownRequest, StartBuild,
-    command_request, engine_update, move_task::Direction as MoveDirection, shutdown_request,
-    shutdown_update,
+    AddTasks, AddTasksKind, AttachRequest, CancelSoftStop, CommandRequest, EditTask, IndentTask,
+    InjectTask, MoveTask, OutdentTask, RemoveTask, RunDiscovery, SettingsChange, ShutdownRequest,
+    StartBuild, command_request, engine_update, move_task::Direction as MoveDirection,
+    shutdown_request, shutdown_update,
 };
 use ratatui::backend::Backend;
 use ratatui::layout::Rect;
@@ -370,7 +370,7 @@ where
 
 /// Runs one submit-family action's dispatch (T144.1): the one dispatch both
 /// the key arm and the mouse arm of [`event_loop`] route `SubmitTasks`,
-/// `ResearchQueue`, `SaveBrief` and `InjectTask` through, so a click on the
+/// `ResearchQueue`, `SaveBrief`, `InjectTask` and `EditTask` through, so a click on the
 /// add-task dialog's or the inject-task modal's primary footer button runs
 /// exactly its Enter key's flow. `submit` is the submit RPC, a generic
 /// function instead of a concrete `EngineClient`, so tests pass fakes (the
@@ -443,6 +443,26 @@ where
                 Ok(()) => app.on_task_injected(),
                 Err(error) => {
                     app.on_submit_failed(format!("could not append to TASKS.md: {error}"));
+                }
+            }
+        }
+        // The edit dialog's confirm (T4.3): the engine replaces the task's
+        // description; the dialog closes on accept and stays open with the
+        // engine's reason on a rejection.
+        Action::EditTask { id, description } => {
+            match crate::driver::submit(
+                submit,
+                command_request::Action::EditTask(EditTask {
+                    id: id.clone(),
+                    description: description.clone(),
+                }),
+                "edit failed",
+            )
+            .await
+            {
+                Ok(()) => app.on_task_edited(),
+                Err(error) => {
+                    app.on_submit_failed(format!("could not edit task {id}: {error}"));
                 }
             }
         }
@@ -555,7 +575,8 @@ async fn event_loop(
                     action @ (Action::SubmitTasks(_)
                     | Action::ResearchQueue(_)
                     | Action::SaveBrief(_)
-                    | Action::InjectTask(_)) => {
+                    | Action::InjectTask(_)
+                    | Action::EditTask { .. }) => {
                         run_submit_family(app, project_dir, &action, |command| {
                             client.submit_command(command)
                         })
@@ -646,7 +667,8 @@ async fn event_loop(
                     action @ (Action::SubmitTasks(_)
                     | Action::ResearchQueue(_)
                     | Action::SaveBrief(_)
-                    | Action::InjectTask(_)) => {
+                    | Action::InjectTask(_)
+                    | Action::EditTask { .. }) => {
                         run_submit_family(app, project_dir, &action, |command| {
                             client.submit_command(command)
                         })
@@ -1541,6 +1563,74 @@ mod tests {
         assert_eq!(
             rejected.dialog.status.as_deref(),
             Some("could not append to TASKS.md: inject failed: nope")
+        );
+    }
+
+    /// The edit dialog's confirm (T4.3) sends the EditTask command and closes
+    /// the dialog with the task list focused on accept; a rejection or
+    /// transport failure keeps it open with the error.
+    #[tokio::test]
+    async fn edit_sends_the_edit_command_and_closes_the_dialog_on_accept() {
+        let mut accepted = app();
+        accepted.run.tasks = patok_core::task::parse("- [ ] T1.2: old\n");
+        accepted.focus = FrameFocus::Tasks;
+        accepted.edit_selected_task();
+        assert!(accepted.dialog_open());
+        let action = Action::EditTask {
+            id: "T1.2".into(),
+            description: "new".into(),
+        };
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let flow = run_submit_family(
+            &mut accepted,
+            std::path::Path::new("/home/user/demo"),
+            &action,
+            recording_submit(&commands, true, ""),
+        )
+        .await;
+        assert!(matches!(flow, SubmitFlow::Handled));
+        {
+            let commands = commands.lock().unwrap();
+            match &commands[0].action {
+                Some(command_request::Action::EditTask(edit)) => {
+                    assert_eq!(edit.id, "T1.2");
+                    assert_eq!(edit.description, "new");
+                }
+                other => panic!("expected an EditTask command, got {other:?}"),
+            }
+        }
+        assert!(!accepted.dialog_open());
+        assert_eq!(accepted.focus, FrameFocus::Tasks);
+
+        let mut rejected = app();
+        rejected.run.tasks = patok_core::task::parse("- [ ] T1.2: old\n");
+        rejected.edit_selected_task();
+        run_submit_family(
+            &mut rejected,
+            std::path::Path::new("/home/user/demo"),
+            &action,
+            recording_submit(
+                &Arc::new(Mutex::new(Vec::new())),
+                false,
+                "task T1.2 is completed and cannot be edited",
+            ),
+        )
+        .await;
+        assert!(rejected.dialog_open());
+        assert_eq!(
+            rejected.dialog.status.as_deref(),
+            Some("could not edit task T1.2: task T1.2 is completed and cannot be edited")
+        );
+        run_submit_family(
+            &mut rejected,
+            std::path::Path::new("/home/user/demo"),
+            &action,
+            failing_submit("nope"),
+        )
+        .await;
+        assert_eq!(
+            rejected.dialog.status.as_deref(),
+            Some("could not edit task T1.2: edit failed: nope")
         );
     }
 

@@ -694,7 +694,7 @@ fn picker_mouse(app: &mut App, mouse: MouseEvent) -> Action {
 /// editor (`DialogEditor`) owns the buffer, the cursor and their motion.
 fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
     if key.code == KeyCode::Esc {
-        app.modals.pop(Modal::Dialog);
+        app.close_dialog();
         return Action::None;
     }
     if key.code == KeyCode::Char('c') && ctrl {
@@ -893,12 +893,24 @@ mod tests {
     #[test]
     fn shift_letters_type_capitals_in_the_add_and_inject_dialogs() {
         for upper in [false, true] {
-            for kind in [crate::app::DialogKind::Add, crate::app::DialogKind::Inject] {
+            for kind in [
+                crate::app::DialogKind::Add,
+                crate::app::DialogKind::Inject,
+                crate::app::DialogKind::Edit,
+            ] {
                 let mut app = app();
-                if kind == crate::app::DialogKind::Add {
-                    app.open_dialog();
-                } else {
-                    app.open_inject();
+                match kind {
+                    crate::app::DialogKind::Add => {
+                        app.open_dialog();
+                    }
+                    crate::app::DialogKind::Inject => {
+                        app.open_inject();
+                    }
+                    crate::app::DialogKind::Edit => {
+                        app.run.tasks = patok_core::task::parse("- [ ] T1.1: x\n");
+                        app.edit_selected_task();
+                        app.dialog.editor.clear();
+                    }
                 }
                 assert_eq!(app.modals.top(), Some(Modal::Dialog));
                 assert_eq!(app.dialog.kind, kind);

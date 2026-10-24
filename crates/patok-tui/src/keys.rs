@@ -166,6 +166,11 @@ impl App {
             // state refuses it -- appending a line is safe in every engine
             // state, and the engine's task-file poll reconciles it.
             KeyCode::Char('i') if !ctrl && self.focus == FrameFocus::Tasks => self.open_inject(),
+            // The edit key (T4.3): opens the input dialog prefilled with the
+            // selected pending task's description.
+            KeyCode::Char('e') if !ctrl && self.focus == FrameFocus::Tasks => {
+                self.edit_selected_task()
+            }
             // Enter is the primary action while the engine is idle (T46.1):
             // it starts the build loop while pending tasks remain and runs a
             // discovery round once the queue is complete.
@@ -250,6 +255,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::DialogKind;
 
     use std::collections::BTreeMap;
 
@@ -356,9 +362,85 @@ mod tests {
         let mut app = tasks_app();
         app.focus = FrameFocus::Output;
         assert_eq!(app.on_key(ev('d', KeyModifiers::NONE)), Action::Detach);
-        for c in ['K', 'J', 'L', 'H'] {
+        for c in ['K', 'J', 'L', 'H', 'e'] {
             assert_eq!(app.on_key(ev(c, KeyModifiers::NONE)), Action::None);
         }
+        assert!(!app.dialog_open());
+    }
+
+    #[test]
+    fn e_opens_the_edit_dialog_prefilled() {
+        let mut app = tasks_app();
+        assert_eq!(app.on_key(ev('e', KeyModifiers::NONE)), Action::None);
+        assert_eq!(app.modals.top(), Some(Modal::Dialog));
+        assert_eq!(app.dialog.kind, DialogKind::Edit);
+        assert_eq!(app.dialog.edit_id, "T2.1");
+        assert_eq!(app.dialog.editor.text(), "c");
+        assert_eq!(app.dialog.editor.cursor(), 1);
+    }
+
+    #[test]
+    fn e_refuses_done_and_running_rows() {
+        let mut app = tasks_app();
+        app.task_cursor = Some(0);
+        assert_eq!(app.on_key(ev('e', KeyModifiers::NONE)), Action::None);
+        assert!(!app.dialog_open());
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Task T1.1 is completed and cannot be edited.")
+        );
+        app.run.current_task = Some("T2.1".into());
+        app.task_cursor = Some(2);
+        assert_eq!(app.on_key(ev('e', KeyModifiers::NONE)), Action::None);
+        assert!(!app.dialog_open());
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Task T2.1 is in progress and cannot be edited.")
+        );
+    }
+
+    #[test]
+    fn edit_dialog_parks_and_restores_the_draft() {
+        let mut app = tasks_app();
+        app.dialog.editor.insert("draft");
+        app.on_key(ev('e', KeyModifiers::NONE));
+        assert_eq!(app.dialog.editor.text(), "c");
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.dialog_open());
+        assert_eq!(app.dialog.editor.text(), "draft");
+
+        app.on_key(ev('e', KeyModifiers::NONE));
+        app.on_key(ev('x', KeyModifiers::NONE));
+        app.on_task_edited();
+        assert!(!app.dialog_open());
+        assert_eq!(app.focus, FrameFocus::Tasks);
+        assert_eq!(app.dialog.editor.text(), "draft");
+    }
+
+    #[test]
+    fn edit_submit_returns_the_trimmed_edit_action() {
+        let mut app = tasks_app();
+        app.on_key(ev('e', KeyModifiers::NONE));
+        app.on_key(ev('u', KeyModifiers::CONTROL));
+        for c in " new ".chars() {
+            app.on_key(ev(c, KeyModifiers::NONE));
+        }
+        assert_eq!(
+            app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Action::EditTask {
+                id: "T2.1".into(),
+                description: "new".into()
+            }
+        );
+        app.on_key(ev('u', KeyModifiers::CONTROL));
+        assert_eq!(
+            app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Action::None
+        );
+        assert_eq!(
+            app.dialog.status.as_deref(),
+            Some("Nothing to save -- type the task description first.")
+        );
     }
 
     #[test]

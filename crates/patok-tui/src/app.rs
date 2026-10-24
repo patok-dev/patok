@@ -87,6 +87,13 @@ pub enum Action {
     /// planner, no discovery; the engine's reconcile picks the line up
     /// right away.
     InjectTask(String),
+    /// Replace the description of task `id` with the edit dialog's text
+    /// (T4.3): the engine keeps the id, the checkbox and the progress token
+    /// and refuses a done, running or missing task and a multi-line text.
+    EditTask {
+        id: String,
+        description: String,
+    },
     /// Save the dialog's text as the project brief into SPEC.md (EmptyProject submit);
     /// the dialog stays open with the created message.
     SaveBrief(String),
@@ -226,6 +233,9 @@ pub enum DialogKind {
     /// well-formed unchecked task line before appending it to TASKS.md,
     /// with no agent session.
     Inject,
+    /// The edit-task dialog (`e`, T4.3): prefilled with the selected pending
+    /// task's description; confirming sends it to the engine's edit command.
+    Edit,
 }
 
 /// The model picker's state (T4.4): the picker and the settings row it was
@@ -533,6 +543,12 @@ pub struct DialogState {
     /// inject-task modal. Pinned back to [`DialogKind::Add`] whenever the
     /// add-task dialog opens, so a reopen never inherits the inject kind.
     pub kind: DialogKind,
+    /// The id of the task being edited (T4.3); only meaningful while `kind`
+    /// is [`DialogKind::Edit`].
+    pub edit_id: String,
+    /// The add/inject draft set aside while the edit dialog uses the shared
+    /// editor (T4.3); put back when the edit dialog closes.
+    pub(crate) parked: Option<DialogEditor>,
     /// A one-line message in the dialog (empty input, command errors).
     pub status: Option<String>,
     /// The dialog's bottom line rect at the last render; its buttons' mouse
@@ -653,6 +669,8 @@ impl App {
             dialog: DialogState {
                 editor: DialogEditor::default(),
                 kind: DialogKind::Add,
+                edit_id: String::new(),
+                parked: None,
                 status: None,
                 footer: Cell::new(Rect::default()),
                 close: Cell::new(Rect::default()),
@@ -790,8 +808,10 @@ impl App {
     /// ready and the input is empty, "Scan" when the queue is complete and the
     /// input is empty, "Submit" otherwise.
     pub fn primary_label(&self) -> &'static str {
-        if self.dialog.kind == DialogKind::Inject {
-            return "Inject";
+        match self.dialog.kind {
+            DialogKind::Inject => return "Inject",
+            DialogKind::Edit => return "Save",
+            DialogKind::Add => {}
         }
         let empty = self.dialog.editor.text().trim().is_empty();
         match (self.scenario(), empty) {

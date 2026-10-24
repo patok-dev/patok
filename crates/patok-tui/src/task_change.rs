@@ -1,41 +1,69 @@
-//! The task list's edit actions (T4.2): the selected task's delete, move and
-//! indent/outdent keys. The key side refuses done, running and malformed rows
+//! The task list's edit actions (T4.2, T4.3): the selected task's delete, move
+//! and indent/outdent keys and the `e` edit dialog. The key side refuses done, running and malformed rows
 //! with a status message; the driver side moves the cursor after the engine
 //! accepts, using the engine's own placement rules.
 
-use crate::app::{Action, App, TaskChange};
+use crate::app::{Action, App, DialogKind, TaskChange};
+use crate::modal::Modal;
 
 impl App {
     /// The action for a change of the selected task, or `Action::None` with a
     /// status message when the row cannot be changed.
     pub(crate) fn change_selected_task(&mut self, change: TaskChange) -> Action {
+        match self.changeable_task(change.verb()) {
+            Some(i) => Action::ChangeTask {
+                id: self.run.tasks[i].id.clone(),
+                change,
+            },
+            None => Action::None,
+        }
+    }
+
+    /// The index of the selected task when it may be changed; otherwise sets
+    /// the refusal status (no task, malformed, done, running; `verb` names the
+    /// refused change) and returns `None`. A success clears the status.
+    pub(crate) fn changeable_task(&mut self, verb: &str) -> Option<usize> {
         let Some(i) = self.selected_task_index() else {
             self.status = Some("No task to change.".into());
-            return Action::None;
+            return None;
         };
         let task = &self.run.tasks[i];
-        let id = task.id.clone();
+        let id = &task.id;
         let refusal = if task.is_malformed() {
             Some("This task line has no valid id; fix it in TASKS.md first.".to_string())
         } else if task.done {
-            Some(format!(
-                "Task {id} is completed and cannot be {}.",
-                change.verb()
-            ))
+            Some(format!("Task {id} is completed and cannot be {verb}."))
         } else if self.run.current_task.as_deref() == Some(id.as_str()) {
-            Some(format!(
-                "Task {id} is in progress and cannot be {}.",
-                change.verb()
-            ))
+            Some(format!("Task {id} is in progress and cannot be {verb}."))
         } else {
             None
         };
         if let Some(message) = refusal {
             self.status = Some(message);
-            return Action::None;
+            return None;
         }
         self.status = None;
-        Action::ChangeTask { id, change }
+        Some(i)
+    }
+
+    /// The `e` key (T4.3): opens the shared input dialog as the edit dialog,
+    /// prefilled with the selected pending task's description. The add/inject
+    /// draft is parked until the dialog closes. A refused row or a refused
+    /// modal push leaves the dialog untouched.
+    pub(crate) fn edit_selected_task(&mut self) -> Action {
+        let Some(i) = self.changeable_task("edited") else {
+            return Action::None;
+        };
+        let id = self.run.tasks[i].id.clone();
+        let description = self.run.tasks[i].description.clone();
+        if self.modals.push(Modal::Dialog) {
+            self.dialog.parked = Some(std::mem::take(&mut self.dialog.editor));
+            self.dialog.editor.insert(&description);
+            self.dialog.kind = DialogKind::Edit;
+            self.dialog.edit_id = id;
+            self.dialog.status = None;
+        }
+        Action::None
     }
 
     /// The success hook: the cursor follows the changed task to the index the

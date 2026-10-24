@@ -2402,6 +2402,24 @@ mod dialog {
     }
 
     #[test]
+    fn edit_modal_prefilled() {
+        let mut app = self::app();
+        press(&mut app, KeyCode::Char('e'));
+        assert_eq!(app.dialog.kind, DialogKind::Edit);
+        insta::assert_snapshot!(draw(&app, 80, 24));
+    }
+
+    #[test]
+    fn edit_modal_error() {
+        let mut app = self::app();
+        press(&mut app, KeyCode::Char('e'));
+        app.on_submit_failed(
+            "could not edit task T1.2: task T1.2 is completed and cannot be edited".into(),
+        );
+        insta::assert_snapshot!(draw(&app, 80, 24));
+    }
+
+    #[test]
     fn accepted_submit_closes_the_dialog_and_focuses_the_output_frame() {
         let mut app = open();
         type_text(&mut app, "add a login page");
@@ -4164,6 +4182,31 @@ mod view {
 
         app.on_key(key(KeyCode::Tab));
         assert_eq!(app.on_key(key(KeyCode::Char('d'))), Action::Detach);
+    }
+
+    #[test]
+    fn the_edit_key_opens_a_prefilled_dialog_and_refuses_done_rows() {
+        use patok_tui::Action;
+        let mut app = long_app();
+        app.on_key(key(KeyCode::Char('e')));
+        assert!(app.dialog_open());
+        app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        for c in "Rename".chars() {
+            app.on_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            Action::EditTask {
+                id: "T9.21".into(),
+                description: "Rename".into()
+            }
+        );
+        app.on_key(key(KeyCode::Esc));
+        assert!(!app.dialog_open());
+
+        app.task_cursor = Some(0);
+        assert_eq!(app.on_key(key(KeyCode::Char('e'))), Action::None);
+        assert!(app.status.as_deref().unwrap().contains("completed"));
     }
 
     #[test]
