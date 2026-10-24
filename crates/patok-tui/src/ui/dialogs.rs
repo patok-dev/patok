@@ -43,6 +43,12 @@ pub fn dialog_area(screen: Rect) -> Rect {
     crate::geom::centered(screen, width, height)
 }
 
+/// The add dialog's checkbox label (T5.1); the click rect's width is measured
+/// from the same string.
+fn agent_checkbox_label(checked: bool) -> String {
+    format!("{} Use agent to add", if checked { "[x]" } else { "[ ]" })
+}
+
 pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let area = Modal::Dialog.area(app, frame.area());
@@ -61,12 +67,33 @@ pub(crate) fn render_dialog(frame: &mut Frame, app: &App) {
     let chrome = render_modal_frame(frame, theme, area, ModalTitle::Left(&title));
     app.dialog.close.set(chrome.close);
     let inner = chrome.inner;
-    let [input, dialog_status, footer] = Layout::vertical([
+    // The checkbox row (T5.1) exists for the add kind only; a height-0 row
+    // leaves the inject and edit modals' layout untouched.
+    let [input, agent_row, dialog_status, footer] = Layout::vertical([
         Constraint::Min(1),
+        Constraint::Length(u16::from(app.dialog.kind == DialogKind::Add)),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(inner);
+
+    if app.dialog.kind == DialogKind::Add {
+        let label = agent_checkbox_label(app.dialog.use_agent);
+        let label_width = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
+        app.dialog.agent_toggle.set(Rect {
+            width: label_width.min(agent_row.width),
+            ..agent_row
+        });
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw(label),
+                Span::styled("  Tab toggle", Style::new().fg(theme.muted_text)),
+            ])),
+            agent_row,
+        );
+    } else {
+        app.dialog.agent_toggle.set(Rect::default());
+    }
 
     if let Some(message) = &app.dialog.status {
         frame.render_widget(

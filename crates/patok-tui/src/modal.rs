@@ -13,10 +13,11 @@ use patok_core::event::Phase;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::app::{Action, App, MenuChoice, SOFT_STOP_PENDING, menu_entries};
+use crate::app::{Action, App, DialogKind, MenuChoice, SOFT_STOP_PENDING, menu_entries};
 use crate::choice::{ChoiceKey, ChoiceMouse, choice_area, choice_key, choice_mouse};
 use crate::hit::{
-    chip_clicked, close_clicked, footer_button_code, menu_row_at, settings_row_at, theme_row_at,
+    chip_clicked, close_clicked, footer_button_code, left_click_in, menu_row_at, settings_row_at,
+    theme_row_at,
 };
 use crate::model_picker::{MODEL_PICKER_BUTTONS, ModelPicker};
 use crate::overlay::{Entry, SETTINGS_CHOICES, header_fold};
@@ -718,6 +719,12 @@ fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
                 return app.submit_dialog();
             }
         }
+        // Tab / Shift+Tab flip the add dialog's "Use agent to add" checkbox
+        // (T5.1); the inject and edit modals have no checkbox, so Tab stays a
+        // no-op there.
+        KeyCode::Tab | KeyCode::BackTab if app.dialog.kind == DialogKind::Add => {
+            app.toggle_use_agent()
+        }
         _ => app.dialog.editor.on_key(key, ctrl),
     }
     Action::None
@@ -727,11 +734,16 @@ fn dialog_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Action {
 /// bottom line's buttons runs exactly that button's key through the
 /// dialog's key path -- Enter submits (with the empty-input refusal) and
 /// Esc closes keeping the text. A click on the title row's close button
-/// runs the dialog's Esc key the same way (T66.1). Everything else is
-/// swallowed, as before.
+/// runs the dialog's Esc key the same way (T66.1). A click on the add
+/// dialog's "Use agent to add" checkbox row toggles it (T5.1). Everything
+/// else is swallowed, as before.
 fn dialog_mouse(app: &mut App, mouse: MouseEvent) -> Action {
     if close_clicked(&mouse, app.dialog.close.get()) {
         return dialog_key(app, bare(KeyCode::Esc), false);
+    }
+    if app.dialog.kind == DialogKind::Add && left_click_in(&mouse, app.dialog.agent_toggle.get()) {
+        app.toggle_use_agent();
+        return Action::None;
     }
     let buttons = Modal::Dialog.buttons(app);
     let code = footer_button_code(&mouse, app.dialog.footer.get(), &buttons);
@@ -917,6 +929,32 @@ mod tests {
                 type_hello(&mut app, upper);
                 assert_eq!(app.dialog.editor.text(), "Hello");
             }
+        }
+    }
+
+    #[test]
+    fn tab_toggles_the_checkbox_in_the_add_dialog_only() {
+        for kind in [DialogKind::Add, DialogKind::Inject, DialogKind::Edit] {
+            let mut app = app();
+            match kind {
+                DialogKind::Add => {
+                    app.open_dialog();
+                }
+                DialogKind::Inject => {
+                    app.open_inject();
+                }
+                DialogKind::Edit => {
+                    app.run.tasks = patok_core::task::parse("- [ ] T1.1: x\n");
+                    app.edit_selected_task();
+                }
+            }
+            let text = app.dialog.editor.text().to_string();
+            let expect = kind == DialogKind::Add;
+            press(&mut app, KeyCode::Tab);
+            assert_eq!(app.dialog.use_agent, expect, "{kind:?}");
+            press(&mut app, KeyCode::BackTab);
+            assert!(!app.dialog.use_agent, "{kind:?}");
+            assert_eq!(app.dialog.editor.text(), text);
         }
     }
 
