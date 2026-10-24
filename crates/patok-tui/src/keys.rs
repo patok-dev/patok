@@ -168,6 +168,14 @@ impl App {
                 self.open_settings();
                 Action::None
             }
+            // The task cursor's keys (T4.1): the focused task list moves its
+            // selection; the output frame keeps scrolling with them below.
+            KeyCode::Up | KeyCode::Char('k') if self.focus == FrameFocus::Tasks => {
+                self.move_task_cursor(-1)
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.focus == FrameFocus::Tasks => {
+                self.move_task_cursor(1)
+            }
             KeyCode::Up | KeyCode::Char('k') => self.scroll_by(1),
             KeyCode::Down | KeyCode::Char('j') => self.scroll_by(-1),
             KeyCode::PageUp => self.scroll_by(10),

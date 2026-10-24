@@ -1,6 +1,7 @@
 //! Mouse input (finding 19, the rest, in
 //! docs/private/structure-review-followup.md): the main view's mouse
-//! handler and the frame scrolling behind it, split out of `app`. The open
+//! handler and the frame scrolling behind it, plus the task cursor's
+//! movement (T4.1), split out of `app`. The open
 //! modal stack swallows every event first; the modals' own mouse handling
 //! lives in `modal`.
 
@@ -35,6 +36,20 @@ impl App {
     /// Scrolls the focused frame's content; the unfocused frame ignores the keys.
     pub(crate) fn scroll_by(&mut self, delta: isize) -> Action {
         self.scroll_frame(self.focus, delta);
+        Action::None
+    }
+
+    /// Moves the Tasks frame's selected row by `delta`, clamped to the list, and
+    /// brings the view back to it (T4.1).
+    pub(crate) fn move_task_cursor(&mut self, delta: isize) -> Action {
+        match self.selected_task_index() {
+            Some(current) => {
+                let last = self.run.tasks.len() - 1;
+                self.task_cursor = Some(current.saturating_add_signed(delta).min(last));
+                self.task_scroll = 0;
+            }
+            None => self.task_cursor = None,
+        }
         Action::None
     }
 
