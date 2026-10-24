@@ -14,8 +14,8 @@ use patok_proto::{
     AddTasksKind, AttachRequest, CommandRequest, CommandResponse, EngineInfo, EngineUpdate, Event,
     PipelineStage, PipelineState as ProtoPipelineState, PipelineTile, RunState, RunStateUpdate,
     SettingsChangeResult, ShutdownNotice, ShutdownRequest, ShutdownUpdate, Snapshot,
-    TileStatus as ProtoTileStatus, command_request, engine_update, event, settings_change_result,
-    shutdown_request, shutdown_update,
+    TileStatus as ProtoTileStatus, command_request, engine_update, event, move_task,
+    settings_change_result, shutdown_request, shutdown_update,
 };
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
@@ -24,6 +24,7 @@ use tonic::{Request, Response, Status};
 
 use crate::QueueCreation;
 use crate::engine::{Attachment, Engine, RunState as EngineRunState};
+use crate::taskfile::MoveDirection;
 
 type Stream<T> = ReceiverStream<Result<T, Status>>;
 
@@ -138,6 +139,19 @@ impl EngineApi for Service {
             Some(command_request::Action::RemoveTask(remove)) => {
                 outcome(self.engine.remove_task(&remove.id).await)
             }
+            // Edits one pending task's description under the engine's
+            // task-file lock, refusing the in-progress and completed tasks;
+            // the queue reconciles immediately.
+            Some(command_request::Action::EditTask(edit)) => {
+                outcome(self.engine.edit_task(&edit.id, &edit.description).await)
+            }
+            // Moves one pending task up or down under the task-file lock,
+            // renumbering the affected ids; a missing or unknown direction is
+            // rejected rather than defaulted.
+            Some(command_request::Action::MoveTask(mv)) => match move_direction(mv.direction) {
+                Some(direction) => outcome(self.engine.move_task(&mv.id, direction).await),
+                None => rejected("the move direction is missing".into()),
+            },
             // One daemon-schema field change: validated,
             // persisted to the resolved layer and merged into the engine's central
             // config; the new value reaches the shell as a ConfigChanged event.
@@ -276,6 +290,16 @@ fn outcome(result: Result<(), String>) -> CommandResponse {
     match result {
         Ok(()) => accepted(),
         Err(error) => rejected(error),
+    }
+}
+
+/// The engine direction for a `MoveTask`'s wire direction; `None` for the
+/// unspecified default and values this engine does not know.
+fn move_direction(direction: i32) -> Option<MoveDirection> {
+    match move_task::Direction::try_from(direction) {
+        Ok(move_task::Direction::Up) => Some(MoveDirection::Up),
+        Ok(move_task::Direction::Down) => Some(MoveDirection::Down),
+        Ok(move_task::Direction::Unspecified) | Err(_) => None,
     }
 }
 
@@ -573,6 +597,20 @@ fn spawn_signal_handlers(engine: Engine) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn move_direction_maps_up_and_down_and_rejects_the_rest() {
+        assert_eq!(
+            move_direction(move_task::Direction::Up as i32),
+            Some(MoveDirection::Up)
+        );
+        assert_eq!(
+            move_direction(move_task::Direction::Down as i32),
+            Some(MoveDirection::Down)
+        );
+        assert_eq!(move_direction(0), None);
+        assert_eq!(move_direction(99), None);
+    }
 
     #[test]
     fn run_state_proto_maps_every_engine_variant() {
